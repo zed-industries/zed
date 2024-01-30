@@ -1,0 +1,11 @@
+*if_sniff.txt*	For Vim version 9.1.  Last change: 2016 Feb 27
+
+
+		  VIM REFERENCE MANUAL
+		by Anton Leherbauer (toni@takefive.co.at)
+
+
+The SNiFF+ support was removed at patch 7.4.1433.  If you want to check it out
+sync to before that.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

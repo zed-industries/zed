@@ -1,0 +1,111 @@
+(* Modula-2 PIM Test File for Vim Syntax Colouring *)
+
+(* --------------------------------------------------
+ * THIS FILE IS LICENSED UNDER THE VIM LICENSE
+ * see https://github.com/vim/vim/blob/master/LICENSE
+ * -------------------------------------------------- *)
+
+DEFINITION MODULE Foobar; (*!m2pim*)
+
+FROM SYSTEM IMPORT WORD, ADDRESS;
+
+CONST MaxFoo = 1.0; LF = CHR(10);
+
+TYPE Foo = POINTER TO Bar;
+
+(* predefined constants *)
+FALSE NIL TRUE
+
+(* predefined types *)
+BITSET BOOLEAN CHAR PROC CARDINAL INTEGER LONGINT REAL LONGREAL
+
+(* predefined procedures *)
+CAP DEC EXCL HALT INC INCL
+
+(* predefined functions *)
+ABS CHR FLOAT HIGH MAX MIN ODD ORD SIZE TRUNC VAL
+
+(* predefined macros *)
+NEW DISPOSE
+
+(* unsafe builtins *)
+ADDRESS PROCESS WORD ADR TSIZE NEWPROCESS TRANSFER SYSTEM
+
+(* non-standard language extensions *)
+BYTE LONGCARD LONGBITSET
+
+(* user defined identifiers *)
+foobar Foobar FooBar foo123 foo_bar
+
+(* string literals *)
+str := "foo 'bar' baz";
+str := 'foo "bar" baz';
+
+(* numeric literals *)
+0FFFH, 1.23, 1.23e-45, 1000
+
+(* octal literals *)
+n := 0377B; ch := 0377C;
+
+(* pragmas *)
+(*$foo*)
+
+(* block comments with emphasis *)
+(* copyright (c) Jurrasic Inc.
+   author Fred Flintstone Sr.
+   license see LICENSE file. *)
+
+(* pre-conditions: foo bar baz bam boo doodle wah.
+   post-conditions: foodle babble bozo bim bam dang.
+   error-conditions: dada jingle jungle boggle dee boo. *)
+
+(* technical debt markers *)
+(* TODO: ... *)
+(* FIXME *)
+(* DEPRECATED *)
+
+(* procedures *)
+PROCEDURE NewFooWithBar ( VAR foo: Foo; bar : INTEGER );
+BEGIN
+  NEW(foo);
+  foo^.bar := bar;
+  RETURN
+END SetBar;
+
+(* functions *)
+PROCEDURE bar ( foo : Foo ) : INTEGER;
+BEGIN
+  IF foo = NIL THEN
+    HALT
+  ELSE
+    RETURN foo^.bar
+  END (* IF *)
+END bar;
+  
+(* disabled code *)
+?<
+WHILE foo = bar DO
+  baz(bam, boo)
+END (* WHILE *);
+>?
+
+(* synonyms *)
+&  ~
+
+(* illegal characters *)
+`  !  @  $  %  \  ?  _
+
+(* illegal identifiers *)
+
+_bar  _bar_baz  _bar_baz__bam  _bar_baz__bam_boo
+
+bar_  bar_baz_  bar_baz__bam_  bar_baz__bam_boo_
+
+__bar  __bar_baz  __bar_baz__bam  __bar_baz__bam_boo
+
+bar__  bar_baz__  bar_baz__bam__  bar_baz__bam_boo__
+
+bar__baz  __bar_baz__  __bar__baz__  __
+
+
+END Foobar.

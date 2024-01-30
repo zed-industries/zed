@@ -1,0 +1,643 @@
+*testing.txt*	For Vim version 9.1.  Last change: 2024 Jan 23
+
+
+		  VIM REFERENCE MANUAL	  by Bram Moolenaar
+
+
+Testing Vim and Vim script			*testing-support*
+
+Expression evaluation is explained in |eval.txt|.  This file goes into details
+about writing tests in Vim script.  This can be used for testing Vim itself
+and for testing plugins.
+
+1. Testing Vim				|testing|
+2. Test functions			|test-functions-details|
+3. Assert functions			|assert-functions-details|
+
+==============================================================================
+1. Testing Vim						*testing*
+
+Vim can be tested after building it, usually with "make test".
+The tests are located in the directory "src/testdir".
+
+There are two types of tests added over time:
+	test20.in		oldest, only for tiny builds
+	test_something.vim	new style tests
+
+						*new-style-testing*
+New tests should be added as new style tests.  The test scripts are named
+test_<feature>.vim (replace <feature> with the feature under test). These use
+functions such as |assert_equal()| to keep the test commands and the expected
+result in one place.
+						*old-style-testing*
+These tests are used only for testing Vim without the |+eval| feature.
+
+Find more information in the file src/testdir/README.txt.
+
+==============================================================================
+2. Test functions				*test-functions-details*
+
+test_alloc_fail({id}, {countdown}, {repeat})		*test_alloc_fail()*
+		This is for testing: If the memory allocation with {id} is
+		called, then decrement {countdown}, and when it reaches zero
+		let memory allocation fail {repeat} times.  When {repeat} is
+		smaller than one it fails one time.
+
+		Can also be used as a |method|: >
+			GetAllocId()->test_alloc_fail()
+
+
+test_autochdir()					*test_autochdir()*
+		Set a flag to enable the effect of 'autochdir' before Vim
+		startup has finished.
+
+
+test_feedinput({string})				*test_feedinput()*
+		Characters in {string} are queued for processing as if they
+		were typed by the user. This uses a low level input buffer.
+		This function works only when with |+unix| or GUI is running.
+
+		Can also be used as a |method|: >
+			GetText()->test_feedinput()
+
+
+test_garbagecollect_now()			 *test_garbagecollect_now()*
+		Like garbagecollect(), but executed right away.  This must
+		only be called directly to avoid any structure to exist
+		internally, and |v:testing| must have been set before calling
+		any function.   *E1142*
+		This will not work when called from a :def function, because
+		variables on the stack will be freed.
+
+
+test_garbagecollect_soon()			 *test_garbagecollect_soon()*
+		Set the flag to call the garbagecollector as if in the main
+		loop.  Only to be used in tests.
+
+
+test_getvalue({name})					*test_getvalue()*
+		Get the value of an internal variable.  These values for
+		{name} are supported:
+			need_fileinfo
+
+		Can also be used as a |method|: >
+			GetName()->test_getvalue()
+<
+						*test_gui_event()*
+test_gui_event({event}, {args})
+		Generate a GUI {event} with arguments {args} for testing Vim
+		functionality. This function works only when the GUI is
+		running.
+
+		{event} is a String and the supported values are:
+		    "dropfiles"	drop one or more files in a window.
+		    "findrepl"  search and replace text.
+		    "mouse"	mouse button click event.
+		    "scrollbar" move or drag the scrollbar.
+		    "key"	send a low-level keyboard event.
+		    "tabline"	select a tab page by mouse click.
+		    "tabmenu"	select a tabline menu entry.
+
+		{args} is a Dict and contains the arguments for the event.
+
+		"dropfiles":
+		  Drop one or more files in a specified window.  The supported
+		  items in {args} are:
+		    files:	List of file names
+		    row:	window row number
+		    col:	window column number
+		    modifiers:	key modifiers. The supported values are:
+				    0x4	Shift
+				    0x8	Alt
+				   0x10	Ctrl
+		  The files are added to the |argument-list| and the first
+		  file in {files} is edited in the window.  See |drag-n-drop|
+		  for more information.  This event works only when the
+		  |drop_file| feature is present.
+
+		"findrepl":
+		  {only available when the GUI has a find/replace dialog}
+		  Perform a search and replace of text.  The supported items
+		  in {args} are:
+		    find_text:	string to find.
+		    repl_text:	replacement string.
+		    flags:	flags controlling the find/replace. Supported
+				values are:
+				    1	search next string (find dialog)
+				    2	search next string (replace dialog)
+				    3	replace string once
+				    4	replace all matches
+				    8	match whole words only
+				   16	match case
+		    forward:	set to 1 for forward search.
+
+		"mouse":
+		  Inject either a mouse button click, or a mouse move, event.
+		  The supported items in {args} are:
+		    button:	mouse button.  The supported values are:
+				    0	left mouse button
+				    1	middle mouse button
+				    2	right mouse button
+				    3	mouse button release
+				    4	scroll wheel down
+				    5	scroll wheel up
+				    6	scroll wheel left
+				    7	scroll wheel right
+		    row:	mouse click row number.  The first row of the
+				Vim window is 1 and the last row is 'lines'.
+		    col:	mouse click column number.  The maximum value
+				of {col} is 'columns'.
+		    multiclick:	set to 1 to inject a multiclick mouse event.
+		    modifiers:	key modifiers.  The supported values are:
+				    4	shift is pressed
+				    8	alt is pressed
+				   16	ctrl is pressed
+		    move:	Optional; if used and TRUE then a mouse move
+			        event can be generated.
+				Only {args} row: and col: are used and
+				required; they are interpreted as pixels or
+				screen cells, depending on "cell".
+				Only results in an event when 'mousemoveevent'
+				is set or a popup uses mouse move events.
+		    cell:	Optional: when present and TRUE then "move"
+				uses screen cells instead of pixel positions
+
+		"scrollbar":
+		  Set or drag the left, right or horizontal scrollbar.  Only
+		  works when the scrollbar actually exists.  The supported
+		  items in {args} are:
+		    which:	Selects the scrollbar. The supported values
+				are:
+				    left  Left scrollbar of the current window
+				    right Right scrollbar of the current window
+				    hor   Horizontal scrollbar
+		    value:	Amount to scroll.  For the vertical scrollbars
+				the value can be between 0 to the line-count
+				of the buffer minus one.  For the horizontal
+				scrollbar the value can be between 1 and the
+				maximum line length, assuming 'wrap' is not
+				set.
+		    dragging:	1 to drag the scrollbar and 0 to click in the
+				scrollbar.
+
+		"key":
+		  Send a low-level keyboard event (e.g. key-up or down).
+		  Currently only supported on MS-Windows.
+		  The supported items in {args} are:
+		    event:	The supported string values are:
+				    keyup   generate a keyup event
+				    keydown generate a keydown event
+		    keycode:    Keycode to use for a keyup or a keydown event.
+								*E1291*
+
+		"tabline":
+		  Inject a mouse click event on the tabline to select a
+		  tabpage. The supported items in {args} are:
+		    tabnr:	tab page number
+
+		"tabmenu":
+		  Inject an event to select a tabline menu entry. The
+		  supported items in {args} are:
+		    tabnr:	tab page number
+		    item:	tab page menu item number. 1 for the first
+				menu item, 2 for the second item and so on.
+
+		After injecting the GUI events you probably should call
+		|feedkeys()| to have them processed, e.g.: >
+			call feedkeys("y", 'Lx!')
+<
+		Returns TRUE if the event is successfully added, FALSE if
+		there is a failure.
+
+		Can also be used as a |method|: >
+			GetEvent()->test_gui_event({args})
+<
+test_ignore_error({expr})			 *test_ignore_error()*
+		Ignore any error containing {expr}.  A normal message is given
+		instead.
+		This is only meant to be used in tests, where catching the
+		error with try/catch cannot be used (because it skips over
+		following code).
+		{expr} is used literally, not as a pattern.
+		When the {expr} is the string "RESET" then the list of ignored
+		errors is made empty.
+
+		Can also be used as a |method|: >
+			GetErrorText()->test_ignore_error()
+
+
+test_mswin_event({event}, {args})		*test_mswin_event()*
+		Generate a low-level MS-Windows {event} with arguments {args}
+		for testing Vim functionality.  It works for MS-Windows GUI
+		and for the console.
+
+		{event} is a String and the supported values are:
+		    "mouse"	mouse event.
+		    "key"	keyboard event.
+		    "set_keycode_trans_strategy"
+				Change the key transation method
+
+		"mouse":
+		  Inject either a mouse button click, or a mouse move, event.
+		  The supported items in {args} are:
+		    button:	mouse button.  The supported values are:
+				    0	right mouse button
+				    1	middle mouse button
+				    2	left mouse button
+				    3	mouse button release
+				    4	scroll wheel down
+				    5	scroll wheel up
+				    6	scroll wheel left
+				    7	scroll wheel right
+		    row:	mouse click row number.  The first row of the
+				Vim window is 1 and the last row is 'lines'.
+		    col:	mouse click column number.  The maximum value
+				of {col} is 'columns'.
+				Note: row and col are always interpreted as
+				screen cells for the console application.
+				But, they may be interpreted as pixels
+				for the GUI, depending on "cell".
+		    multiclick:	set to 1 to inject a double-click mouse event.
+		    modifiers:	key modifiers.  The supported values are:
+				    4	shift is pressed
+				    8	alt is pressed
+				   16	ctrl is pressed
+		    move:	Optional; if used and TRUE then a mouse move
+			        event can be generated.
+				Only {args} row: and col: are used and
+				required.
+				Only results in an event when 'mousemoveevent'
+				is set or a popup uses mouse move events.
+		    cell:	Optional for the GUI: when present and TRUE
+				then "move" uses screen cells instead of pixel
+				positions.  Not used by the console.
+
+		"key":
+		  Send a low-level keyboard event (e.g. keyup or keydown).
+		  The supported items in {args} are:
+		    event:	The supported string values are:
+				    keyup   generate a keyup event
+				    keydown generate a keydown event
+		    keycode:	Keycode to use for a keyup or a keydown event.
+		    modifiers:	Optional; key modifiers.
+				The supported values are:
+				    2	shift is pressed
+				    4	ctrl is pressed
+				    8	alt is pressed
+				Note: These values are different from the
+				mouse modifiers.
+		    execute:	Optional. Similar to |feedkeys()| mode x.
+				When this is included and set to true
+				(non-zero) then Vim will process any buffered
+				unprocessed key events.  All other {args}
+				items are optional when this is set and true.
+
+		"set_keycode_trans_strategy":
+		  |w32-experimental-keycode-trans-strategy|
+		  Switch the keycode translation method. The supported methods are:
+		    experimental:   The method used after Patch v8.2.4807
+				    using ToUnicode() Win API call.
+		    classic:	    The method used pre Patch v8.2.4807
+				    using the TranslateMessage() Win API call.
+
+		Returns TRUE if the event is successfully added or executed,
+		FALSE if there is a failure.
+
+		Can also be used as a |method|: >
+			GetEvent()->test_mswin_event({args})
+<
+
+test_null_blob()					*test_null_blob()*
+		Return a |Blob| that is null. Only useful for testing.
+
+
+test_null_channel()					*test_null_channel()*
+		Return a |Channel| that is null. Only useful for testing.
+		{only available when compiled with the +channel feature}
+
+
+test_null_dict()					*test_null_dict()*
+		Return a |Dict| that is null. Only useful for testing.
+
+
+test_null_function()					*test_null_function()*
+		Return a |Funcref| that is null. Only useful for testing.
+
+
+test_null_job()						*test_null_job()*
+		Return a |Job| that is null. Only useful for testing.
+		{only available when compiled with the +job feature}
+
+
+test_null_list()					*test_null_list()*
+		Return a |List| that is null. Only useful for testing.
+
+
+test_null_partial()					*test_null_partial()*
+		Return a |Partial| that is null. Only useful for testing.
+
+
+test_null_string()					*test_null_string()*
+		Return a |String| that is null. Only useful for testing.
+
+
+test_option_not_set({name})				*test_option_not_set()*
+		Reset the flag that indicates option {name} was set.  Thus it
+		looks like it still has the default value. Use like this: >
+			set ambiwidth=double
+			call test_option_not_set('ambiwidth')
+<		Now the 'ambiwidth' option behaves like it was never changed,
+		even though the value is "double".
+		Only to be used for testing!
+
+		Can also be used as a |method|: >
+			GetOptionName()->test_option_not_set()
+
+
+test_override({name}, {val})				*test_override()*
+		Overrides certain parts of Vim's internal processing to be able
+		to run tests. Only to be used for testing Vim!
+		The override is enabled when {val} is non-zero and removed
+		when {val} is zero.
+		Current supported values for {name} are:
+
+		{name}	     effect when {val} is non-zero ~
+		alloc_lines  make a copy of every buffer line into allocated
+			     memory, so that memory access errors can be found
+			     by valgrind
+		autoload     `import autoload` will load the script right
+			     away, not postponed until an item is used
+		char_avail   disable the char_avail() function
+		nfa_fail     makes the NFA regexp engine fail to force a
+			     fallback to the old engine
+		no_query_mouse  do not query the mouse position for "dec"
+				terminals
+		no_wait_return	set the "no_wait_return" flag.  Not restored
+				with "ALL".
+		redraw       disable the redrawing() function
+		redraw_flag  ignore the RedrawingDisabled flag
+		starting     reset the "starting" variable, see below
+		term_props   reset all terminal properties when the version
+			     string is detected
+		ui_delay     time in msec to use in ui_delay(); overrules a
+			     wait time of up to 3 seconds for messages
+		unreachable  no error for code after `:throw` and `:return`
+		uptime	     overrules sysinfo.uptime
+		vterm_title  setting the window title by a job running in a
+			     terminal window
+		ALL	     clear all overrides, except alloc_lines ({val} is
+			     not used)
+
+		"starting" is to be used when a test should behave like
+		startup was done.  Since the tests are run by sourcing a
+		script the "starting" variable is non-zero. This is usually a
+		good thing (tests run faster), but sometimes this changes
+		behavior in a way that the test doesn't work properly.
+		When using: >
+			call test_override('starting', 1)
+<		The value of "starting" is saved.  It is restored by: >
+			call test_override('starting', 0)
+
+<		To make sure the flag is reset later using `:defer` can be
+		useful: >
+			call test_override('unreachable', 1)
+			defer call test_override('unreachable', 0)
+
+<		Can also be used as a |method|: >
+			GetOverrideVal()-> test_override('starting')
+
+
+test_refcount({expr})					*test_refcount()*
+		Return the reference count of {expr}.  When {expr} is of a
+		type that does not have a reference count, returns -1.  Only
+		to be used for testing.
+
+		Can also be used as a |method|: >
+			GetVarname()->test_refcount()
+
+
+test_setmouse({row}, {col})				*test_setmouse()*
+		Set the mouse position to be used for the next mouse action.
+		{row} and {col} are one based.
+		For example: >
+			call test_setmouse(4, 20)
+			call feedkeys("\<LeftMouse>", "xt")
+
+
+test_settime({expr})					*test_settime()*
+		Set the time Vim uses internally.  Currently only used for
+		timestamps in the history, as they are used in viminfo, and
+		for undo.
+		Using a value of 1 makes Vim not sleep after a warning or
+		error message.
+		{expr} must evaluate to a number.  When the value is zero the
+		normal behavior is restored.
+
+		Can also be used as a |method|: >
+			GetTime()->test_settime()
+
+
+test_srand_seed([seed])					*test_srand_seed()*
+		When [seed] is given this sets the seed value used by
+		`srand()`.  When omitted the test seed is removed.
+
+
+test_unknown()						*test_unknown()*
+		Return a value with unknown type. Only useful for testing.
+
+
+test_void()						*test_void()*
+		Return a value with void type. Only useful for testing.
+
+==============================================================================
+3. Assert functions				*assert-functions-details*
+
+
+assert_beeps({cmd})					*assert_beeps()*
+		Run {cmd} and add an error message to |v:errors| if it does
+		NOT produce a beep or visual bell.
+		Also see |assert_fails()|, |assert_nobeep()| and
+		|assert-return|.
+
+		Can also be used as a |method|: >
+			GetCmd()->assert_beeps()
+<
+							*assert_equal()*
+assert_equal({expected}, {actual} [, {msg}])
+		When {expected} and {actual} are not equal an error message is
+		added to |v:errors| and 1 is returned.  Otherwise zero is
+		returned. |assert-return|
+		The error is in the form "Expected {expected} but got
+		{actual}".  When {msg} is present it is prefixed to that.
+
+		There is no automatic conversion, the String "4" is different
+		from the Number 4.  And the number 4 is different from the
+		Float 4.0.  The value of 'ignorecase' is not used here, case
+		always matters.
+		Example: >
+	assert_equal('foo', 'bar')
+<		Will result in a string to be added to |v:errors|:
+	test.vim line 12: Expected 'foo' but got 'bar' ~
+
+		Can also be used as a |method|, the base is passed as the
+		second argument: >
+			mylist->assert_equal([1, 2, 3])
+
+<							*assert_equalfile()*
+assert_equalfile({fname-one}, {fname-two} [, {msg}])
+		When the files {fname-one} and {fname-two} do not contain
+		exactly the same text an error message is added to |v:errors|.
+		Also see |assert-return|.
+		When {fname-one} or {fname-two} does not exist the error will
+		mention that.
+		Mainly useful with |terminal-diff|.
+
+		Can also be used as a |method|: >
+			GetLog()->assert_equalfile('expected.log')
+
+assert_exception({error} [, {msg}])			*assert_exception()*
+		When v:exception does not contain the string {error} an error
+		message is added to |v:errors|.  Also see |assert-return|.
+		This can be used to assert that a command throws an exception.
+		Using the error number, followed by a colon, avoids problems
+		with translations: >
+			try
+			  commandthatfails
+			  call assert_false(1, 'command should have failed')
+			catch
+			  call assert_exception('E492:')
+			endtry
+<
+							*assert_fails()*
+assert_fails({cmd} [, {error} [, {msg} [, {lnum} [, {context}]]]])
+		Run {cmd} and add an error message to |v:errors| if it does
+		NOT produce an error or when {error} is not found in the
+		error message.  Also see |assert-return|.
+							*E856*
+		When {error} is a string it must be found literally in the
+		first reported error. Most often this will be the error code,
+		including the colon, e.g. "E123:". >
+			assert_fails('bad cmd', 'E987:')
+<
+		When {error} is a |List| with one or two strings, these are
+		used as patterns.  The first pattern is matched against the
+		first reported error: >
+			assert_fails('cmd', ['E987:.*expected bool'])
+<		The second pattern, if present, is matched against the last
+		reported error.
+		If there is only one error then both patterns must match. This
+		can be used to check that there is only one error.
+		To only match the last error use an empty string for the first
+		error: >
+			assert_fails('cmd', ['', 'E987:'])
+<
+		If {msg} is empty then it is not used.  Do this to get the
+		default message when passing the {lnum} argument.
+							*E1115*
+		When {lnum} is present and not negative, and the {error}
+		argument is present and matches, then this is compared with
+		the line number at which the error was reported. That can be
+		the line number in a function or in a script.
+							*E1116*
+		When {context} is present it is used as a pattern and matched
+		against the context (script name or function name) where
+		{lnum} is located in.
+
+		Note that beeping is not considered an error, and some failing
+		commands only beep.  Use |assert_beeps()| for those.
+
+		Can also be used as a |method|: >
+			GetCmd()->assert_fails('E99:')
+
+assert_false({actual} [, {msg}])			*assert_false()*
+		When {actual} is not false an error message is added to
+		|v:errors|, like with |assert_equal()|.
+		The error is in the form "Expected False but got {actual}".
+		When {msg} is present it is prepended to that.
+		Also see |assert-return|.
+
+		A value is false when it is zero. When {actual} is not a
+		number the assert fails.
+
+		Can also be used as a |method|: >
+			GetResult()->assert_false()
+
+assert_inrange({lower}, {upper}, {actual} [, {msg}])	 *assert_inrange()*
+		This asserts number and |Float| values.  When {actual}  is lower
+		than {lower} or higher than {upper} an error message is added
+		to |v:errors|.  Also see |assert-return|.
+		The error is in the form "Expected range {lower} - {upper},
+		but got {actual}".  When {msg} is present it is prefixed to
+		that.
+
+								*assert_match()*
+assert_match({pattern}, {actual} [, {msg}])
+		When {pattern} does not match {actual} an error message is
+		added to |v:errors|.  Also see |assert-return|.
+		The error is in the form "Pattern {pattern} does not match
+		{actual}".  When {msg} is present it is prefixed to that.
+
+		{pattern} is used as with |=~|: The matching is always done
+		like 'magic' was set and 'cpoptions' is empty, no matter what
+		the actual value of 'magic' or 'cpoptions' is.
+
+		{actual} is used as a string, automatic conversion applies.
+		Use "^" and "$" to match with the start and end of the text.
+		Use both to match the whole text.
+
+		Example: >
+	assert_match('^f.*o$', 'foobar')
+<		Will result in a string to be added to |v:errors|:
+	test.vim line 12: Pattern '^f.*o$' does not match 'foobar' ~
+
+		Can also be used as a |method|: >
+			getFile()->assert_match('foo.*')
+<
+assert_nobeep({cmd})					*assert_nobeep()*
+		Run {cmd} and add an error message to |v:errors| if it
+		produces a beep or visual bell.
+		Also see |assert_beeps()|.
+
+		Can also be used as a |method|: >
+			GetCmd()->assert_nobeep()
+<
+							*assert_notequal()*
+assert_notequal({expected}, {actual} [, {msg}])
+		The opposite of `assert_equal()`: add an error message to
+		|v:errors| when {expected} and {actual} are equal.
+		Also see |assert-return|.
+
+		Can also be used as a |method|: >
+			mylist->assert_notequal([1, 2, 3])
+
+<							*assert_notmatch()*
+assert_notmatch({pattern}, {actual} [, {msg}])
+		The opposite of `assert_match()`: add an error message to
+		|v:errors| when {pattern} matches {actual}.
+		Also see |assert-return|.
+
+		Can also be used as a |method|: >
+			getFile()->assert_notmatch('bar.*')
+
+
+assert_report({msg})					*assert_report()*
+		Report a test failure directly, using String {msg}.
+		Always returns one.
+
+		Can also be used as a |method|: >
+			GetMessage()->assert_report()
+
+
+assert_true({actual} [, {msg}])				*assert_true()*
+		When {actual} is not true an error message is added to
+		|v:errors|, like with |assert_equal()|.
+		Also see |assert-return|.
+		A value is TRUE when it is a non-zero number.  When {actual}
+		is not a number the assert fails.
+		When {msg} is given it precedes the default message.
+
+		Can also be used as a |method|: >
+			GetResult()->assert_true()
+<
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

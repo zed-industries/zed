@@ -1,0 +1,28 @@
+INIT
+WANTSTATE
+
+# Many of these test cases inspired by
+#   https://blueprints.launchpad.net/libvterm/+spec/reflow-cases
+
+!Spillover text marks continuation on second line
+RESET
+PUSH "A"x100
+PUSH "\r\n"
+  ?lineinfo 0 =
+  ?lineinfo 1 = cont
+
+!CRLF in column 80 does not mark continuation
+RESET
+PUSH "B"x80
+PUSH "\r\n"
+PUSH "B"x20
+PUSH "\r\n"
+  ?lineinfo 0 =
+  ?lineinfo 1 =
+
+!EL cancels continuation of following line
+RESET
+PUSH "D"x100
+  ?lineinfo 1 = cont
+PUSH "\eM\e[79G\e[K"
+  ?lineinfo 1 =

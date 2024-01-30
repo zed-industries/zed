@@ -1,0 +1,1562 @@
+*channel.txt*      For Vim version 9.1.  Last change: 2023 Aug 15
+
+
+		  VIM REFERENCE MANUAL	  by Bram Moolenaar
+
+
+		      Inter-process communication		*channel*
+
+Vim uses channels to communicate with other processes.
+A channel uses a socket or pipes.			*socket-interface*
+Jobs can be used to start processes and communicate with them.
+The Netbeans interface also uses a channel. |netbeans|
+
+1. Overview				|job-channel-overview|
+2. Channel demo				|channel-demo|
+3. Opening a channel			|channel-open|
+4. Using a JSON or JS channel		|channel-use|
+5. Channel commands			|channel-commands|
+6. Using a RAW or NL channel		|channel-raw|
+7. More channel functions		|channel-more|
+8. Channel functions details		|channel-functions-details|
+9. Starting a job with a channel	|job-start|
+10. Starting a job without a channel	|job-start-nochannel|
+11. Job functions			|job-functions-details|
+12. Job options				|job-options|
+13. Controlling a job			|job-control|
+14. Using a prompt buffer		|prompt-buffer|
+15. Language Server Protocol		|language-server-protocol|
+
+							*E1277*
+{only when compiled with the |+channel| feature for channel stuff}
+	You can check this with: `has('channel')`
+{only when compiled with the |+job| feature for job stuff}
+	You can check this with: `has('job')`
+
+==============================================================================
+1. Overview						*job-channel-overview*
+
+There are four main types of jobs:
+1. A daemon, serving several Vim instances.
+   Vim connects to it with a socket.
+2. One job working with one Vim instance, asynchronously.
+   Uses a socket or pipes.
+3. A job performing some work for a short time, asynchronously.
+   Uses a socket or pipes.
+4. Running a filter, synchronously.
+   Uses pipes.
+
+For when using sockets See |job-start|, |job-start-nochannel| and
+|channel-open|.  For 2 and 3, one or more jobs using pipes, see |job-start|.
+For 4 use the ":{range}!cmd" command, see |filter|.
+
+Over the socket and pipes these protocols are available:
+RAW	nothing known, Vim cannot tell where a message ends
+NL	every message ends in a NL (newline) character
+JSON	JSON encoding |json_encode()|
+JS	JavaScript style JSON-like encoding |js_encode()|
+LSP	Language Server Protocol encoding |language-server-protocol|
+
+Common combination are:
+- Using a job connected through pipes in NL mode.  E.g., to run a style
+  checker and receive errors and warnings.
+- Using a daemon, connecting over a socket in JSON mode.  E.g. to lookup
+  cross-references in a database.
+
+==============================================================================
+2. Channel demo				*channel-demo* *demoserver.py*
+
+This requires Python.  The demo program can be found in
+$VIMRUNTIME/tools/demoserver.py
+Run it in one terminal.  We will call this T1.
+
+Run Vim in another terminal.  Connect to the demo server with: >
+	let channel = ch_open('localhost:8765')
+
+In T1 you should see:
+	=== socket opened === ~
+
+You can now send a message to the server: >
+	echo ch_evalexpr(channel, 'hello!')
+
+The message is received in T1 and a response is sent back to Vim.
+You can see the raw messages in T1.  What Vim sends is:
+	[1,"hello!"] ~
+And the response is:
+	[1,"got it"] ~
+The number will increase every time you send a message.
+
+The server can send a command to Vim.  Type this on T1 (literally, including
+the quotes):
+	["ex","echo 'hi there'"] ~
+And you should see the message in Vim. You can move the cursor a word forward:
+	["normal","w"] ~
+
+To handle asynchronous communication a callback needs to be used: >
+	func MyHandler(channel, msg)
+	  echo "from the handler: " .. a:msg
+	endfunc
+	call ch_sendexpr(channel, 'hello!', {'callback': "MyHandler"})
+Vim will not wait for a response.  Now the server can send the response later
+and MyHandler will be invoked.
+
+Instead of giving a callback with every send call, it can also be specified
+when opening the channel: >
+	call ch_close(channel)
+	let channel = ch_open('localhost:8765', {'callback': "MyHandler"})
+	call ch_sendexpr(channel, 'hello channel!')
+
+When trying out channels it's useful to see what is going on.  You can tell
+Vim to write lines in log file: >
+	call ch_logfile('channellog', 'w')
+See |ch_logfile()|.
+
+==============================================================================
+3. Opening a channel					*channel-open*
+
+To open a channel: >
+    let channel = ch_open({address} [, {options}])
+    if ch_status(channel) == "open"
+      " use the channel
+
+Use |ch_status()| to see if the channel could be opened.
+
+					*channel-address*
+{address} can be a domain name or an IP address, followed by a port number, or
+a Unix-domain socket path prefixed by "unix:".  E.g. >
+    www.example.com:80   " domain + port
+    127.0.0.1:1234       " IPv4 + port
+    [2001:db8::1]:8765   " IPv6 + port
+    unix:/tmp/my-socket  " Unix-domain socket path
+
+{options} is a dictionary with optional entries:	*channel-open-options*
+
+"mode" can be:						*channel-mode*
+	"json" - Use JSON, see below; most convenient way. Default.
+	"js"   - Use JS (JavaScript) encoding, more efficient than JSON.
+	"nl"   - Use messages that end in a NL character
+	"raw"  - Use raw messages
+	"lsp"  - Use language server protocol encoding
+						*channel-callback* *E921*
+"callback"	A function that is called when a message is received that is
+		not handled otherwise (e.g. a JSON message with ID zero).  It
+		gets two arguments: the channel and the received message.
+		Example: >
+	func Handle(channel, msg)
+	  echo 'Received: ' .. a:msg
+	endfunc
+	let channel = ch_open("localhost:8765", {"callback": "Handle"})
+<
+		When "mode" is "json" or "js" or "lsp" the "msg" argument is
+		the body of the received message, converted to Vim types.
+		When "mode" is "nl" the "msg" argument is one message,
+		excluding the NL.
+		When "mode" is "raw" the "msg" argument is the whole message
+		as a string.
+
+		For all callbacks: Use |function()| to bind it to arguments
+		and/or a Dictionary.  Or use the form "dict.function" to bind
+		the Dictionary.
+
+		Callbacks are only called at a "safe" moment, usually when Vim
+		is waiting for the user to type a character.  Vim does not use
+		multi-threading.
+
+							*close_cb*
+"close_cb"	A function that is called when the channel gets closed, other
+		than by calling ch_close().  It should be defined like this: >
+	func MyCloseHandler(channel)
+<		Vim will invoke callbacks that handle data before invoking
+		close_cb, thus when this function is called no more data will
+		be passed to the callbacks.  However, if a callback causes Vim
+		to check for messages, the close_cb may be invoked while still
+		in the callback.  The plugin must handle this somehow, it can
+		be useful to know that no more data is coming.
+		If it is not known if there is a message to be read, use a
+		try/catch block: >
+			try
+			  let msg = ch_readraw(a:channel)
+			catch
+			  let msg = 'no message'
+			endtry
+			try
+			  let err = ch_readraw(a:channel, #{part: 'err'})
+			catch
+			  let err = 'no error'
+			endtry
+<							*channel-drop*
+"drop"		Specifies when to drop messages:
+		    "auto"	When there is no callback to handle a message.
+				The "close_cb" is also considered for this.
+		    "never"	All messages will be kept.
+
+							*channel-noblock*
+"noblock"	Same effect as |job-noblock|.  Only matters for writing.
+
+							*waittime*
+"waittime"	The time to wait for the connection to be made in
+		milliseconds.  A negative number waits forever.
+
+		The default is zero, don't wait, which is useful if a local
+		server is supposed to be running already.  On Unix Vim
+		actually uses a 1 msec timeout, that is required on many
+		systems.  Use a larger value for a remote server, e.g.  10
+		msec at least.
+							*channel-timeout*
+"timeout"	The time to wait for a request when blocking, E.g. when using
+		ch_evalexpr().  In milliseconds.  The default is 2000 (2
+		seconds).
+
+When "mode" is "json" or "js" the "callback" is optional.  When omitted it is
+only possible to receive a message after sending one.
+
+To change the channel options after opening it use |ch_setoptions()|.  The
+arguments are similar to what is passed to |ch_open()|, but "waittime" cannot
+be given, since that only applies to opening the channel.
+
+For example, the handler can be added or changed: >
+    call ch_setoptions(channel, {'callback': callback})
+When "callback" is empty (zero or an empty string) the handler is removed.
+
+After a callback has been invoked Vim will update the screen and put the
+cursor back where it belongs.  Thus the callback should not need to do
+`:redraw`.
+
+The timeout can be changed: >
+    call ch_setoptions(channel, {'timeout': msec})
+<
+							  *channel-close* *E906*
+Once done with the channel, disconnect it like this: >
+    call ch_close(channel)
+When a socket is used this will close the socket for both directions.  When
+pipes are used (stdin/stdout/stderr) they are all closed.  This might not be
+what you want!  Stopping the job with job_stop() might be better.
+All readahead is discarded, callbacks will no longer be invoked.
+
+Note that a channel is closed in three stages:
+  - The I/O ends, log message: "Closing channel". There can still be queued
+    messages to read or callbacks to invoke.
+  - The readahead is cleared, log message: "Clearing channel".  Some variables
+    may still reference the channel.
+  - The channel is freed, log message: "Freeing channel".
+
+When the channel can't be opened you will get an error message.  There is a
+difference between MS-Windows and Unix: On Unix when the port doesn't exist
+ch_open() fails quickly.  On MS-Windows "waittime" applies.
+*E898* *E901* *E902*
+
+If there is an error reading or writing a channel it will be closed.
+*E630* *E631*
+
+==============================================================================
+4. Using a JSON or JS channel					*channel-use*
+
+If mode is JSON then a message can be sent synchronously like this: >
+    let response = ch_evalexpr(channel, {expr})
+This awaits a response from the other side.
+
+When mode is JS this works the same, except that the messages use
+JavaScript encoding.  See |js_encode()| for the difference.
+
+To send a message, without handling a response or letting the channel callback
+handle the response: >
+    call ch_sendexpr(channel, {expr})
+
+To send a message and letting the response handled by a specific function,
+asynchronously: >
+    call ch_sendexpr(channel, {expr}, {'callback': Handler})
+
+Vim will match the response with the request using the message ID.  Once the
+response is received the callback will be invoked.  Further responses with the
+same ID will be ignored.  If your server sends back multiple responses you
+need to send them with ID zero, they will be passed to the channel callback.
+
+The {expr} is converted to JSON and wrapped in an array.  An example of the
+message that the receiver will get when {expr} is the string "hello":
+	[12,"hello"] ~
+
+The format of the JSON sent is:
+    [{number},{expr}]
+
+In which {number} is different every time.  It must be used in the response
+(if any):
+
+    [{number},{response}]
+
+This way Vim knows which sent message matches with which received message and
+can call the right handler.  Also when the messages arrive out of order.
+
+A newline character is terminating the JSON text.  This can be used to
+separate the read text.  For example, in Python:
+	splitidx = read_text.find('\n')
+	message = read_text[:splitidx]
+	rest = read_text[splitidx + 1:]
+
+The sender must always send valid JSON to Vim.  Vim can check for the end of
+the message by parsing the JSON.  It will only accept the message if the end
+was received.  A newline after the message is optional.
+
+When the process wants to send a message to Vim without first receiving a
+message, it must use the number zero:
+    [0,{response}]
+
+Then channel handler will then get {response} converted to Vim types.  If the
+channel does not have a handler the message is dropped.
+
+It is also possible to use ch_sendraw() and ch_evalraw() on a JSON or JS
+channel.  The caller is then completely responsible for correct encoding and
+decoding.
+
+==============================================================================
+5. Channel commands					*channel-commands*
+
+With a JSON channel the process can send commands to Vim that will be
+handled by Vim internally, it does not require a handler for the channel.
+
+Possible commands are:				*E903* *E904* *E905*
+    ["redraw", {forced}]
+    ["ex",     {Ex command}]
+    ["normal", {Normal mode command}]
+    ["expr",   {expression}, {number}]
+    ["expr",   {expression}]
+    ["call",   {func name}, {argument list}, {number}]
+    ["call",   {func name}, {argument list}]
+
+With all of these: Be careful what these commands do!  You can easily
+interfere with what the user is doing.  To avoid trouble use |mode()| to check
+that the editor is in the expected state.  E.g., to send keys that must be
+inserted as text, not executed as a command:
+    ["ex","if mode() == 'i' | call feedkeys('ClassName') | endif"] ~
+
+Errors in these commands are normally not reported to avoid them messing up
+the display.  If you do want to see them, set the 'verbose' option to 3 or
+higher.
+
+
+Command "redraw" ~
+
+The other commands do not explicitly update the screen, so that you can send a
+sequence of commands without the cursor moving around.  A redraw can happen as
+a side effect of some commands.  You must end with the "redraw" command to
+show any changed text and show the cursor where it belongs.
+
+The argument is normally an empty string:
+	["redraw", ""] ~
+To first clear the screen pass "force":
+	["redraw", "force"] ~
+
+
+Command "ex" ~
+
+The "ex" command is executed as any Ex command.  There is no response for
+completion or error.  You could use functions in an |autoload| script:
+	["ex","call myscript#MyFunc(arg)"]
+
+You can also use "call |feedkeys()|" to insert any key sequence.
+
+When there is an error a message is written to the channel log, if it exists,
+and v:errmsg is set to the error.
+
+
+Command "normal" ~
+
+The "normal" command is executed like with ":normal!", commands are not
+mapped.  Example to open the folds under the cursor:
+	["normal" "zO"]
+
+
+Command "expr"  with response ~
+
+The "expr" command can be used to get the result of an expression.  For
+example, to get the number of lines in the current buffer:
+	["expr","line('$')", -2] ~
+
+It will send back the result of the expression:
+	[-2, "last line"] ~
+The format is:
+	[{number}, {result}]
+
+Here {number} is the same as what was in the request.  Use a negative number
+to avoid confusion with message that Vim sends.  Use a different number on
+every request to be able to match the request with the response.
+
+{result} is the result of the evaluation and is JSON encoded.  If the
+evaluation fails or the result can't be encoded in JSON it is the string
+"ERROR".
+
+
+Command "expr" without a response ~
+
+This command is similar to "expr" above, but does not send back any response.
+Example:
+	["expr","setline('$', ['one', 'two', 'three'])"] ~
+There is no third argument in the request.
+
+
+Command "call" ~
+
+This is similar to "expr", but instead of passing the whole expression as a
+string this passes the name of a function and a list of arguments.  This
+avoids the conversion of the arguments to a string and escaping and
+concatenating them.  Example:
+	["call", "line", ["$"], -2] ~
+
+Leave out the fourth argument if no response is to be sent:
+	["call", "setline", ["$", ["one", "two", "three"]]] ~
+
+==============================================================================
+6. Using a RAW or NL channel				*channel-raw*
+
+If mode is RAW or NL then a message can be sent like this: >
+    let response = ch_evalraw(channel, {string})
+
+The {string} is sent as-is.  The response will be what can be read from the
+channel right away.  Since Vim doesn't know how to recognize the end of the
+message you need to take care of it yourself.  The timeout applies for reading
+the first byte, after that it will not wait for anything more.
+
+If mode is "nl" you can send a message in a similar way.  You are expected
+to put in the NL after each message.  Thus you can also send several messages
+ending in a NL at once.  The response will be the text up to and including the
+first NL.  This can also be just the NL for an empty response.
+If no NL was read before the channel timeout an empty string is returned.
+
+To send a message, without expecting a response: >
+    call ch_sendraw(channel, {string})
+The process can send back a response, the channel handler will be called with
+it.
+
+						*channel-onetime-callback*
+To send a message and letting the response handled by a specific function,
+asynchronously: >
+    call ch_sendraw(channel, {string}, {'callback': 'MyHandler'})
+
+This {string} can also be JSON, use |json_encode()| to create it and
+|json_decode()| to handle a received JSON message.
+
+It is not possible to use |ch_evalexpr()| or |ch_sendexpr()| on a raw channel.
+
+A String in Vim cannot contain NUL bytes.  To send or receive NUL bytes read
+or write from a buffer.  See |in_io-buffer| and |out_io-buffer|.
+
+==============================================================================
+7. More channel functions				*channel-more*
+
+To obtain the status of a channel: ch_status(channel).  The possible results
+are:
+	"fail"		Failed to open the channel.
+	"open"		The channel can be used.
+	"buffered"	The channel was closed but there is data to read.
+	"closed"	The channel was closed.
+
+To obtain the job associated with a channel: ch_getjob(channel)
+
+To read one message from a channel: >
+	let output = ch_read(channel)
+This uses the channel timeout.  To read without a timeout, just get any
+message that is available: >
+	let output = ch_read(channel, {'timeout': 0})
+When no message was available then the result is v:none for a JSON or JS mode
+channels, an empty string for a RAW or NL channel.  You can use |ch_canread()|
+to check if there is something to read.
+
+Note that when there is no callback, messages are dropped.  To avoid that add
+a close callback to the channel.
+
+To read all normal output from a RAW channel that is available: >
+	let output = ch_readraw(channel)
+To read all error output from a RAW channel that is available: >
+	let output = ch_readraw(channel, {"part": "err"})
+Note that if the channel is in NL mode, ch_readraw() will only return one line
+for each call.
+
+ch_read() and ch_readraw() use the channel timeout.  When there is nothing to
+read within that time an empty string is returned.  To specify a different
+timeout in msec use the "timeout" option:
+	{"timeout": 123} ~
+To read from the error output use the "part" option:
+	{"part": "err"} ~
+To read a message with a specific ID, on a JS or JSON channel:
+	{"id": 99} ~
+When no ID is specified or the ID is -1, the first message is returned. This
+overrules any callback waiting for this message.
+
+For a RAW channel this returns whatever is available, since Vim does not know
+where a message ends.
+For a NL channel this returns one message.
+For a JS or JSON channel this returns one decoded message.
+This includes any sequence number.
+
+==============================================================================
+8. Channel functions details			*channel-functions-details*
+
+ch_canread({handle})						*ch_canread()*
+		Return non-zero when there is something to read from {handle}.
+		{handle} can be a Channel or a Job that has a Channel.
+
+		This is useful to read from a channel at a convenient time,
+		e.g. from a timer.
+
+		Note that messages are dropped when the channel does not have
+		a callback.  Add a close callback to avoid that.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_canread()
+
+ch_close({handle})						*ch_close()*
+		Close {handle}.  See |channel-close|.
+		{handle} can be a Channel or a Job that has a Channel.
+		A close callback is not invoked.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_close()
+
+ch_close_in({handle})						*ch_close_in()*
+		Close the "in" part of {handle}.  See |channel-close-in|.
+		{handle} can be a Channel or a Job that has a Channel.
+		A close callback is not invoked.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_close_in()
+
+
+ch_evalexpr({handle}, {expr} [, {options}])			*ch_evalexpr()*
+		Send {expr} over {handle}.  The {expr} is encoded
+		according to the type of channel.  The function cannot be used
+		with a raw channel.  See |channel-use|.
+		{handle} can be a Channel or a Job that has a Channel.
+		When using the "lsp" channel mode, {expr} must be a |Dict|.
+								*E917*
+		{options} must be a Dictionary.  It must not have a "callback"
+		entry.  It can have a "timeout" entry to specify the timeout
+		for this specific request.
+
+		ch_evalexpr() waits for a response and returns the decoded
+		expression.  When there is an error or timeout it returns an
+		empty |String| or, when using the "lsp" channel mode, returns an
+		empty |Dict|.
+
+		Note that while waiting for the response, Vim handles other
+		messages.  You need to make sure this doesn't cause trouble.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_evalexpr(expr)
+
+
+ch_evalraw({handle}, {string} [, {options}])		*ch_evalraw()*
+		Send {string} over {handle}.
+		{handle} can be a Channel or a Job that has a Channel.
+
+		Works like |ch_evalexpr()|, but does not encode the request or
+		decode the response.  The caller is responsible for the
+		correct contents.  Also does not add a newline for a channel
+		in NL mode, the caller must do that.  The NL in the response
+		is removed.
+		Note that Vim does not know when the text received on a raw
+		channel is complete, it may only return the first part and you
+		need to use |ch_readraw()| to fetch the rest.
+		See |channel-use|.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_evalraw(rawstring)
+
+ch_getbufnr({handle}, {what})				 *ch_getbufnr()*
+		Get the buffer number that {handle} is using for String {what}.
+		{handle} can be a Channel or a Job that has a Channel.
+		{what} can be "err" for stderr, "out" for stdout or empty for
+		socket output.
+		Returns -1 when there is no buffer.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_getbufnr(what)
+
+ch_getjob({channel})						*ch_getjob()*
+		Get the Job associated with {channel}.
+		If there is no job calling |job_status()| on the returned Job
+		will result in "fail".
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_getjob()
+
+
+ch_info({handle})						*ch_info()*
+		Returns a Dictionary with information about {handle}.  The
+		items are:
+		   "id"		  number of the channel
+		   "status"	  "open", "buffered" or "closed", like
+				  ch_status()
+		When opened with ch_open():
+		   "hostname"	  the hostname of the address
+		   "port"	  the port of the address
+		   "path"	  the path of the Unix-domain socket
+		   "sock_status"  "open" or "closed"
+		   "sock_mode"	  "NL", "RAW", "JSON" or "JS"
+		   "sock_io"	  "socket"
+		   "sock_timeout" timeout in msec
+
+		Note that "path" is only present for Unix-domain sockets, for
+		regular ones "hostname" and "port" are present instead.
+
+		When opened with job_start():
+		   "out_status"	  "open", "buffered" or "closed"
+		   "out_mode"	  "NL", "RAW", "JSON" or "JS"
+		   "out_io"	  "null", "pipe", "file" or "buffer"
+		   "out_timeout"  timeout in msec
+		   "err_status"	  "open", "buffered" or "closed"
+		   "err_mode"	  "NL", "RAW", "JSON" or "JS"
+		   "err_io"	  "out", "null", "pipe", "file" or "buffer"
+		   "err_timeout"  timeout in msec
+		   "in_status"	  "open" or "closed"
+		   "in_mode"	  "NL", "RAW", "JSON", "JS" or "LSP"
+		   "in_io"	  "null", "pipe", "file" or "buffer"
+		   "in_timeout"	  timeout in msec
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_info()
+
+
+ch_log({msg} [, {handle}])					*ch_log()*
+		Write String {msg} in the channel log file, if it was opened
+		with |ch_logfile()|.
+		The text "ch_log():" is prepended to the message to make clear
+		it came from this function call and make it easier to find in
+		the log file.
+		When {handle} is passed the channel number is used for the
+		message.
+		{handle} can be a Channel or a Job that has a Channel.  The
+		Channel must be open for the channel number to be used.
+
+		Can also be used as a |method|: >
+			'did something'->ch_log()
+
+
+ch_logfile({fname} [, {mode}])					*ch_logfile()*
+		Start logging channel activity to {fname}.
+		When {fname} is an empty string: stop logging.
+
+		When {mode} is omitted or contains "a" or is "o" then append
+		to the file.
+		When {mode} contains "w" and not "a" start with an empty file.
+		When {mode} contains "o" then log all terminal output.
+		Otherwise only some interesting terminal output is logged.
+
+		Use |ch_log()| to write log messages.  The file is flushed
+		after every message, on Unix you can use "tail -f" to see what
+		is going on in real time.
+
+		To enable the log very early, to see what is received from a
+		terminal during startup, use |--log| (this uses mode "ao"): >
+			vim --log logfile
+<
+		This function is not available in the |sandbox|.
+		NOTE: the channel communication is stored in the file, be
+		aware that this may contain confidential and privacy sensitive
+		information, e.g. a password you type in a terminal window.
+
+		Can also be used as a |method|: >
+			'logfile'->ch_logfile('w')
+
+
+ch_open({address} [, {options}])				*ch_open()*
+		Open a channel to {address}.  See |channel|.
+		Returns a Channel.  Use |ch_status()| to check for failure.
+
+		{address} is a String, see |channel-address| for the possible
+		accepted forms.
+
+		If {options} is given it must be a |Dictionary|.
+		See |channel-open-options|.
+
+		Can also be used as a |method|: >
+			GetAddress()->ch_open()
+
+
+ch_read({handle} [, {options}])					*ch_read()*
+		Read from {handle} and return the received message.
+		{handle} can be a Channel or a Job that has a Channel.
+		For a NL channel this waits for a NL to arrive, except when
+		there is nothing more to read (channel was closed).
+		See |channel-more|.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_read()
+
+
+ch_readblob({handle} [, {options}])			*ch_readblob()*
+		Like ch_read() but reads binary data and returns a |Blob|.
+		See |channel-more|.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_readblob()
+
+
+ch_readraw({handle} [, {options}])			*ch_readraw()*
+		Like ch_read() but for a JS and JSON channel does not decode
+		the message.  For a NL channel it does not block waiting for
+		the NL to arrive, but otherwise works like ch_read().
+		See |channel-more|.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_readraw()
+
+
+ch_sendexpr({handle}, {expr} [, {options}])			*ch_sendexpr()*
+		Send {expr} over {handle}.  The {expr} is encoded
+		according to the type of channel.  The function cannot be used
+		with a raw channel.
+		See |channel-use|.				*E912*
+		{handle} can be a Channel or a Job that has a Channel.
+		When using the "lsp" channel mode, {expr} must be a |Dict|.
+
+		If the channel mode is "lsp", then returns a Dict. Otherwise
+		returns an empty String.  If the "callback" item is present in
+		{options}, then the returned Dict contains the ID of the
+		request message.  The ID can be used to send a cancellation
+		request to the LSP server (if needed).  Returns an empty Dict
+		on error.
+
+		If a response message is not expected for {expr}, then don't
+		specify the "callback" item in {options}.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_sendexpr(expr)
+
+
+ch_sendraw({handle}, {expr} [, {options}])		*ch_sendraw()*
+		Send |String| or |Blob| {expr} over {handle}.
+		Works like |ch_sendexpr()|, but does not encode the request or
+		decode the response.  The caller is responsible for the
+		correct contents.  Also does not add a newline for a channel
+		in NL mode, the caller must do that.  The NL in the response
+		is removed.
+		See |channel-use|.
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_sendraw(rawexpr)
+
+
+ch_setoptions({handle}, {options})			*ch_setoptions()*
+		Set options on {handle}:
+			"callback"	the channel callback
+			"timeout"	default read timeout in msec
+			"mode"		mode for the whole channel
+		See |ch_open()| for more explanation.
+		{handle} can be a Channel or a Job that has a Channel.
+
+		Note that changing the mode may cause queued messages to be
+		lost.
+
+		These options cannot be changed:
+			"waittime"	only applies to |ch_open()|
+
+		Can also be used as a |method|: >
+			GetChannel()->ch_setoptions(options)
+
+
+ch_status({handle} [, {options}])				*ch_status()*
+		Return the status of {handle}:
+			"fail"		failed to open the channel
+			"open"		channel can be used
+			"buffered"	channel can be read, not written to
+			"closed"	channel can not be used
+		{handle} can be a Channel or a Job that has a Channel.
+		"buffered" is used when the channel was closed but there is
+		still data that can be obtained with |ch_read()|.
+
+		If {options} is given it can contain a "part" entry to specify
+		the part of the channel to return the status for: "out" or
+		"err".  For example, to get the error status: >
+			ch_status(job, {"part": "err"})
+<
+		Can also be used as a |method|: >
+			GetChannel()->ch_status()
+
+==============================================================================
+9. Starting a job with a channel			*job-start* *job*
+
+To start a job and open a channel for stdin/stdout/stderr: >
+    let job = job_start(command, {options})
+
+You can get the channel with: >
+    let channel = job_getchannel(job)
+
+The channel will use NL mode.  If you want another mode it's best to specify
+this in {options}.  When changing the mode later some text may have already
+been received and not parsed correctly.
+
+If the command produces a line of output that you want to deal with, specify
+a handler for stdout: >
+    let job = job_start(command, {"out_cb": "MyHandler"})
+The function will be called with the channel and a message. You would define
+it like this: >
+    func MyHandler(channel, msg)
+
+Without the handler you need to read the output with |ch_read()| or
+|ch_readraw()|. You can do this in the close callback, see |read-in-close-cb|.
+
+Note that if the job exits before you read the output, the output may be lost.
+This depends on the system (on Unix this happens because closing the write end
+of a pipe causes the read end to get EOF).  To avoid this make the job sleep
+for a short while before it exits.
+
+The handler defined for "out_cb" will not receive stderr.  If you want to
+handle that separately, add an "err_cb" handler: >
+    let job = job_start(command, {"out_cb": "MyHandler",
+	    \			  "err_cb": "ErrHandler"})
+
+If you want to handle both stderr and stdout with one handler use the
+"callback" option: >
+    let job = job_start(command, {"callback": "MyHandler"})
+
+Depending on the system, starting a job can put Vim in the background, the
+started job gets the focus.  To avoid that, use the `foreground()` function.
+This might not always work when called early, put in the callback handler or
+use a timer to call it after the job has started.
+
+You can send a message to the command with ch_evalraw().  If the channel is in
+JSON or JS mode you can use ch_evalexpr().
+
+There are several options you can use, see |job-options|.
+For example, to start a job and write its output in buffer "dummy": >
+	let logjob = job_start("tail -f /tmp/log",
+			     \ {'out_io': 'buffer', 'out_name': 'dummy'})
+	sbuf dummy
+
+
+Job input from a buffer ~
+							*in_io-buffer*
+To run a job that reads from a buffer: >
+	let job = job_start({command},
+	    \ {'in_io': 'buffer', 'in_name': 'mybuffer'})
+<
+							*E915* *E918*
+The buffer is found by name, similar to |bufnr()|. The buffer must exist and
+be loaded when job_start() is called.
+
+By default this reads the whole buffer.  This can be changed with the "in_top"
+and "in_bot" options.
+
+A special mode is when "in_top" is set to zero and "in_bot" is not set: Every
+time a line is added to the buffer, the last-but-one line will be sent to the
+job stdin.  This allows for editing the last line and sending it when pressing
+Enter.
+							*channel-close-in*
+When not using the special mode the pipe or socket will be closed after the
+last line has been written.  This signals the reading end that the input
+finished.  You can also use |ch_close_in()| to close it sooner.
+
+NUL bytes in the text will be passed to the job (internally Vim stores these
+as NL bytes).
+
+
+Reading job output in the close callback ~
+							*read-in-close-cb*
+If the job can take some time and you don't need intermediate results, you can
+add a close callback and read the output there: >
+
+	func! CloseHandler(channel)
+	  while ch_status(a:channel, {'part': 'out'}) == 'buffered'
+	    echomsg ch_read(a:channel)
+	  endwhile
+	endfunc
+	let job = job_start(command, {'close_cb': 'CloseHandler'})
+
+You will want to do something more useful than "echomsg".
+
+==============================================================================
+10. Starting a job without a channel			*job-start-nochannel*
+
+To start another process without creating a channel: >
+    let job = job_start(command,
+	\ {"in_io": "null", "out_io": "null", "err_io": "null"})
+
+This starts {command} in the background, Vim does not wait for it to finish.
+
+When Vim sees that neither stdin, stdout or stderr are connected, no channel
+will be created.  Often you will want to include redirection in the command to
+avoid it getting stuck.
+
+There are several options you can use, see |job-options|.
+
+							*job-start-if-needed*
+To start a job only when connecting to an address does not work, do something
+like this: >
+	let channel = ch_open(address, {"waittime": 0})
+	if ch_status(channel) == "fail"
+	  let job = job_start(command)
+	  let channel = ch_open(address, {"waittime": 1000})
+	endif
+
+Note that the waittime for ch_open() gives the job one second to make the port
+available.
+
+==============================================================================
+11. Job functions					*job-functions-details*
+
+job_getchannel({job})					 *job_getchannel()*
+		Get the channel handle that {job} is using.
+		To check if the job has no channel: >
+			if string(job_getchannel(job)) == 'channel fail'
+<
+		Can also be used as a |method|: >
+			GetJob()->job_getchannel()
+
+job_info([{job}])					*job_info()*
+		Returns a Dictionary with information about {job}:
+		   "status"	what |job_status()| returns
+		   "channel"	what |job_getchannel()| returns
+		   "cmd"	List of command arguments used to start the job
+		   "process"	process ID
+		   "tty_in"	terminal input name, empty when none
+		   "tty_out"	terminal output name, empty when none
+		   "exitval"	only valid when "status" is "dead"
+		   "exit_cb"	function to be called on exit
+		   "stoponexit"	|job-stoponexit|
+
+		   Only in Unix:
+		   "termsig"	the signal which terminated the process
+				(See |job_stop()| for the values)
+				only valid when "status" is "dead"
+
+		   Only in MS-Windows:
+		   "tty_type"	Type of virtual console in use.
+				Values are "winpty" or "conpty".
+				See 'termwintype'.
+
+		Without any arguments, returns a List with all Job objects.
+
+		Can also be used as a |method|: >
+			GetJob()->job_info()
+
+
+job_setoptions({job}, {options})			*job_setoptions()*
+		Change options for {job}.  Supported are:
+		   "stoponexit"	|job-stoponexit|
+		   "exit_cb"	|job-exit_cb|
+
+		Can also be used as a |method|: >
+			GetJob()->job_setoptions(options)
+
+
+job_start({command} [, {options}])			*job_start()*
+		Start a job and return a Job object.  Unlike |system()| and
+		|:!cmd| this does not wait for the job to finish.
+		To start a job in a terminal window see |term_start()|.
+
+		If the job fails to start then |job_status()| on the returned
+		Job object results in "fail" and none of the callbacks will be
+		invoked.
+
+		{command} can be a String.  This works best on MS-Windows.  On
+		Unix it is split up in white-separated parts to be passed to
+		execvp().  Arguments in double quotes can contain white space.
+
+		{command} can be a List, where the first item is the executable
+		and further items are the arguments.  All items are converted
+		to String.  This works best on Unix.
+
+		On MS-Windows, job_start() makes a GUI application hidden. If
+		you want to show it, use |:!start| instead.
+
+		The command is executed directly, not through a shell, the
+		'shell' option is not used.  To use the shell: >
+	let job = job_start(["/bin/sh", "-c", "echo hello"])
+<		Or: >
+	let job = job_start('/bin/sh -c "echo hello"')
+<		Note that this will start two processes, the shell and the
+		command it executes.  If you don't want this use the "exec"
+		shell command.
+
+		On Unix $PATH is used to search for the executable only when
+		the command does not contain a slash.
+
+		The job will use the same terminal as Vim.  If it reads from
+		stdin the job and Vim will be fighting over input, that
+		doesn't work.  Redirect stdin and stdout to avoid problems: >
+	let job = job_start(['sh', '-c', "myserver </dev/null >/dev/null"])
+<
+		The returned Job object can be used to get the status with
+		|job_status()| and stop the job with |job_stop()|.
+
+		Note that the job object will be deleted if there are no
+		references to it.  This closes the stdin and stderr, which may
+		cause the job to fail with an error.  To avoid this keep a
+		reference to the job.  Thus instead of: >
+	call job_start('my-command')
+<		use: >
+	let myjob = job_start('my-command')
+<		and unlet "myjob" once the job is not needed or is past the
+		point where it would fail (e.g. when it prints a message on
+		startup).  Keep in mind that variables local to a function
+		will cease to exist if the function returns.  Use a
+		script-local variable if needed: >
+	let s:myjob = job_start('my-command')
+<
+		{options} must be a Dictionary.  It can contain many optional
+		items, see |job-options|.
+
+		Can also be used as a |method|: >
+			BuildCommand()->job_start()
+
+
+job_status({job})					*job_status()* *E916*
+		Returns a String with the status of {job}:
+			"run"	job is running
+			"fail"	job failed to start
+			"dead"	job died or was stopped after running
+
+		On Unix a non-existing command results in "dead" instead of
+		"fail", because a fork happens before the failure can be
+		detected.
+
+		If in Vim9 script a variable is declared with type "job" but
+		never assigned to, passing that variable to job_status()
+		returns "fail".
+
+		If an exit callback was set with the "exit_cb" option and the
+		job is now detected to be "dead" the callback will be invoked.
+
+		For more information see |job_info()|.
+
+		Can also be used as a |method|: >
+			GetJob()->job_status()
+
+
+job_stop({job} [, {how}])					*job_stop()*
+		Stop the {job}.  This can also be used to signal the job.
+
+		When {how} is omitted or is "term" the job will be terminated.
+		For Unix SIGTERM is sent.  On MS-Windows the job will be
+		terminated forcedly (there is no "gentle" way).
+		This goes to the process group, thus children may also be
+		affected.
+
+		Effect for Unix:
+			"term"	 SIGTERM (default)
+			"hup"	 SIGHUP
+			"quit"	 SIGQUIT
+			"int"	 SIGINT
+			"kill"	 SIGKILL (strongest way to stop)
+			number	 signal with that number
+
+		Effect for MS-Windows:
+			"term"	 terminate process forcedly (default)
+			"hup"	 CTRL_BREAK
+			"quit"	 CTRL_BREAK
+			"int"	 CTRL_C
+			"kill"	 terminate process forcedly
+			Others	 CTRL_BREAK
+
+		On Unix the signal is sent to the process group.  This means
+		that when the job is "sh -c command" it affects both the shell
+		and the command.
+
+		The result is a Number: 1 if the operation could be executed,
+		0 if "how" is not supported on the system.
+		Note that even when the operation was executed, whether the
+		job was actually stopped needs to be checked with
+		|job_status()|.
+
+		If the status of the job is "dead", the signal will not be
+		sent.  This is to avoid to stop the wrong job (esp. on Unix,
+		where process numbers are recycled).
+
+		When using "kill" Vim will assume the job will die and close
+		the channel.
+
+		Can also be used as a |method|: >
+			GetJob()->job_stop()
+
+
+==============================================================================
+12. Job options						*job-options*
+
+The {options} argument in job_start() is a dictionary.  All entries are
+optional.  Some options can be used after the job has started, using
+job_setoptions(job, {options}).  Many options can be used with the channel
+related to the job, using ch_setoptions(channel, {options}).
+See |job_setoptions()| and |ch_setoptions()|.
+
+						*in_mode* *out_mode* *err_mode*
+"in_mode"		mode specifically for stdin, only when using pipes
+"out_mode"		mode specifically for stdout, only when using pipes
+"err_mode"		mode specifically for stderr, only when using pipes
+			See |channel-mode| for the values.
+
+			Note: when setting "mode" the part specific mode is
+			overwritten.  Therefore set "mode" first and the part
+			specific mode later.
+
+			Note: when writing to a file or buffer and when
+			reading from a buffer NL mode is used by default.
+
+						*job-noblock*
+"noblock": 1		When writing use a non-blocking write call.  This
+			avoids getting stuck if Vim should handle other
+			messages in between, e.g. when a job sends back data
+			to Vim.  It implies that when `ch_sendraw()` returns
+			not all data may have been written yet.
+			This option was added in patch 8.1.0350, test with: >
+				if has("patch-8.1.350")
+				  let options['noblock'] = 1
+				endif
+<
+						*job-callback*
+"callback": handler	Callback for something to read on any part of the
+			channel.
+						*job-out_cb* *out_cb*
+"out_cb": handler	Callback for when there is something to read on
+			stdout.  Only for when the channel uses pipes.  When
+			"out_cb" wasn't set the channel callback is used.
+			The two arguments are the channel and the message.
+
+						*job-err_cb* *err_cb*
+"err_cb": handler	Callback for when there is something to read on
+			stderr.  Only for when the channel uses pipes.  When
+			"err_cb" wasn't set the channel callback is used.
+			The two arguments are the channel and the message.
+						*job-close_cb*
+"close_cb": handler	Callback for when the channel is closed.  Same as
+			"close_cb" on |ch_open()|, see |close_cb|.
+						*job-drop*
+"drop": when		Specifies when to drop messages.  Same as "drop" on
+			|ch_open()|, see |channel-drop|.  For "auto" the
+			exit_cb is not considered.
+						*job-exit_cb*
+"exit_cb": handler	Callback for when the job ends.  The arguments are the
+			job and the exit status.
+			Vim checks up to 10 times per second for jobs that
+			ended.  The check can also be triggered by calling
+			|job_status()|, which may then invoke the exit_cb
+			handler.
+			Note that data can be buffered, callbacks may still be
+			called after the process ends.
+							*job-timeout*
+"timeout": time		The time to wait for a request when blocking, E.g.
+			when using ch_evalexpr().  In milliseconds.  The
+			default is 2000 (2 seconds).
+						*out_timeout* *err_timeout*
+"out_timeout": time	Timeout for stdout.  Only when using pipes.
+"err_timeout": time	Timeout for stderr.  Only when using pipes.
+			Note: when setting "timeout" the part specific mode is
+			overwritten.  Therefore set "timeout" first and the
+			part specific mode later.
+
+						*job-stoponexit*
+"stoponexit": {signal}	Send {signal} to the job when Vim exits.  See
+			|job_stop()| for possible values.
+"stoponexit": ""	Do not stop the job when Vim exits.
+			The default is "term".
+
+						*job-term*
+"term": "open"		Start a terminal in a new window and connect the job
+			stdin/stdout/stderr to it.  Similar to using
+			`:terminal`.
+			NOTE: Not implemented yet!
+
+"channel": {channel}	Use an existing channel instead of creating a new one.
+			The parts of the channel that get used for the new job
+			will be disconnected from what they were used before.
+			If the channel was still used by another job this may
+			cause I/O errors.
+			Existing callbacks and other settings remain.
+
+"pty": 1		Use a pty (pseudo-tty) instead of a pipe when
+			possible.  This is most useful in combination with a
+			terminal window, see |terminal|.
+			{only on Unix and Unix-like systems}
+
+				*job-in_io* *in_top* *in_bot* *in_name* *in_buf*
+"in_io": "null"		disconnect stdin (read from /dev/null)
+"in_io": "pipe"		stdin is connected to the channel (default)
+"in_io": "file"		stdin reads from a file
+"in_io": "buffer"	stdin reads from a buffer
+"in_top": number	when using "buffer": first line to send (default: 1)
+"in_bot": number	when using "buffer": last line to send (default: last)
+"in_name": "/path/file"	the name of the file or buffer to read from
+"in_buf": number	the number of the buffer to read from
+
+				*job-out_io* *out_name* *out_buf*
+"out_io": "null"	disconnect stdout (goes to /dev/null)
+"out_io": "pipe"	stdout is connected to the channel (default)
+"out_io": "file"	stdout writes to a file
+"out_io": "buffer"	stdout appends to a buffer (see below)
+"out_name": "/path/file" the name of the file or buffer to write to
+"out_buf": number	the number of the buffer to write to
+"out_modifiable": 0	when writing to a buffer, 'modifiable' will be off
+			(see below)
+"out_msg": 0		when writing to a new buffer, the first line will be
+			set to "Reading from channel output..."
+
+				*job-err_io* *err_name* *err_buf*
+"err_io": "out"		stderr messages to go to stdout
+"err_io": "null"	disconnect stderr  (goes to /dev/null)
+"err_io": "pipe"	stderr is connected to the channel (default)
+"err_io": "file"	stderr writes to a file
+"err_io": "buffer"	stderr appends to a buffer (see below)
+"err_name": "/path/file" the name of the file or buffer to write to
+"err_buf": number	the number of the buffer to write to
+"err_modifiable": 0	when writing to a buffer, 'modifiable' will be off
+			(see below)
+"err_msg": 0		when writing to a new buffer, the first line will be
+			set to "Reading from channel error..."
+
+"block_write": number	only for testing: pretend every other write to stdin
+			will block
+
+"env": dict		environment variables for the new process
+"cwd": "/path/to/dir"	current working directory for the new process;
+			if the directory does not exist an error is given
+
+
+Writing to a buffer ~
+							*out_io-buffer*
+When the out_io or err_io mode is "buffer" and there is a callback, the text
+is appended to the buffer before invoking the callback.
+
+When a buffer is used both for input and output, the output lines are put
+above the last line, since the last line is what is written to the channel
+input.  Otherwise lines are appended below the last line.
+
+When using JS or JSON mode with "buffer", only messages with zero or negative
+ID will be added to the buffer, after decoding + encoding.  Messages with a
+positive number will be handled by a callback, commands are handled as usual.
+
+The name of the buffer from "out_name" or "err_name" is compared the full name
+of existing buffers, also after expanding the name for the current directory.
+E.g., when a buffer was created with ":edit somename" and the buffer name is
+"somename" it will use that buffer.
+
+If there is no matching buffer a new buffer is created.  Use an empty name to
+always create a new buffer.  |ch_getbufnr()| can then be used to get the
+buffer number.
+
+For a new buffer 'buftype' is set to "nofile" and 'bufhidden' to "hide".  If
+you prefer other settings, create the buffer first and pass the buffer number.
+					*out_modifiable* *err_modifiable*
+The "out_modifiable" and "err_modifiable" options can be used to set the
+'modifiable' option off, or write to a buffer that has 'modifiable' off.  That
+means that lines will be appended to the buffer, but the user can't easily
+change the buffer.
+					*out_msg* *err_msg*
+The "out_msg" option can be used to specify whether a new buffer will have the
+first line set to "Reading from channel output...".  The default is to add the
+message.  "err_msg" does the same for channel error.
+
+When an existing buffer is to be written where 'modifiable' is off and the
+"out_modifiable" or "err_modifiable" options is not zero, an error is given
+and the buffer will not be written to.
+
+When the buffer written to is displayed in a window and the cursor is in the
+first column of the last line, the cursor will be moved to the newly added
+line and the window is scrolled up to show the cursor if needed.
+
+Undo is synced for every added line.  NUL bytes are accepted (internally Vim
+stores these as NL bytes).
+
+
+Writing to a file ~
+							*E920*
+The file is created with permissions 600 (read-write for the user, not
+accessible for others).  Use |setfperm()| to change this.
+
+If the file already exists it is truncated.
+
+==============================================================================
+13. Controlling a job					*job-control*
+
+To get the status of a job: >
+	echo job_status(job)
+
+To make a job stop running: >
+	job_stop(job)
+
+This is the normal way to end a job. On Unix it sends a SIGTERM to the job.
+It is possible to use other ways to stop the job, or even send arbitrary
+signals.  E.g. to force a job to stop, "kill it": >
+	job_stop(job, "kill")
+
+For more options see |job_stop()|.
+
+==============================================================================
+14. Using a prompt buffer				*prompt-buffer*
+
+If you want to type input for the job in a Vim window you have a few options:
+- Use a normal buffer and handle all possible commands yourself.
+  This will be complicated, since there are so many possible commands.
+- Use a terminal window.  This works well if what you type goes directly to
+  the job and the job output is directly displayed in the window.
+  See |terminal-window|.
+- Use a window with a prompt buffer. This works well when entering a line for
+  the job in Vim while displaying (possibly filtered) output from the job.
+
+A prompt buffer is created by setting 'buftype' to "prompt". You would
+normally only do that in a newly created buffer.
+
+The user can edit and enter one line of text at the very last line of the
+buffer.  When pressing Enter in the prompt line the callback set with
+|prompt_setcallback()| is invoked.  It would normally send the line to a job.
+Another callback would receive the output from the job and display it in the
+buffer, below the prompt (and above the next prompt).
+
+Only the text in the last line, after the prompt, is editable. The rest of the
+buffer is not modifiable with Normal mode commands.  It can be modified by
+calling functions, such as |append()|.  Using other commands may mess up the
+buffer.
+
+After setting 'buftype' to "prompt" Vim does not automatically start Insert
+mode, use `:startinsert` if you want to enter Insert mode, so that the user
+can start typing a line.
+
+The text of the prompt can be set with the |prompt_setprompt()| function. If
+no prompt is set with |prompt_setprompt()|, "% " is used. You can get the
+effective prompt text for a buffer, with |prompt_getprompt()|.
+
+The user can go to Normal mode and navigate through the buffer.  This can be
+useful to see older output or copy text.
+
+The CTRL-W key can be used to start a window command, such as CTRL-W w to
+switch to the next window.  This also works in Insert mode (use Shift-CTRL-W
+to delete a word). When leaving the window Insert mode will be stopped.  When
+coming back to the prompt window Insert mode will be restored.
+
+Any command that starts Insert mode, such as "a", "i", "A" and "I", will move
+the cursor to the last line.  "A" will move to the end of the line, "I" to the
+start of the line.
+
+Here is an example for Unix.  It starts a shell in the background and prompts
+for the next shell command.  Output from the shell is displayed above the
+prompt. >
+
+	" Create a channel log so we can see what happens.
+	call ch_logfile('logfile', 'w')
+
+	" Function handling a line of text that has been typed.
+	func TextEntered(text)
+	  " Send the text to a shell with Enter appended.
+	  call ch_sendraw(g:shell_job, a:text .. "\n")
+	endfunc
+
+	" Function handling output from the shell: Add it above the prompt.
+	func GotOutput(channel, msg)
+	  call append(line("$") - 1, "- " .. a:msg)
+	endfunc
+
+	" Function handling the shell exits: close the window.
+	func JobExit(job, status)
+	  quit!
+	endfunc
+
+	" Start a shell in the background.
+	let shell_job = job_start(["/bin/sh"], #{
+		\ out_cb: function('GotOutput'),
+		\ err_cb: function('GotOutput'),
+		\ exit_cb: function('JobExit'),
+		\ })
+
+	new
+	set buftype=prompt
+	let buf = bufnr('')
+	call prompt_setcallback(buf, function("TextEntered"))
+	eval prompt_setprompt(buf, "shell command: ")
+
+	" start accepting shell commands
+	startinsert
+<
+The same in |Vim9| script: >
+
+	vim9script
+
+	# Create a channel log so we can see what happens.
+	ch_logfile('logfile', 'w')
+
+	var shell_job: job
+
+	# Function handling a line of text that has been typed.
+	def TextEntered(text: string)
+	  # Send the text to a shell with Enter appended.
+	  ch_sendraw(shell_job, text .. "\n")
+	enddef
+
+	# Function handling output from the shell: Add it above the prompt.
+	def GotOutput(channel: channel, msg: string)
+	  append(line("$") - 1, "- " .. msg)
+	enddef
+
+	# Function handling the shell exits: close the window.
+	def JobExit(job: job, status: number)
+	  quit!
+	enddef
+
+	# Start a shell in the background.
+	shell_job = job_start(["/bin/sh"], {
+				 out_cb: GotOutput,
+				 err_cb: GotOutput,
+				 exit_cb: JobExit,
+				 })
+
+	new
+	set buftype=prompt
+	var buf = bufnr('')
+	prompt_setcallback(buf, TextEntered)
+	prompt_setprompt(buf, "shell command: ")
+
+	# start accepting shell commands
+	startinsert
+
+==============================================================================
+15. Language Server Protocol			*language-server-protocol*
+
+The language server protocol specification is available at:
+
+    https://microsoft.github.io/language-server-protocol/specification
+
+Each LSP protocol message starts with a simple HTTP header followed by the
+payload encoded in JSON-RPC format.  This is described in:
+
+    https://www.jsonrpc.org/specification
+
+To encode and send a LSP request/notification message in a Vim |Dict| into a
+LSP JSON-RPC message and to receive and decode a LSP JSON-RPC
+response/notification message into a Vim |Dict|, connect to the LSP server
+with the |channel-mode| set to "lsp".
+
+For messages received on a channel with |channel-mode| set to "lsp", Vim will
+process the HTTP header and decode the JSON-RPC payload into a Vim |Dict| type
+and call the |channel-callback| function or the specified
+|channel-onetime-callback| function.  When sending messages on a channel using
+the |ch_evalexpr()| or |ch_sendexpr()| functions, Vim will add the HTTP header
+and encode the Vim expression into JSON.  Refer to |json_encode()| and
+|json_decode()| for more information about how Vim encodes and decodes the
+builtin types into JSON.
+
+To open a channel using the 'lsp' mode, set the 'mode' item in the |ch_open()|
+{options} argument to 'lsp'.  Example: >
+
+    let ch = ch_open(..., #{mode: 'lsp'})
+
+To open a channel using the 'lsp' mode with a job, set the 'in_mode' and
+'out_mode' items in the |job_start()| {options} argument to 'lsp'. Example: >
+
+    let cmd = ['clangd', '--background-index', '--clang-tidy']
+    let opts = {}
+    let opts.in_mode = 'lsp'
+    let opts.out_mode = 'lsp'
+    let opts.err_mode = 'nl'
+    let opts.out_cb = function('LspOutCallback')
+    let opts.err_cb = function('LspErrCallback')
+    let opts.exit_cb = function('LspExitCallback')
+    let job = job_start(cmd, opts)
+
+Note that if a job outputs LSP messages on stdout and non-LSP messages on
+stderr, then the channel-callback function should handle both the message
+formats appropriately or you should use a separate callback function for
+"out_cb" and "err_cb" to handle them as shown above.
+
+To synchronously send a JSON-RPC request to the server, use the
+|ch_evalexpr()| function. This function will wait and return the decoded
+response message from the server. You can use either the |channel-timeout| or
+the 'timeout' field in the {options} argument to control the response wait
+time.  If the request times out, then an empty |Dict| is returned.  Example: >
+
+    let req = {}
+    let req.method = 'textDocument/definition'
+    let req.params = {}
+    let req.params.textDocument = #{uri: 'a.c'}
+    let req.params.position = #{line: 10, character: 3}
+    let defs = ch_evalexpr(ch, req, #{timeout: 100})
+    if defs->empty()
+        ... <handle failure>
+    endif
+
+Note that in the request message the 'id' field should not be specified. If it
+is specified, then Vim will overwrite the value with an internally generated
+identifier.  Vim currently supports only a number type for the 'id' field.
+The callback function will be invoked for both a successful and a failed RPC
+request.
+
+To send a JSON-RPC request to the server and asynchronously process the
+response, use the |ch_sendexpr()| function and supply a callback function.  If
+the "id" field is present in the request message, then Vim will overwrite it
+with an internally generated number.  This function returns a Dict with the
+identifier used for the message.  This can be used to send cancellation
+request to the LSP server (if needed).  Example: >
+
+    let req = {}
+    let req.method = 'textDocument/hover'
+    let req.id = 200
+    let req.params = {}
+    let req.params.textDocument = #{uri: 'a.c'}
+    let req.params.position = #{line: 10, character: 3}
+    let resp = ch_sendexpr(ch, req, #{callback: 'HoverFunc'})
+
+To cancel an outstanding asynchronous LSP request sent to the server using the
+|ch_sendexpr()| function, send a cancellation message to the server using the
+|ch_sendexpr()| function with the ID returned by the |ch_sendexpr()| function
+for the request.  Example: >
+
+    " send a completion request
+    let req = {}
+    let req.method = 'textDocument/completion'
+    let req.params = {}
+    let req.params.textDocument = #{uri: 'a.c'}
+    let req.params.position = #{line: 10, character: 3}
+    let reqstatus = ch_sendexpr(ch, req, #{callback: 'LspComplete'})
+    " send a cancellation notification
+    let notif = {}
+    let notif.method = '$/cancelRequest'
+    let notif.id = reqstatus.id
+    call ch_sendexpr(ch, notif)
+
+To send a JSON-RPC notification message to the server, use the |ch_sendexpr()|
+function. As the server will not send a response message to the notification,
+don't specify the "callback" item.  Example: >
+
+    call ch_sendexpr(ch, #{method: 'initialized'})
+
+To respond to a JSON-RPC request message from the server, use the
+|ch_sendexpr()| function.  In the response message, copy the 'id' field value
+from the server request message. Example: >
+
+    let resp = {}
+    let resp.id = req.id
+    let resp.result = 1
+    call ch_sendexpr(ch, resp)
+
+The JSON-RPC notification messages from the server are delivered through the
+|channel-callback| function.
+
+Depending on the use case, you can use the ch_evalexpr(), ch_sendexpr() and
+ch_sendraw() functions on the same channel.
+
+A LSP request message has the following format (expressed as a Vim Dict).  The
+"params" field is optional: >
+
+    {
+	"jsonrpc": "2.0",
+	"id": <number>,
+	"method": <string>,
+	"params": <list|dict>
+    }
+
+A LSP response message has the following format (expressed as a Vim Dict).  The
+"result" and "error" fields are optional: >
+
+    {
+	"jsonrpc": "2.0",
+	"id": <number>,
+	"result": <vim type>
+	"error": <dict>
+    }
+
+A LSP notification message has the following format (expressed as a Vim Dict).
+The "params" field is optional: >
+
+    {
+	"jsonrpc": "2.0",
+	"method": <string>,
+	"params": <list|dict>
+    }
+
+<
+ vim:tw=78:ts=8:noet:ft=help:norl:

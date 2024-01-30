@@ -1,0 +1,61 @@
+INIT
+WANTSTATE g
+
+!Single Width, Single Height
+RESET
+PUSH "\e#5"
+PUSH "Hello"
+  putglyph 0x48 1 0,0
+  putglyph 0x65 1 0,1
+  putglyph 0x6c 1 0,2
+  putglyph 0x6c 1 0,3
+  putglyph 0x6f 1 0,4
+
+!Double Width, Single Height
+RESET
+PUSH "\e#6"
+PUSH "Hello"
+  putglyph 0x48 1 0,0 dwl
+  putglyph 0x65 1 0,1 dwl
+  putglyph 0x6c 1 0,2 dwl
+  putglyph 0x6c 1 0,3 dwl
+  putglyph 0x6f 1 0,4 dwl
+  ?cursor = 0,5
+PUSH "\e[40GAB"
+  putglyph 0x41 1 0,39 dwl
+  putglyph 0x42 1 1,0
+  ?cursor = 1,1
+
+!Double Height
+RESET
+PUSH "\e#3"
+PUSH "Hello"
+  putglyph 0x48 1 0,0 dwl dhl-top
+  putglyph 0x65 1 0,1 dwl dhl-top
+  putglyph 0x6c 1 0,2 dwl dhl-top
+  putglyph 0x6c 1 0,3 dwl dhl-top
+  putglyph 0x6f 1 0,4 dwl dhl-top
+  ?cursor = 0,5
+PUSH "\r\n\e#4"
+PUSH "Hello"
+  putglyph 0x48 1 1,0 dwl dhl-bottom
+  putglyph 0x65 1 1,1 dwl dhl-bottom
+  putglyph 0x6c 1 1,2 dwl dhl-bottom
+  putglyph 0x6c 1 1,3 dwl dhl-bottom
+  putglyph 0x6f 1 1,4 dwl dhl-bottom
+  ?cursor = 1,5
+
+!Double Width scrolling
+RESET
+PUSH "\e[20H\e#6ABC"
+  putglyph 0x41 1 19,0 dwl
+  putglyph 0x42 1 19,1 dwl
+  putglyph 0x43 1 19,2 dwl
+PUSH "\e[25H\n"
+PUSH "\e[19;4HDE"
+  putglyph 0x44 1 18,3 dwl
+  putglyph 0x45 1 18,4 dwl
+PUSH "\e[H\eM"
+PUSH "\e[20;6HFG"
+  putglyph 0x46 1 19,5 dwl
+  putglyph 0x47 1 19,6 dwl

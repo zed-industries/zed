@@ -1,0 +1,16 @@
+# Origin mode
+INIT
+WANTSCREEN
+
+RESET
+
+PUSH "\e[?6h"
+PUSH "\e[23;24r"
+PUSH "\n"
+PUSH "Bottom"
+PUSH "\e[1;1H"
+PUSH "Above"
+
+!Output
+?screen_row 22 = "Above"
+?screen_row 23 = "Bottom"

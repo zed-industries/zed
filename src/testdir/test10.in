@@ -1,0 +1,21 @@
+Test that vim9script also works without the +eval feature.
+
+STARTTEST
+:/^START/+1,/^END/-1:w! Xvim9
+:so Xvim9
+ENDTEST
+
+START
+vim9script
+
+if 1
+  echo 'this is skipped without +eval'
+endif
+
+# colon required for a range
+:$-1,$w! test.out
+qa!
+END
+
+first line
+last line

@@ -1,0 +1,13 @@
+INIT
+WANTSTATE 
+
+!Mouse reporting should not break by idempotent DECSM 1002
+PUSH "\e[?1002h"
+MOUSEMOVE 0,0 0
+MOUSEBTN d 1 0
+  output "\e[M\x20\x21\x21"
+MOUSEMOVE 1,0 0
+  output "\e[M\x40\x21\x22"
+PUSH "\e[?1002h"
+MOUSEMOVE 2,0 0
+  output "\e[M\x40\x21\x23"

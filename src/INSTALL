@@ -1,0 +1,221 @@
+INSTALL - Installation of Vim on different machines.
+
+This file contains instructions for compiling Vim. If you already have an
+executable version of Vim, you don't need this.
+
+Contents:
+1. Generic
+2. Unix
+3. OS/2 (with EMX 0.9b)
+4. Atari MiNT
+
+See INSTALLami.txt              for Amiga
+See INSTALLmac.txt              for Macintosh
+See INSTALLpc.txt               for PC (Windows XP/Vista/7/8/10)
+See INSTALLvms.txt              for VMS
+See INSTALLx.txt		for cross-compiling on Unix
+See ../READMEdir/README_390.txt for z/OS and OS/390 Unix
+See ../runtime/doc/os_haiku.txt	for Haiku
+
+1. Generic
+==========
+
+If you compile Vim without specifying anything, you will get the default
+behaviour as is documented, which should be fine for most people.
+
+For features that you can't enable/disable in another way, you can edit the
+file "feature.h" to match your preferences.
+
+
+2. Unix
+=======
+
+Summary:
+1. make			run configure, compile and link
+2. make install		installation in /usr/local
+
+This will include the GUI and X11 libraries, if you have them.  If you want a
+version of Vim that is small and starts up quickly, see the Makefile for how
+to disable the GUI and X11.  If you don't have GUI libraries and/or X11, these
+features will be disabled automatically.
+
+To build Vim on Ubuntu from scratch on a clean system using git:
+	Install tools required to be able to get and build Vim:
+	% sudo apt install git
+	% sudo apt install make
+	% sudo apt install clang
+	% sudo apt install libtool-bin
+	
+	Build Vim with default features:
+	% git clone https://github.com/vim/vim.git
+	% cd vim/src
+	% make
+
+	Run tests to check there are no problems:
+	% make test
+
+	Install Vim in /usr/local:
+	% sudo make install
+
+	Add X windows clipboard support (also needed for GUI):
+	% sudo apt install libxt-dev
+	% make reconfig
+
+	Add GUI support:
+	% sudo apt install libgtk-3-dev
+	% make reconfig
+
+	Add Python 3 support:
+	% sudo apt install libpython3-dev
+	Uncomment this line in Makefile:
+		"CONF_OPT_PYTHON3 = --enable-python3interp"
+	% make reconfig
+
+	Debugging:
+	% sudo apt install valgrind
+	Uncomment this line in Makefile:
+		CFLAGS = -g -Wall -Wextra -Wshadow -Wmissing-prototypes -Wunreachable-code -Wno-deprecated-declarations -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=1
+	% make reconfig
+	% make test_{test-name}
+	See output in testdir/valgrind.test_{test-name}
+
+
+See the start of Makefile for more detailed instructions about how to compile
+Vim.
+
+If you need extra compiler and/or linker arguments, set $CFLAGS and/or $LIBS
+before starting configure.  Example:
+
+	env CFLAGS=-I/usr/local/include  LIBS=-lm  make
+
+This is only needed for things that configure doesn't offer a specific argument
+for or figures out by itself.  First try running configure without extra
+arguments.
+
+GNU Autoconf and a few other tools have been used to make Vim work on many
+different Unix systems.  The advantage of this is that Vim should compile
+on most systems without any adjustments.  The disadvantage is that when
+adjustments are required, it takes some time to understand what is happening.
+
+If configure finds all library files and then complains when linking that some
+of them can't be found, your linker doesn't return an error code for missing
+libraries.  Vim should be linked fine anyway, mostly you can just ignore these
+errors.
+
+If you run configure by hand (not using the Makefile), remember that any
+changes in the Makefile have no influence on configure.  This may be what you
+want, but maybe not!
+
+The advantage of running configure separately, is that you can write a script
+to build Vim, without changing the Makefile or feature.h.  Example (using sh):
+
+	CFLAGS=-DCOMPILER_FLAG ./configure --enable-gui=motif
+
+One thing to watch out for: If the configure script itself changes, running
+"make" will execute it again, but without your arguments.  Do "make clean" and
+run configure again.
+
+If you are compiling Vim for several machines, for each machine:
+  a.    make shadow
+  b.    mv shadow machine_name
+  c.    cd machine_name
+  d.    make; make install
+
+[Don't use a path for machine_name, just a directory name, otherwise the links
+that "make shadow" creates won't work.]
+
+
+Unix: COMPILING WITH/WITHOUT GUI
+
+NOTE: This is incomplete, look in Makefile for more info.
+
+These configure arguments can be used to select which GUI to use:
+--enable-gui=gtk      or: gtk2, motif, athena or auto
+--disable-gtk-check
+--disable-motif-check
+--disable-athena-check
+
+This configure argument can be used to disable the GUI, even when the necessary
+files are found:
+--disable-gui
+
+--enable-gui defaults to "auto", so it will automatically look for a GUI (in
+the order of GTK, Motif, then Athena).  If one is found, then it is used and
+does not proceed to check any of the remaining ones.  Otherwise, it moves on
+to the next one.
+
+--enable-{gtk,gtk2,kde,motif,athena}-check all default to "yes", such that if
+--enable-gui is "auto" (which it is by default), GTK, Motif, and Athena will
+be checked for.  If you want to *exclude* a certain check, then you use
+--disable-{gtk,gtk2,kde,motif,athena}-check.
+
+For example, if --enable-gui is set to "auto", but you don't want it look for
+Motif, you then also specify --disable-motif-check.  This results in only
+checking for GTK and Athena.
+
+Lastly, if you know which one you want to use, then you can just do
+--enable-gui={gtk,gtk2,kde,motif,athena}.  So if you wanted to only use Motif,
+then you'd specify --enable-gui=motif.  Once you specify what you want, the
+--enable-{gtk,gtk2,kde,motif,athena}-check options are ignored.
+
+On Linux you usually need GUI "-devel" packages.  You may already have GTK
+libraries installed, but that doesn't mean you can compile Vim with GTK, you
+also need the header files.
+
+For compiling with the GTK+ GUI, you need a recent version of glib and gtk+.
+Configure checks for at least version 1.1.16.  An older version is not selected
+automatically.  If you want to use it anyway, run configure with
+"--disable-gtktest".
+GTK requires an ANSI C compiler.  If you fail to compile Vim with GTK+ (it
+is the preferred choice), try selecting another one in the Makefile.
+If you are sure you have GTK installed, but for some reason configure says you
+do not, you may have left-over header files and/or library files from an older
+(and incompatible) version of GTK.  if this is the case, please check
+auto/config.log for any error messages that may give you a hint as to what's
+happening.
+
+There used to be a KDE version of Vim, using Qt libraries, but since it didn't
+work very well and there was no maintainer it was dropped.
+
+
+Unix: COMPILING ON LINUX
+
+On Linux, when using -g to compile (which is default for gcc), the executable
+will probably be statically linked.  If you don't want this, remove the -g
+option from CFLAGS.
+
+Unix: PUTTING vimrc IN /etc
+
+Some Linux distributions prefer to put the global vimrc file in /etc, and the
+Vim runtime files in /usr.  This can be done with:
+	./configure --prefix=/usr
+	make VIMRCLOC=/etc VIMRUNTIMEDIR=/usr/share/vim MAKE="make -e"
+
+Unix: COMPILING ON NeXT
+
+Add the "-posix" argument to the compiler by using one of these commands:
+	setenv CC 'cc -posix' (csh)
+	export CC='cc -posix' (sh)
+And run configure with "--disable-motif-check".
+
+Unix: LOCAL HEADERS AND LIBRARIES NOT IN /usr/local
+
+Sometimes it is necessary to search different path than /usr/local for locally
+installed headers (/usr/local/include) and libraries (/usr/local/lib).
+To search /stranger/include and /stranger/lib for locally installed
+headers and libraries, use:
+	./configure --with-local-dir=/stranger
+And to not search for locally installed headers and libraries at all, use:
+	./configure --without-local-dir
+
+
+3. OS/2
+=======
+
+OS/2 support was removed in patch 7.4.1008
+
+
+4. Atari MiNT
+=============
+
+Atari MiNT support was removed in patch 8.2.1215.

@@ -1,0 +1,29 @@
+# TAB setting/resetting
+INIT
+WANTSTATE
+WANTSCREEN
+
+RESET
+
+PUSH "\e[2J\e[3g"
+
+PUSH "\e[1;1H"
+$REP 26: PUSH "\e[3C\eH"
+
+PUSH "\e[1;4H"
+$REP 13: PUSH "\e[0g\e[6C"
+
+PUSH "\e[1;7H"
+PUSH "\e[1g\e[2g"
+
+PUSH "\e[1;1H"
+$REP 13: PUSH "\t*"
+
+PUSH "\e[2;2H"
+$REP 13: PUSH "     *"
+
+!Output
+?screen_row 0 = "      *     *     *     *     *     *     *     *     *     *     *     *     *"
+?screen_row 1 = "      *     *     *     *     *     *     *     *     *     *     *     *     *"
+
+?cursor = 1,79

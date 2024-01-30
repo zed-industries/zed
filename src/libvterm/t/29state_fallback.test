@@ -1,0 +1,31 @@
+INIT
+WANTSTATE f
+RESET
+
+!Unrecognised control 
+PUSH "\x03"
+  control 03
+
+!Unrecognised CSI
+PUSH "\e[?15;2z"
+  csi 0x7a L=3f 15,2
+
+!Unrecognised OSC
+PUSH "\e]27;Something\e\\"
+  osc [27 "Something"]
+
+!Unrecognised DCS
+PUSH "\ePz123\e\\"
+  dcs ["z123"]
+
+!Unrecognised APC
+PUSH "\e_z123\e\\"
+  apc ["z123"]
+
+!Unrecognised PM
+PUSH "\e^z123\e\\"
+  pm ["z123"]
+
+!Unrecognised SOS
+PUSH "\eXz123\e\\"
+  sos ["z123"]

@@ -1,0 +1,81 @@
+# Aap recipe for Basque Vim spell files.
+#
+# NOTE: This takes a VERY long time: several hours on a modern PC, more than
+# a day on older systems.
+
+# Select the amount of memory that can be used.
+# Default.
+#SETTING = 'set mkspellmem=460000,2000,500'
+
+# For about 1 Tbyte of RAM.
+#SETTING = 'set mkspellmem=900000,4000,1000'
+
+# For about 2 Tbyte of RAM.
+#SETTING = 'set mkspellmem=1900000,8000,2000'
+
+# For about 4 Tbyte of RAM.
+#SETTING = 'set mkspellmem=3900000,16000,4000'
+
+# For about 8 Tbyte of RAM.
+SETTING = 'set mkspellmem=7900000,30000,8000'
+
+
+# Use a freshly compiled Vim if it exists.
+@if os.path.exists('../../../src/vim'):
+    VIM = ../../../src/vim
+@else:
+    :progsearch VIM vim
+
+SPELLDIR = ..
+FILES    = eu_ES.aff eu_ES.dic
+
+all: $SPELLDIR/eu.utf-8.spl ../README_eu.txt
+
+$SPELLDIR/eu.utf-8.spl : $FILES
+        :sys env LANG=eu_ES.UTF-8
+		$VIM -u NONE -e -c $SETTING -c "mkspell! $SPELLDIR/eu eu_ES" -c q
+
+#
+# Fetching the files.
+# URL suggested by Zuhaitz Beloki Leiza.
+#
+:attr {fetch = http://xuxen.eus/static/hunspell/xuxen_5.1_hunspell.tar.gz} xuxen_5.1_hunspell.tar.gz
+
+# The files don't depend on the tar file so that we can delete it.
+# Only download the tar file if the targets don't exist.
+eu_ES.aff eu_ES.dic: {buildcheck=}
+        :assertpkg tar
+        :fetch xuxen_5.1_hunspell.tar.gz
+        :sys tar xf xuxen_5.1_hunspell.tar.gz
+        :update cleanunused
+        @if not os.path.exists('eu_ES.orig.aff'):
+            :copy eu_ES.aff eu_ES.orig.aff
+        @if not os.path.exists('eu_ES.orig.dic'):
+            :copy eu_ES.dic eu_ES.orig.dic
+        @if os.path.exists('eu_ES.diff'):
+            :sys patch <eu_ES.diff
+
+../README_eu.txt : LICENSE.txt
+        :cat $source >! $target
+
+# Delete all the files unpacked from the archive
+clean: cleanunused
+        :delete {f} eu_ES.dic
+        :delete {f} eu_ES.aff
+
+# Delete all the files from the archive that are not used, including the
+# archive itself.
+cleanunused:
+        :delete {f} xuxen_5.1_hunspell.tar.gz
+
+# Generate diff files, so that others can get the files and apply
+# the diffs to get the Vim versions.
+
+diff:
+        :assertpkg diff
+        :sys {force} diff -a -C 1 eu_ES.orig.aff eu_ES.aff >eu_ES.diff
+        :sys {force} diff -a -C 1 eu_ES.orig.dic eu_ES.dic >>eu_ES.diff
+
+
+
+# vim: set sts=4 sw=4 :

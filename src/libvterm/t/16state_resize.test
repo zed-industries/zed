@@ -1,0 +1,48 @@
+INIT
+WANTSTATE g
+
+!Placement
+RESET
+PUSH "AB\e[79GCDE"
+  putglyph 0x41 1 0,0
+  putglyph 0x42 1 0,1
+  putglyph 0x43 1 0,78
+  putglyph 0x44 1 0,79
+  putglyph 0x45 1 1,0
+
+!Resize
+RESET
+RESIZE 27,85
+PUSH "AB\e[79GCDE"
+  putglyph 0x41 1 0,0
+  putglyph 0x42 1 0,1
+  putglyph 0x43 1 0,78
+  putglyph 0x44 1 0,79
+  putglyph 0x45 1 0,80
+  ?cursor = 0,81
+
+!Resize without reset
+RESIZE 28,90
+  ?cursor = 0,81
+PUSH "FGHI"
+  putglyph 0x46 1 0,81
+  putglyph 0x47 1 0,82
+  putglyph 0x48 1 0,83
+  putglyph 0x49 1 0,84
+  ?cursor = 0,85
+
+!Resize shrink moves cursor
+RESIZE 25,80
+  ?cursor = 0,79
+
+!Resize grow doesn't cancel phantom
+RESET
+PUSH "\e[79GAB"
+  putglyph 0x41 1 0,78
+  putglyph 0x42 1 0,79
+  ?cursor = 0,79
+RESIZE 30,100
+  ?cursor = 0,80
+PUSH "C"
+  putglyph 0x43 1 0,80
+  ?cursor = 0,81

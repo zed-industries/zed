@@ -1,0 +1,33 @@
+/* XPM */
+static char * tb_replace_xpm[] = {
+/* width height ncolors cpp [x_hot y_hot] */
+"18 18 9 1 0 0",
+/* colors */
+" 	s none	m none	c none",
+".	s iconColor1	m black	c #000000",
+"X	s iconColor2	m none	c #FFFFFF",
+"o	s bottomShadowColor	m black	c #5D6069",
+"+	s iconGray4	m none	c #949494",
+"@	s iconColor3	m black	c #FF0000",
+"#	s iconGray3	m none	c #adadad",
+"$	s iconGray1	m none	c #dedede",
+"%	s iconGray7	m black	c #424242",
+/* pixels */
+"                  ",
+"  .........       ",
+"  .XXXXXXX..      ",
+"  .X..XXXX.X.     ",
+"  oX..oXXX....    ",
+"  o.X..XXXXXX.    ",
+"  +....oXXXXX.o   ",
+"  .XXX..XXXXX.o   ",
+" ..oXo...XXXX.o   ",
+"  +XXXXXXXXXX+o   ",
+"  .X@@XX@XXX....  ",
+"  .Xo@XX@@XX.#$.. ",
+"  .XXo@@@@@X....  ",
+"  .XXXXX@@XX.#$.. ",
+"  .XXXXX@XXX.#$.. ",
+"  ......o..%....  ",
+"     ooooooooo    ",
+"                  "};

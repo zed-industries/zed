@@ -1,0 +1,157 @@
+INIT
+WANTSTATE
+
+!Unmodified ASCII
+INCHAR 0 41
+  output "A"
+INCHAR 0 61
+  output "a"
+
+!Ctrl modifier on ASCII letters
+INCHAR C 41
+  output "\e[65;5u"
+INCHAR C 61
+  output "\x01"
+
+!Alt modifier on ASCII letters
+INCHAR A 41
+  output "\eA"
+INCHAR A 61
+  output "\ea"
+
+!Ctrl-Alt modifier on ASCII letters
+INCHAR CA 41
+  output "\e[65;7u"
+INCHAR CA 61
+  output "\e\x01"
+
+!Special handling of Ctrl-I
+INCHAR 0 49
+  output "I"
+INCHAR 0 69
+  output "i"
+INCHAR C 49
+  output "\e[73;5u"
+INCHAR C 69
+  output "\e[105;5u"
+INCHAR A 49
+  output "\eI"
+INCHAR A 69
+  output "\ei"
+INCHAR CA 49
+  output "\e[73;7u"
+INCHAR CA 69
+  output "\e[105;7u"
+
+!Special handling of Space
+INCHAR 0 20
+  output " "
+INCHAR S 20
+  output "\e[32;2u"
+INCHAR C 20
+  output "\0"
+INCHAR SC 20
+  output "\e[32;6u"
+INCHAR A 20
+  output "\e "
+INCHAR SA 20
+  output "\e[32;4u"
+INCHAR CA 20
+  output "\e\0"
+INCHAR SCA 20
+  output "\e[32;8u"
+
+!Cursor keys in reset (cursor) mode
+INKEY 0 Up
+  output "\e[A"
+INKEY S Up
+  output "\e[1;2A"
+INKEY C Up
+  output "\e[1;5A"
+INKEY SC Up
+  output "\e[1;6A"
+INKEY A Up
+  output "\e[1;3A"
+INKEY SA Up
+  output "\e[1;4A"
+INKEY CA Up
+  output "\e[1;7A"
+INKEY SCA Up
+  output "\e[1;8A"
+
+!Cursor keys in application mode
+PUSH "\e[?1h"
+# Plain "Up" should be SS3 A now
+INKEY 0 Up
+  output "\eOA"
+# Modified keys should still use CSI
+INKEY S Up
+  output "\e[1;2A"
+INKEY C Up
+  output "\e[1;5A"
+
+!Shift-Tab should be different
+INKEY 0 Tab
+  output "\x09"
+INKEY S Tab
+  output "\e[Z"
+INKEY C Tab
+  output "\e[9;5u"
+INKEY A Tab
+  output "\e\x09"
+INKEY CA Tab
+  output "\e[9;7u"
+
+!Enter in linefeed mode
+INKEY 0 Enter
+  output "\x0d"
+
+!Enter in newline mode
+PUSH "\e[20h"
+INKEY 0 Enter
+  output "\x0d\x0a"
+
+!Unmodified F1 is SS3 P
+INKEY 0 F1
+  output "\eOP"
+
+!Modified F1 is CSI P
+INKEY S F1
+  output "\e[1;2P"
+INKEY A F1
+  output "\e[1;3P"
+INKEY C F1
+  output "\e[1;5P"
+
+!Keypad in DECKPNM
+INKEY 0 KP0
+  output "0"
+
+!Keypad in DECKPAM
+PUSH "\e="
+INKEY 0 KP0
+  output "\eOp"
+
+!Bracketed paste mode off
+PASTE START
+PASTE END
+
+!Bracketed paste mode on
+PUSH "\e[?2004h"
+PASTE START
+  output "\e[200~"
+PASTE END
+  output "\e[201~"
+
+!Focus reporting disabled
+FOCUS IN
+FOCUS OUT
+
+!Focus reporting enabled
+WANTSTATE +p
+PUSH "\e[?1004h"
+  settermprop 9 true
+FOCUS IN
+  output "\e[I"
+FOCUS OUT
+  output "\e[O"

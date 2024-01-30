@@ -1,0 +1,29 @@
+/* XPM */
+static char * tb_maxwidth_xpm[] = {
+/* width height ncolors cpp [x_hot y_hot] */
+"18 18 5 1 0 0",
+/* colors */
+" 	s none	m none	c none",
+".	s topShadowColor	m none	c #DCDEE5",
+"X	s iconColor1	m black	c #000000",
+"o	s iconColor2	m none	c #FFFFFF",
+"O	s bottomShadowColor	m black	c #5D6069",
+/* pixels */
+"                  ",
+"                  ",
+"                  ",
+"                  ",
+".XXXXXXXXXXXXXXXX ",
+".X.............oX ",
+".X..X........X.oXO",
+".X.XX........XXoXO",
+".XXXX........XXXXO",
+".X.XX........XXoXO",
+".X..X........X.oXO",
+".XooooooooooooooXO",
+".XXXXXXXXXXXXXXXXO",
+"   OOOOOOOOOOOOOOO",
+"                  ",
+"                  ",
+"                  ",
+"                  "};

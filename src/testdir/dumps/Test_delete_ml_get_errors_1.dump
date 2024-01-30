@@ -1,0 +1,10 @@
+|-+0&#ffffff0|>| |s|t|d|:@1|o|p|t|i|o|n|a|l|<|D|a|t|a|:@1|W|a|l@1|P|a|p|e|r|>| |{| @39
+@8|i|f| |(|!|_|f|o|r|P|e@1|r|)| |{| @50
+@16|r|e|t|u|r|n| |{|}|;| @48
+@8|}| @65
+@8|c|o|n|s|t| |a|u|t|o| |n|o|n|C|u|s|t|o|m| |=| |W|i|n|d|o|w|:@1|T|h|e|m|e|:@1|B|a|c|k|g|r|o|u|n|d|(|)|-|>|p|a|p|e|r|(|)|;| @6
+@8|c|o|n|s|t| |a|u|t|o| |t|h|e|m|e|E|m|o|j|i| |=| |_|f|o|r|P|e@1|r|-|>|t|h|e|m|e|E|m|o|j|i|(|)|;| @19
+@8|i|f| |(|t|h|e|m|e|E|m|o|j|i|.|i|s|E|m|p|t|y|(|)@1| |{| @39
+|"|s|a|m|p|l|e|s|/|b|o|x|.|t|x|t|"| |6|0|1|L|,| |1|7@1|3@1|B| @44
+|3|5|3| |f|e|w|e|r| |l|i|n|e|s| @59
+|P+0#00e0003&|r|e|s@1| |E|N|T|E|R| |o|r| |t|y|p|e| |c|o|m@1|a|n|d| |t|o| |c|o|n|t|i|n|u|e> +0#0000000&@35

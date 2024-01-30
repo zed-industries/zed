@@ -1,0 +1,69 @@
+INIT
+UTF8 1
+WANTSTATE gm
+
+!79th Column
+PUSH "\e[75G"
+PUSH "A"x5
+  putglyph 0x41 1 0,74
+  putglyph 0x41 1 0,75
+  putglyph 0x41 1 0,76
+  putglyph 0x41 1 0,77
+  putglyph 0x41 1 0,78
+  ?cursor = 0,79
+
+!80th Column Phantom
+PUSH "A"
+  putglyph 0x41 1 0,79
+  ?cursor = 0,79
+
+!Line Wraparound
+PUSH "B"
+  putglyph 0x42 1 1,0
+  ?cursor = 1,1
+
+!Line Wraparound during combined write
+PUSH "\e[78G"
+PUSH "BBBCC"
+  putglyph 0x42 1 1,77
+  putglyph 0x42 1 1,78
+  putglyph 0x42 1 1,79
+  putglyph 0x43 1 2,0
+  putglyph 0x43 1 2,1
+  ?cursor = 2,2
+
+!DEC Auto Wrap Mode
+RESET
+PUSH "\e[?7l"
+PUSH "\e[75G"
+PUSH "D"x6
+  putglyph 0x44 1 0,74
+  putglyph 0x44 1 0,75
+  putglyph 0x44 1 0,76
+  putglyph 0x44 1 0,77
+  putglyph 0x44 1 0,78
+  putglyph 0x44 1 0,79
+  ?cursor = 0,79
+PUSH "D"
+  putglyph 0x44 1 0,79
+  ?cursor = 0,79
+PUSH "\e[?7h"
+
+!80th column causes linefeed on wraparound
+PUSH "\e[25;78HABC"
+  putglyph 0x41 1 24,77
+  putglyph 0x42 1 24,78
+  putglyph 0x43 1 24,79
+  ?cursor = 24,79
+PUSH "D"
+  moverect 1..25,0..80 -> 0..24,0..80
+  putglyph 0x44 1 24,0
+
+!80th column phantom linefeed phantom cancelled by explicit cursor move
+PUSH "\e[25;78HABC"
+  putglyph 0x41 1 24,77
+  putglyph 0x42 1 24,78
+  putglyph 0x43 1 24,79
+  ?cursor = 24,79
+PUSH "\e[25;1HD"
+  putglyph 0x44 1 24,0

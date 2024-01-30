@@ -1,0 +1,23 @@
+# Aap recipe for Serbian Vim spell files.
+# See README_sr.txt for instructions to get the .aff and .dic files.
+
+# Use a freshly compiled Vim if it exists.
+@if os.path.exists('../../../src/vim'):
+    VIM = ../../../src/vim
+@else:
+    :progsearch VIM vim
+
+SPELLDIR = ..
+FILES    = sr.aff sr.dic
+
+all: $SPELLDIR/sr.utf-8.spl ../README_sr.txt
+
+$SPELLDIR/sr.utf-8.spl : $FILES
+        :sys env LANG=sr_RS.UTF-8
+		$VIM -u NONE -e -c "set enc=utf-8" -c "mkspell! $SPELLDIR/sr sr" -c q
+
+../README_sr.txt : README_sr.txt
+        :copy README_sr.txt $target
+
+
+vim: set sts=4 sw=4 : 

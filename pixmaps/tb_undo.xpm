@@ -1,0 +1,28 @@
+/* XPM */
+static char * tb_undo_xpm[] = {
+/* width height ncolors cpp [x_hot y_hot] */
+"18 18 4 1 0 0",
+/* colors */
+" 	s none	m none	c none",
+".	s iconColor1	m black	c #000000",
+"X	s iconColor2	m none	c #FFFFFF",
+"o	s bottomShadowColor	m black	c #5D6069",
+/* pixels */
+"                  ",
+"                  ",
+"  ..  .....       ",
+"  .X..XXXXX..     ",
+"  .XXXXXXXXXX.    ",
+"  .XXXX....XX.o   ",
+"  .XXXX.ooo.XX.   ",
+"  .XXXXX.  .XX.o  ",
+"  .......o .XX.o  ",
+"   o.ooooo .XX.o  ",
+"   .X.     .XX.o  ",
+"   .XX.....XX.oo  ",
+"    .XXXXXXXX.o   ",
+"     .XXXXX..oo   ",
+"      .....ooo    ",
+"       ooooo      ",
+"                  ",
+"                  "};

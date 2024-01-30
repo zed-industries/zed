@@ -1,0 +1,151 @@
+*ft_mp.txt*	For Vim version 9.1.  Last change: 2022 Aug 12
+
+This is the documentation for the METAFONT and MetaPost filetype plugins.
+Unless otherwise specified, the commands, settings and mappings defined below
+apply equally to both filetypes.
+
+NOTE: the plugin requires +vim9script.
+
+==============================================================================
+CONTENTS						*mp.vim* *ft-metapost*
+							*mf.vim* *ft-metafont*
+
+1. Introduction				|ft-metapost-intro|
+2. Commands				|ft-metapost-commands|
+3. Settings				|ft-metapost-settings|
+4. Mappings				|ft-metapost-mappings|
+
+==============================================================================
+							*ft-metapost-intro*
+							*ft-metafont-intro*
+Introduction ~
+This filetype plugin provides extensive support for editing METAFONT and
+MetaPost documents, including syntax coloring, indentation, and completion.
+
+Defining indentation rules for METAFONT and MetaPost code is tricky and
+somewhat subjective, because the syntax is quite liberal. The plugin uses some
+heuristics that work well most of the time, but in particular cases you may
+want to to override the automatic rules, so that the manually defined
+indentation is preserved by commands like `gg=G`.
+
+This can be achieved by appending `%>`, `%<`, `%=` or `%!` to a line to
+explicitly control the indentation of the next line. The `<` and `>` symbols
+may be repeated many times: for instance, `%>>` will cause the next line to be
+indented twice. Of course, `%<` means that the next line should be
+de-indented; `%=` sets the indentation of the next line to be equal to the
+indentation of the current line; and `%!` means that the indentation of the
+next line should not change from whatever it has been manually set.
+
+For example, this is the default indentation of a simple macro:
+>
+   def foo =
+       makepen(
+           subpath(T-n,t) of r
+           shifted .5down
+           --subpath(t,T) of r shifted .5up -- cycle
+       )
+       withcolor black
+   enddef
+<
+By adding the special comments, the indentation can be adjusted arbitrarily:
+>
+   def foo =
+       makepen(
+           subpath(T-n,t) of r  %>
+               shifted .5down   %>
+                   --subpath(t,T) of r shifted .5up -- cycle   %<<<
+       )
+       withcolor black
+   enddef
+<
+							*ft-metapost-commands*
+Commands ~
+					*:FixBeginfigs*
+Renumber beginfig() blocks in the current buffer so that the n-th figure has
+number n. MetaPost only.
+
+							*ft-metapost-settings*
+							*ft-metafont-settings*
+Settings ~
+					*'g:mf_other_macros'*
+Highlight some other basic macro names, e.g., from cmbase, logo, etc. This is
+set to 1 by default in METAFONT buffers, and it is set to 0 by default in
+MetaPost buffers.
+
+					*'g:mf_plain_macros'*
+Highlight keywords defined by plain.mf. This is set to 1 by default in
+METAFONT buffers, and it is set to 0 by default in MetaPost buffers.
+
+					*'g:mf_plain_modes'*
+Highlight keywords defined by modes.mf. This is set to 1 by default in
+METAFONT buffers, and it is set to 0 by default in MetaPost buffers.
+
+					*'g:mp_close_tag'*
+Define additional keywords that end indented blocks. For instance, if you
+define:
+>
+	g:mp_close_tag = ['\<endfoo\>']
+<
+any line starting with `endfoo` will be de-indented compared to its previous
+line.
+>
+	g:mp_close_tag = []
+<
+					*'b:mp_metafun'*
+					*'g:mp_metafun'*
+If set to 1, highlight ConTeXt's MetaFun keywords. MetaPost only.
+>
+	g:mp_metafun = 0
+<
+					*'g:mp_mfplain_macros'*
+Highlight keywords defined by mfplain.mp. MetaPost only.
+>
+	g:mp_mfplain_macros = 1
+<
+					*'g:mp_open_tag'*
+Define additional keywords that start indented blocks. For instance, if you
+define:
+>
+	g:mp_open_tag = ['\<beginfoo\>']
+<
+the line following `beginfoo` will be indented.
+>
+	g:mp_open_tag = []
+<
+					*'g:mp_other_macros'*
+Highlight keywords defined by all base macro packages (boxes, rboxes, format,
+graph, marith, sarith, string, TEX). This option affects only MetaPost
+buffers.
+>
+	g:mp_other_macros = 1
+<
+					*'g:mp_plain_macros'*
+Highlight keywords defined by plain.mp. MetaPost only.
+>
+	g:mp_plain_macros = 1
+<
+					*'g:no_mp_maps'*
+					*'g:no_mf_maps'*
+When set, do not define any mapping in buffers with the corresponding
+filetype.
+>
+	g:no_mp_maps = 0
+	g:no_mf_maps = 0
+<
+							*ft-metapost-mappings*
+							*ft-metafont-mappings*
+Mappings ~
+
+]]			[count] vardefs, macros or figures forward.
+
+[[			[count] vardefs, macros or figures backward.
+
+][			[count] end of vardefs, macros or figures forward.
+
+[]			[count] end of vardefs, macros or figures backward.
+
+]}			[count] end of blocks (fi, endfor, endgroup) forward.
+
+[{			[count] begin of blocks (if, for, begingroup) backward.
+
+ vim:tw=78:sw=4:ts=8:noet:ft=help:norl:

@@ -1,0 +1,38 @@
+INIT
+WANTSCREEN
+
+RESET
+
+!Single Width, Single Height
+RESET
+PUSH "\e#5"
+PUSH "abcde"
+  ?screen_cell 0,0 = {0x61} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Double Width, Single Height
+RESET
+PUSH "\e#6"
+PUSH "abcde"
+  ?screen_cell 0,0 = {0x61} width=1 attrs={} dwl fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Double Height
+RESET
+PUSH "\e#3"
+PUSH "abcde"
+PUSH "\r\n\e#4"
+PUSH "abcde"
+  ?screen_cell 0,0 = {0x61} width=1 attrs={} dwl dhl-top fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 1,0 = {0x61} width=1 attrs={} dwl dhl-bottom fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Late change
+RESET
+PUSH "abcde"
+  ?screen_cell 0,0 = {0x61} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+PUSH "\e#6"
+  ?screen_cell 0,0 = {0x61} width=1 attrs={} dwl fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!DWL doesn't spill over on scroll
+RESET
+PUSH "\e[25H\e#6Final\r\n"
+  ?screen_cell 23,0 = {0x46} width=1 attrs={} dwl fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 24,0 = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)

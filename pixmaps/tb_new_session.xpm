@@ -1,0 +1,32 @@
+/* XPM */
+static char * tb_new_session_xpm[] = {
+/* width height ncolors cpp [x_hot y_hot] */
+"18 18 8 1 0 0",
+/* colors */
+" 	s none	m none	c none",
+".	s bottomShadowColor	m black	c #5D6069",
+"X	s iconColor2	m none	c #FFFFFF",
+"o	s iconColor1	m black	c #000000",
+"O	s iconGray2	m none	c #bdbdbd",
+"+	s iconGray5	m black	c #737373",
+"@	s iconGray4	m none	c #949494",
+"#	s iconColor3	m black	c #FF0000",
+/* pixels */
+"    .  .X.  .     ",
+"     . oXo .      ",
+"    ..oXXXo..     ",
+"    XXXXXXXXX     ",
+"    ..oXXXo..     ",
+"     . oXo .      ",
+"    .  .X.  .     ",
+"        .         ",
+"   ooooooooooooo  ",
+"  oXXXXXXXXXXOO+o ",
+" oXXXXXXXXXXXX@+o ",
+" oXOOOOOOOOO##@+o ",
+" oXOOOOOOOOOOO@+o ",
+" oXooooooooooO@+o.",
+" oXXXXXXXXXXXO@+o.",
+" oO@@@@@@@@@@@+o. ",
+"  ooooooooooooo.  ",
+"    ...........   "};

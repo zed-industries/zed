@@ -1,0 +1,17 @@
+*~
+*.swp
+
+tags
+src/*.o
+src/*.lo
+
+libvterm.la
+bin/unterm
+bin/vterm-ctrl
+bin/vterm-dump
+
+t/harness
+t/harness.lo
+t/harness.o
+
+.libs/

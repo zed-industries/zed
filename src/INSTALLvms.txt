@@ -1,0 +1,428 @@
+INSTALLvms.txt - Installation of Vim on OpenVMS
+
+Maintainer:   Zoltan Arpadffy <zoltan.arpadffy@gmail.com>
+Last change:  2023 Nov 29
+
+This file contains instructions for compiling Vim on Openvms.
+If you already have an executable version of Vim, you don't need this.
+
+If you skip settings described here, then you will get the default Vim
+behavior as it is documented, which should be fine for most users.
+
+The file "feature.h" can be edited to match your preferences, but this file
+does not describe possibilities hidden in feature.h acrobatics, however
+parameters from MAKE_VMS.MMS actively use and set up parameters in relation
+with feature.h
+
+More information and case analysis you can find in os_vms.txt
+([runtime.doc]os_vms.txt or :help vms from vim prompt)
+
+Contents:
+1. Download files
+2. Configuration
+3. Compilation DECC
+4. Compilation VAXC
+5. CTAGS, XXD
+6. Deployment
+7. GTK and other features
+8. Notes
+9. Authors
+
+----------------------------------------------------------------------------
+1. Download files
+
+1.1. Visit the Vim ftp site (see ftp://ftp.vim.org/pub/vim/MIRRORS)
+     and obtain the following three files:
+
+     unix/vim-X.X-src.tar.gz
+     unix/vim-X.X-rt.tar.gz
+     extra/vim-X.X-extra.tar.gz
+
+     where X.X is the version number.
+
+You may want to clone the latest source code from https://github/vim/vim
+Or the last tested on OpenVMS from http://polarhome.com/vim/files/source/vms/
+
+1.2. Expand the three archives.
+
+1.3. Apply patches if they exist.  (Patch files are found in the ftp
+     site in the "patches" directory.)
+
+1.4. You will need either the DECSET mms utility or the freely available clone
+     of it called mmk (VMS has no make utility in the standard distribution).
+     You can download mmk from http://www.openvms.digital.com/freeware/MMK/
+
+1.5. If you want to have Perl, Python or Tcl support in Vim you will need VMS
+     distributions for them as well.
+
+1.6  If you want to have GTK executable, you need to have properly installed
+     GTK libraries.
+
+NOTE: procedure in chapter 1 describes source code preparation from multi OS
+code, however it is available OpenVMS optimized (and tested) source code from:
+ftp://ftp.polarhome.com/pub/vim/source/vms/
+(http://www.polarhome.com/vim/files/source/vms/)
+
+Current OpenVMS source code as .zip or .tar.gz file is possible to download
+from CVS mirror ftp://ftp.polarhome.com/pub/cvs/SOURCE/
+(http://www.polarhome.com/cvs/SOURCE/)
+
+2.   Configuration
+
+2.1. Edit vim-X.X/src/feature.h for your preference.  (You can skip
+     this, then you will get the default behavior as is documented,
+     which should be fine for most people.)
+
+     For example, if you want to add the MULTI_BYTE feature, turn on
+     #define MULTI_BYTE
+
+2.2  Edit vim-X.X/src/Make_vms.mms to customize your Vim. Options are:
+
+	Parameter name	: MODEL
+	Description	: Build model selection
+	Options:	: TINY	  - No optional features enabled
+			  NORMAL  - A default selection of features enabled
+				    (OpenVMS default)
+			  HUGE	  - All possible features enabled.
+			  Uncommented - will default to HUGE
+	Default		: MODEL = NORMAL
+
+	Parameter name	: GUI
+	Description	: GUI or terminal mode executable
+	Options:	: YES - GUI executable
+			  Uncommented - char only
+	Default		: GUI = YES
+
+	Parameter name	: GTK
+	Description	: Enable GTK in GUI mode.
+			  It enables features as toolbar etc.
+	Options:	: YES - GTK executable
+			  Uncommented - without GTK
+	Default		: Uncommented
+
+	Parameter name	: XPM
+	Description	: Enable XPM libraries in GUI/Motif mode.
+			  It enables features as toolbar etc.
+	Options:	: YES - GUI executable
+			  Uncommented - without XPM
+	Default		: Uncommented
+
+	Parameter name	: DECC
+	Description	: Compiler selection
+	Options:	: YES - DECC compiler
+			  Uncommented - VAXC compiler
+	Default		: DECC = YES
+
+	Parameter name	: CCVER
+	Description	: Compiler version with :ver command
+	Options:	: YES - Compiler version info will be added
+			  Uncommented - will not be added
+	Default		: CCVER = YES
+
+	Parameter name	: DEBUG
+	Description	: Building a debug version (DVIM.EXE)
+	Options:	: YES - debug version will be built
+			  Uncommented - building normal executable
+	Default		: Uncommented
+
+	Parameter name	: VIM_TCL
+	Description	: Add Tcl support
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented
+
+	Parameter name	: VIM_PERL
+	Description	: Add Perl support
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented
+
+	Parameter name	: VIM_PYTHON
+	Description	: Add Python support
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented
+
+	Parameter name	: VIM_XIM
+	Description	: X Input Method. For entering special languages
+			  like Chinese and Japanese. Please define just
+			  one: VIM_XIM or VIM_HANGULIN
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented
+
+	Parameter name	: VIM_HANGULIN
+	Description	: Internal Hangul input method. GUI only.
+			  Please define just one: VIM_XIM or VIM_HANGULIN
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented
+
+	Parameter name	: VIM_TAG_ANYWHITE
+	Description	: Allow any white space to separate the fields in a
+			  tags file
+			  When not defined, only a TAB is allowed.
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented
+
+	Parameter name	: VIM_RUBY
+	Description	: Add Ruby support
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented
+
+	Parameter name	: VIM_LUA
+	Description	: Add Lua support
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented     
+
+	Parameter name	: VIM_MZSCHEME
+	Description	: Add support for FEATURE_MZSCHEM
+	Options:	: YES - Build with support
+			  Uncommented - build without FEATURE_MZSCHEM.
+	Default		: Uncommented
+
+	Parameter name	: VIM_ICONV
+	Description	: Build with using the ICONV library 
+	Options:	: YES - Build with support
+			  Uncommented - build without support.
+	Default		: Uncommented     
+
+	Parameter name	: MODIFIED_BY
+	Description	: Add note if you modified the code
+	Options:	: YES - Build with adding the MODIFIED_BY define
+			  Uncommented - build without the define
+	Default		: Uncommented
+
+     You can edit the *_INC and *_LIB qualifiers, but it is really
+     not recommended for beginners.
+
+3. Compilation DECC
+
+3.1. If you have MSS on your system, the command
+
+	mms /descrip=Make_vms.mms
+
+     will start building your own customized version of Vim.
+     The adequate command for mmk is:
+
+	mmk /descrip=Make_vms.mms
+
+     NOTE: Because of empty /auto/config.h (needed for Unix configure) build
+     will fail with very strange messages. Therefore before building, it is
+     recommended to make one clean up, to prepare everything for OpenVMS
+     development. The command is:
+
+	mms /descrip=Make_vms.mms clean
+
+     The build will stop if any error or warning is encontered. In some cases
+     the warnings can be ignored. Use:
+
+     mms /descrip=Make_vms.mms /ignore=warning
+
+4. Compilation VAXC
+
+4.1. VAXC compiler is not fully ANSI C compatible in pre-processor directives
+     semantics, therefore you have to use a converter program what will do the
+     lion part of the job.
+
+	@os_vms_fix.com *.c *.h <.proto>*.pro
+
+     more information can be found in os_vms_fix.com file itself.
+
+     NOTE: even if os_vms_fix.com will fix all pre-processor directives it will
+     leave single (long) line directives. You have to fix them manually.
+     Known problematic files are option.h and option.c
+
+4.2. After the conversion you can continue building as it has been described
+     above.
+
+5. CTAGS, XXD
+
+5.1. MMS_VIM.EXE is building together with VIM.EXE, but for CTAGS.EXE and
+     XXD.EXE you should change to subdirectory <.CTAGS> or <.XXD> and build
+     them separately.
+
+5.2. In these directories you can find one make file for VMS as well.
+     Please read the detailed build instructions in the related *.MMS file.
+
+6.   Deployment
+
+6.1. Copy over all executables to the deployment directory.
+
+6.2. Vim uses a special directory structure to hold the document and runtime
+     files:
+
+   vim (or wherever)
+    |-- doc
+    |-- syntax
+    vimrc    (system rc files)
+    gvimrc
+
+6.3 Define logicals VIM
+
+	define/nolog VIM device:[leading-path-here.vim]
+
+     to get vim.exe to find its document, filetype, and syntax files.
+
+     Now, if you are lucky you should have one own built, customized and
+     working Vim.
+
+7.   GTK and other features
+
+7.1  General notes
+
+     To be able to build external GUI or language support you have to enable
+     related feature in MAKE_VMS.MMS file. Usually it needs some extra tuning
+     around include files, shared libraries etc.
+
+     Please note, that leading "," are valuable for MMS/MMK syntax.
+
+     MAKE_VMS.MMS uses defines as described below:
+
+7.1.1   feature_DEF = ,"SOME_FEATURE"
+
+     Submits definition to compiler preprocessor to enable code blocks
+     defined with
+     #ifdef SOME_FEATURE
+     {some code here}
+     #endif
+
+     Example:  TCL_DEF = ,"FEAT_TCL"
+
+
+7.1.2   feature_SRC = code1.c code2.c
+
+     Defines source code related with particular feature.
+     Example:  TCL_SRC = if_tcl.c
+
+7.1.3   feature_OBJ = code1.obj code2.obj
+
+     Lists objects created from source codes listed in feature_SRC
+     Example: PERL_OBJ = if_perlsfio.obj if_perl.obj
+
+7.1.4  feature_LIB = ,OS_VMS_TCL.OPT/OPT
+
+     Defines the libraries that have to be used for build.
+     If it is an OPT file then MAKE_VMS.MMS creates OPT files
+     in gen_feature procedure.
+
+     Example:
+     PERL_LIB = ,OS_VMS_PERL.OPT/OPT
+
+.IFDEF VIM_PERL
+perl_env :
+	-@ write sys$output "creating OS_VMS_PERL.OPT file."
+	-@ open/write opt_file OS_VMS_PERL.OPT
+	-@ write opt_file "PERLSHR /share"
+	-@ close opt_file
+.ELSE
+perl_env :
+	-@ !
+.ENDIF
+
+
+7.1.5  feature_INC = ,dka0:[tcl80.generic]
+
+     Defines the directory where the necessary include files are.
+     Example: TCL_INC = ,dka0:[tcl80.generic]
+
+7.2  GTK
+
+     To build VIM with GTK you have to install GTK on your OpenVMS.
+     So far it works just on Alpha and IA64. More information at:
+     http://www.openvms.compaq.com/openvms/products/ips/gtk.html
+
+     You also need the OpenVMS Porting Library:
+     http://www.openvms.compaq.com/openvms/products/ips/porting.html
+
+     Source code for GTK and porting library that is used to build
+     VMS executables at polarhome.com are at
+     http://www.polarhome.com/vim/files/source/vms/
+
+     Enable GTK in make_vms.mms file with GTK = YES
+     Define GTK_ROOT that points to your GTK root directory.
+
+     You will need to edit GTKDIR variable in order to point
+     to GTK header files and libraries.
+
+     GTK_DIR  = ALPHA$DKA0:[GTK128.]
+
+     ".]" at the end is very important.
+
+     Build it as normally.
+
+     Used shareable images are:
+	gtk_root:[glib]libglib.exe /share,-
+	gtk_root:[glib.gmodule]libgmodule.exe /share,-
+	gtk_root:[gtk.gdk]libgdk.exe /share,-
+	gtk_root:[gtk.gtk]libgtk.exe /share
+
+     During runtime it is suggested to have all these files installed and
+     copied to SYS$LIBRARY: to be able to use it without problems.
+     Also VMS_JACKETS.EXE from OpenVMS Porting Library.
+
+     Please note, that GTK uses /name=(as_is,short)/float=ieee/ieee=denorm
+     compiler directives that is not compatible with "standard" VMS usage,
+     therefore other external features might fail as PERL, PYTHON and TCL
+     support.
+
+7.3  PERL
+
+     You have to install OpenVMS perl package from:
+     http://www.openvms.compaq.com/openvms/products/ips/apache/csws_perl_relnotes.html or build on your own from sources downloaded from http://www.perl.org
+
+     You need defined PERLSHR logical that points to PERL shareable image
+     (or you can just copy over to SYS$LIBRARY:)
+
+     Enable Perl feature at make_vms.mms with VIM_PERL = YES
+
+     Edit PERL_INC = to point to perl includes directory where is extern.h
+
+     Build as usual.
+
+7.4  PYTHON
+
+     You have to install an OpenVMS python package.
+     Set up the normal Python work environment.
+
+     You have to have defined PYTHON_INCLUDE and PYTHON_OLB logicals.
+     PYTHON_INCLUDE should point to Python include files where for ex:
+     python.h is located.
+     Enable Python feature at make_vms.mms with VIM_PYTHON = YES
+
+     Build as usual.
+
+7.5  TCL
+
+     You have to install an OpenVMS TCL package.
+     Set up the normal TCL work environment.
+
+     You have to have defined TCLSHR logical that points to shareable image.
+
+     Enable TCL feature at make_vms.mms with VIM_TCL = YES
+
+     Edit TCL_INC = to point to TCL includes directory where is tcl.h
+
+     Build as usual.
+
+8.   Notes
+
+8.1. New Compaq C compiler
+
+     If you are using Compaq C compiler V6.2 or newer, informational messages
+     of the type QUESTCOMPARE will be displayed. You should ignore those
+     messages ; they are generated only because some test comparisons are done
+     with variables which type vary depending on the OS. Under VMS, those are
+     "unsigned" and the compiler issue a message whenever the comparison is
+     done with '<=' to 0. However, the code is correct and will behave as
+     expected.
+     ( Jerome Lauret <JLAURET@mail.chem.sunysb.edu> Vim 6.0n )
+	NOTE: from version 6.0ad Vim code has been reviewed and these warnings
+	have been corrected.
+
+9.   Authors
+
+     Initial version, 2000 Jul 19, Zoltan Arpadffy <arpadffy@polarhome.com>

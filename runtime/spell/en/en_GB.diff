@@ -1,0 +1,214 @@
+*** en_GB.orig.aff	2015-12-30 18:49:37.568638905 +0100
+--- en_GB.aff	2016-01-09 13:15:56.490432894 +0100
+***************
+*** 20,21 ****
+--- 20,158 ----
+  
++ FOL  àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþßÿ
++ LOW  àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþßÿ
++ UPP  ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßÿ
++ 
++ MIDWORD	'
++ 
++ RARE ?
++ BAD %
++ 
++ MAP 9
++ MAP aàáâãäå
++ MAP eèéêë
++ MAP iìíîï
++ MAP oòóôõö
++ MAP uùúûü
++ MAP nñ
++ MAP cç
++ MAP yÿý
++ MAP sß
++ 
++ # This comes from Aspell en_phonet.dat, version 1.1, 2000-01-07
++ 
++ SAL AH(AEIOUY)-^         *H
++ SAL AR(AEIOUY)-^         *R
++ SAL A(HR)^               *
++ SAL A^                   *
++ SAL AH(AEIOUY)-          H
++ SAL AR(AEIOUY)-          R
++ SAL A(HR)                _
++ SAL À^                   *
++ SAL Å^                   *
++ SAL BB-                  _
++ SAL B                    B
++ SAL CQ-                  _
++ SAL CIA                  X
++ SAL CH                   X
++ SAL C(EIY)-              S
++ SAL CK                   K
++ SAL COUGH^               KF
++ SAL CC<                  C
++ SAL C                    K
++ SAL DG(EIY)              K
++ SAL DD-                  _
++ SAL D                    T
++ SAL É<                   E
++ SAL EH(AEIOUY)-^         *H
++ SAL ER(AEIOUY)-^         *R
++ SAL E(HR)^               *
++ SAL ENOUGH^$             *NF
++ SAL E^                   *
++ SAL EH(AEIOUY)-          H
++ SAL ER(AEIOUY)-          R
++ SAL E(HR)                _
++ SAL FF-                  _
++ SAL F                    F
++ SAL GN^                  N
++ SAL GN$                  N
++ SAL GNS$                 NS
++ SAL GNED$                N
++ SAL GH(AEIOUY)-          K
++ SAL GH                   _
++ SAL GG9                  K
++ SAL G                    K
++ SAL H                    H
++ SAL IH(AEIOUY)-^         *H
++ SAL IR(AEIOUY)-^         *R
++ SAL I(HR)^               *
++ SAL I^                   *
++ SAL ING6                 N
++ SAL IH(AEIOUY)-          H
++ SAL IR(AEIOUY)-          R
++ SAL I(HR)                _
++ SAL J                    K
++ SAL KN^                  N
++ SAL KK-                  _
++ SAL K                    K
++ SAL LAUGH^               LF
++ SAL LL-                  _
++ SAL L                    L
++ SAL MB$                  M
++ SAL MM                   M
++ SAL M                    M
++ SAL NN-                  _
++ SAL N                    N
++ SAL OH(AEIOUY)-^         *H
++ SAL OR(AEIOUY)-^         *R
++ SAL O(HR)^               *
++ SAL O^                   *
++ SAL OH(AEIOUY)-          H
++ SAL OR(AEIOUY)-          R
++ SAL O(HR)                _
++ SAL PH                   F
++ SAL PN^                  N
++ SAL PP-                  _
++ SAL P                    P
++ SAL Q                    K
++ SAL RH^                  R
++ SAL ROUGH^               RF
++ SAL RR-                  _
++ SAL R                    R
++ SAL SCH(EOU)-            SK
++ SAL SC(IEY)-             S
++ SAL SH                   X
++ SAL SI(AO)-              X
++ SAL SS-                  _
++ SAL S                    S
++ SAL TI(AO)-              X
++ SAL TH                   @
++ SAL TCH--                _
++ SAL TOUGH^               TF
++ SAL TT-                  _
++ SAL T                    T
++ SAL UH(AEIOUY)-^         *H
++ SAL UR(AEIOUY)-^         *R
++ SAL U(HR)^               *
++ SAL U^                   *
++ SAL UH(AEIOUY)-          H
++ SAL UR(AEIOUY)-          R
++ SAL U(HR)                _
++ SAL V^                   W
++ SAL V                    F
++ SAL WR^                  R
++ SAL WH^                  W
++ SAL W(AEIOU)-            W
++ SAL X^                   S
++ SAL X                    KS
++ SAL Y(AEIOU)-            Y
++ SAL ZZ-                  _
++ SAL Z                    S
++ 
++ # When soundfolding "th" is turned into "@".  When this is mistyped as "ht" it
++ # soundfolds to "ht".  This difference is too big, thus use REP items to lower
++ # the score.
++ REPSAL 2
++ REPSAL ht @
++ REPSAL @ ht
++ 
+  REP 27
+***************
+*** 49,50 ****
+--- 186,203 ----
+  
++ # This is disabled, because if Vim does not support NOCOMPOUNDSUGS giving
++ # suggestions is extremely slow.
++ ## ordinal numbers
++ #COMPOUNDMIN 1
++ ## only in compounds: 1th, 2th, 3th
++ #ONLYINCOMPOUND ,
++ ## compound rules:
++ ## 1. [0-9]*1[0-9]th (10th, 11th, 12th, 56714th, etc.)
++ ## 2. [0-9]*[02-9](1st|2nd|3rd|[4-9]th) (21st, 22nd, 123rd, 1234th, etc.)
++ #COMPOUNDRULE 2
++ #COMPOUNDRULE (*:)
++ #COMPOUNDRULE (*{}
++ #NOCOMPOUNDSUGS
++ 
++ # WORDCHARS 0123456789
++ 
+  PFX A Y 2
+*** en_GB.orig.dic	2015-12-30 18:49:42.360587040 +0100
+--- en_GB.dic	2016-01-08 23:03:35.510272903 +0100
+***************
+*** 1,2 ****
+--- 1,12 ----
+  56453
++ 0th
++ 1st
++ 2nd
++ 3rd
++ 4th
++ 5th
++ 6th
++ 7th
++ 8th
++ 9th
+  'gainst
+***************
+*** 3615,3617 ****
+  autosuggestion
+- autosuggestion
+  autotest/S
+--- 3625,3626 ----
+***************
+*** 9325,9327 ****
+  Church
+- church
+  Church-of-England
+--- 9334,9335 ----
+***************
+*** 22885,22887 ****
+  hand-painted
+- hand-pick/D
+  hand-pick/GSD
+--- 22893,22894 ----
+***************
+*** 56454 ****
+--- 56461,56471 ----
+  émigré/S
++ a a/%
++ a an/%
++ a the/%
++ an a/%
++ an an/%
++ an the/%
++ and and/%
++ the a/%
++ the an/%
++ the the/%

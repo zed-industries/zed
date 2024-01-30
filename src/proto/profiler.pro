@@ -1,0 +1,35 @@
+/* profiler.c */
+void profile_start(proftime_T *tm);
+void profile_end(proftime_T *tm);
+void profile_sub(proftime_T *tm, proftime_T *tm2);
+char *profile_msg(proftime_T *tm);
+float_T profile_float(proftime_T *tm);
+void profile_setlimit(long msec, proftime_T *tm);
+int profile_passed_limit(proftime_T *tm);
+void profile_zero(proftime_T *tm);
+void profile_divide(proftime_T *tm, int count, proftime_T *tm2);
+void profile_add(proftime_T *tm, proftime_T *tm2);
+void profile_self(proftime_T *self, proftime_T *total, proftime_T *children);
+void profile_sub_wait(proftime_T *tm, proftime_T *tma);
+int profile_cmp(const proftime_T *tm1, const proftime_T *tm2);
+void ex_profile(exarg_T *eap);
+char_u *get_profile_name(expand_T *xp, int idx);
+void set_context_in_profile_cmd(expand_T *xp, char_u *arg);
+void prof_inchar_enter(void);
+void prof_inchar_exit(void);
+int prof_def_func(void);
+void func_do_profile(ufunc_T *fp);
+void profile_may_start_func(profinfo_T *info, ufunc_T *fp, ufunc_T *caller);
+void profile_may_end_func(profinfo_T *info, ufunc_T *fp, ufunc_T *caller);
+void prof_child_enter(proftime_T *tm);
+void prof_child_exit(proftime_T *tm);
+void func_line_start(void *cookie, long lnum);
+void func_line_exec(void *cookie);
+void func_line_end(void *cookie);
+void script_do_profile(scriptitem_T *si);
+void script_prof_restore(proftime_T *tm);
+void profile_dump(void);
+void script_line_start(void);
+void script_line_exec(void);
+void script_line_end(void);
+/* vim: set ft=c : */

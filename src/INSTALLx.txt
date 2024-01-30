@@ -1,0 +1,156 @@
+INSTALLx.txt - cross-compiling Vim on Unix
+
+Content:
+ 1. Introduction
+ 2. Necessary arguments for "configure"
+ 3. Necessary environment variables for "configure"
+ 4. Example
+
+
+1. INTRODUCTION
+===============
+
+This document discusses cross-compiling VIM on Unix-like systems. We assume
+you are already familiar with cross-compiling and have a working cross-compile
+environment with at least the following components:
+
+ * a cross-compiler
+ * a libc to link against
+ * ncurses library to link against
+
+Discussing how to set up a cross-compile environment would go beyond the scope
+of this document. See http://www.kegel.com/crosstool/ for more information and
+a script that aids in setting up such an environment.
+
+
+The problem is that "configure" needs to compile and run small test programs
+to check for certain features. Running these test programs can't be done when
+cross-compiling so we need to pass the results these checks would produce via
+environment variables. See the list of variables and the examples at the end of
+this document.
+
+
+2. NECESSARY ARGUMENTS FOR "configure"
+======================================
+
+You need to set the following "configure" command line switches:
+
+--build=... :
+	The build system (i.e. the platform name of the system you compile on
+	right now).
+	For example, "i586-linux".
+
+--host=... :
+	The system on which VIM will be run. Quite often this the name of your
+	cross-compiler without the "-gcc".
+	For example, "powerpc-603-linux-gnu".
+
+--target=... :
+	Only relevant for compiling compilers. Set this to the same value as
+	--host.
+
+--with-tlib=... :
+	Which terminal library to use.
+	For example, "ncurses".
+
+
+3. NECESSARY ENVIRONMENT VARIABLES FOR "configure"
+==================================================
+
+Additionally to the variables listed here you might want to set the CPPFLAGS
+environment variable to enable optimization for your target system (e.g.
+"CPPFLAGS=-march=arm5te").
+
+The following variables need to be set:
+
+ac_cv_sizeof_int:
+	The size of an "int" C type in bytes. Should be "4" on all 32bit
+	machines.
+
+vi_cv_path_python_conf:
+	If Python support is enabled, set this variable to the path for
+	Python's library implementation. This is a path like
+	"/usr/lib/pythonX.Y/config" (the directory contains a file
+	"config.c").
+
+vi_cv_path_python_epfx:
+	If Python support is enabled, set this variable to the execution
+	prefix of your Python interpreter (that is, where it thinks it is
+	running).
+	This is the output of the following Python script:
+		import sys; print sys.exec_prefix
+
+vi_cv_path_python_pfx:
+	If Python support is enabled, set this variable to the prefix of your
+	Python interpreter (that is, where it was installed).
+	This is the output of the following Python script:
+		import sys; print sys.prefix
+
+vi_cv_var_python_version:
+	If Python support is enabled, set this variable to the version of the
+	Python interpreter that will be used.
+	This is the output of the following Python script:
+		import sys; print sys.version[:3]
+
+vim_cv_bcopy_handles_overlap:
+	Whether the "bcopy" C library call is able to copy overlapping
+	memory regions. Set to "yes" if it does or "no" if it does not.
+	You only need to set this if vim_cv_memmove_handles_overlap is set
+	to "no".
+
+vim_cv_getcwd_broken:
+	Whether the "getcwd" C library call is broken. Set to "yes" if you
+	know that "getcwd" is implemented as 'system("sh -c pwd")', set to
+	"no" otherwise.
+
+vim_cv_memcpy_handles_overlap:
+	Whether the "memcpy" C library call is able to copy overlapping
+	memory regions. Set to "yes" if it does or "no" if it does not.
+	You only need to set this if both vim_cv_memmove_handles_overlap
+	and vim_cv_bcopy_handles_overlap are set to "no".
+
+vim_cv_memmove_handles_overlap:
+	Whether the "memmove" C library call is able to copy overlapping
+	memory regions. Set to "yes" if it does or "no" if it does not.
+
+vim_cv_stat_ignores_slash:
+	Whether the "stat" C library call ignores trailing slashes in the path
+	name. Set to "yes" if it ignores them or "no" if it does not ignore
+	them.
+
+vim_cv_tgetent:
+	Whether the "tgetent" terminal library call returns a zero or non-zero
+	value when it encounters an unknown terminal. Set to either the string
+	"zero" or "non-zero", corresponding.
+
+vim_cv_terminfo:
+	Whether the environment has terminfo support. Set to "yes" if so,
+	otherwise set to "no".
+
+vim_cv_toupper_broken:
+	Whether the "toupper" C library function works correctly. Set to "yes"
+	if you know it's broken, otherwise set to "no".
+
+
+4. EXAMPLE:
+===========
+
+Assuming the target system string is "armeb-xscale-linux-gnu" (a Intel XScale
+system) with glibc and ncurses, the call to configure would look like this:
+
+ac_cv_sizeof_int=4 \
+vim_cv_getcwd_broken=no \
+vim_cv_memmove_handles_overlap=yes \
+vim_cv_stat_ignores_slash=yes \
+vim_cv_tgetent=zero \
+vim_cv_terminfo=yes \
+vim_cv_toupper_broken=no \
+./configure \
+	--build=i586-linux \
+	--host=armeb-xscale-linux-gnu \
+	--target=armeb-xscale-linux-gnu \
+	--with-tlib=ncurses
+
+
+
+Written 2007 by Marc Haisenko <marc@darkdust.net> for the VIM project.

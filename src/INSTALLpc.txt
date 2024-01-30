@@ -1,0 +1,1001 @@
+INSTALLpc.txt - Installation of Vim on PC
+
+This file contains instructions for compiling Vim. If you already have an
+executable version of Vim, you don't need this.
+
+You can find the latest here: https://github.com/vim/vim-win32-installer
+This page also has links to install support for interfaces such as Perl,
+Python, Lua, etc.
+
+The file "feature.h" can be edited to match your preferences. You can skip
+this, then you will get the default behavior as is documented, which should
+be fine for most people.
+
+This document assumes that you are building Vim for Win32 or later (Windows
+7/8/10/11).  There are also instructions for pre-Vista and pre-XP systems, but
+they might no longer work.
+
+The recommended way is to build a 32 bit Vim, also on 64 bit systems.  You can
+build a 64 bit Vim if you like, the executable will be bigger and Vim won't be
+any faster, but you can edit files larger than 2 Gbyte.
+
+
+Contents:
+1. Microsoft Visual C++
+2. Using MSYS2 with MinGW
+3. Using MinGW
+4. Cygwin
+5. Cross compiling for Win32 from a Linux machine
+6. Building with Python support
+7. Building with Python3 support
+8. Building with Racket or MzScheme support
+9. Building with Lua support
+10. Building with Perl support
+11. Building with Ruby support
+12. Building with Tcl support
+13. Building with DirectX (DirectWrite) support
+14. Building with libsodium support
+15. Windows 3.1
+16. MS-DOS
+
+17. Installing after building from sources
+
+
+The currently recommended way (that means it has been verified to work) is
+using the "Visual Studio 2022 Community Edition" installation.  This doesn't 
+include the SDK for older Windows versions (95 - XP), see "OLDER VERSIONS"
+below for that.
+
+
+1. Microsoft Visual C++
+=======================
+
+We do not provide download links, since Microsoft keeps changing them.  You
+can search for "Visual Studio 2022 Community Edition", for example.  You will
+need to create a Microsoft account (it's free).  You need to download the 
+"DVD", and execute the installer from it.
+
+When installing "Visual Studio 2022 Community Edition" or "Build Tools for
+Visual Studio 2022" make sure to select "custom" and check all checkboxes
+under "Universal Windows App Development Tools".  Or whatever they are called
+now.
+
+Note: Vim source code no longer supports Windows XP since Patch 9.0.0496.
+Also, Visual Studio 2017 was the last version to support a Windows XP target.
+If you still want to target Windows XP, you can check out an older version of
+vim source code and install Visual Studio 2017 or 2015 - making sure to check
+the checkbox for "Windows XP Support for C++".  Additional build instructions
+for Windows XP are provided below. |new-msvc-windows-xp|
+
+
+Visual Studio
+-------------
+
+Building with Visual Studio (VS2015, VS2017, VS2019 and VS2022) is
+straightforward.  Older versions probably don't work.
+
+Vim versions built with VS2015 and VS2017 are systematically tested and known
+to work well on Windows versions 7, 8 and 8.1.
+
+Vim versions built with VS2015 and VS2017 are also known to work well on all
+early versions of Windows 10.  However, Vim versions built with VS2015 and
+VS2017 may run into a known issue on the latest versions of Windows 10 and 11.
+Building Vim with VS2019 or VS2022 resolves the issue.
+
+Vim versions built with VS2019 and VS2022 are systematically tested and
+known to work on Windows versions 7, 8, 8.1, 10, 11 and all respective server
+variants.
+
+Visual Studio installed a batch file called vcvarsall.bat, which you must
+run to set up paths for nmake and MSVC.  We provide a batch file
+"msvc2015.bat" for this.  You may need to edit it if you didn't install Visual
+Studio in the standard location.
+If you use VS2017 or later, you can use "msvc-latest.bat" (or "msvc2017.bat"
+and so on for the specific version).  You must specify the architecture (e.g.
+"x86", "x64", etc.) as the first argument when you use this.  If you use VS2017
+Express, you must use "x86_amd64" instead of "x64" for targeting the x64
+platform.
+
+To build Vim from the command line with MSVC, use Make_mvc.mak.
+
+nmake -f Make_mvc.mak		console   Win32 SDK or Microsoft Visual C++
+nmake -f Make_mvc.mak GUI=yes	GUI	  Microsoft Visual C++
+nmake -f Make_mvc.mak OLE=yes	OLE	  Microsoft Visual C++
+nmake -f Make_mvc.mak PERL=C:\Perl PYTHON=C:\Python etc.
+				Perl, Python, etc.
+
+Make_mvc.mak allows a Vim to be built with various different features and
+debug support.
+
+For compiling gVim with IME support on far-east Windows, add IME=yes
+to the parameters you pass to Make_mvc.mak.
+
+See the specific files for comments and options.
+
+These files have been supplied by George V. Reilly, Ben Singer, Ken Scott and
+Ron Aaron; they have been tested.  But several things changed after that...
+
+
+Targeting Windows XP with MSVC 2015 or 2017        *new-msvc-windows-xp*
+-------------------------------------------
+
+(The support for pre-Vista was removed in patch 9.0.0496.  If you want to
+target Windows XP, use the source code before that.)
+
+Beginning with Visual C++ 2012, Microsoft changed the behavior of LINK.EXE
+so that it targets Windows 6.0 (Vista) by default.  In order to override
+this, the target Windows version number needs to be passed to LINK like
+follows:
+    LINK ... /subsystem:console,5.01
+
+Make_mvc.mak now supports a macro SUBSYSTEM_VER to pass the Windows version.
+Use lines like follows to target Windows XP x86 (assuming using Visual C++
+2012 under 64-bit Windows):
+    set WinSdk71=%ProgramFiles(x86)%\Microsoft SDKs\Windows\v7.1A
+    set INCLUDE=%WinSdk71%\Include;%INCLUDE%
+    set LIB=%WinSdk71%\Lib;%LIB%
+    set CL=/D_USING_V110_SDK71_
+    nmake -f Make_mvc.mak ... WINVER=0x0501 SUBSYSTEM_VER=5.01
+
+To target Windows XP x64 instead of x86, you need to change the settings of
+LIB and SUBSYSTEM_VER:
+    ...
+    set LIB=%WinSdk71%\Lib\x64;%LIB%
+    ...
+    nmake -f Make_mvc.mak ... WINVER=0x0501 SUBSYSTEM_VER=5.02
+
+If you use Visual C++ 2015 (either Express or Community Edition), executing
+msvc2015.bat will set them automatically.  For x86 builds run this without
+options:
+  msvc2015
+For x64 builds run this with the "x86_amd64" option:
+  msvc2015 x86_amd64
+This enables x86_x64 cross compiler. This works on any editions including
+Express edition.
+If you use Community (or Professional) edition, you can enable the x64 native
+compiler by using the "x64" option:
+  msvc2015 x64
+
+The following Visual C++ team blog can serve as a reference page:
+    http://blogs.msdn.com/b/vcblog/archive/2012/10/08/windows-xp-targeting-with-c-in-visual-studio-2012.aspx
+
+
+Cross compile support for Windows on ARM64
+------------------------------------------
+
+This depends on VS2017 with the optional ARM64 compiler and SDK
+installed. Use "vcvarsall.bat x64_arm64" as the build environment.
+
+The ARM64 support was provided by Leendert van Doorn.
+
+
+OLDER VERSIONS
+
+The minimal supported version is Windows 7. Building with compilers older than
+2015 most likely doesn't work.  Since MSVC 2022 can be obtained for free there
+is no point in supporting older versions.
+
+If you need the executable to run on Windows 98 or ME, use the 2005 one
+|msvc-2005-express|, and use the source code before 8.0.0029.  See the
+src/INSTALLpc.txt file for instructions.
+
+
+2. MSYS2 with MinGW
+===================
+
+2.1. Setup the basic msys2 environment
+
+Go to the official page of MSYS2: https://www.msys2.org
+Download an installer:
+
+* msys2-x86_64-YYYYMMDD.exe for 64-bit Windows
+  (Even if you want to build 32-bit Vim)
+* msys2-i686-YYYYMMDD.exe for 32-bit Windows
+
+Execute the installer and follow the instructions to update basic packages.
+At the end keep the checkbox checked to run msys2 now.  If needed, you can
+open the window from the start menu, MSYS2 64 bit / MSYS2 MSYS.
+
+Execute:
+    $ pacman -Syu
+
+And restart MSYS2 console (select "MSYS2 MSYS 32-Bit" icon from the Start
+Menu for building 32 bit Vim, otherwise select "MSYS2 MinGW 64-Bit").
+Then execute:
+    $ pacman -Su
+
+If pacman complains that `catgets` and `libcatgets` conflict with another
+package, select `y` to remove them.
+
+
+2.2. Install additional packages for building Vim
+
+The following package groups are required for building Vim:
+
+* base-devel
+* mingw-w64-i686-toolchain (for building 32-bit Vim)
+* mingw-w64-x86_64-toolchain (for building 64-bit Vim)
+* git (optional, to clone the repository)
+* pactoys (optional for the pacboy command)
+
+(These groups also include some useful packages which are not used by Vim.)
+Use the following command to install them:
+
+    $ pacman -S base-devel mingw-w64-i686-toolchain \
+      mingw-w64-x86_64-toolchain pactoys git
+
+Or you can use the `pacboy` command to avoid long package names:
+
+    $ pacboy -S base-devel: toolchain:m
+
+The suffix ":" means that it disables the package name translation.
+The suffix ":m" means both i686 and x86_64.  You can also use the ":i" suffix
+to install only i686, and the ":x" suffix to install only x86_64.
+(See `pacboy help` for the help.)
+
+See also the pacman page in ArchWiki for the general usage of pacman:
+    https://wiki.archlinux.org/index.php/pacman
+
+MSYS2 has its own git package, and you can also install it via pacman:
+
+    $ pacman -S git
+
+
+2.3. Keep the build environment up-to-date
+
+After you have installed the build environment, you may want to keep it
+up-to-date (E.g. always use the latest GCC).
+In that case, you just need to execute the command:
+    $ pacman -Syu
+
+
+2.4. Build Vim
+
+Select one of the following icon from the Start Menu:
+
+* MSYS2 MinGW 32-bit (To build 32-bit versions of Vim)
+* MSYS2 MinGW 64-bit (To build 64-bit versions of Vim)
+
+Go to the source directory of Vim, then execute the make command.  E.g.:
+
+    make -f Make_ming.mak
+    make -f Make_ming.mak GUI=no
+    make -f Make_ming.mak GUI=no DEBUG=yes
+
+NOTE: you can't execute vim.exe in the MSYS2 console, open a normal Windows
+console for that.  You need to set $PATH to be able to build there, e.g.:
+
+    set PATH=c:\msys64\mingw32\bin;c:\msys64\usr\bin;%PATH%
+
+This command is in msys32.bat.  Or for the 64 bit compiler use msys64.bat:
+
+    set PATH=c:\msys64\mingw64\bin;c:\msys64\usr\bin;%PATH%
+
+If you have msys64 in another location you will need to adjust the paths for
+that.
+
+2.5. Build Vim with Clang
+
+The following package group is required for building Vim with Clang:
+
+* mingw-w64-clang-x86_64-clang
+
+Use the following command to install it:
+
+    $ pacman -S mingw-w64-clang-x86_64-clang
+
+Go to the source directory of Vim, then execute the make command.  E.g.:
+
+    CC=clang
+    CXX=clang++
+    # To build Vim without the GUI support
+    make -f Make_ming.mak GUI=no
+    # To build Vim with the GUI support
+    make -f Make_ming.mak GUI=yes XPM=no
+
+To build Vim with the address sanitizer (ASAN), execute the following command:
+
+    CC=clang
+    CXX=clang++
+    make -f Make_ming.mak DEBUG=yes ASAN=yes
+
+3. MinGW
+========
+
+(written by Ron Aaron: <ronaharon@yahoo.com>, updated by Ken Takata, et al.)
+
+This is about how to produce a Win32 binary of gvim with MinGW from the normal
+Command Prompt window.  (To use MSYS2 console, see above.)
+
+First, you need to get the 'MinGW-w64' compiler, which is free for the
+download at:
+
+    http://mingw-w64.sourceforge.net/
+
+Or a compiler provided on msys2:
+
+    https://www.msys2.org/
+
+The original 'mingw32' compiler is outdated, and may no longer work:
+
+    http://www.mingw.org/
+
+Once you have downloaded the compiler binaries, unpack them on your hard disk
+somewhere, and put them on your PATH.  Go to the Control Panel, (Performance
+and Maintenance), System, Advanced, and edit the environment from there.  If
+you use the standalone MinGW-w64 compiler, the path may depend on your
+installation.  If you use msys2 compilers, set your installed paths (normally
+one of the following):
+
+    C:\msys32\mingw32\bin   (32-bit msys2, targeting 32-bit builds)
+    C:\msys64\mingw32\bin   (64-bit msys2, targeting 32-bit builds)
+    C:\msys64\mingw64\bin   (64-bit msys2, targeting 64-bit builds)
+
+Test if gcc is on your path.  From a Command Prompt window:
+
+    C:\> gcc --version
+    gcc (GCC) 4.8.1
+
+    C:\> mingw32-make --version
+    GNU Make 3.82.90 (...etc...)
+
+Now you are ready to rock 'n' roll.  Unpack the vim sources (look on
+www.vim.org for exactly which version of the vim files you need).
+
+Change directory to 'vim\src':
+
+    C:\> cd vim\src
+    C:\VIM\SRC>
+
+and you type:
+
+    mingw32-make -f Make_ming.mak gvim.exe
+
+After churning for a while, you will end up with 'gvim.exe' in the 'vim\src'
+directory.
+
+You should not need to do *any* editing of any files to get vim compiled this
+way.  If, for some reason, you want the console-mode-only version of vim (this
+is NOT recommended on Win32, especially on '95/'98!!!), you can use:
+
+    mingw32-make -f Make_ming.mak GUI=no vim.exe
+
+If you are dismayed by how big the EXE is, I strongly recommend you get 'UPX'
+(also free!) and compress the file (typical compression is 50%). UPX can be
+found at
+    http://www.upx.org/
+
+As of 2011, UPX still does not support compressing 64-bit EXE's; if you have
+built a 64-bit vim then an alternative to UPX is 'MPRESS'. MPRESS can be found
+at:
+    http://www.matcode.com/mpress.htm
+
+
+ADDITION: NLS support with MinGW
+
+(by Eduardo F. Amatria <eferna1@platea.pntic.mec.es>)
+
+If you want National Language Support, read the file src/po/README_mingw.txt.
+You need to uncomment lines in Make_ming.mak to have NLS defined.
+
+
+4. Cygwin
+=========
+
+Use Make_cyg.mak with Cygwin's GCC. See
+    http://users.skynet.be/antoine.mechelynck/vim/compile.htm
+
+With Cygnus gcc you should use the Unix Makefile instead (you need to get the
+Unix archive then).  Then you get a Cygwin application (feels like Vim is
+running on Unix), while with Make_cyg.mak you get a Windows application (like
+with the other makefiles).
+
+
+5. Cross compiling for Win32 from a Linux machine
+=================================================
+
+[Update of 1) needs to be verified]
+
+If you like, you can compile the 'mingw' Win32 version from the comfort of
+your Linux (or other unix) box.  To do this, you need to follow a few steps:
+    1) Install the mingw32 cross-compiler. See
+	http://www.mingw.org/wiki/LinuxCrossMinGW
+	http://www.libsdl.org/extras/win32/cross/README.txt
+    2) Get and unpack both the Unix sources and the extra archive
+    3) in 'Make_cyg_ming.mak', set 'CROSS' to 'yes' instead of 'no'.
+       Make further changes to 'Make_cyg_ming.mak' and 'Make_ming.mak' as you
+       wish.  If your cross-compiler prefix differs from the predefined value,
+       set 'CROSS_COMPILE' corresponding.
+    4) make -f Make_ming.mak gvim.exe
+
+Now you have created the Windows binary from your Linux box!  Have fun...
+
+
+6. Building with Python support
+===============================
+
+For building with MSVC the "Windows Installer" from www.python.org works fine.
+
+When building, you need to set the following variables at least:
+
+    PYTHON:         Where Python is installed. E.g. C:\Python27
+    DYNAMIC_PYTHON: Whether dynamic linking is used. Usually, set to yes.
+    PYTHON_VER:     Python version. E.g. 27 for Python 2.7.X.
+
+E.g. When using MSVC (as one line):
+
+    nmake -f Make_mvc.mak
+        PYTHON=C:\Python27 DYNAMIC_PYTHON=yes PYTHON_VER=27
+
+When using MinGW and link with the official Python (as one line):
+
+    mingw32-make -f Make_ming.mak
+        PYTHON=C:/Python27 DYNAMIC_PYTHON=yes PYTHON_VER=27
+
+When using msys2 and link with Python2 bundled with msys2 (as one line):
+
+    mingw32-make -f Make_ming.mak PYTHON=c:/msys64/mingw64
+        PYTHON_HOME=c:/msys64/mingw64
+        PYTHONINC=-Ic:/msys64/mingw64/include/python2.7
+        DYNAMIC_PYTHON=yes
+        PYTHON_VER=27
+        DYNAMIC_PYTHON_DLL=libpython2.7.dll
+        STATIC_STDCPLUS=yes
+
+(This is for 64-bit builds.  For 32-bit builds, replace mingw64 with mingw32.)
+(STATIC_STDCPLUS is optional.  Set to yes if you don't want to require
+libstdc++-6.dll.)
+
+
+(rest written by Ron Aaron: <ronaharon@yahoo.com>)
+
+Building with the mingw32 compiler, and the ActiveState ActivePython:
+    http://www.ActiveState.com/Products/ActivePython/
+
+After installing the ActivePython, you will have to create a 'mingw32'
+'libpython20.a' to link with:
+    cd $PYTHON/libs
+    pexports python20.dll > python20.def
+    dlltool -d python20.def -l libpython20.a
+
+Once that is done, edit the 'Make_ming.mak' so the PYTHON variable points to
+the root of the Python installation (C:\Python20, for example).  If you are
+cross-compiling on Linux with the mingw32 setup, you need to also convert all
+the 'Include' files to *unix* line-endings.  This bash command will do it
+easily:
+    for fil in *.h ; do vim -e -c 'set ff=unix|w|q' $fil
+
+Now just do:
+    make -f Make_ming.mak gvim.exe
+
+You will end up with a Python-enabled, Win32 version. Enjoy!
+
+
+7. Building with Python3 support
+================================
+
+For building with MSVC the "Windows Installer" from www.python.org works fine.
+Python 3.6 is recommended.
+
+When building, you need to set the following variables at least:
+
+    PYTHON3:         Where Python3 is installed. E.g. C:\Python36
+    DYNAMIC_PYTHON3: Whether dynamic linking is used. Usually, set to yes.
+    PYTHON3_VER:     Python3 version. E.g. 36 for Python 3.6.X.
+
+E.g. When using MSVC (as one line):
+
+    nmake -f Make_mvc.mak
+        PYTHON3=C:\Python36 DYNAMIC_PYTHON3=yes PYTHON3_VER=36
+
+When using MinGW and link with the official Python3 (as one line):
+
+    mingw32-make -f Make_ming.mak
+        PYTHON3=C:/Python36 DYNAMIC_PYTHON3=yes PYTHON3_VER=36
+
+When using msys2 and link with Python3 bundled with msys2 (as one line):
+
+    mingw32-make -f Make_ming.mak PYTHON3=c:/msys64/mingw64
+        PYTHON3_HOME=c:/msys64/mingw64
+        PYTHON3INC=-Ic:/msys64/mingw64/include/python3.6m
+        DYNAMIC_PYTHON3=yes
+        PYTHON3_VER=36
+        DYNAMIC_PYTHON3_DLL=libpython3.6m.dll
+        STATIC_STDCPLUS=yes
+
+(This is for 64-bit builds.  For 32-bit builds, replace mingw64 with mingw32.)
+(STATIC_STDCPLUS is optional.  Set to yes if you don't want to require
+libstdc++-6.dll.)
+
+
+8. Building with Racket or MzScheme support
+===========================================
+
+1) Building with Racket support (newest)
+
+MzScheme and PLT Scheme names have been rebranded as Racket.  Vim with Racket
+support can be built with either MSVC or MinGW (or Cygwin).
+Get it from https://download.racket-lang.org/
+
+Copy lib/libracket{version}.dll to your Windows system directory. The system
+directory depends on your Windows bitness and Vim bitness:
+  32-bit Vim on 32-bit Windows: C:\Windows\System32
+  32-bit Vim on 64-bit Windows: C:\Windows\SysWOW64
+  64-bit Vim on 64-bit Windows: C:\Windows\System32
+
+For building you need to set the following variables:
+
+    MZSCHEME:          Where Racket is installed.
+                       E.g. C:\Program Files (x86)\Racket
+    DYNAMIC_MZSCHEME:  Whether dynamic linking is used. Usually, set to yes.
+    MZSCHEME_VER:      Racket DLL version which is used for the file name.
+                       See below for a list of MZSCHEME_VER.
+                       The DLL can be found under the lib directory. E.g.
+                       C:\Program Files (x86)\Racket\lib\libracket3m_XXXXXX.dll
+    MZSCHEME_COLLECTS: (Optional) Path of the collects directory used at
+                       runtime. Default: $(MZSCHEME)\collects
+                       User can override this with the PLTCOLLECTS environment
+                       variable.
+
+List of MZSCHEME_VER (incomplete):
+
+    Racket ver. | MZSCHEME_VER
+    ==========================
+    6.3         | 3m_9z0ds0
+    6.6         | 3m_a0solc
+    6.8         | 3m_a1zjsw
+    6.10        | 3m_a36fs8
+
+
+E.g. When using MSVC (as one line):
+
+    nmake -f Make_mvc.mak
+        MZSCHEME="C:\Program Files (x86)\Racket" DYNAMIC_MZSCHEME=yes
+        MZSCHEME_VER=3m_9z0ds0
+
+Or when using MinGW (as one line):
+
+    mingw32-make -f Make_ming.mak
+        MZSCHEME='C:/Program\ Files\ (x86)/Racket' DYNAMIC_MZSCHEME=yes
+        MZSCHEME_VER=3m_9z0ds0
+
+    Spaces should be escaped with '\'.
+
+
+2) Building with MzScheme support (older)
+
+(written by Sergey Khorev <sergey.khorev@gmail.com>)
+
+Vim with MzScheme (http://www.plt-scheme.org/software/mzscheme) support can
+be built with either MSVC, or MinGW, or Cygwin. Supported versions are 205 and
+above (including 299 and 30x series).
+
+The MSVC build is quite straightforward. Simply invoke (in one line)
+nmake -fMake_mvc.mak MZSCHEME=<Path-to-MzScheme>
+    [MZSCHEME_VER=<MzScheme-version>] [DYNAMIC_MZSCHEME=<yes or no>]
+where <MzScheme-version> is the last seven characters from MzScheme dll name
+(libmzschXXXXXXX.dll).
+If DYNAMIC_MZSCHEME=yes, resulting executable will not depend on MzScheme
+DLL's, but will load them in runtime on demand.
+
+Building dynamic MzScheme support on MinGW and Cygwin is similar. Take into
+account that <Path-to-MzScheme> should contain slashes rather than backslashes
+(e.g. d:/Develop/MzScheme)
+
+"Static" MzScheme support (Vim executable will depend on MzScheme DLLs
+explicitly) on MinGW and Cygwin requires additional step.
+
+libmzschXXXXXXX.dll and libmzgcXXXXXXX.dll should be copied from
+%WINDOWS%\System32 to other location (either build directory, some temporary
+dir or even MzScheme home).
+
+Pass that path as MZSCHEME_DLLS parameter for Make. E.g.,
+make -f Make_cyg.mak MZSCHEME=d:/Develop/MzScheme MZSCHEME_VER=209_000
+    MZSCHEME_DLLS=c:/Temp DYNAMIC_MZSCHEME=no
+
+After a successful build, these dlls can be freely removed, leaving them in
+%WINDOWS%\System32 only.
+
+
+
+9. Building with Lua support
+============================
+
+Vim with Lua support can be built with either MSVC or MinGW (or maybe Cygwin).
+You can use binaries from LuaBinaries: http://luabinaries.sourceforge.net/
+This also applies to when you get a Vim executable and don't build yourself,
+do the part up to "Build".
+
+1) Download and install LuaBinaries
+
+Go to the Download page of LuaBinaries:
+  http://luabinaries.sourceforge.net/download.html
+
+Download lua-X.Y.Z_Win32_dllw4_lib.zip for x86 or
+lua-X.Y.Z_Win64_dllw4_lib.zip for x64.  You can use them both for MSVC and
+MinGW.
+
+Unpack it to a working directory. E.g. C:\projects\lua53.
+Lua's header files will be installed under the include directory.
+
+Copy luaXY.dll to your Windows system directory. The system directory depends
+on your Windows bitness and Vim bitness:
+  32-bit Vim on 32-bit Windows: C:\Windows\System32
+  32-bit Vim on 64-bit Windows: C:\Windows\SysWOW64
+  64-bit Vim on 64-bit Windows: C:\Windows\System32
+
+Or another option is copying luaXY.dll to the directory where gvim.exe
+(or vim.exe) is.
+
+
+2) Build
+
+You need to set LUA, DYNAMIC_LUA and LUA_VER.
+
+  LUA: Where Lua's header files are installed. E.g. C:\projects\lua53.
+  DYNAMIC_LUA: Whether dynamic linking is used. Set to yes.
+  LUA_VER: Lua version. E.g. 53 for Lua 5.3.X.
+
+E.g. When using MSVC (as one line):
+
+    nmake -f Make_mvc.mak
+        LUA=C:\projects\lua53 DYNAMIC_LUA=yes LUA_VER=53
+
+Or when using MinGW (as one line):
+
+    mingw32-make -f Make_ming.mak
+        LUA=C:/projects/lua53 DYNAMIC_LUA=yes LUA_VER=53
+
+
+Or when using Cygwin (as one line) (untested):
+
+    make -f Make_cyg.mak
+        LUA=/cygdrive/c/projects/lua53 DYNAMIC_LUA=yes LUA_VER=53
+
+
+10. Building with Perl support
+==============================
+
+Vim with Perl support can be built with either MSVC or MinGW (or Cygwin).
+You can use binaries from ActiveState (ActivePerl) or Strawberry Perl.
+
+    http://www.activestate.com/activeperl
+    http://strawberryperl.com/
+
+When building, you need to set the following variables:
+
+    PERL:         Where perl is installed. E.g. C:\Perl, C:\Strawberry\perl
+    DYNAMIC_PERL: Whether dynamic linking is used. Usually, set to yes.
+    PERL_VER:     Perl version. E.g. 522 for Perl 5.22.X.
+
+E.g. When using MSVC (as one line):
+
+    nmake -f Make_mvc.mak
+        PERL=C:\Perl DYNAMIC_PERL=yes PERL_VER=522
+
+Or when using MinGW (as one line):
+
+    mingw32-make -f Make_ming.mak
+        PERL=C:/Perl DYNAMIC_PERL=yes PERL_VER=522
+
+
+11. Building with Ruby support
+==============================
+
+Vim with Ruby support can be built with either MSVC or MinGW (or Cygwin).
+Ruby doesn't provide the official Windows binaries.  The most widely used
+Windows binaries might be RubyInstaller.  Currently Ruby 2.4 is recommended.
+
+    http://rubyinstaller.org/
+
+If you use MinGW you can easily build with RubyInstaller, but if you use MSVC
+you need some tricks described below.
+(Another binary distribution is ActiveScriptRuby:
+    http://www.artonx.org/data/asr/)
+
+When building, you need to set the following variables at least:
+
+    RUBY:              Where ruby is installed. E.g. C:\Ruby24
+    DYNAMIC_RUBY:      Whether dynamic linking is used. Usually, set to yes.
+    RUBY_VER:          Ruby version. E.g. 24 for Ruby 2.4.X.
+    RUBY_API_VER_LONG: Ruby API version in a long format.
+                       E.g. 2.4.0 for Ruby 2.4.X.
+
+Ruby version vs. Ruby API version:
+
+    Ruby ver. | Ruby API ver.
+    =========================
+    1.9.[1-3] | 1.9.1
+    2.0.0     | 2.0.0
+    2.X.Y     | 2.X.0
+
+(Ruby 1.9.0 is excluded from the table because it is an unstable version.)
+
+
+A) Using MSVC
+
+If you want to link with ruby, normally you must use the same compiler as
+which was used to build the ruby binary.  RubyInstaller is built with MinGW,
+so normally you cannot use MSVC for building Vim if you want to link with
+RubyInstaller.  If you use a different compiler, there are mainly two problems:
+config.h and Ruby's DLL name. Here are the steps for working around them:
+
+  1) Download and Install RubyInstaller.
+    You can install RubyInstaller with the default options and directory.
+    E.g.:
+      C:\Ruby24 (32-bit) or C:\Ruby24-x64 (64-bit)
+
+    Ruby 2.4.X is used in this example.
+
+  2) Download Ruby 2.4.X's source code and generate config.h:
+
+      cd C:\projects
+      git clone https://github.com/ruby/ruby.git -b ruby_2_4
+      cd ruby
+      win32\configure.bat
+      nmake .config.h.time
+
+    Note that ruby_2_4 is the branch name for Ruby 2.4.X's source code.
+    There is no need to build whole Ruby, just config.h is needed.
+    If you use 32-bit MSVC 2015, the config.h is generated in the
+    .ext\include\i386-mswin32_140 directory.
+    If you use 64-bit MSVC 2015, the config.h is generated in the
+    .ext\include\x64-mswin64_140 directory.
+
+  3) Install the generated config.h.
+
+    For 32-bit version:
+
+      xcopy /s .ext\include C:\Ruby24\include\ruby-2.4.0
+
+    For 64-bit version:
+
+      xcopy /s .ext\include C:\Ruby24-x64\include\ruby-2.4.0
+
+    Note that 2.4.0 is Ruby API version of Ruby 2.4.X.
+    You may need to close the console and reopen it to pick up the new $PATH.
+
+  4) Build Vim. Note that you need to adjust some variables (as one line):
+
+    For 32-bit version:
+
+      nmake -f Make_mvc.mak
+          RUBY=C:\Ruby24 DYNAMIC_RUBY=yes RUBY_VER=24 RUBY_API_VER_LONG=2.4.0
+          RUBY_MSVCRT_NAME=msvcrt
+          WINVER=0x601
+
+    For 64-bit version, replace RUBY=C:\Ruby24 with RUBY=C:\Ruby24-x64.
+
+    If you set WINVER explicitly, it must be set to >=0x500, when building
+    with Ruby 2.1 or later.  (Default is 0x601.)
+    When using this trick, you also need to set RUBY_MSVCRT_NAME to msvcrt
+    which is used for the Ruby's DLL name.
+
+B) Using MinGW
+
+Using MinGW is easier than using MSVC when linking with RubyInstaller.
+After you install RubyInstaller, just type this (as one line):
+
+    mingw32-make -f Make_ming.mak
+        RUBY=C:/Ruby24 DYNAMIC_RUBY=yes RUBY_VER=24 RUBY_API_VER_LONG=2.4.0
+        WINVER=0x601
+
+For 64-bit version, replace RUBY=C:/Ruby24 with RUBY=C:/Ruby24-x64.
+If you set WINVER explicitly, it must be set to >=0x500, when building with
+Ruby 2.1 or later.  (Default is 0x601.)
+
+
+
+12. Building with Tcl support
+=============================
+
+Vim with Tcl support can be built with either MSVC or MinGW (or Cygwin).
+You can use binaries from ActiveState (ActiveTcl).
+
+    http://www.activestate.com/activetcl
+
+Alternatively, you can use the binaries provided by IronTcl from
+
+    https://www.irontcl.com/
+
+They might lack behind the latest version a bit, but should provide 64bit
+and 32bit versions even if ActiveTcl does not provide them anymore.
+
+For building with MSVC 2015 use version 8.6.6 or later.
+When building, you need to set the following variables:
+
+    TCL:          Where tcl is installed. E.g. C:\Tcl86
+    DYNAMIC_TCL:  Whether dynamic linking is used. Usually, set to yes.
+    TCL_VER:      Tcl version in a short format. E.g. 86 for Tcl 8.6.X.
+    TCL_VER_LONG: Tcl version in a long format. E.g. 8.6 for Tcl 8.6.X.
+
+Sometimes the Tcl dll name changes.  E.g. ActiveTcl 8.6.4 comes with tcl86.dll,
+but ActiveTcl 8.6.6 comes with tcl86t.dll.  You can set the dll name by setting
+the TCL_DLL variable:
+    TCL_DLL=tcl86t.dll
+
+E.g. When using MSVC (as one line):
+
+    nmake -f Make_mvc.mak
+        TCL=C:\Tcl86 DYNAMIC_TCL=yes TCL_VER=86 TCL_VER_LONG=8.6
+
+Or when using MinGW (as one line):
+
+    mingw32-make -f Make_ming.mak
+        TCL=C:/Tcl86 DYNAMIC_TCL=yes TCL_VER=86 TCL_VER_LONG=8.6
+
+
+13. Building with DirectX (DirectWrite) support
+===============================================
+
+Vim with DirectX (DirectWrite) support can be built with either MSVC or MinGW.
+This requires dwrite_2.h and some other header files which come with Windows
+SDK 8.1 or later (or MinGW-w64), if you want to enable color emoji support.
+This also requires MBYTE=yes which is enabled by default.
+
+A) Using MSVC
+
+If you use MSVC 2013 or later, Windows SDK 8.1 or later is used by default.
+You just need to specify DIRECTX=yes:
+
+    nmake -f Make_mvc.mak DIRECTX=yes
+
+If you use MSVC 2012 or earlier, the required header files are not available
+by default.  However, you can use the header files from newer SDKs with older
+compilers.  E.g.:
+
+    set "INCLUDE=%INCLUDE%;C:\Program Files (x86)\Windows Kits\8.1\Include\um"
+    nmake -f Make_mvc.mak DIRECTX=yes
+
+If you don't need color emoji support, only dwrite.h is required.  You can use
+older compilers (e.g. VC2010) without Windows SDK 8.1.  E.g.:
+
+    nmake -f Make_mvc.mak DIRECTX=yes COLOR_EMOJI=no
+
+B) Using MinGW-w64
+
+Just set DIRECTX to yes:
+
+    mingw32-make -f Make_ming.mak DIRECTX=yes
+
+
+14. Building with libsodium support
+===================================
+
+For better encryption support, you can build Vim with libsodium.
+
+A) Using MSVC
+
+You can download the latest libsodium library from here:
+	https://download.libsodium.org/libsodium/releases/
+
+At this moment, libsodium-1.0.18-stable-msvc.zip is the latest package.
+Unpack it to anywhere you like, and specify the path to the SODIUM option:
+
+    nmake -f Make_mvc.mak SODIUM=C:/path/to/libsodium
+    (libsodium.dll will be used as the libsodium DLL name.)
+
+B) Using MinGW
+
+If you use msys2, you can install the libsodium package by pacman (or pacboy):
+
+    $ pacman -S mingw-w64-x86_64-libsodium	# for 64-bit Vim
+    $ pacman -S mingw-w64-i686-libsodium	# for 32-bit Vim
+    $ pacboy -S libsodium:m		# for both 32-bit and 64-bit Vim
+
+Then set SODIUM to yes:
+
+    mingw32-make -f Make_ming.mak SODIUM=yes
+    (libsodium-23.dll will be used as the libsodium DLL name.)
+
+Or you can set the path to libsodium explicitly:
+
+    mingw32-make -f Make_ming.mak SODIUM=C:/path/to/libsodium
+    (libsodium.dll will be used as the libsodium DLL name.)
+
+
+15. Windows 3.1x
+================
+
+The Windows 3.1x support was removed in patch 7.4.1364.
+
+
+16. MS-DOS
+==========
+
+The MS-DOS support was removed in patch 7.4.1399.  Only very old Vim versions
+work on MS-DOS because of the limited amount of memory available.
+
+
+17. Installing after building from sources
+==========================================
+
+[provided by Michael Soyka, updated by Ken Takata]
+
+After you've built the Vim binaries as described above, you're ready to
+install Vim on your system.  However, if you've obtained the Vim sources
+using Git, Mercurial or by downloading them as a unix tar file, you must
+first create a "vim90" directory.  If you instead downloaded the sources as
+zip files, you can skip this setup as the zip archives already have the
+correct directory structure.
+
+  A.  Create a Vim "runtime" subdirectory named "vim90"
+  -----------------------------------------------------
+  If you obtained your Vim sources as zip files, you can skip this step.
+  Otherwise, continue reading.
+
+  Go to the directory that contains the Vim "src" and "runtime"
+  directories and create a new subdirectory named "vim90".
+
+  Copy the "runtime" files into "vim90":
+     copy runtime\* vim90
+     xcopy /s runtime\* vim90
+
+  B.  Copy the new binaries into the "vim90" directory
+  ----------------------------------------------------
+  Regardless of how you installed the Vim sources, you need to copy the
+  new binaries you created above into "vim90":
+
+     copy src\*.exe vim90
+     copy src\tee\tee.exe vim90
+     copy src\xxd\xxd.exe vim90
+
+  To install the "Edit with Vim" popup menu, you need both 32-bit and 64-bit
+  versions of gvimext.dll.  They should be copied to "vim90\GvimExt32" and
+  "vim90\GvimExt64" respectively.
+  First, build the 32-bit version, then:
+
+     mkdir vim90\GvimExt32
+     copy src\GvimExt\gvimext.dll vim90\GvimExt32
+
+  Next, clean the 32-bit version and build the 64-bit version, then:
+
+     mkdir vim90\GvimExt64
+     copy src\GvimExt\gvimext.dll vim90\GvimExt64
+
+  C.  Copy gettext and iconv DLLs into the "vim90" directory
+  ----------------------------------------------------------
+  Get gettext and iconv DLLs from the following site:
+     https://github.com/mlocati/gettext-iconv-windows/releases
+  Both 64- and 32-bit versions are needed.
+  Download the files gettextX.X.X.X-iconvX.XX-shared-{32,64}.zip, extract
+  DLLs and place them as follows:
+
+        vim90\
+            |   libintl-8.dll
+            |   libiconv-2.dll
+            |   libgcc_s_sjlj-1.dll     (only for 32-bit)
+            |
+            + GvimExt32\
+            |   libintl-8.dll
+            |   libiconv-2.dll
+            |   libgcc_s_sjlj-1.dll
+            |
+            ` GvimExt64\
+                libintl-8.dll
+                libiconv-2.dll
+
+  The DLLs in the "vim90" should be the same bitness with the (g)vim.exe.
+
+  D.  Move the "vim90" directory into the Vim installation subdirectory
+  ---------------------------------------------------------------------
+  Move the "vim90" subdirectory into the subdirectory where you want Vim
+  to be installed.  Typically, this subdirectory will be named "vim".
+  If you already have a "vim90" subdirectory in "vim", delete it first
+  by running its uninstall.exe program.
+
+  E.  Install Vim
+  ---------------
+  "cd" to your Vim installation subdirectory "vim\vim90" and run the
+  "install.exe" program.  It will ask you a number of questions about
+  how you would like to have your Vim setup.  Among these are:
+  - You can tell it to write a "_vimrc" file with your preferences in the
+    parent directory.
+  - It can also install an "Edit with Vim" entry in the Windows Explorer
+    popup menu.
+  - You can have it create batch files, so that you can run Vim from the
+    console or in a shell.  You can select one of the directories in your
+    PATH or add the directory to PATH using the Windows Control Panel.
+  - Create entries for Vim on the desktop and in the Start menu.
+
+Happy Vimming!

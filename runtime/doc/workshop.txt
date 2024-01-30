@@ -1,0 +1,14 @@
+*workshop.txt*  For Vim version 9.1.  Last change: 2019 Jan 17
+
+
+		  VIM REFERENCE MANUAL    by Gordon Prieur
+
+
+Sun Visual WorkShop Features			*workshop* *workshop-support*
+
+The support for WorkShop was removed in patch 8.1.0763 in January 2019.
+The product has not been available for a long time and has been replaced by
+|NetBeans|.
+
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

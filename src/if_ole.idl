@@ -1,0 +1,45 @@
+// if_ole.idl - IDL source for the Vim OLE Automation interface
+//
+// Processed by the IDL compiler (MIDL) to generate the type library
+// (Vim.tlb).
+//
+// Command line:
+//   MIDL /proxy nul /iid iid_ole.c /h if_ole.h /tlb vim.tlb if_ole.idl
+
+[
+	object,
+	uuid(0F0BFAE2-4C90-11d1-82D7-0004AC368519),  // IID_IVim
+	helpstring("IVim"),
+	pointer_default(unique),
+	dual,
+	oleautomation
+]
+interface IVim : IDispatch
+{
+	import "oaidl.idl";
+	HRESULT SendKeys([in]BSTR keys);
+	HRESULT Eval([in]BSTR expr, [out, retval]BSTR* result);
+	HRESULT SetForeground(void);
+	HRESULT GetHwnd([out, retval]UINT_PTR* result);
+};
+
+// Component and type library definitions
+[
+	uuid(0F0BFAE0-4C90-11d1-82D7-0004AC368519),		// LIBID_Vim
+	helpstring("Vim OLE Interface 1.1 Type Library"),
+	version(1.1)
+]
+library Vim
+{
+	importlib("stdole32.tlb");
+
+	// Component
+	[
+		uuid(0F0BFAE1-4C90-11d1-82D7-0004AC368519),  // CLSID_Vim
+		helpstring("Vim OLE Interface")
+	]
+	coclass Vim
+	{
+		[default] interface IVim;
+	};
+};

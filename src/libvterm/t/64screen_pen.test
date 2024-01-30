@@ -1,0 +1,71 @@
+INIT
+WANTSCREEN
+
+RESET
+
+!Plain
+PUSH "A"
+  ?screen_cell 0,0 = {0x41} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Bold
+PUSH "\e[1mB"
+  ?screen_cell 0,1 = {0x42} width=1 attrs={B} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Italic
+PUSH "\e[3mC"
+  ?screen_cell 0,2 = {0x43} width=1 attrs={BI} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Underline
+PUSH "\e[4mD"
+  ?screen_cell 0,3 = {0x44} width=1 attrs={BU1I} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Reset
+PUSH "\e[mE"
+  ?screen_cell 0,4 = {0x45} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Font
+PUSH "\e[11mF\e[m"
+  ?screen_cell 0,5 = {0x46} width=1 attrs={F1} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Foreground
+PUSH "\e[31mG\e[m"
+  ?screen_cell 0,6 = {0x47} width=1 attrs={} fg=idx(1) bg=rgb(0,0,0)
+
+!Background
+PUSH "\e[42mH\e[m"
+  ?screen_cell 0,7 = {0x48} width=1 attrs={} fg=rgb(240,240,240) bg=idx(2)
+
+!Super/subscript
+PUSH "x\e[74m0\e[73m2\e[m"
+  ?screen_cell 0,8  = {0x78} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,9  = {0x30} width=1 attrs={S_} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,10 = {0x32} width=1 attrs={S^} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!EL sets only colours to end of line, not other attrs
+PUSH "\e[H\e[7;33;44m\e[K"
+  ?screen_cell 0,0  = {} width=1 attrs={} fg=idx(3) bg=idx(4)
+  ?screen_cell 0,79 = {} width=1 attrs={} fg=idx(3) bg=idx(4)
+
+!DECSCNM xors reverse for entire screen
+PUSH "R\e[?5h"
+  ?screen_cell 0,0  = {0x52} width=1 attrs={} fg=idx(3) bg=idx(4)
+  ?screen_cell 1,0  = {} width=1 attrs={R} fg=rgb(240,240,240) bg=rgb(0,0,0)
+PUSH "\e[?5\$p"
+  output "\e[?5;1\$y"
+PUSH "\e[?5l"
+  ?screen_cell 0,0  = {0x52} width=1 attrs={R} fg=idx(3) bg=idx(4)
+  ?screen_cell 1,0  = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+PUSH "\e[?5\$p"
+  output "\e[?5;2\$y"
+
+!Set default colours
+RESET
+PUSH "ABC\e[31mDEF\e[m"
+  ?screen_cell 0,0  = {0x41} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,3  = {0x44} width=1 attrs={} fg=idx(1) bg=rgb(0,0,0)
+SETDEFAULTCOL rgb(252,253,254)
+  ?screen_cell 0,0  = {0x41} width=1 attrs={} fg=rgb(252,253,254) bg=rgb(0,0,0)
+  ?screen_cell 0,3  = {0x44} width=1 attrs={} fg=idx(1) bg=rgb(0,0,0)
+SETDEFAULTCOL rgb(250,250,250) rgb(10,20,30)
+  ?screen_cell 0,0  = {0x41} width=1 attrs={} fg=rgb(250,250,250) bg=rgb(10,20,30)
+  ?screen_cell 0,3  = {0x44} width=1 attrs={} fg=idx(1) bg=rgb(10,20,30)

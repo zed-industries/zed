@@ -1,0 +1,28 @@
+/* XPM */
+static char * tb_redo_xpm[] = {
+/* width height ncolors cpp [x_hot y_hot] */
+"18 18 4 1 0 0",
+/* colors */
+" 	s none	m none	c none",
+".	s iconColor1	m black	c #000000",
+"X	s iconColor2	m none	c #FFFFFF",
+"o	s bottomShadowColor	m black	c #5D6069",
+/* pixels */
+"                  ",
+"                  ",
+"      .....  ..   ",
+"    ..XXXXX..X.o  ",
+"   .XXXXXXXXXX.o  ",
+"   .XX....XXXX.o  ",
+"  .XX.ooo.XXXX.o  ",
+"  .XX.o .XXXXX.o  ",
+"  .XX.o .......o  ",
+"  .XX.o  ooo.ooo  ",
+"  .XX.o    .X.    ",
+"   .XX.....XX.o   ",
+"   .XXXXXXXX.oo   ",
+"    ..XXXXX.oo    ",
+"      .....oo     ",
+"       ooooo      ",
+"                  ",
+"                  "};

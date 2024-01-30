@@ -1,0 +1,8 @@
+libdir=@LIBDIR@
+includedir=@INCDIR@
+
+Name: vterm
+Description: Abstract VT220/Xterm/ECMA-48 emulation library
+Version: @VERSION@
+Libs: -L${libdir} -lvterm
+Cflags: -I${includedir}

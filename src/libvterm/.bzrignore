@@ -1,0 +1,13 @@
+.libs
+*.lo
+*.la
+
+bin/*
+!bin/*.c
+
+pangoterm
+t/test
+t/suites.h
+t/externs.h
+t/harness
+src/encoding/*.inc

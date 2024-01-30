@@ -1,0 +1,34 @@
+*** ro_RO.orig.aff	2014-08-29 16:29:21.162457824 +0200
+--- ro_RO.aff	2014-09-19 15:29:52.354413307 +0200
+***************
+*** 3,5 ****
+  TRY iaăâșțîertolncusmpdbgfzvhjxkwyqACDM
+! KEY qwertyuiop|asdfghjkl|zxcvbnm
+  
+--- 3,9 ----
+  TRY iaăâșțîertolncusmpdbgfzvhjxkwyqACDM
+! # KEY qwertyuiop|asdfghjkl|zxcvbnm
+! 
+! # ignore extra field (specifies type of word?)
+! IGNOREEXTRA
+! 
+  
+***************
+*** 1546,1553 ****
+  SFX q   0     ilor    .      adj. m. pl. dat.
+! SFX q   0    ă
+! SFX q   0    a
+! SFX q   0    ei
+! SFX q   0    e
+! SFX q   0    ele
+! SFX q   0    elor
+  PFX q Y 1
+--- 1550,1557 ----
+  SFX q   0     ilor    .      adj. m. pl. dat.
+! SFX q   0    ă        .
+! SFX q   0    a        .
+! SFX q   0    ei       .
+! SFX q   0    e        .
+! SFX q   0    ele      .
+! SFX q   0    elor     .
+  PFX q Y 1

@@ -1,0 +1,156 @@
+INIT
+UTF8 1
+WANTSTATE s
+
+!Linefeed
+PUSH "\n"x24
+  ?cursor = 24,0
+PUSH "\n"
+  scrollrect 0..25,0..80 => +1,+0
+  ?cursor = 24,0
+
+RESET
+
+!Index
+PUSH "\e[25H"
+PUSH "\eD"
+  scrollrect 0..25,0..80 => +1,+0
+
+RESET
+
+!Reverse Index
+PUSH "\eM"
+  scrollrect 0..25,0..80 => -1,+0
+
+RESET
+
+!Linefeed in DECSTBM
+PUSH "\e[1;10r"
+  ?cursor = 0,0
+PUSH "\n"x9
+  ?cursor = 9,0
+PUSH "\n"
+  scrollrect 0..10,0..80 => +1,+0
+  ?cursor = 9,0
+
+!Linefeed outside DECSTBM
+PUSH "\e[20H"
+  ?cursor = 19,0
+PUSH "\n"
+  ?cursor = 20,0
+
+!Index in DECSTBM
+PUSH "\e[9;10r"
+PUSH "\e[10H"
+PUSH "\eM"
+  ?cursor = 8,0
+PUSH "\eM"
+  scrollrect 8..10,0..80 => -1,+0
+
+!Reverse Index in DECSTBM
+PUSH "\e[25H"
+  ?cursor = 24,0
+PUSH "\n"
+  # no scrollrect
+  ?cursor = 24,0
+
+!Linefeed in DECSTBM+DECSLRM
+PUSH "\e[?69h"
+PUSH "\e[3;10r\e[10;40s"
+PUSH "\e[10;10H\n"
+  scrollrect 2..10,9..40 => +1,+0
+
+!IND/RI in DECSTBM+DECSLRM
+PUSH "\eD"
+  scrollrect 2..10,9..40 => +1,+0
+PUSH "\e[3;10H\eM"
+  scrollrect 2..10,9..40 => -1,+0
+
+!DECRQSS on DECSTBM
+PUSH "\eP\$qr\e\\"
+  output "\eP1\$r3;10r\e\\"
+
+!DECRQSS on DECSLRM
+PUSH "\eP\$qs\e\\"
+  output "\eP1\$r10;40s\e\\"
+
+!Setting invalid DECSLRM with !DECVSSM is still rejected
+PUSH "\e[?69l\e[;0s\e[?69h"
+
+RESET
+
+!Scroll Down
+PUSH "\e[S"
+  scrollrect 0..25,0..80 => +1,+0
+  ?cursor = 0,0
+PUSH "\e[2S"
+  scrollrect 0..25,0..80 => +2,+0
+  ?cursor = 0,0
+PUSH "\e[100S"
+  scrollrect 0..25,0..80 => +25,+0
+
+!Scroll Up
+PUSH "\e[T"
+  scrollrect 0..25,0..80 => -1,+0
+  ?cursor = 0,0
+PUSH "\e[2T"
+  scrollrect 0..25,0..80 => -2,+0
+  ?cursor = 0,0
+PUSH "\e[100T"
+  scrollrect 0..25,0..80 => -25,+0
+
+!SD/SU in DECSTBM
+PUSH "\e[5;20r"
+PUSH "\e[S"
+  scrollrect 4..20,0..80 => +1,+0
+PUSH "\e[T"
+  scrollrect 4..20,0..80 => -1,+0
+
+RESET
+
+!SD/SU in DECSTBM+DECSLRM
+PUSH "\e[?69h"
+PUSH "\e[3;10r\e[10;40s"
+  ?cursor = 0,0
+PUSH "\e[3;10H"
+  ?cursor = 2,9
+PUSH "\e[S"
+  scrollrect 2..10,9..40 => +1,+0
+PUSH "\e[?69l"
+PUSH "\e[S"
+  scrollrect 2..10,0..80 => +1,+0
+
+!Invalid boundaries
+RESET
+
+PUSH "\e[100;105r\eD"
+PUSH "\e[5;2r\eD"
+
+RESET
+WANTSTATE -s+me
+
+!Scroll Down move+erase emulation
+PUSH "\e[S"
+  moverect 1..25,0..80 -> 0..24,0..80
+  erase 24..25,0..80
+  ?cursor = 0,0
+PUSH "\e[2S"
+  moverect 2..25,0..80 -> 0..23,0..80
+  erase 23..25,0..80
+  ?cursor = 0,0
+
+!Scroll Up move+erase emulation
+PUSH "\e[T"
+  moverect 0..24,0..80 -> 1..25,0..80
+  erase 0..1,0..80
+  ?cursor = 0,0
+PUSH "\e[2T"
+  moverect 0..23,0..80 -> 2..25,0..80
+  erase 0..2,0..80
+  ?cursor = 0,0
+
+!DECSTBM resets cursor position
+PUSH "\e[5;5H"
+  ?cursor = 4,4
+PUSH "\e[r"
+  ?cursor = 0,0

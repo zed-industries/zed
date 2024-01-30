@@ -1,0 +1,77 @@
+Uninstalling Vim on MS-Windows.
+
+There are three ways to remove Vim:
+
+1. With the GUI uninstaller.
+   This is only available when Vim was installed with the self-installing
+   executable.  This has a minimal number of questions.  It can delete
+   everything that was installed.
+
+2. With uninstall.exe.
+   This removes most installed items, but does not delete the files you
+   unpacked.
+
+3. By hand.
+   This is a bit more work, but you can decide exactly what you want to
+   remove.  For uninstalling the "Edit with Vim" popup menu entry you still
+   have to use uninstall.exe.
+
+It's recommended to use the method that matches with how you installed Vim.
+Thus if you installed Vim by hand, delete it by hand.
+
+The first two methods should be available from the Add/Remove software window
+and the Vim entry in the Start menu.  If these have been removed already, find
+"uninstall-gui.exe" or "uninstall.exe" in the Vim directory.
+   Running these programs should be self-explanatory.  Carefully read the
+messages to avoid deleting something you want to keep.
+
+Here are guidelines for removing Vim by hand:
+
+1. Remove the "Edit with Vim" popup menu entry, if it exists.  This is done by
+   running the uninstall.exe program.  It removes the registry entries for the
+   "Edit with Vim" popup menu entry.  You only need to run uninstall.exe when
+   you have installed the menu entry.  You can also run uninstall.exe from the
+   Control panel with the Add/Remove programs application.
+   Note that uninstall.exe offers you the option to uninstall other items.  You
+   can skip this.
+
+2. Only if you have used the OLE version of gvim: Remove the registration of
+   this program by running "gvim -unregister" in a console window.
+
+3. Delete the executables.  If you copied the executables to another location,
+   you will have to delete them from where you copied them to.  If you don't
+   remember where they are, look in the directories from the $PATH environment
+   variable.
+   If you created .bat files when installing Vim, also search for vim.bat,
+   gvim.bat, etc.
+
+4. If you want to completely delete vim, and are not going to install another
+   version, you can delete the vimrc files that you created.  These are
+   normally located in a directory like "C:\vim".  If the $VIM environment
+   variable is set, it will tell the name of the directory.  Normally you can
+   delete everything in this directory.  Warning: You might have put some
+   files there that you would like to save.  If you did remove it all, you can
+   skip the next step.
+
+5. Delete the distributed files.  If you followed the directions, these will
+   be located in a directory like "C:\vim\vim81".  If the $VIM environment
+   variable is set, the directory will be $VIM\vim81.  Delete the "vim81"
+   directory and all that is in it.  Warning: If you changed any of the
+   distributed files, or added some of your own files, you might want to save
+   these first.  But normally you would not have changed or added files here.
+
+6. Remove setting the $VIM and $VIMRUNTIME environment variable and adjust
+   $PATH.  $VIM only needs to be removed if you are not going to install
+   another version of Vim.  $VIMRUNTIME is mostly not set.  Check if $PATH
+   contains the path of the vim directory.  Note that $PATH may be set in
+   several places, you will have to find the right one, and only delete the
+   Vim path from it.  You might need to use the "System Properties" editor to
+   change the environment variables.  You can start it by selecting
+   Start/Settings/Control Panel and then "System".
+
+7. If you added a Vim entry in the start menu, delete it.
+
+8. If you created icons for Vim on the desktop, delete them.
+
+Vim does not use .ini files.  The above should remove all Vim files, except
+the ones that you moved elsewhere yourself.

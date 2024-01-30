@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+    <gresource prefix="/org/vim/gui/icon">
+        <file>stock_vim_build_tags.png</file>
+        <file>stock_vim_find_help.png</file>
+        <file>stock_vim_save_all.png</file>
+        <file>stock_vim_session_load.png</file>
+        <file>stock_vim_session_new.png</file>
+        <file>stock_vim_session_save.png</file>
+        <file>stock_vim_shell.png</file>
+        <file>stock_vim_window_maximize.png</file>
+        <file>stock_vim_window_maximize_width.png</file>
+        <file>stock_vim_window_minimize.png</file>
+        <file>stock_vim_window_minimize_width.png</file>
+        <file>stock_vim_window_split.png</file>
+        <file>stock_vim_window_split_vertical.png</file>
+    </gresource>
+</gresources>

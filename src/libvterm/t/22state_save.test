@@ -1,0 +1,64 @@
+INIT
+WANTSTATE p
+
+RESET
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+
+!Set up state
+PUSH "\e[2;2H"
+  ?cursor = 1,1
+PUSH "\e[1m"
+  ?pen bold = on
+
+!Save
+PUSH "\e[?1048h"
+
+!Change state
+PUSH "\e[5;5H"
+  ?cursor = 4,4
+PUSH "\e[4 q"
+  settermprop 2 false
+  settermprop 7 2
+PUSH "\e[22;4m"
+  ?pen bold = off
+  ?pen underline = 1
+
+!Restore
+PUSH "\e[?1048l"
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+  ?cursor = 1,1
+  ?pen bold = on
+  ?pen underline = 0
+
+!Save/restore using DECSC/DECRC
+PUSH "\e[2;2H\e7"
+  ?cursor = 1,1
+
+PUSH "\e[5;5H"
+  ?cursor = 4,4
+PUSH "\e8"
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+  ?cursor = 1,1
+
+!Save twice, restore twice happens on both edge transitions
+PUSH "\e[2;10H\e[?1048h\e[6;10H\e[?1048h"
+PUSH "\e[H"
+  ?cursor = 0,0
+PUSH "\e[?1048l"
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+  ?cursor = 5,9
+PUSH "\e[H"
+  ?cursor = 0,0
+PUSH "\e[?1048l"
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+  ?cursor = 5,9

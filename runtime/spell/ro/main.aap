@@ -1,0 +1,101 @@
+# Aap recipe for Romanian Vim spell files.
+
+# Use a freshly compiled Vim if it exists.
+@if os.path.exists('../../../src/vim'):
+    VIM = ../../../src/vim
+@else:
+    :progsearch VIM vim
+
+SPELLDIR = ..
+FILES    = ro_RO.aff ro_RO.dic
+
+all: $SPELLDIR/ro.utf-8.spl \
+        $SPELLDIR/ro.iso-8859-2.spl \
+        $SPELLDIR/ro.cp1250.spl \
+        ../README_ro.txt
+
+$SPELLDIR/ro.utf-8.spl : $FILES
+        :sys env LANG=ro_RO.utf8 $VIM -u NONE -e -c "mkspell! $SPELLDIR/ro ro_RO" -c q
+
+# Note: this generates conversion errors, because not all characters can be
+# represented in iso-8859-2.
+$SPELLDIR/ro.iso-8859-2.spl : $FILES
+        :sys env LANG=ro_RO.iso88592 $VIM -u NONE -e -c "mkspell! $SPELLDIR/ro ro_RO" -c q
+
+# Note: this generates conversion errors, because not all characters can be
+# represented in cp1250.
+$SPELLDIR/ro.cp1250.spl : $FILES
+        :sys $VIM -u NONE -e -c "set enc=cp1250" -c "mkspell! $SPELLDIR/ro ro_RO" -c q
+
+../README_ro.txt: README
+        :copy $source $target
+
+#
+# Fetching the files from OpenOffice.org.
+#
+#OODIR = http://ftp.services.openoffice.org/pub/OpenOffice.org/contrib/dictionaries
+OODIR = http://sourceforge.net/projects/rospell/files/Romanian%20dictionaries/dict-3.3.10
+ZIPFILE = ro_RO.3.3.10.zip
+:attr {fetch = $OODIR/%file%} $ZIPFILE
+
+# The files don't depend on the .zip file so that we can delete it.
+# Only download the zip file if the targets don't exist.
+# This is a bit tricky, since the file name includes the date.
+ro_RO.aff ro_RO.dic: {buildcheck=}
+        :assertpkg unzip patch
+        :fetch $ZIPFILE
+        :sys $UNZIP $ZIPFILE
+        :delete $ZIPFILE
+        @if not os.path.exists('ro_RO.orig.aff'):
+            :copy ro_RO.aff ro_RO.orig.aff
+        @if not os.path.exists('ro_RO.orig.dic'):
+            :copy ro_RO.dic ro_RO.orig.dic
+        @if os.path.exists('ro_RO.diff'):
+            :sys patch <ro_RO.diff
+
+
+# Generate diff files, so that others can get the OpenOffice files and apply
+# the diffs to get the Vim versions.
+
+diff:
+        :assertpkg diff
+        :sys {force} diff -a -C 1 ro_RO.orig.aff ro_RO.aff >ro_RO.diff
+        :sys {force} diff -a -C 1 ro_RO.orig.dic ro_RO.dic >>ro_RO.diff
+
+
+# Check for updated spell files.  When there are changes the
+# ".new.aff" and ".new.dic" files are left behind for manual inspection.
+
+check:
+        :assertpkg unzip diff
+        :fetch $ZIPFILE
+        :mkdir tmp
+        :cd tmp
+        @try:
+            @import stat
+            :sys $UNZIP ../$ZIPFILE
+            :sys {force} diff ../ro_RO.orig.aff ro_RO.aff >d
+            @if os.stat('d')[stat.ST_SIZE] > 0:
+                :copy ro_RO.aff ../ro_RO.new.aff
+            :sys {force} diff ../ro_RO.orig.dic ro_RO.dic >d
+            @if os.stat('d')[stat.ST_SIZE] > 0:
+                :copy ro_RO.dic ../ro_RO.new.dic
+        @finally:
+            :cd ..
+            :delete {r}{f}{q} tmp
+            :delete $ZIPFILE
+
+# Remove all the downloaded and generated files.
+clean:
+        :delete ro_RO.aff
+        :delete ro_RO.dic
+        :delete ro_RO.orig.aff
+        :delete ro_RO.orig.dic
+        :delete ro_RO-ante1993.aff
+        :delete ro_RO-ante1993.dic
+        :delete COPYING.GPL
+        :delete COPYING.LGPL
+        :delete COPYING.MPL
+        :delete README
+
+# vim: set sts=4 sw=4 :

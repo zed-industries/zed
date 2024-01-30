@@ -1,0 +1,45 @@
+#include <windows.h>
+#define xstr(x) str(x)
+#define str(x) #x
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,1
+ PRODUCTVERSION 1,0,0,1
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x3L
+#else
+ FILEFLAGS 0x2L
+#endif
+ FILEOS 0x4L
+ FILETYPE VFT_DLL
+ FILESUBTYPE 0x0L
+{
+    BLOCK "StringFileInfo"
+    {
+        BLOCK "040904b0"
+        {
+            VALUE "Comments", "Developed using COM architecture!\0"
+            VALUE "CompanyName", "Tianmiao Hu's Developer Studio\0"
+            VALUE "FileDescription", "A small project for the context menu of gvim!\0"
+            VALUE "FileVersion", "1, 0, 0, 1\0"
+            VALUE "InternalName", "gvim right-click menu extension\0"
+            VALUE "LegalCopyright", "Copyright © 1999 Tianmiao Hu\0"
+            VALUE "LegalTrademarks", "Tianmiao Hu's Gvim Context Menu Extension\0"
+            VALUE "OriginalFilename", "gvimext.dll\0"
+            VALUE "PrivateBuild", "\0"
+            VALUE "ProductName", "Tianmiao Hu's  gvimext context menu extension\0"
+            VALUE "ProductVersion", "1, 0, 0, 1\0"
+
+#if defined(__GNUC__)
+            VALUE "SpecialBuild", "Build With " "MingW " xstr(__GNUC__) "." xstr(__GNUC_MINOR__) "." xstr(__GNUC_PATCHLEVEL__)  " on " __DATE__ " " __TIME__ "\0"
+#else
+            VALUE "SpecialBuild", "Unknown compiler\0"
+
+#endif
+        }
+    }
+    BLOCK "VarFileInfo"
+    {
+        VALUE "Translation", 0x409, 1200
+    }
+}

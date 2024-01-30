@@ -1,0 +1,66 @@
+CODE-MAP
+ - high-level list and description of files in the repository
+
+CONTRIBUTING
+ - documentation explaining how developers can contribute fixes and features
+
+doc/
+ - contains documentation
+
+doc/seqs.txt
+ - documents the sequences recognised by the library
+
+include/vterm.h
+ - main include file
+
+include/vterm_keycodes.h
+ - include file containing the keyboard input keycode enumerations
+
+LICENSE
+ - legalese
+
+Makefile
+ - main build file
+
+src/
+ - contains the source code for the library
+
+src/encoding.c
+ - handles mapping ISO/IEC 2022 alternate character sets into Unicode
+   codepoints
+
+src/keyboard.c
+ - handles sending reported keyboard events to the output stream
+
+src/mouse.c
+ - handles sending reported mouse events to the output stream
+
+src/parser.c
+ - parses bytes from the input stream into parser-level events
+
+src/pen.c
+ - interprets SGR sequences and maintains current rendering attributes
+
+src/screen.c
+ - uses state-level events to maintain a buffer of current screen contents
+
+src/state.c
+ - follows parser-level events to keep track of the overall terminal state
+
+src/unicode.c
+ - utility functions for Unicode and UTF-8 handling
+
+src/vterm.c
+ - toplevel object state and miscellaneous functions
+
+src/vterm_internal.h
+ - include file for definitions private to the library's internals
+
+t/
+ - contains unit tests
+
+t/harness.c
+ - standalone program to embed the library into for unit-test purposes
+
+t/run-test.pl
+ - invokes the test harness to run a single unit test script

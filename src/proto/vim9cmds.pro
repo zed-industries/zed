@@ -1,0 +1,37 @@
+/* vim9cmds.c */
+void free_locals(cctx_T *cctx);
+int check_vim9_unlet(char_u *name);
+char_u *compile_unletlock(char_u *arg, exarg_T *eap, cctx_T *cctx);
+void drop_scope(cctx_T *cctx);
+char_u *compile_if(char_u *arg, cctx_T *cctx);
+char_u *compile_elseif(char_u *arg, cctx_T *cctx);
+char_u *compile_else(char_u *arg, cctx_T *cctx);
+char_u *compile_endif(char_u *arg, cctx_T *cctx);
+char_u *compile_for(char_u *arg_start, cctx_T *cctx);
+char_u *compile_endfor(char_u *arg, cctx_T *cctx);
+char_u *compile_while(char_u *arg, cctx_T *cctx);
+char_u *compile_endwhile(char_u *arg, cctx_T *cctx);
+int get_loop_var_info(cctx_T *cctx, loopvarinfo_T *lvi);
+void get_loop_var_idx(cctx_T *cctx, int idx, lvar_T *lvar);
+char_u *compile_continue(char_u *arg, cctx_T *cctx);
+char_u *compile_break(char_u *arg, cctx_T *cctx);
+char_u *compile_block(char_u *arg, cctx_T *cctx);
+void compile_endblock(cctx_T *cctx);
+char_u *compile_try(char_u *arg, cctx_T *cctx);
+char_u *compile_catch(char_u *arg, cctx_T *cctx);
+char_u *compile_finally(char_u *arg, cctx_T *cctx);
+char_u *compile_endtry(char_u *arg, cctx_T *cctx);
+char_u *compile_throw(char_u *arg, cctx_T *cctx);
+char_u *compile_eval(char_u *arg, cctx_T *cctx);
+int get_defer_var_idx(cctx_T *cctx);
+char_u *compile_defer(char_u *arg_start, cctx_T *cctx);
+char_u *compile_mult_expr(char_u *arg, int cmdidx, long cmd_count, cctx_T *cctx);
+char_u *compile_put(char_u *arg, exarg_T *eap, cctx_T *cctx);
+char_u *compile_exec(char_u *line_arg, exarg_T *eap, cctx_T *cctx);
+char_u *compile_script(char_u *line, cctx_T *cctx);
+char_u *compile_substitute(char_u *arg, exarg_T *eap, cctx_T *cctx);
+char_u *compile_redir(char_u *line, exarg_T *eap, cctx_T *cctx);
+char_u *compile_cexpr(char_u *line, exarg_T *eap, cctx_T *cctx);
+char_u *compile_return(char_u *arg, int check_return_type, int legacy, cctx_T *cctx);
+int check_global_and_subst(char_u *cmd, char_u *arg);
+/* vim: set ft=c : */

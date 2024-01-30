@@ -1,0 +1,13 @@
+*os_os2.txt*    For Vim version 9.1.  Last change: 2015 Dec 31
+
+
+		  VIM REFERENCE MANUAL    by Paul Slootman
+
+
+							*os2* *OS2* *OS/2*
+This file used to contain the particularities for the OS/2 version of Vim.
+
+The OS/2 support was removed in patch 7.4.1008.
+
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

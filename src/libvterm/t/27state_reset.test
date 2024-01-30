@@ -1,0 +1,32 @@
+INIT
+WANTSTATE
+
+RESET
+
+!RIS homes cursor
+PUSH "\e[5;5H"
+  ?cursor = 4,4
+WANTSTATE +m
+PUSH "\ec"
+  ?cursor = 0,0
+WANTSTATE -m
+
+!RIS cancels scrolling region
+PUSH "\e[5;10r"
+WANTSTATE +s
+PUSH "\ec\e[25H\n"
+  scrollrect 0..25,0..80 => +1,+0
+WANTSTATE -s
+
+!RIS erases screen
+PUSH "ABCDE"
+WANTSTATE +e
+PUSH "\ec"
+  erase 0..25,0..80
+WANTSTATE -e
+
+!RIS clears tabstops
+PUSH "\e[5G\eH\e[G\t"
+  ?cursor = 0,4
+PUSH "\ec\t"
+  ?cursor = 0,8

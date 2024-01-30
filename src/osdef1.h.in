@@ -1,0 +1,138 @@
+/* autoconf cannot fiddle out declarations. Use our homebrewn tools. (jw) */
+/*
+ * Declarations that may cause conflicts belong here so that osdef.sh
+ * can clean out the forest. Everything else belongs in os_unix.h
+ *
+ * How this works:
+ * - This file contains all unix prototypes that Vim might need.
+ * - The shell script osdef.sh is executed at compile time to remove all the
+ *   prototypes that are in an include file. This results in osdef.h.
+ * - osdef.h is included in vim.h.
+ *
+ * sed cannot always handle so many commands, this is file 1 of 2
+ */
+
+extern int	printf(char *, ...);
+extern int	fprintf(FILE *, char *, ...);
+extern int	sprintf(char *, char *, ...);
+extern int	sscanf(char *, char *, ...);
+#ifndef fopen	/* could be redefined to fopen64() */
+extern FILE	*fopen(const char *, const char *);
+#endif
+extern int	fclose(FILE *);
+extern int	fseek(FILE *, long, int);
+#ifdef HAVE_FSEEKO
+extern int	fseeko(FILE *, off_t, int);
+#endif
+extern long	ftell(FILE *);
+#ifdef HAVE_FSEEKO
+extern off_t	ftello(FILE *);
+#endif
+extern void	rewind(FILE *);
+extern int	fread(char *, int, int, FILE *);
+extern int	fwrite(char *, int, int, FILE *);
+extern int	fputs(char *, FILE *);
+#ifndef ferror	/* let me say it again: "macros should never have prototypes" */
+extern int	ferror(FILE *);
+#endif
+extern int	fflush(FILE *);
+#if defined(sun) || defined(_SEQUENT_)
+/* used inside of stdio macros getc(), puts(), putchar()... */
+extern int	_flsbuf(int, FILE *);
+extern int	_filbuf(FILE *);
+#endif
+
+#if !defined(HAVE_SELECT)
+struct pollfd;			/* for poll() */
+extern int	poll(struct pollfd *, long, int);
+#endif
+
+#ifdef HAVE_MEMSET
+extern void	*memset(void *, int, size_t);
+#endif
+extern int	memcmp(const void *, const void *, size_t);
+#ifdef HAVE_STRPBRK
+extern char	*strpbrk(const char *, const char *);
+#endif
+#ifdef USEBCOPY
+extern void	bcopy(char *, char *, int);
+#else
+# ifdef USEMEMCPY
+extern void	memcpy(char *, char *, int);
+# else
+#  ifdef USEMEMMOVE
+extern void	memmove(char *, char *, int);
+#  endif
+# endif
+#endif
+#if !defined(__BIONIC__) && !defined(__HAIKU__)  // Android's libc #defines bzero to memset.
+// used inside of FD_ZERO macro
+extern void	bzero(void *, size_t);
+#endif
+#ifdef HAVE_SETSID
+extern pid_t	setsid(void);
+#endif
+#ifdef HAVE_SETPGID
+extern int	setpgid(pid_t, pid_t);
+#endif
+#ifdef HAVE_STRTOL
+extern int	strtol(char *, char **, int);
+#endif
+#ifdef HAVE_STRFTIME
+extern size_t	strftime(char *, size_t, char *, struct tm *);
+#endif
+#ifdef HAVE_STRCASECMP
+extern int	strcasecmp(char *, char *);
+#endif
+#ifdef HAVE_STRNCASECMP
+extern int	strncasecmp(char *, char *, size_t);
+#endif
+#ifndef strdup
+extern char	*strdup(const char *);
+#endif
+extern int	atoi(char *);
+extern int	atol(char *);
+
+#ifndef USE_SYSTEM
+extern int	fork(void);
+# ifndef __TANDEM
+extern int	execvp(const char *, const char **);
+# endif
+extern int	wait(int *); /* will this break things ...? */
+extern int	waitpid(pid_t, int *, int);
+#endif
+
+extern int	toupper(int);
+extern int	tolower(int);
+
+extern void (*signal(int, void (*func) SIGPROTOARG)) SIGPROTOARG;
+#ifdef HAVE_SIGSET
+extern void (*sigset(int, void (*func) SIGPROTOARG)) SIGPROTOARG;
+#endif
+
+#if defined(HAVE_SETJMP_H)
+# ifdef HAVE_SIGSETJMP
+extern int	sigsetjmp(sigjmp_buf, int);
+extern void	siglongjmp(sigjmp_buf, int);
+# else
+extern int	setjmp(jmp_buf);
+extern void	longjmp(jmp_buf, int);
+# endif
+#endif
+
+extern int	kill(int, int);
+
+#ifndef __TANDEM
+extern int	access(char *, int);
+#endif
+extern int	fsync(int);
+extern int	fchown(int, int, int);
+#if defined(HAVE_GETCWD) && !defined(sun) && !defined(__TANDEM)
+extern char	*getcwd(char *, int);
+#else
+extern char	*getwd(char *);
+#endif
+#ifndef __alpha	/* suggested by Campbell */
+extern int	ioctl(int, int, ...);
+#endif
+extern int	chmod(const char *, mode_t);

@@ -1,0 +1,79 @@
+INIT
+UTF8 1
+WANTSTATE
+
+!Set clipboard; final chunk len 4
+PUSH "\e]52;c;SGVsbG8s\e\\"
+  selection-set mask=0001 ["Hello,"]
+
+!Set clipboard; final chunk len 3
+PUSH "\e]52;c;SGVsbG8sIHc=\e\\"
+  selection-set mask=0001 ["Hello, w"]
+
+!Set clipboard; final chunk len 2
+PUSH "\e]52;c;SGVsbG8sIHdvcmxkCg==\e\\"
+  selection-set mask=0001 ["Hello, world\n"]
+
+!Set clipboard; split between chunks
+PUSH "\e]52;c;SGVs"
+  selection-set mask=0001 ["Hel"
+PUSH "bG8s\e\\"
+  selection-set mask=0001 "lo,"]
+
+!Set clipboard; split within chunk
+PUSH "\e]52;c;SGVsbG"
+  selection-set mask=0001 ["Hel"
+PUSH "8s\e\\"
+  selection-set mask=0001 "lo,"]
+
+!Set clipboard; empty first chunk
+PUSH "\e]52;c;"
+PUSH "SGVsbG8s\e\\"
+  selection-set mask=0001 ["Hello,"]
+
+!Set clipboard; empty final chunk
+PUSH "\e]52;c;SGVsbG8s"
+  selection-set mask=0001 ["Hello,"
+PUSH "\e\\"
+  selection-set mask=0001 ]
+
+!Set clipboard; longer than buffer
+PUSH "\e]52;c;" . "LS0t"x10 . "\e\\"
+  selection-set mask=0001 ["-"x15
+  selection-set mask=0001 "-"x15]
+
+!Clear clipboard
+PUSH "\e]52;c;\e\\"
+  selection-set mask=0001 []
+
+!Set invalid data clears and ignores
+PUSH "\e]52;c;SGVs*SGVsbG8s\e\\"
+  selection-set mask=0001 []
+
+!Query clipboard
+PUSH "\e]52;c;?\e\\"
+  selection-query mask=0001
+
+!Send clipboard; final chunk len 4
+SELECTION 1 ["Hello,"]
+  output "\e]52;c;SGVsbG8s\e\\"
+
+!Send clipboard; final chunk len 3
+SELECTION 1 ["Hello, w"]
+  output "\e]52;c;SGVsbG8sIHc=\e\\"
+
+!Send clipboard; final chunk len 2
+SELECTION 1 ["Hello, world\n"]
+  output "\e]52;c;SGVsbG8sIHdvcmxkCg==\e\\"
+
+!Send clipboard; split between chunks
+SELECTION 1 ["Hel"
+  output "\e]52;c;SGVs"
+SELECTION 1  "lo,"]
+  output "bG8s\e\\"
+
+!Send clipboard; split within chunk
+SELECTION 1 ["Hello"
+  output "\e]52;c;SGVs"
+SELECTION 1 ","]
+  output "bG8s\e\\"

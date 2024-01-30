@@ -1,0 +1,155 @@
+INIT
+WANTSCREEN aDb
+
+!Putglyph
+RESET
+  damage 0..25,0..80
+PUSH "123"
+  damage 0..1,0..1 = 0<31>
+  damage 0..1,1..2 = 0<32>
+  damage 0..1,2..3 = 0<33>
+
+!Erase
+PUSH "\e[H"
+PUSH "\e[3X"
+  damage 0..1,0..3
+
+!Scroll damages entire line in two chunks
+PUSH "\e[H\e[5@"
+  damage 0..1,5..80
+  damage 0..1,0..5
+
+!Scroll down damages entire screen in two chunks
+PUSH "\e[T"
+  damage 1..25,0..80
+  damage 0..1,0..80
+
+!Altscreen damages entire area
+PUSH "\e[?1049h"
+  damage 0..25,0..80
+PUSH "\e[?1049l"
+  damage 0..25,0..80
+
+WANTSCREEN m
+
+!Scroll invokes moverect but not damage
+PUSH "\e[5@"
+  moverect 0..1,0..75 -> 0..1,5..80
+  damage 0..1,0..5
+
+WANTSCREEN -m
+
+!Merge to cells
+RESET
+  damage 0..25,0..80
+DAMAGEMERGE CELL
+
+PUSH "A"
+  damage 0..1,0..1 = 0<41>
+PUSH "B"
+  damage 0..1,1..2 = 0<42>
+PUSH "C"
+  damage 0..1,2..3 = 0<43>
+
+!Merge entire rows
+RESET
+  damage 0..25,0..80
+DAMAGEMERGE ROW
+
+PUSH "ABCDE\r\nEFGH"
+  damage 0..1,0..5 = 0<41 42 43 44 45>
+DAMAGEFLUSH
+  damage 1..2,0..4 = 1<45 46 47 48>
+PUSH "\e[3;6r\e[6H\eD"
+  damage 2..5,0..80
+DAMAGEFLUSH
+  damage 5..6,0..80
+
+!Merge entire screen
+RESET
+  damage 0..25,0..80
+DAMAGEMERGE SCREEN
+
+PUSH "ABCDE\r\nEFGH"
+DAMAGEFLUSH
+  damage 0..2,0..5 = 0<41 42 43 44 45> 1<45 46 47 48>
+PUSH "\e[3;6r\e[6H\eD"
+DAMAGEFLUSH
+  damage 2..6,0..80
+
+!Merge entire screen with moverect
+WANTSCREEN m
+
+RESET
+  damage 0..25,0..80
+DAMAGEMERGE SCREEN
+
+PUSH "ABCDE\r\nEFGH"
+PUSH "\e[3;6r\e[6H\eD"
+  damage 0..2,0..5 = 0<41 42 43 44 45> 1<45 46 47 48>
+  moverect 3..6,0..80 -> 2..5,0..80
+DAMAGEFLUSH
+  damage 5..6,0..80
+
+!Merge scroll
+RESET
+  damage 0..25,0..80
+DAMAGEMERGE SCROLL
+
+PUSH "\e[H1\r\n2\r\n3"
+PUSH "\e[25H\n\n\n"
+  sb_pushline 80 = 31
+  sb_pushline 80 = 32
+  sb_pushline 80 = 33
+DAMAGEFLUSH
+  moverect 3..25,0..80 -> 0..22,0..80
+  damage 0..25,0..80
+
+!Merge scroll with damage
+PUSH "\e[25H"
+PUSH "ABCDE\r\nEFGH\r\n"
+  sb_pushline 80 =
+  sb_pushline 80 =
+DAMAGEFLUSH
+  moverect 2..25,0..80 -> 0..23,0..80
+  damage 22..25,0..80 = 22<41 42 43 44 45> 23<45 46 47 48>
+
+!Merge scroll with damage past region
+PUSH "\e[3;6r\e[6H1\r\n2\r\n3\r\n4\r\n5"
+DAMAGEFLUSH
+  damage 2..6,0..80 = 2<32> 3<33> 4<34> 5<35>
+
+!Damage entirely outside scroll region
+PUSH "\e[HABC\e[3;6r\e[6H\r\n6"
+  damage 0..1,0..3 = 0<41 42 43>
+DAMAGEFLUSH
+  moverect 3..6,0..80 -> 2..5,0..80
+  damage 5..6,0..80 = 5<36>
+
+!Damage overlapping scroll region
+PUSH "\e[H\e[2J"
+DAMAGEFLUSH
+  damage 0..25,0..80
+
+PUSH "\e[HABCD\r\nEFGH\r\nIJKL\e[2;5r\e[5H\r\nMNOP"
+DAMAGEFLUSH
+  moverect 2..5,0..80 -> 1..4,0..80
+  damage 0..5,0..80 = 0<41 42 43 44> 1<49 4A 4B 4C>
+  ## TODO: is this right?
+
+!Merge scroll*2 with damage
+RESET
+  damage 0..25,0..80
+DAMAGEMERGE SCROLL
+
+PUSH "\e[25H\r\nABCDE\b\b\b\e[2P\r\n"
+  sb_pushline 80 =
+  moverect 1..25,0..80 -> 0..24,0..80
+  damage 24..25,0..80 = 24<41 42 43 44 45>
+  moverect 24..25,4..80 -> 24..25,2..78
+  damage 24..25,78..80
+  sb_pushline 80 =
+DAMAGEFLUSH
+  moverect 1..25,0..80 -> 0..24,0..80
+  damage 24..25,0..80
+  ?screen_row 23 = "ABE"

@@ -1,0 +1,128 @@
+INIT
+UTF8 1
+WANTSTATE g
+
+!REP no argument
+RESET
+PUSH "a\e[b"
+  putglyph 0x61 1 0,0
+  putglyph 0x61 1 0,1
+
+!REP zero (zero should be interpreted as one)
+RESET
+PUSH "a\e[0b"
+  putglyph 0x61 1 0,0
+  putglyph 0x61 1 0,1
+
+!REP lowercase a times two
+RESET
+PUSH "a\e[2b"
+  putglyph 0x61 1 0,0
+  putglyph 0x61 1 0,1
+  putglyph 0x61 1 0,2
+
+!REP with UTF-8 1 char
+# U+00E9 = 0xC3 0xA9  name: LATIN SMALL LETTER E WITH ACUTE
+RESET
+PUSH "\xC3\xA9\e[b"
+  putglyph 0xe9 1 0,0
+  putglyph 0xe9 1 0,1
+
+!REP with UTF-8 wide char
+# U+00E9 = 0xC3 0xA9  name: LATIN SMALL LETTER E WITH ACUTE
+RESET
+PUSH "\xEF\xBC\x90\e[b"
+  putglyph 0xff10 2 0,0
+  putglyph 0xff10 2 0,2
+
+!REP with UTF-8 combining character
+RESET
+PUSH "e\xCC\x81\e[b"
+  putglyph 0x65,0x301 1 0,0
+  putglyph 0x65,0x301 1 0,1
+
+!REP till end of line
+RESET
+PUSH "a\e[1000bb"
+  putglyph 0x61 1 0,0
+  putglyph 0x61 1 0,1
+  putglyph 0x61 1 0,2
+  putglyph 0x61 1 0,3
+  putglyph 0x61 1 0,4
+  putglyph 0x61 1 0,5
+  putglyph 0x61 1 0,6
+  putglyph 0x61 1 0,7
+  putglyph 0x61 1 0,8
+  putglyph 0x61 1 0,9
+  putglyph 0x61 1 0,10
+  putglyph 0x61 1 0,11
+  putglyph 0x61 1 0,12
+  putglyph 0x61 1 0,13
+  putglyph 0x61 1 0,14
+  putglyph 0x61 1 0,15
+  putglyph 0x61 1 0,16
+  putglyph 0x61 1 0,17
+  putglyph 0x61 1 0,18
+  putglyph 0x61 1 0,19
+  putglyph 0x61 1 0,20
+  putglyph 0x61 1 0,21
+  putglyph 0x61 1 0,22
+  putglyph 0x61 1 0,23
+  putglyph 0x61 1 0,24
+  putglyph 0x61 1 0,25
+  putglyph 0x61 1 0,26
+  putglyph 0x61 1 0,27
+  putglyph 0x61 1 0,28
+  putglyph 0x61 1 0,29
+  putglyph 0x61 1 0,30
+  putglyph 0x61 1 0,31
+  putglyph 0x61 1 0,32
+  putglyph 0x61 1 0,33
+  putglyph 0x61 1 0,34
+  putglyph 0x61 1 0,35
+  putglyph 0x61 1 0,36
+  putglyph 0x61 1 0,37
+  putglyph 0x61 1 0,38
+  putglyph 0x61 1 0,39
+  putglyph 0x61 1 0,40
+  putglyph 0x61 1 0,41
+  putglyph 0x61 1 0,42
+  putglyph 0x61 1 0,43
+  putglyph 0x61 1 0,44
+  putglyph 0x61 1 0,45
+  putglyph 0x61 1 0,46
+  putglyph 0x61 1 0,47
+  putglyph 0x61 1 0,48
+  putglyph 0x61 1 0,49
+  putglyph 0x61 1 0,50
+  putglyph 0x61 1 0,51
+  putglyph 0x61 1 0,52
+  putglyph 0x61 1 0,53
+  putglyph 0x61 1 0,54
+  putglyph 0x61 1 0,55
+  putglyph 0x61 1 0,56
+  putglyph 0x61 1 0,57
+  putglyph 0x61 1 0,58
+  putglyph 0x61 1 0,59
+  putglyph 0x61 1 0,60
+  putglyph 0x61 1 0,61
+  putglyph 0x61 1 0,62
+  putglyph 0x61 1 0,63
+  putglyph 0x61 1 0,64
+  putglyph 0x61 1 0,65
+  putglyph 0x61 1 0,66
+  putglyph 0x61 1 0,67
+  putglyph 0x61 1 0,68
+  putglyph 0x61 1 0,69
+  putglyph 0x61 1 0,70
+  putglyph 0x61 1 0,71
+  putglyph 0x61 1 0,72
+  putglyph 0x61 1 0,73
+  putglyph 0x61 1 0,74
+  putglyph 0x61 1 0,75
+  putglyph 0x61 1 0,76
+  putglyph 0x61 1 0,77
+  putglyph 0x61 1 0,78
+  putglyph 0x61 1 0,79
+  putglyph 0x62 1 1,0
+

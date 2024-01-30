@@ -1,0 +1,22 @@
+How to Contribute
+-----------------
+
+The main resources for this library are:
+
+  Launchpad
+    https://launchpad.net/libvterm
+
+  IRC:
+    ##tty or #tickit on irc.libera.chat
+
+  Email:
+    Paul "LeoNerd" Evans <leonerd@leonerd.org.uk>
+
+
+Bug reports and feature requests can be sent to any of the above resources.
+
+New features, bug patches, etc.. should in the first instance be discussed via
+any of the resources listed above, before starting work on the actual code.
+There may be future plans or development already in-progress that could be
+affected so it is better to discuss the ideas first before starting work
+actually writing any code.

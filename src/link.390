@@ -1,0 +1,7 @@
+s%-lXext  *%%g
+s%-lXmu  *%%g
+s%-lXm  *%/usr/lib/Xm.x %g
+s%-lX11  *%/usr/lib/X11.x %g
+s%-lXt  *%%g
+s%-lSM  *%/usr/lib/SM.x %g
+s%-lICE  *%/usr/lib/ICE.x %g

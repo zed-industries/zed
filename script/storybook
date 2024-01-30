@@ -1,7 +1,0 @@
-#!/bin/bash
-
-if [ -z "$1" ]; then
-    cargo run -p storybook
-else
-    cargo run -p storybook -- "components/$1"
-fi

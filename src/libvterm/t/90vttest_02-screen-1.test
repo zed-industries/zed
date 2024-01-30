@@ -1,0 +1,18 @@
+# Test of WRAP AROUND mode setting.
+INIT
+WANTSCREEN
+
+RESET
+
+PUSH "\e[?7h"
+$REP 170: PUSH "*"
+
+PUSH "\e[?7l\e[3;1H"
+$REP 177: PUSH "*"
+
+PUSH "\e[?7h\e[5;1HOK"
+
+!Output
+$SEQ 0 2: ?screen_row \# = "********************************************************************************"
+          ?screen_row  3 = ""
+          ?screen_row  4 = "OK"

@@ -1,0 +1,948 @@
+" vim: set ft=vim sw=4 :
+
+" START_INDENT
+func Some()
+    let x = 1
+endfunc
+
+let cmd =
+	    \ 'some '
+	    \ 'string'
+
+if 1
+    let x = [
+		\ ]
+endif
+
+for x in [
+	{key: 'value'},
+	]
+    eval 0
+endfor
+
+let t = [
+	    \ {
+	    \ 'k': 'val',
+	    \ },
+	    \  ]
+
+def Func()
+    var d = dd
+	->extend({
+	})
+    eval 0
+enddef
+" END_INDENT
+
+" START_INDENT
+" INDENT_EXE let g:vim_indent_cont = 6
+
+let cmd =
+      \ 'some '
+      \ 'string'
+
+" END_INDENT
+
+" START_INDENT
+" INDENT_EXE let g:vim_indent_cont = 5
+
+let list = [
+     \ 'one',
+     \ 'two']
+
+" END_INDENT
+
+" START_INDENT
+" INDENT_EXE unlet g:vim_indent_cont
+
+let list = [
+    'one',
+    'two',
+]
+echo
+
+" END_INDENT
+
+" START_INDENT
+" INDENT_AT  this-line
+func Some()
+    let f = x " this-line
+endfunc
+" END_INDENT
+
+" START_INDENT
+" INDENT_NEXT  next-line
+func Some()
+    " next-line
+    let f = x
+endfunc
+" END_INDENT
+
+" START_INDENT
+" INDENT_PREV  prev-line
+func Some()
+    let f = x
+" prev-line
+endfunc
+" END_INDENT
+
+" START_INDENT
+let a =<< END
+nothing
+END
+" END_INDENT
+
+" START_INDENT
+let a =<< trim END
+    nothing
+END
+" END_INDENT
+
+" START_INDENT
+" INDENT_AT  this-line
+let a=<< trim END
+   blah
+      blah
+      blah this-line
+END
+" END_INDENT
+
+" START_INDENT
+if v:true
+    echo 0
+end
+" END_INDENT
+
+" START_INDENT
+var result = Func(
+    arg1,
+    arg2
+)
+" END_INDENT
+
+" START_INDENT
+var result = Func(arg1,
+    arg2)
+" END_INDENT
+
+" START_INDENT
+filter(list, (k, v) =>
+    v > 0)
+" END_INDENT
+
+" START_INDENT
+filter(list, (k, v) => {
+    const x = get(list, k, 0)
+    return x > 0
+})
+" END_INDENT
+
+" START_INDENT
+if x > 0
+    filter(list, (k, v) => {
+	const x = get(list, k, 1)
+	return x > 0
+    })
+endif
+" END_INDENT
+
+" START_INDENT
+{
+    var temp = 'temp'
+}
+" END_INDENT
+
+" START_INDENT
+var text = lead
+    .. middle
+    .. end
+" END_INDENT
+
+" START_INDENT
+var text = lead ..
+    middle ..
+    end
+" END_INDENT
+
+" START_INDENT
+var total = start +
+    end -
+    correction
+" END_INDENT
+
+" START_INDENT
+var result = start
+:+ print
+" END_INDENT
+
+" START_INDENT
+var result = positive
+    ? PosFunc(arg)
+    : NegFunc(arg)
+" END_INDENT
+
+" START_INDENT
+var result = GetBuilder()
+    ->BuilderSetWidth(333)
+    ->BuilderSetHeight(777)
+    ->BuilderBuild()
+" END_INDENT
+
+" START_INDENT
+var result = MyDict
+    .member
+" END_INDENT
+
+" START_INDENT
+autocmd BufNewFile *.match if condition
+    |   echo 'match'
+    | endif
+" END_INDENT
+
+" START_INDENT
+set cpo+=C
+var lines =<< trim END
+    | this works
+END
+set cpo-=C
+" END_INDENT
+
+" START_INDENT
+syn region Text
+	    \ start='foo'
+	    #\ comment
+	    \ end='bar'
+" END_INDENT
+
+" START_INDENT
+au CursorHold * echom 'BEFORE bar'
+    #\ some comment
+    | echom 'AFTER bar'
+" END_INDENT
+
+" START_INDENT
+def MyFunc(text: string,
+	separator = '-'
+	): string
+enddef
+" END_INDENT
+
+" START_INDENT
+def MyFunc(
+	text: string,
+	separator = '-'
+	): string
+enddef
+" END_INDENT
+
+" START_INDENT
+[var1, var2] =
+    Func()
+" END_INDENT
+
+" START_INDENT
+const list = ['one',
+    'two']
+" END_INDENT
+
+" START_INDENT
+const list = [
+    'one',
+    'two',
+]
+" END_INDENT
+
+" START_INDENT
+const dict = {one: 1,
+    two: 2
+}
+" END_INDENT
+
+" START_INDENT
+const dict = {
+    one: 1,
+    two: 2
+}
+" END_INDENT
+
+" START_INDENT
+if true
+    const dict =
+	{
+	    one: 1,
+	    two: 2
+	}
+endif
+" END_INDENT
+
+" START_INDENT
+def Func()
+    return {
+	one: 1
+    }
+enddef
+" END_INDENT
+
+" START_INDENT
+echo {
+    a: 0,
+    # b
+    # c
+}
+" END_INDENT
+
+" START_INDENT
+echo search(
+    # comment
+    '1'
+    .. '2'
+)
+" END_INDENT
+
+" START_INDENT
+if true
+    var v = (      # trailing "(" starts line continuation
+	3 + 4      # nothing special
+    )              # end of expression indicates continued line
+    var x: number  # needs to align with previous "var"
+endif
+" END_INDENT
+
+" START_INDENT
+def Func() # {{{
+    # comment
+    if true
+	return
+    endif
+enddef
+" END_INDENT
+
+" START_INDENT
+echo {
+    key:
+	'value',
+}
+" END_INDENT
+
+" START_INDENT
+var id = time
+    ->timer_start((_) => {
+	n = 0
+    })
+" END_INDENT
+
+" START_INDENT
+augroup Name
+    autocmd!
+augroup END
+" END_INDENT
+
+" START_INDENT
+var n =
+    # comment
+    1
+    + 2
+
+var s = ''
+" END_INDENT
+
+" START_INDENT
+var keys = {
+    J: 'j',
+    "\<Home>": '1G',
+    "\<End>": 'G',
+    z: 'zz'
+}
+" END_INDENT
+
+" START_INDENT
+export def Func(
+	n: number,
+	s: string,
+	...l: list<bool>
+	)
+enddef
+" END_INDENT
+
+" START_INDENT
+var heredoc =<< trim ENDD
+    var nested_heredoc =<< trim END
+    END
+ENDD
+" END_INDENT
+
+" START_INDENT
+if true
+else  " comment
+endif
+" END_INDENT
+
+" START_INDENT
+if true | echo 'one' | endif
+if true | echo 'two' | endif
+if true | echo 'three' | endif
+" END_INDENT
+
+" START_INDENT
+if true
+    :'<-1 mark <
+else
+    echo ''
+endif
+" END_INDENT
+
+" START_INDENT
+substitute/pat /rep /
+echo
+" END_INDENT
+
+" START_INDENT
+try
+    echo 1
+catch /pat /  # comment
+    echo 2
+endtry
+" END_INDENT
+
+" START_INDENT
+def Func()
+    Cmd %
+enddef
+" END_INDENT
+
+" START_INDENT
+if end == 'xxx' || end == 'yyy'
+    echo
+endif
+" END_INDENT
+
+" START_INDENT
+if true
+    popup_move(id, {col: 1,
+	line: 2})
+endif
+setwinvar(id, 'name', 3)
+" END_INDENT
+
+" START_INDENT
+var d = [
+    {a: 'x',
+	b: 'y'},
+    FuncA(),
+    FuncB(),
+]
+" END_INDENT
+
+" START_INDENT
+var ll = [[
+    1,
+    2,
+    3], [
+    4,
+    5,
+    6], [
+    7,
+    8,
+    9]]
+" END_INDENT
+
+" START_INDENT
+var ld = [{
+    a: 'xxx',
+    b: 'yyy'}, {
+    c: 'xxx',
+    d: 'yyy'}, {
+    e: 'xxx',
+    f: 'yyy'}, {
+    }]
+" END_INDENT
+
+" START_INDENT
+var d = {
+    a: {
+	b: {
+	    c: [{
+		d: 'e',
+		f: 'g',
+		h: 'i'
+	    }],
+	    j: 'k',
+	},
+    },
+}
+" END_INDENT
+
+" START_INDENT
+if true
+    var end: any
+    if true
+	end = 0
+    elseif true
+	echo
+    endif
+endif
+" END_INDENT
+
+" START_INDENT
+if true
+    var d = {
+	end: 0}
+endif
+" END_INDENT
+
+" START_INDENT
+nunmap <buffer> (
+nunmap <buffer> )
+inoremap [ {
+inoremap ] }
+silent! xunmap i{
+silent! xunmap a{
+" END_INDENT
+
+" START_INDENT
+def Func(
+	s: string,
+	n = 1,
+	m = 2
+	)
+enddef
+" END_INDENT
+
+" START_INDENT
+var h =<< END
+text
+END
+
+def Func()
+    echo
+enddef
+" END_INDENT
+
+" START_INDENT
+def Func()
+    var h =<< END
+text
+END
+    echo 'test'
+enddef
+" END_INDENT
+
+" START_INDENT
+def Foo()
+    lcd -
+enddef
+def Bar()
+    echo
+enddef
+" END_INDENT
+
+" START_INDENT
+if true
+    n = Func(1, 2,
+	3)
+endif
+" END_INDENT
+
+" START_INDENT
+def Func(s: string,
+	n: number): bool
+    if true
+	return false
+    endif
+enddef
+" END_INDENT
+
+" START_INDENT
+def Func(
+	n: number)
+    #
+    echo
+enddef
+" END_INDENT
+
+" START_INDENT
+" INDENT_AT  this-line
+def Func(
+	n: number)
+    #
+    echo  # this-line
+enddef
+" END_INDENT
+
+" START_INDENT
+if true
+    if true
+	normal! ==
+    endif
+endif
+" END_INDENT
+
+" START_INDENT
+var d = {
+    a: () => true,
+    b: () => true
+	&& true
+	&& Foo(),
+    c: () => Bar(),
+    e: () => Baz(),
+}
+" END_INDENT
+
+" START_INDENT
+def Select(Cont: func(func(any)), Pred: func(any): bool): func(func(any))
+    return (Emit: func(any)) => {
+	Cont((t: any) => {
+	    if Pred(t)
+		Emit(t)
+	    endif
+	})
+    }
+enddef
+" END_INDENT
+
+" START_INDENT
+" INDENT_EXE let g:vim_indent = {'more_in_bracket_block': v:true}
+def Select(Cont: func(func(any)), Pred: func(any): bool): func(func(any))
+    return (Emit: func(any)) => {
+	    Cont((t: any) => {
+		    if Pred(t)
+			Emit(t)
+		    endif
+		})
+	}
+enddef
+" END_INDENT
+
+" START_INDENT
+" INDENT_EXE unlet! g:vim_indent
+" END_INDENT
+
+" START_INDENT
+g:lightline = {
+    'active': {
+	'left': [ [ 'mode', 'paste' ], [ 'readonly', 'relativepath', 'modified' ] ],
+    },
+    'inactive': {
+	'left': [ [ 'readonly', 'relativepath', 'modified' ] ],
+    }
+}
+" END_INDENT
+
+" START_INDENT
+if getline(1, 10)
+	->map((_, v: string): number => strcharlen(v))
+	->max() > 1'000
+    &l:breakindent = false
+    &l:linebreak = false
+else
+    &l:breakindent = true
+    &l:linebreak = true
+endif
+" END_INDENT
+
+" START_INDENT
+var ext2cmd: dict<string> = {
+    doc: $'antiword {fname}',
+    docx: $'pandoc --from=docx --to=markdown {fname}',
+    epub: $'pandoc --from=epub --to=markdown {fname}',
+    odp: $'odt2txt {fname}',
+    odt: $'odt2txt {fname}',
+    pdf: $'pdftotext -nopgbrk -layout -q -eol unix {fname} -',
+    rtf: 'unrtf --text',
+}
+" END_INDENT
+
+" START_INDENT
+const ptybuf: number = term_start(&shell, {
+    hidden: true,
+    exit_cb: (_, _) => {
+	if true
+	    close
+	else
+	    help
+	endif
+    }
+})
+" END_INDENT
+
+" START_INDENT
+var d = {
+    a: 0,
+    # a ' quote {{{
+    #}}}
+    b: 0,
+}
+" END_INDENT
+
+" START_INDENT
+echo printf('%s () %s',
+    1,
+    2
+)
+" END_INDENT
+
+" START_INDENT
+prop_add(1, col('.'), {
+    length: 2,
+    type: 'test'
+})
+" END_INDENT
+
+" START_INDENT
+echo (() => " string starting with space")()
+echo
+" END_INDENT
+
+" START_INDENT
+var variables = deepcopy(g:)
+    ->filter((k: string, _): bool =>
+	k =~ '\c\V' .. keyword->escape('\')
+	&& k !~ '\%(loaded\|did_plugin_\)')
+    ->items()
+    ->map((_, v): string => v[0] .. ' = ' .. string(v[1]))
+new
+" END_INDENT
+
+" START_INDENT
+var d = freq
+    ->map((_, v) =>
+	v * (
+	    1
+	    + 2
+	))
+for item in d
+	->items()
+	->sort((a, b) => b[1] - a[1])
+    echo
+endfor
+" END_INDENT
+
+" START_INDENT
+make_job = job_start([&shell, &shellcmdflag, make_cmd], {
+    callback: function(MakeProcessOutput, [qfid]),
+    close_cb: function(MakeCloseCb, [qfid]),
+    exit_cb: MakeCompleted,
+    in_io: 'null'
+})
+" END_INDENT
+
+" START_INDENT
+var matching_abbrev: list<dict<string>> = copy(ABBREV)
+    ->filter((_, v: dict<string>): bool =>
+	stridx(v.lhs, word_to_complete) == 0)
+    ->map((_, v: dict<string>) => ({
+	word: v.lhs,
+	menu: AbbrevRhs(v.rhs)->stridx('expand_') >= 0
+	    ?    AbbrevRhs(v.rhs)->matchstr('.*,\s*''\zs.*\ze'')')
+	    :    AbbrevRhs(v.rhs)
+    }))
+" END_INDENT
+
+" START_INDENT
+def Func()
+    if true
+	vimgrep /^\C\s*\%(fu\%[nction]\|def\)\s\+/ file
+    endif
+enddef
+" END_INDENT
+
+" START_INDENT
+setlocal iskeyword+=[
+cword = expand('<cword>')
+" END_INDENT
+
+" START_INDENT
+silent if true
+    echo
+endif
+" END_INDENT
+
+" START_INDENT
+def Func()
+    sort :^.*[\/]:
+enddef
+" END_INDENT
+
+" START_INDENT
+def Func()
+    d = {
+    }
+    hd =<< trim END
+	['
+	]'
+    END
+enddef
+" END_INDENT
+
+" START_INDENT
+def Func()
+    if true
+	var hd =<< trim END
+	    if get(b:, 'current_syntax', '')
+	    endif
+	END
+    elseif true
+	echo
+    endif
+enddef
+" END_INDENT
+
+" START_INDENT
+# test for control-flow keyword followed by commented fold marker {{{
+if true
+    echo
+endif #}}}
+" END_INDENT
+
+" START_INDENT
+if winsz == 0|let winsz= ""|endif
+exe "noswapfile ".winsz."wincmd s"
+" END_INDENT
+
+" START_INDENT
+if true
+    if true
+	windo if true | echo | endif
+	augroup Name
+	    autocmd WinLeave * if true | eval 1 + 2 | endif
+	augroup END
+    endif
+endif
+" END_INDENT
+
+" START_INDENT
+if true
+    echo ' =<< trim END'
+	->len()
+endif
+" END_INDENT
+
+" START_INDENT
+function Func()
+    if true
+	if true
+	    if true | echo com | endif
+	    if true | echo com | endif
+	endif
+    else
+    endif
+endfunction
+" END_INDENT
+
+" START_INDENT
+function Func()
+    if v:true
+	+
+	echo
+	-
+    endif
+endfunction
+" END_INDENT
+
+" START_INDENT
+var matchpairs: string = &matchpairs
+var pairs: dict<list<string>>
+for [opening: string, closing: string]
+	in matchpairs
+	->split(',')
+	->map((_, v: string): list<string> => split(v, ':'))
+    pairs[opening] = [escape(opening, '[]'), escape(closing, '[]'),  'nW', 'w$']
+    pairs[closing] = [escape(opening, '[]'), escape(closing, '[]'), 'bnW', 'w0']
+endfor
+" END_INDENT
+
+" START_INDENT
+{
+    echo []
+	+ []
+	+ [{a: 1,
+	b: 2}]
+}
+" END_INDENT
+
+" START_INDENT
+silent! argdel *
+edit file
+" END_INDENT
+
+" START_INDENT
+def Foo()
+    Bar(1,
+	[]->filter((_, v) => {
+	    return true
+	}),
+	() => {
+	    echo
+	})
+enddef
+" END_INDENT
+
+" START_INDENT
+echo {
+    k: () => {
+	if true
+	    echo
+	    popup_setoptions(id,
+		{title: 'title'})
+	endif
+    }
+}
+" END_INDENT
+
+" START_INDENT
+if true
+elseif
+endif
+" END_INDENT
+
+" START_INDENT
+if (
+	true)
+	&& true
+    echo
+endif
+" END_INDENT
+
+" START_INDENT
+abstract class Shape
+    this.color = Color.Black
+    this.thickness = 10
+endclass
+" END_INDENT
+
+" START_INDENT
+class OtherThing
+    this.size: number
+    static totalSize: number
+
+    static def ClearTotalSize(): number
+	var prev = totalSize
+	totalSize = 0
+	return prev
+    enddef
+endclass
+" END_INDENT
+
+" START_INDENT
+interface HasSurface
+    this.size: number
+    def Surface(): number
+endinterface
+" END_INDENT
+
+" START_INDENT
+interface EnterExit
+    def Enter(): void
+    def Exit(): void
+endinterface
+" END_INDENT
+
+" START_INDENT
+enum Color
+    White
+    Red
+    Green
+    Blue
+    Black
+endenum
+" END_INDENT

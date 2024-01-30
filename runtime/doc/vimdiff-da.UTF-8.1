@@ -1,0 +1,50 @@
+.TH VIMDIFF 1 "30. marts 2001"
+.SH NAVN
+vimdiff \- rediger to, tre eller fire version af en fil med Vim,
+og vis forskellene
+.SH SYNOPSIS
+.br
+.B vimdiff
+[tilvalg] fil1 fil2 [fil3 [fil4]]
+.PP
+.B gvimdiff
+.SH BESKRIVELSE
+.B Vimdiff
+starter
+.B Vim
+på to (eller tre eller fire) filer.
+Hver fil får sit eget vindue.
+Forskellene mellem filerne fremhæves.
+Det er en fin måde til at inspicere ændringer og til at flytte ændringer fra
+en version til en anden version af den samme fil.
+.PP
+Se vim(1) for detaljer om selve Vim.
+.PP
+Når den startes som
+.B gvimdiff
+, så starter den GUI'en, hvis den er tilgængelig.
+.PP
+I hvert vindue sættes 'diff'-valgmuligheden, som får forskellene
+til at blive fremhævet.
+.br
+\'wrap'- og 'scrollbind'-valgmulighederne sættes for at få teksten til
+at se godt ud.
+.br
+\'foldmethod'-valgmuligheden sættes til "diff", hvilket lægger områder af
+linjer uden ændringer i en sammenfoldning. 'foldcolumn' sættes til to,
+for at gøre det lettere at se sammenfoldningerne og åbne eller lukke dem.
+.SH TILVALG
+Lodrette opdelinger bruges til at opstille linjerne, som hvis "\-O"-argumentet
+blev brugt.
+Brug "\-o"-argumentet, for i stedet at bruge vandrette opdelinger.
+.PP
+Se vim(1) for alle andre argumenter.
+.SH SE OGSÅ
+vim(1)
+.SH FORFATTER
+Det meste af
+.B Vim
+blev lavet af Bram Moolenaar, med en masse hjælp fra andre.
+Se ":help credits" i
+.B Vim\c
+\&.

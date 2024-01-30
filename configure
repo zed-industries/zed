@@ -1,0 +1,6 @@
+#! /bin/sh
+
+# This is just a stub for the Unix configure script, to provide support for
+# doing "./configure" in the top Vim directory.
+
+cd "${SRCDIR:-src}" && exec ./configure "$@"

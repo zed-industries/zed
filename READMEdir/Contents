@@ -1,0 +1,23 @@
+Vim		Vi IMproved.  A clone of the UNIX text editor Vi.  Very useful
+		for editing programs and other plain ASCII text.  Full Vi
+		compatibility and includes all Ex commands.  Extra features
+		above Vi: Multilevel undo, multiple windows, syntax
+		highlighting, command line history, folding, improved command
+		line editing, command typeahead display, command to display
+		yank buffers, possibility to edit binary files, file name
+		stack, support for Manx QuickFix and other compiler's error
+		messages, shows current file name in window title, on-line
+		help, rectangular cut/paste, etc., etc., etc...
+
+		Version 9.1.  Also runs under UNIX, MS-Windows, Mac, etc.
+		vim91rt.tgz  contains the documentation and syntax files.
+		vim91bin.tgz contains the binaries.
+		vim91src.tgz contains the sources.
+		Author: Bram Moolenaar et al.
+
+
+Xxd		Hex dumper and reader.  Can be used to view files as hex, edit
+		them and write them back.  Can also be used to patch files.
+
+		Version 2023 Oct 25
+		Author: Juergen Weigert

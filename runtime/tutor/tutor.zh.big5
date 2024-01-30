@@ -1,0 +1,852 @@
+===============================================================================
+=      舧          綷     弄    V I M  毙  祘         セ 1.5      =
+===============================================================================
+     vim 琌ㄣΤ㏑獶盽眏絪胯竟絞碩セ毙祘讽い
+     ぃ碞冈灿ざ残セ毙祘砞璸ヘ夹琌量瓃ㄇゲ璶膀セ㏑τ磝搐硂
+     ㄇ㏑眤碞镑甧盢vim讽硄ノ窾絪胯竟ㄓㄏノ
+
+     ЧΘセ毙祘ず甧惠璶25-30だ牧∕眤癡絤丁
+
+     –竊㏑巨盢穦эセゅ崩滤眤確セゅ捌セ礛捌セ
+     秈︽癡絤(狦眤琌硄筁"vimtutor"ㄓ币笆毙祘ê或セゅ碞竒琌捌セ)
+
+     ち癘翴セ毙祘砞璸隔琌ㄏノい秈︽厩策碞琌弧眤惠璶硄筁
+     磅︽㏑ㄓ厩策ウセōタ絋ノ猭狦眤琌綷弄τぃ巨ê或眤
+     穦е框а硂ㄇ㏑
+
+     瞷叫絋﹚眤Shift-Lock(糶玛﹚龄)临⊿Τ礛龄絃
+     ダ龄 j ì镑Ω计ㄓ簿笆夹材竊ず甧镑Ч骸辊
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			材量材竊簿笆夹
+
+
+   ““ 璶簿笆夹叫ㄌ酚弧だ hjkl 龄 ““
+
+	     ^
+	     k		    矗ボ h 龄オ娩–Ω碞穦オ簿笆
+       < h	 l >		   l 龄娩–Ω碞穦簿笆
+	     j			   j 龄怇ㄓ禜や狠よ绰絙繷
+	     v
+
+  1. 叫繦種辊ず簿笆夹眤谋眔滴狝ゎ
+
+  2. ︽龄(j)瞷夹確︽
+
+---> 瞷眤莱赣竒厩穦簿笆量
+
+  3. 瞷叫ㄏノ︽龄盢夹簿笆材量材竊
+
+矗ボ狦眤ぃ幢絋﹚眤┮ダ叫<ESC>龄タ盽(Normal)家Α
+      礛Ω眖龄絃块眤稱璶㏑
+
+矗ボ夹龄莱讽タ盽琌ㄏノhjkl龄策篋ぇ眤碞镑е硉
+      辊ず矪簿笆夹
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			材量材竊VIM秈㎝癶
+
+
+  !! 疭矗ボ穛叫綷弄Ч俱セ竊ず甧礛磅︽┮量秆㏑
+
+  1. 叫<ESC>龄(硂琌絋玂眤矪タ盽家Α)
+
+  2. 礛块			:q! <ó>
+
+---> 硂贺よΑ癶絪胯竟荡ぃ穦玂眤秈絪胯竟ㄓ┮暗э笆
+     狦眤稱玂э癶叫块
+				:wq  <ó>
+
+  3. 狦眤㏑︽矗ボ才叫块镑盿眤セ毙祘㏑ê碞琌
+
+		vimtutor <ó>
+
+     硄盽薄猵眤ノ硂贺よΑ
+
+		vim tutor <ó>
+
+---> 硂柑 'vim' ボ秈vim絪胯竟τ 'tutor'玥琌眤非称璶絪胯ゅン
+
+  4. 狦眤獺竒╟╟癘硂ㄇ˙艼杠叫眖˙艼1磅︽˙艼3癶礛
+     Ω秈絪胯竟钡帝盢夹簿笆材量材竊ㄓ膥尿и毙祘量秆
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			材量材竊ゅセ絪胯ぇ埃
+
+
+   ** タ盽(Normal)家Α x 龄ㄓ埃夹┮竚才**
+
+  1. 叫盢夹簿笆セ竊い夹癘Τ ---> ê︽
+
+  2. タ块岿粇叫盢夹簿非称埃才竚矪
+
+  3. 礛 x 龄盢岿粇才埃奔
+
+  4. 確˙艼2˙艼4タゎ
+
+---> The ccow jumpedd ovverr thhe mooon.
+
+  5. 赣︽竒タ竊ず甧琌材量材竊
+
+疭矗ボ眤聅凝セ毙祘ぃ璶眏︽癘拘癘翴ㄏノい厩策
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		     材量材竊ゅセ絪胯ぇ础
+
+
+	 ** タ盽家Α i 龄ㄓ础ゅセ**
+
+  1. 叫盢夹簿笆セ竊い夹癘Τ ---> 材︽
+
+  2. ㄏ眔材︽ず甧筽材︽叫盢夹簿ゅセ材才非称础
+     竚
+
+  3. 礛 i 龄钡帝块ゲ璶ゅセ才
+
+  4. ┮Τゅセ恗タЧ拨叫 <ESC> 龄タ盽家Α
+     確˙艼2˙艼4獽タ
+
+---> There is text misng this .
+---> There is some text missing from this line.
+
+  5. 狦眤癸ゅセ础巨竒骸種叫钡帝綷弄挡
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			       材量挡
+
+
+  1. 夹辊ゅセい簿笆琂ノ絙繷龄ㄏノ hjkl ダ龄
+	 h (オ簿)	j (︽)       k (︽)	    l (簿)
+
+  2. 饼秈vim絪胯竟(眖㏑︽矗ボ才)叫块vim ゅン <ó>
+
+  3. 饼癶vim絪胯竟叫块㏑斌┮Τэ
+
+	<ESC>   :q!	 <ó>
+
+     ┪幫块㏑玂┮Τэ
+
+	<ESC>   :wq	 <ó>
+
+  4. タ盽家Α埃夹┮竚才叫 x
+
+  5. タ盽家Α璶夹┮竚秨﹍础ゅセ叫
+
+	 i     块ゲ璶ゅセ	<ESC>
+
+疭矗ボ <ESC> 龄穦盿眤タ盽家Α┪幫ぃ戳辨┪幫场だЧΘ
+㏑
+
+材量挡钡ㄓ膥尿材量ず甧
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			材量材竊埃摸㏑
+
+
+	    ** 块 dw 眖夹矪埃虫/虫迭ソЮ**
+
+  1. 叫 <ESC> 龄絋玂眤矪タ盽家Α
+
+  2. 叫盢夹簿笆セ竊い夹癘Τ ---> ê︽
+
+  3. 叫盢夹簿非称璶埃虫迭秨﹍
+
+  4. 钡帝块 dw 埃奔赣虫迭
+
+  疭矗ボ眤┮块 dw 穦眤块瞷辊程︽狦眤块
+  Τ粇叫 <ESC> 龄礛穝ㄓ
+
+---> There are a some words fun that don't belong paper in this sentence.
+
+  5. 確˙艼3˙艼4タЧ拨钡帝膥尿材量材竊ず甧
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		      材量材竊ㄤ埃摸㏑
+
+
+		   ** 块 d$ 眖讽玡夹埃︽ソ**
+
+  1. 叫 <ESC> 龄絋玂眤矪タ盽家Α
+
+  2. 叫盢夹簿笆セ竊い夹癘Τ ---> ê︽
+
+  3. 叫盢夹簿笆赣︽Ю场(碞琌材翴腹ˉ.ˇ)
+
+  4. 礛块 d$ 眖夹矪讽玡︽Ю场
+
+---> Somebody typed the end of this line twice. end of this line twice.
+
+
+  5. 叫膥尿厩策材量材竊碞笵琌或ㄆ
+
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		     材量材竊闽㏑㎝癸禜
+
+
+  埃㏑ d Α
+
+	 [number]   d	object	    ┪幫     d	 [number]   object
+
+  ㄤ種
+    number - 磅︽㏑Ω计(匡兜砞竚 1 )
+    d - 埃
+    object - ㏑┮璶巨癸禜(Τ闽ざ残)
+
+  虏祏癸禜
+    w - 眖讽玡夹讽玡竚虫/虫迭ソЮ珹
+    e - 眖讽玡夹讽玡竚虫/虫迭ソЮ琌 *ぃ* 珹
+    $ - 眖讽玡夹讽玡竚讽玡︽ソ
+
+疭矗ボ
+    癸玦贝幫叫タ盽家Α度莱癸禜龄τぃㄏノ㏑玥
+    盢夹簿笆タ癸禜┮妓
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		材量材竊癸禜㏑疭薄猵
+
+
+	       ** 块 dd 埃俱讽玡︽ **
+
+  懦俱︽埃蔼繵VIM 砞璸幫∕﹚璶虏て俱︽埃度惠璶︽
+  阑ゴㄢΩ d 碞埃奔夹┮俱︽
+
+  1. 叫盢夹簿笆セ竊い祏琿辅い材︽
+  2. 块 dd 埃赣︽
+  3. 礛簿笆材︽
+  4. 钡帝块 2dd (临癘眔玡量筁 number-command-object 盾) 埃ㄢ︽
+
+      1)  Roses are red,
+      2)  Mud is fun,
+      3)  Violets are blue,
+      4)  I have a car,
+      5)  Clocks tell time,
+      6)  Sugar is sweet
+      7)  And so are you.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			 材量材き竊篗摸㏑
+
+
+	 ** 块 u ㄓ篗程磅︽㏑块 U ㄓタ俱︽**
+
+  1. 叫盢夹簿笆セ竊い夹癘Τ ---> ê︽盢ㄤ竚材岿粇
+     矪
+  2. 块 x 埃材ぃ稱玂痙ダ
+  3. 礛块 u 篗程磅︽(Ω)㏑
+  4. 硂Ω璶ㄏノ x タセ︽┮Τ岿粇
+  5. 瞷块糶 U 灘確赣︽﹍篈
+  6. 钡帝Ω块 u 篗 U の玡㏑
+  7. 礛Ω块 CTRL-R ( CTRL 龄ぃ秨钡帝块 R 龄) 硂妓碞
+     磅︽灘確㏑碞琌篗奔篗㏑
+
+---> Fiix the errors oon thhis line and reeplace them witth undo.
+
+  8. 硂ㄇ恗琌獶盽Τノ㏑琌材量挡
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			       材量挡
+
+
+  1. 饼眖讽玡夹埃虫/虫迭ソЮ叫块dw
+
+  2. 饼眖讽玡夹埃讽玡︽ソЮ叫块d$
+
+  3. 饼埃俱︽叫块dd
+
+  4. タ盽家Α㏑Α琌
+
+       [number]   command   object     ┪幫     command	[number]   object
+     ㄤ種琌
+       number - 琌㏑磅︽Ω计
+       command - 璶暗ㄆ薄ゑ d 埃
+       object - 璶巨癸禜ゑ w 虫/虫迭$ ︽ソ单单
+		$ (to the end of line), etc.
+
+  5. 饼篗玡巨叫块u (糶u)
+     饼篗︽い┮暗э笆叫块U (糶U)
+     饼篗玡篗㏑灘確玡巨挡狦叫块CTRL-R
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			 材量材竊竚摸㏑
+
+
+	       ** 块 p 盢程Ω埃ず甧竚夹ぇ **
+
+  1. 叫盢夹簿笆セ竊いボ璖琿辅︽
+
+  2. 块 dd 盢赣︽埃硂妓穦盢赣︽玂vim絯≧跋い
+
+  3. 钡帝盢夹簿笆非称竚竚よ癘琌よ瓳
+
+  4. 礛タ盽家Α(<ESC>龄秈)块 p 盢赣︽诌禟竚
+
+  5. 確˙艼2˙艼4盢┮Τ︽ㄌ竚タ絋竚
+
+     d) Can you learn too?
+     b) Violets are blue,
+     c) Intelligence is learned,
+     a) Roses are red,
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		       材量材竊蠢传摸㏑
+
+
+	  ** 块 r ㎝才蠢传夹┮竚才**
+
+  1. 叫盢夹簿笆セ竊い夹癘Τ ---> 材︽
+
+  2. 叫簿笆夹材岿粇続讽竚
+
+  3. 钡帝块 r 硂妓碞盢岿粇蠢传奔
+
+  4. 確˙艼2㎝˙艼3材︽竒эЧ拨
+
+--->  Whan this lime was tuoed in, someone presswd some wrojg keys!
+--->  When this line was typed in, someone pressed some wrong keys!
+
+  5. 礛и膥尿厩材量材竊
+
+疭矗ボち癘眤璶ㄏノい厩策τぃ琌癘拘い厩策
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			材量材竊э摸㏑
+
+
+	   ** 璶э跑虫/虫迭场だ┪幫场叫块 cw **
+
+  1. 叫盢夹簿笆セ竊い夹癘Τ ---> 材︽
+
+  2. 钡帝р夹虫迭 lubw ダ u 竚ê柑
+
+  3. 礛块 cw 碞タ赣虫迭(セㄒ硂柑琌块 ine )
+
+  4. 程 <ESC> 龄礛夹﹚岿粇材非称эダ矪
+
+  5. 確˙艼3㎝˙艼4材Ч筽材
+
+---> This lubw has a few wptfd that mrrf changing usf the change command.
+---> This line has a few words that need changing using the change command.
+
+矗ボ叫猔種 cw ㏑ぃ度度琌蠢传虫迭琵眤秈ゅセ础篈
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		       材量材竊ㄏノcㄤэ摸㏑
+
+
+	     ** э摸ㄏノ埃摸㏑┮ㄏノ癸禜把计**
+
+  1. э摸よΑ蛤埃摸㏑琌璓巨Α琌
+
+       [number]   c   object	   ┪幫	    c	[number]   object
+
+  2. 癸禜把计琌妓ゑ w 虫/虫迭$︽ソ单单
+
+  3. 叫盢夹簿笆セ竊い夹癘Τ ---> 材︽
+
+  4. 钡帝盢夹簿笆材岿粇矪
+
+  5. 礛块 c$ ㄏ眔赣︽逞场だタ眔材︽妓程 <ESC> 龄
+
+---> The end of this line needs some help to make it like the second.
+---> The end of this line needs to be corrected using the  c$  command.
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			       材量挡
+
+
+  1. 璶穝竚竒埃ゅセず甧叫块糶ダ p赣巨盢埃
+     ゅセず甧竚夹ぇ狦程Ω埃琌俱︽ê或赣︽盢竚
+     讽玡夹┮︽︽
+
+  2. 璶蠢传夹┮竚才叫块糶 r ㎝璶蠢传奔竚才穝
+     才
+
+  3. э摸㏑す砛眤э跑﹚癸禜眖讽玡夹┮竚癸禜ソЮ
+     ゑ块 cw 蠢传讽玡夹虫迭ソЮず甧块 c$ 蠢传讽
+     玡夹︽ソず甧
+
+  4. э摸㏑Α琌
+
+	 [number]   c	object	      ┪幫	c   [number]   object
+
+и膥尿厩策量
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		     材量材竊﹚のゅン篈
+
+
+  ** 块 CTRL-g 陪ボ讽玡絪胯ゅンい讽玡夹┮︽竚のゅン篈獺
+     块 SHIFT-G 玥钡铬锣ゅンい琘﹚︽**
+
+  矗ボち癘璶硄弄セ竊ず甧ぇ磅︽˙艼!!!
+
+  1.  CTRL 龄ぃ秨礛 g 龄礛碞穦程┏场瞷篈獺
+     ︽陪ボず甧琌讽玡絪胯ゅン㎝ゅン羆︽计叫癘˙艼3︽腹
+
+  2.  SHIFT-G 龄ㄏ眔讽玡夹钡铬锣ゅン程︽
+
+  3. 块眤纯氨痙︽腹礛 SHIFT-G硂妓碞眤材Ω
+     CTRL-g ┮︽猔種块︽腹︽腹琌ぃ穦辊陪ボㄓ
+     
+
+  4. 狦腀種眤膥尿磅︽˙艼1˙艼
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			材量材竊穓摸㏑
+
+
+     ** 块 / のЮ繦才﹃ノ讽玡ゅンい琩т赣才﹃**
+
+  1. タ盽家Α块 / 才眤穦猔種赣才㎝夹恗穦瞷辊┏
+     场硂蛤 : ㏑琌妓
+
+  2. 钡帝块 errroor <ó>êerrroor碞琌眤璶琩т才﹃
+
+  3. 璶琩тΩ才﹃惠璶 n 龄璶はよ琩тΩ
+     才﹃叫块 Shift-N 
+
+  4. 狦眤稱癴琩т才﹃叫ㄏノ ? 蠢 / 秈︽
+
+---> When the search reaches the end of the file it will continue at the start.
+
+  "errroor" is not the way to spell error;  errroor is an error.
+
+  矗ボ狦琩т竒笷ゅンソЮ琩т穦笆眖ゅン繷场膥尿琩т
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		   材量材竊皌癸珹腹琩т
+
+
+	      **  % 琩т皌癸珹腹 )]}**
+
+  1. р夹セ竊夹癘Τ --> ê︽いヴ ([ ┪ { 矪
+
+  2. 钡帝 % 才
+
+  3. 夹竚莱讽琌皌癸珹腹矪
+
+  4. Ω % 碞铬皌癸材珹腹矪
+
+---> This ( is a test line with ('s, ['s ] and {'s } in it. ))
+
+矗ボ祘秸刚硂ノㄓ琩тぃ皌癸珹腹琌Τノ
+
+
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		      材量材竊タ岿粇よ猭ぇ
+
+
+		** 块 :s/old/new/g 蠢传 old  new**
+
+  1. 叫盢夹簿笆セ竊い夹癘Τ ---> ê︽
+
+  2. 块 :s/thee/the <ó> 叫猔種赣㏑э跑夹┮︽材で皌
+     ﹃
+
+  3. 块 :s/thee/the/g	玥琌蠢传︽で皌﹃
+
+---> the best time to see thee flowers is in thee spring.
+
+  4. 璶蠢传ㄢ︽ぇ丁瞷–で皌﹃叫块 :#,#s/old/new/g (#,#琌
+     ㄢ︽︽腹)块 :%s/old/new/g 玥琌蠢传俱ゅンい–で皌﹃
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			       材量挡
+
+
+  1. Ctrl-g ノ陪ボ讽玡夹┮竚㎝ゅン篈獺Shift-G ノ盢夹铬
+     锣ゅン程︽篤︽腹礛 Shift-G 玥琌盢夹簿笆赣︽
+     腹︽
+
+  2. 块 / 礛候繦才﹃琌玥琌讽玡┮絪胯ゅ郎い琩т赣才﹃
+     块拜腹 ? 礛候繦才﹃琌玥琌讽玡┮絪胯ゅ郎い玡琩т赣
+     才﹃ЧΘΩ琩тぇ n 龄玥琌確Ω㏑よ琩
+     т才﹃┮┪幫 Shift-N はよ琩т赣才﹃┮
+
+  3. 狦夹讽玡竚琌珹腹()[]{} % 盢夹簿笆皌癸
+     珹腹
+
+  4. ︽ず蠢传繷才﹃ old 穝才﹃ new叫块  :s/old/new
+     ︽ず蠢传┮Τ才﹃ old 穝才﹃ new叫块  :s/old/new/g
+     ㄢ︽ず蠢传┮Τ才﹃ old 穝才﹃ new叫块  :#,#s/old/new/g
+     ゅンず蠢传┮Τ才﹃ old 穝才﹃ new叫块  :%s/old/new/g
+     秈︽ゅ蠢传高拜ノめ絋粄–蠢传惠睰 c 匡兜叫块 :%s/old/new/gc
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		材き量材竊 VIM ず磅︽场㏑よ猭
+
+
+	   ** 块 :! 礛候繦帝块场㏑磅︽赣场㏑**
+
+  1. и┮剪眡 : ㏑砞竚夹辊┏场硂妓碞琵眤块㏑
+
+  2. 钡帝块稰鼓腹 ! 硂才硂妓碞す砛眤磅︽场 shell ㏑
+
+  3. и ls ㏑ㄒ块 !ls <ó> 赣㏑碞穦羭眤讽玡ヘ魁
+     ず甧碞眤㏑︽矗ボ才块 ls ㏑挡狦妓狦 !ls ⊿怇
+     ノ眤刚刚 :!dir 
+
+---> 矗ボ ┮Τ场㏑恗硂贺よΑ磅︽
+
+---> 矗ボ ┮Τ : ㏑恗ゲ斗 <ó> 沧
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		      材き量材竊闽玂ゅン獺
+
+
+	     ** 璶盢癸ゅンэ笆玂ゅンい叫块 :w FILENAME **
+
+  1. 块 :!dir ┪幫 :!ls 莉讽玡ヘ魁ず甧眤莱讽笵程临眔篤
+     <ó> 
+
+  2. 匡拒﹟ゼゅンゑ TEST 
+
+  3. 钡帝块 :w TEST  (矪 TEST 琌眤┮匡拒ゅン)
+
+  4. 赣㏑穦 TEST ゅン玂俱ゅン (VIM 毙祘)絋玂タ絋玂
+     叫Ω块 :!dir 琩眤ヘ魁ず甧
+
+---> 叫猔種狦眤癶 VIM 礛ゅン TEST 把计秈ê或赣ゅンず
+     甧莱赣眤玂ゅンず甧琌Ч妓
+
+  5. 瞷眤硄筁块 :!rm TEST ㄓ埃 TEST ゅン
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		    材き量材竊ㄣΤ匡拒┦玂㏑
+
+
+		** 璶玂ゅン场だず甧叫块 :#,# w FILENAME **
+
+  1. ㄓ磅︽Ω :!dir ┪幫 :!ls 莉讽玡ヘ魁ず甧礛匡拒続
+     ぃゅンゑ TEST 
+
+  2. 钡帝盢夹簿笆セ程郴狠礛 CTRL-g т赣︽︽腹а
+     ︽腹瓳
+
+  3. 钡帝р夹簿笆セ程┏狠Ω CTRL-g а硂︽腹瓳
+
+  4. 玂ゅ彻琘场だ叫块 :#,# w TEST 硂柑 #,# 碞琌
+     璶―眤癘︽腹(郴狠︽腹,┏狠︽腹)τ TEST 碞琌匡﹚ゅン
+
+  5. 程ノ :!dir 絋粄ゅン琌タ絋玂琌硂Ω埃奔
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		   材き量材竊矗㎝ゅン
+
+
+       ** 璶讽玡ゅンい础ゅンず甧叫块 :r FILENAME **
+
+  1. 叫龄 :!dir 絋粄眤玡承 TEST ゅン临
+
+  2. 礛盢夹簿笆讽玡郴狠
+
+疭矗ボ 磅︽˙艼3ぇ眤盢材き量材竊叫┕簿笆硂柑ㄓ
+
+  3. 钡帝硄筁 :r TEST 盢玡承 TEST ゅン矗秈ㄓ
+
+疭矗ボ眤┮矗秈ㄓゅン盢眖夹┮竚矪秨﹍竚
+
+  4. 絋粄ゅン竒矗Θ簿笆夹ㄓ竚碞猔種Τㄢ材
+     き量材竊琌セ琌ㄓゅン捌セ
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			       材き量挡
+
+
+  1. :!command ノ磅︽场㏑ command
+
+     叫ㄇ龟悔ㄒ
+	 :!dir		-  ノ陪ボ讽玡ヘ魁ず甧
+	 :!rm FILENAME	-  ノ埃 FILENAME ゅン
+
+  2. :w FILENAME  盢讽玡 VIM いタ絪胯ゅン玂 FILENAME
+     ゅンい
+
+  3. :#,#w FILENAME 盢讽玡絪胯ゅン材 # ︽材 # ︽ず甧玂ゅン
+     FILENAME い
+
+  4. :r FILENAME 矗合絃ゅン FILENAME 盢ㄤ础讽玡ゅン夹竚
+     
+
+
+
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			 材せ量材竊ゴ秨摸㏑
+
+
+	 ** 块 o 盢夹よゴ秨穝︽秈础家Α**
+
+  1. 叫盢夹簿笆セ竊い夹癘Τ ---> ê︽
+
+  2. 钡帝块糶 o 夹 *よ* ゴ秨穝︽秈础家Α
+
+  3. 礛確夹癘Τ ---> ︽ <ESC> 龄癶础家Ατ秈タ盽家Α
+
+---> After typing  o  the cursor is placed on the open line in Insert mode.
+
+  4. 夹 *よ* ゴ秨穝︽惠璶块糶 O τぃ琌糶 o
+     碞叫︽代刚讽夹矪赣︽ Shift-O
+     赣︽よ穝秨︽
+
+Open up a line above this by typing Shift-O while the cursor is on this line.
+
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			材せ量材竊夹础摸㏑
+
+
+		     ** 块 a 盢夹ぇ础ゅセ **
+
+  1. 叫タ盽家Α硄筁块 $ 盢夹簿笆セ竊い夹癘Τ ---> 材︽
+     ソЮ
+
+  2. 钡帝块糶 a 玥夹ぇ础ゅセ糶 A 玥钡︽
+     ソ础ゅセ
+
+矗ボ块糶 A 巨よ猭︽ソ础ゅセ磷块 i夹﹚
+      程才块ゅセ<ESC> 確タ盽家Α絙繷龄簿笆夹の
+      x 埃讽玡夹┮竚才单单窖羉馒巨
+
+  3. 巨ぇ材︽碞干Ч俱叫猔種夹础ゅセ籔础家Α琌膀
+     セЧ璓琌ゅセ础竚﹚祔Τぃ絵
+
+---> This line will allow you to practice
+---> This line will allow you to practice appending text to the end of a line.
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		    材せ量材竊竚传摸㏑セ
+
+
+		      ** 块糶 R 硈尿蠢传才**
+
+  1. 叫盢夹簿笆セ竊い夹癘Τ ---> 材︽
+
+  2. 簿笆夹材︽いぃ夹Τ ---> 材︽材虫迭秨﹍虫
+     迭 last 矪
+
+  3. 礛块糶 R 秨﹍р材︽いぃ材︽逞才硋块碞
+     场蠢传奔Τ才τㄏ眔材︽Ч筽材︽
+
+---> To make the first line the same as the last on this page use the keys.
+---> To make the first line the same as the second, type R and the new text.
+
+  4. 叫猔種狦眤 <ESC> 癶竚传家Α確タ盽家Α﹟ゼ蠢传ゅセ盢ご
+     礛玂
+
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			    材せ量材竊砞竚摸㏑匡兜
+
+
+		  ** 砞竚ㄏ琩т┪幫蠢传┛菠糶匡兜 **
+
+
+  1. 璶琩т虫迭 ignore タ盽家Α块 /ignore 璶確琩т赣迭
+     確 n 龄
+
+  2. 礛砞竚 ic 匡兜(ic碞琌璣ゅ┛菠糶Ignore Caseダ罽糶迭)
+     块
+	:set ic
+
+  3. 瞷硄筁龄 n 龄Ω琩т虫迭 ignore確琩т確龄 n 龄
+
+  4. 礛砞竚 hlsearch ㎝ incsearch 硂ㄢ匡兜块ず甧
+     :set hls is
+
+  5. 瞷Ω块琩т㏑穦Τぐ或狦
+     /ignore
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+			       材せ量挡
+
+
+  1. 块糶 o 夹よゴ秨穝︽盢夹竚穝秨︽秈
+     础家Α
+     块糶 O 夹よゴ秨穝︽盢夹竚穝秨︽秈
+     础家Α
+
+  2. 块糶 a 夹┮竚ぇ础ゅセ
+     块糶 A 夹┮︽︽ソぇ础ゅセ
+
+  3. 块糶 R 盢秈蠢传家Α <ESC> 龄癶蠢传家Ατ秈タ盽
+     家Α
+
+  4. 块 :set xxx 砞竚 xxx 匡兜
+
+
+
+
+
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		       材量絬腊㏑
+
+		      ** ㄏノ絬腊╰参 **
+
+  Vim 局Τ灿璓絬腊╰参璶币笆赣腊╰参叫匡拒贺よ
+  猭ぇ
+	-  <HELP> 龄 (狦龄絃Τ杠)
+	-  <F1> 龄 (狦龄絃Τ杠)
+	- 块	:help <ó>
+
+  块 :q <ó> 闽超腊怠
+
+  矗ㄑタ絋把计倒":help"㏑眤т闽赣肈腊叫刚喷
+  把计(аó龄瓳:)
+
+	  :help w <ó>
+	  :help c_<T <ó>
+	  :help insert-index <ó>
+	  :help user-manual <ó>
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		      材量承币笆竲セ
+
+			 ** 币ノvim **
+
+  Vim疭┦璶ゑvi眔场だ恗⊿Τ縀币笆
+  眤眔承vimrcゅン
+
+  1. 秨﹍絪胯vimrcゅン硂∕眤┮ㄏノ巨╰参
+
+     :edit ~/.vimrc		硂琌Unix╰参┮ㄏノ㏑
+     :edit ~/_vimrc		硂琌Windows╰参┮ㄏノ㏑
+
+  2. 钡帝旧vimrc璖ㄒゅン
+
+     :read $VIMRUNTIME/vimrc_example.vim
+
+  3. 玂ゅン㏑
+
+     :write
+
+  Ω眤币笆vim絪胯竟碞穦Τ粂猭蔼獹眤膥尿р眤尺
+  舧ㄤウ砞竚睰硂vimrcゅンい
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  vim 毙祘挡セ毙祘琌虏ざ残vim絪胯竟ì琵眤
+  甧厩穦ㄏノセ絪胯竟ゐ眅借好vim临Τ㏑セ毙祘┮ざ
+  残临畉眔环帝㎡┮眤璶弘硄杠临辨膥尿瓳˙眤綷弄
+  vimもㄏノ㏑琌
+	:help user-manual
+
+  秈˙把σ㎝厩策硂セ眔崩滤
+
+	Vim - Vi Improved - 幫Steve Oualline
+	New Riders
+
+  硂琌材セЧ量秆vim膟癸厩幫疭Τノㄤい临Τ秖龟ㄒ
+  ㎝瓜ボ饼冈薄叫砐拜 https://iccf-holland.org/click5.html
+
+  硂セゑ耕ρτず甧璶琌viτぃ琌vim琌眔崩滤
+
+	Learning the Vi Editor - 幫Linda Lamb
+	O'Reilly & Associates Inc.
+
+  硂琌セぃ岿硄筁ウ眤碭镑秆场vi镑暗ㄆ薄材
+  せセㄇ闽vim獺
+
+  セ毙祘琌パㄓCalorado School of MineseMichael C. PierceRobert K.
+  Ware ┮絪糶ㄤいㄓColorado State UniversityCharles Smith矗ㄑ
+  承種絪幫硄獺琌
+
+	bware@mines.colorado.edu
+
+  セ毙祘パBram Moolenaar盡vim秈︽璹
+
+
+
+  亩幫ē
+  ===========
+      虏砰いゅ毙祘陆亩ぇ亩幫辩 <beos@turbolinux.com.cn>临Τ
+      羛╰linuxrat@gnuchina.org
+
+      羉砰いゅ毙祘琌眖虏砰いゅ毙祘陆亩ㄏノ Debian GNU/Linux いゅ兜ヘ
+      舱約谨ネ絪糶いゅ簙锣絏竟  autoconvert 锣传τΘ癸锣
+      传挡狦暗ㄇ灿竊э笆
+
+  跑癘魁
+  =========
+      200208る30ら 辩 <beos@turbolinux.com.cn>
+      稰谅 RMS@SMTH タ盢矪岿粇タ
+
+      200204る22ら 辩 <linuxrat@gnuchina.org>
+      稰谅 xuandong@sh163.net タ盢ㄢ矪岿タ
+
+      200203る18ら 辩 <linuxrat@gnuchina.org>
+      沮Bram Moolenaarネ200203る16らㄓ獺璶―盢vimtutor1.4い亩
+      どvimtutor1.5
+
+      200111る15ら 辩 <linuxrat@gnuchina.org>
+      盢vimtutor1.4い亩矗ユ倒Bram Moolenaar㎝Sven Guckes
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

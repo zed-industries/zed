@@ -1,0 +1,40 @@
+INIT
+WANTSTATE
+WANTSCREEN
+
+RESET
+
+PUSH "\e[3;21r"
+PUSH "\e[?6h"
+
+PUSH "\e[19;1HA\e[19;80Ha\x0a\e[18;80HaB\e[19;80HB\b b\x0a\e[19;80HC\b\b\t\tc\e[19;2H\bC\x0a\e[19;80H\x0a\e[18;1HD\e[18;80Hd"
+PUSH "\e[19;1HE\e[19;80He\x0a\e[18;80HeF\e[19;80HF\b f\x0a\e[19;80HG\b\b\t\tg\e[19;2H\bG\x0a\e[19;80H\x0a\e[18;1HH\e[18;80Hh"
+PUSH "\e[19;1HI\e[19;80Hi\x0a\e[18;80HiJ\e[19;80HJ\b j\x0a\e[19;80HK\b\b\t\tk\e[19;2H\bK\x0a\e[19;80H\x0a\e[18;1HL\e[18;80Hl"
+PUSH "\e[19;1HM\e[19;80Hm\x0a\e[18;80HmN\e[19;80HN\b n\x0a\e[19;80HO\b\b\t\to\e[19;2H\bO\x0a\e[19;80H\x0a\e[18;1HP\e[18;80Hp"
+PUSH "\e[19;1HQ\e[19;80Hq\x0a\e[18;80HqR\e[19;80HR\b r\x0a\e[19;80HS\b\b\t\ts\e[19;2H\bS\x0a\e[19;80H\x0a\e[18;1HT\e[18;80Ht"
+PUSH "\e[19;1HU\e[19;80Hu\x0a\e[18;80HuV\e[19;80HV\b v\x0a\e[19;80HW\b\b\t\tw\e[19;2H\bW\x0a\e[19;80H\x0a\e[18;1HX\e[18;80Hx"
+PUSH "\e[19;1HY\e[19;80Hy\x0a\e[18;80HyZ\e[19;80HZ\b z\x0a"
+
+!Output
+
+?screen_row  2 = "I                                                                              i"
+?screen_row  3 = "J                                                                              j"
+?screen_row  4 = "K                                                                              k"
+?screen_row  5 = "L                                                                              l"
+?screen_row  6 = "M                                                                              m"
+?screen_row  7 = "N                                                                              n"
+?screen_row  8 = "O                                                                              o"
+?screen_row  9 = "P                                                                              p"
+?screen_row 10 = "Q                                                                              q"
+?screen_row 11 = "R                                                                              r"
+?screen_row 12 = "S                                                                              s"
+?screen_row 13 = "T                                                                              t"
+?screen_row 14 = "U                                                                              u"
+?screen_row 15 = "V                                                                              v"
+?screen_row 16 = "W                                                                              w"
+?screen_row 17 = "X                                                                              x"
+?screen_row 18 = "Y                                                                              y"
+?screen_row 19 = "Z                                                                              z"
+?screen_row 20 = ""
+
+?cursor = 20,79

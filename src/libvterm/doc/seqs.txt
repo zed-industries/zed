@@ -1,0 +1,283 @@
+Sequences documented in parens are implicit ones from parser.c, which move
+between states.
+
+1 = VT100
+2 = VT220
+3 = VT320
+x = xterm
+
+    C0 controls
+
+123    0x00             = NUL
+123x   0x07             = BEL
+123x   0x08             = BS
+123x   0x09             = HT
+123x   0x0A             = LF
+123x   0x0B             = VT
+123x   0x0C             = FF
+123x   0x0D             = CR
+123x   0x0E             = LS1
+123x   0x0F             = LS0
+      (0x18             = CAN)
+      (0x1A             = SUB)
+      (0x1B             = ESC)
+
+123    0x7f             = DEL (ignored)
+
+    C1 controls
+
+123x   0x84             = IND
+123x   0x85             = NEL
+123x   0x88             = HTS
+123x   0x8D             = RI
+ 23x   0x8E             = SS2
+ 23x   0x8F             = SS3
+      (0x90             = DCS)
+      (0x98             = SOS)
+      (0x9B             = CSI)
+      (0x9C             = ST)
+      (0x9D             = OSC)
+      (0x9E             = PM)
+      (0x9F             = APC)
+
+    Escape sequences
+     - excluding sequences that are C1 aliases
+
+123x   ESC (            = SCS, select character set G0
+123x   ESC )            = SCS, select character set G1
+ 23x   ESC *            = SCS, select character set G2
+ 23x   ESC +            = SCS, select character set G3
+123x   ESC 7            = DECSC - save cursor
+123x   ESC 8            = DECRC - restore cursor
+123x   ESC # 3          = DECDHL, double-height line (top half)
+123x   ESC # 4          = DECDHL, double-height line (bottom half)
+123x   ESC # 5          = DECSWL, single-width single-height line
+123x   ESC # 6          = DECDWL, double-width single-height line
+123x   ESC # 8          = DECALN
+123    ESC <            = Ignored (used by VT100 to exit VT52 mode)
+123x   ESC =            = DECKPAM, keypad application mode
+123x   ESC >            = DECKPNM, keypad numeric mode
+ 23x   ESC Sp F         = S7C1T
+ 23x   ESC Sp G         = S8C1T
+      (ESC P            = DCS)
+      (ESC X            = SOS)
+      (ESC [            = CSI)
+      (ESC \            = ST)
+      (ESC ]            = OSC)
+      (ESC ^            = PM)
+      (ESC _            = APC)
+123x   ESC c            = RIS, reset initial state
+  3x   ESC n            = LS2
+  3x   ESC o            = LS3
+  3x   ESC |            = LS3R
+  3x   ESC }            = LS2R
+  3x   ESC ~            = LS1R
+
+    DCSes
+
+  3x   DCS $ q      ST  = DECRQSS
+  3x           m        =   Request SGR
+   x           Sp q     =   Request DECSCUSR
+  3x           " q      =   Request DECSCA
+  3x           r        =   Request DECSTBM
+   x           s        =   Request DECSLRM
+
+    CSIs
+ 23x   CSI @            = ICH
+123x   CSI A            = CUU
+123x   CSI B            = CUD
+123x   CSI C            = CUF
+123x   CSI D            = CUB
+   x   CSI E            = CNL
+   x   CSI F            = CPL
+   x   CSI G            = CHA
+123x   CSI H            = CUP
+   x   CSI I            = CHT
+123x   CSI J            = ED
+ 23x   CSI ? J          = DECSED, selective erase in display
+123x   CSI K            = EL
+ 23x   CSI ? K          = DECSEL, selective erase in line
+ 23x   CSI L            = IL
+ 23x   CSI M            = DL
+ 23x   CSI P            = DCH
+   x   CSI S            = SU
+   x   CSI T            = SD
+ 23x   CSI X            = ECH
+   x   CSI Z            = CBT
+   x   CSI `            = HPA
+   x   CSI a            = HPR
+   x   CSI b            = REP
+123x   CSI   c          = DA, device attributes
+123        0            =   DA
+ 23x   CSI >   c        = DECSDA
+ 23          0          =   SDA
+   x   CSI d            = VPA
+   x   CSI e            = VPR
+123x   CSI f            = HVP
+123x   CSI g            = TBC
+123x   CSI h            = SM, Set mode
+123x   CSI ? h          = DECSM, DEC set mode
+       CSI j            = HPB
+       CSI k            = VPB
+123x   CSI l            = RM, Reset mode
+123x   CSI ? l          = DECRM, DEC reset mode
+123x   CSI m            = SGR, Set Graphic Rendition
+       CSI ? m          = DECSGR, private Set Graphic Rendition
+123x   CSI   n          = DSR, Device Status Report
+ 23x       5            =   operating status
+ 23x       6            =   CPR = cursor position
+ 23x   CSI ? n          = DECDSR; behaves as DSR but uses CSI ? instead of CSI to respond
+ 23x   CSI ! p          = DECSTR, soft terminal reset
+  3x   CSI ? $ p        = DECRQM, request private mode
+   x   CSI   Sp q       = DECSCUSR (odd numbers blink, even numbers solid)
+           1 or 2       =   block
+           3 or 4       =   underline
+           5 or 6       =   I-beam to left
+   x   CSI > q          = XTVERSION, request version string
+ 23x   CSI " q          = DECSCA, select character attributes
+123x   CSI r            = DECSTBM
+   x   CSI s            = DECSLRM
+   x   CSI ' }          = DECIC
+   x   CSI ' ~          = DECDC
+
+    OSCs
+
+   x   OSC 0;           = Set icon name and title
+   x   OSC 1;           = Set icon name
+   x   OSC 2;           = Set title
+   x   OSC 52;          = Selection management
+
+    Standard modes
+
+ 23x   SM 4             = IRM
+123x   SM 20            = NLM, linefeed/newline
+
+    DEC modes
+
+123x   DECSM 1          = DECCKM, cursor keys
+123x   DECSM 5          = DECSCNM, screen
+123x   DECSM 6          = DECOM, origin
+123x   DECSM 7          = DECAWM, autowrap
+   x   DECSM 12         = Cursor blink
+ 23x   DECSM 25         = DECTCEM, text cursor enable
+   x   DECSM 69         = DECVSSM, vertical screen split
+   x   DECSM 1000       = Mouse click/release tracking
+   x   DECSM 1002       = Mouse click/release/drag tracking
+   x   DECSM 1003       = Mouse all movements tracking
+   x   DECSM 1004       = Focus in/out reporting
+   x   DECSM 1005       = Mouse protocol extended (UTF-8) - not recommended
+   x   DECSM 1006       = Mouse protocol SGR
+   x   DECSM 1015       = Mouse protocol rxvt
+   x   DECSM 1047       = Altscreen
+   x   DECSM 1048       = Save cursor
+   x   DECSM 1049       = 1047 + 1048
+   x   DECSM 2004       = Bracketed paste
+
+    Graphic Renditions
+
+123x   SGR 0            = Reset
+123x   SGR 1            = Bold on
+   x   SGR 3            = Italic on
+123x   SGR 4            = Underline single
+       SGR 4:x          = Underline style
+123x   SGR 5            = Blink on
+123x   SGR 7            = Reverse on
+   x   SGR 8            = Conceal on
+   x   SGR 9            = Strikethrough on
+       SGR 10-19        = Select font
+   x   SGR 21           = Underline double
+ 23x   SGR 22           = Bold off
+   x   SGR 23           = Italic off
+ 23x   SGR 24           = Underline off
+ 23x   SGR 25           = Blink off
+ 23x   SGR 27           = Reverse off
+   x   SGR 28           = Conceal off
+   x   SGR 29           = Strikethrough off
+   x   SGR 30-37        = Foreground ANSI
+   x   SGR 38           = Foreground alternative palette
+   x   SGR 39           = Foreground default
+   x   SGR 40-47        = Background ANSI
+   x   SGR 48           = Background alternative palette
+   x   SGR 49           = Background default
+       SGR 73           = Superscript on
+       SGR 74           = Subscript on
+       SGR 75           = Superscript/subscript off
+   x   SGR 90-97        = Foreground ANSI high-intensity
+   x   SGR 100-107      = Background ANSI high-intensity
+
+The state storage used by ESC 7 and DECSM 1048/1049 is shared.
+
+    Unimplemented sequences:
+
+The following sequences are not recognised by libvterm.
+
+123x   0x05             = ENQ
+  3    0x11             = DC1 (XON)
+  3    0x13             = DC3 (XOFF)
+   x   ESC % @          = Select default character set
+   x   ESC % G          = Select UTF-8 character set
+   x   ESC 6            = DECBI, Back Index
+12     ESC Z            = DECID, identify terminal
+   x   DCS + Q          = XTGETXRES, Request resource values
+       DCS $ q          = [DECRQSS]
+  3x           " p      =   Request DECSCL
+   x           t        =   Request DECSLPP
+   x           $ |      =   Request DECSCPP
+   x           * |      =   Request DECSLNS
+  3            $ }      =   Request DECSASD
+  3            $ ~      =   Request DECSSDT
+   x   DCS + p          = XTSETTCAP, set termcap/terminfo data
+   x   DCS + q          = XTGETTCAP, request termcap/terminfo
+ 23    DCS {            = DECDLD, down-line-loadable character set
+ 23x   DCS |            = DECUDK, user-defined key
+   x   CSI Sp @         = Shift left columns
+   x   CSI Sp A         = Shift right columns
+   x   CSI # P          = XTPUSHCOLORS, push current dynamic colours to stack
+   x   CSI # Q          = XTPOPCOLORS, pop dynamic colours from stack
+   x   CSI # R          = XTREPORTCOLORS, report current entry on palette stack
+   x   CSI ? S          = XTSMGRAPHICS, set/request graphics attribute
+   x   CSI > T          = XTRMTITLE, reset title mode features
+ 23x   CSI i            = DEC printer control
+   x   CSI > m          = XTMODKEYS, set key modifier options
+   x   CSI > n          = (XTMODKEYS), reset key modifier options
+   x   CSI $ p          = DECRQM, request ANSI mode
+ 23x   CSI " p          = DECSCL, set compatibility level
+   x   CSI > p          = XTSMPOINTER, set resource value pointer mode
+1  x   CSI q            = DECLL, load LEDs
+   x   CSI ? r          = XTRESTORE, restore DEC private mode values
+   x   CSI $ r          = DECCARA, change attributes in rectangular area
+   x   CSI > s          = XTSHIFTESCAPE, set/reset shift-escape options
+   x   CSI ? s          = XTSAVE, save DEC private mode values
+   x   CSI t            = XTWINOPS, window operations
+   x   CSI > t          = XTSMTITLE, set title mode features
+   x   CSI $ t          = DECRARA, reset attributes in rectangular area
+  3    CSI   $ u        = DECRQTSR, request terminal state report
+  3        1            =   terminal state report
+  3    CSI & u          = DECRQUPSS, request user-preferred supplemental set
+   x   CSI $ v          = DECCRA, copy rectangular area
+  3x   CSI   $ w        = DECRQPSR, request presentation state report
+  3x       1            =   cursor information report
+  3x       2            =   tab stop report
+   x   CSI ' w          = DECEFR, enable filter rectangle
+1  x   CSI x            = DECREQTPARM, request terminal parameters
+   x   CSI * x          = DECSACE, select attribute change extent
+   x   CSI $ x          = DECFRA, fill rectangular area
+123    CSI y            = DECTST, invoke confidence test
+   x   CSI $ z          = DECERA, erase rectangular area
+   x   CSI # {          = XTPUSHSGR, push video attributes onto stack
+   x   CSI $ {          = DECSERA, selective erase in rectangular area
+   x   CSI # |          = XTREPORTSGR, report selected graphic rendition
+   x   CSI $ |          = DECSCPP, select columns per page
+   x   CSI # }          = XTPOPSGR, pop video attributes from stack
+  3    CSI $ }          = DECSASD, select active status display
+  3    CSI $ ~          = DECSSDT, select status line type
+ 23    SM 2             = KAM, keyboard action
+123    SM 12            = SRM, send/receive
+123    DECSM 2          = DECANM, ANSI/VT52
+123    DECSM 3          = DECCOLM, 132 column
+123    DECSM 4          = DECSCLM, scrolling
+123    DECSM 8          = DECARM, auto-repeat
+12     DECSM 9          = DECINLM, interlace
+ 23    DECSM 18         = DECPFF, print form feed
+ 23    DECSM 19         = DECPEX, print extent
+ 23    DECSM 42         = DECNRCM, national/multinational character

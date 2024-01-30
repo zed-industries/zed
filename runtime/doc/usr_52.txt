@@ -1,0 +1,343 @@
+*usr_52.txt*	For Vim version 9.1.  Last change: 2022 Jun 04
+
+		     VIM USER MANUAL - by Bram Moolenaar
+
+		       Write larger plugins
+
+When plugins do more than simple things, they tend to grow big.  This file
+explains how to make sure they still load fast and how to split them up in
+smaller parts.
+
+|52.1|	Export and import
+|52.2|	Autoloading
+|52.3|	Autoloading without import/export
+|52.4|	Other mechanisms to use
+|52.5|	Using a Vim9 script from legacy script
+
+     Next chapter: |usr_90.txt|  Installing Vim
+ Previous chapter: |usr_51.txt|  Create a plugin
+Table of contents: |usr_toc.txt|
+
+==============================================================================
+*52.1*	Export and import
+
+Vim9 script was designed to make it easier to write large Vim scripts.  It
+looks more like other script languages, especially Typescript.  Also,
+functions are compiled into instructions that can be executed quickly.  This
+makes Vim9 script a lot faster, up to a 100 times.
+
+The basic idea is that a script file has items that are private, only used
+inside the script file, and items that are exported, which can be used by
+scripts that import them.  That makes very clear what is defined where.
+
+Let's start with an example, a script that exports one function and has one
+private function: >
+
+	vim9script
+
+	export def GetMessage(count: string): string
+	   var nr = str2nr(count)
+	   var result = $'To {nr} we say '
+	   result ..= GetReply(nr)
+	   return result
+	enddef
+
+	def GetReply(nr: number): string
+	  if nr == 42
+	     return 'yes'
+	  elseif nr = 22
+	     return 'maybe'
+	  else
+	     return 'no'
+	  endif
+	enddef
+
+The `vim9script` command is required, `export` only works in a |Vim9| script.
+
+The `export def GetMessage(...` line starts with `export`, meaning that this
+function can be called by other scripts.  The line `def GetReply(...` does not
+start with `export`, this is a script-local function, it can only be used
+inside this script file.
+
+Now about the script where this is imported.  In this example we use this
+layout, which works well for a plugin below the "pack" directory:
+	.../plugin/theplugin.vim
+	.../lib/getmessage.vim
+
+Assuming the "..." directory has been added to 'runtimepath', Vim will look
+for plugins in the "plugin" directory and source "theplugin.vim".  Vim does
+not recognize the "lib" directory, you can put any scripts there.
+
+The above script that exports GetMessage() goes in lib/getmessage.vim.  The
+GetMessage() function is used in plugin/theplugin.vim: >
+
+	vim9script
+
+	import "../lib/getmessage.vim"
+	command -nargs=1 ShowMessage echomsg getmessage.GetMessage(<f-args>)
+
+The `import` command uses a relative path, it starts with "../", which means
+to go one directory up.  For other kinds of paths see the `:import` command.
+
+How we can try out the command that the plugin provides: >
+	ShowMessage 1
+<	To 1 we say no ~
+>
+	ShowMessage 22
+<	To 22 we say maybe ~
+
+Notice that the function GetMessage() is prefixed with the imported script
+name "getmessage".  That way, for every imported function used, you know what
+script it was imported from.  If you import several scripts each of them could
+define a GetMessage() function: >
+
+	vim9script
+
+	import "../lib/getmessage.vim"
+	import "../lib/getother.vim"
+	command -nargs=1 ShowMessage echomsg getmessage.GetMessage(<f-args>)
+	command -nargs=1 ShowOther echomsg getother.GetMessage(<f-args>)
+
+If the imported script name is long or you use it in many places, you can
+shorten it by adding an "as" argument: >
+	import "../lib/getmessage.vim" as msg
+	command -nargs=1 ShowMessage echomsg msg.GetMessage(<f-args>)
+
+
+RELOADING
+
+One thing to keep in mind: the imported "lib/getmessage.vim" script will be
+sourced only once.  When it is imported a second time sourcing it will be
+skipped, since the items in it have already been created.  It does not matter
+if this import command is in another script, or in the same script that is
+sourced again.
+
+This is efficient when using a plugin, but when still developing a plugin it
+means that changing "lib/getmessage.vim" after it has been imported will have
+no effect.  You need to quit Vim and start it again. (Rationale: the items
+defined in the script could be used in a compiled function, sourcing the
+script again may break those functions).
+
+
+USING GLOBALS
+
+Sometimes you will want to use global variables or functions, so that they can
+be used anywhere.  A good example is a global variable that passes a
+preference to a plugin.  To avoid other scripts using the same name, use a
+prefix that is very unlikely to be used elsewhere.  For example, if you have a
+"mytags" plugin, you could use: >
+
+	g:mytags_location = '$HOME/project'
+	g:mytags_style = 'fast'
+
+==============================================================================
+*52.2*	Autoloading
+
+After splitting your large script into pieces, all the lines will still be
+loaded and executed the moment the script is used.  Every `import` loads the
+imported script to find the items defined there.  Although that is good for
+finding errors early, it also takes time.  Which is wasted if the
+functionality is not often used.
+
+Instead of having `import` load the script immediately, it can be postponed
+until needed.  Using the example above, only one change needs to be made in
+the plugin/theplugin.vim script: >
+	import autoload "../lib/getmessage.vim"
+
+Nothing in the rest of the script needs to change.  However, the types will
+not be checked.  Not even the existence of the GetMessage() function is
+checked until it is used.  You will have to decide what is more important for
+your script: fast startup or getting errors early.  You can also add the
+"autoload" argument later, after you have checked everything works.
+
+
+AUTOLOAD DIRECTORY
+
+Another form is to use autoload with a script name that is not an absolute or
+relative path: >
+	import autload "monthlib.vim"
+
+This will search for the script "monthlib.vim" in the autoload directories of
+'runtimepath'.  With Unix one of the directories often is "~/.vim/autoload".
+It will also search under 'packpath', under "start".
+
+The main advantage of this is that this script can be easily shared with other
+scripts.  You do need to make sure that the script name is unique, since Vim
+will search all the "autoload" directories in 'runtimepath', and if you are
+using several plugins with a plugin manager, it may add a directory to
+'runtimepath', each of which might have an "autoload" directory.
+
+Without autoload: >
+	import "monthlib.vim"
+
+Vim will search for the script "monthlib.vim" in the import directories of
+'runtimepath'.  Note that in this case adding or removing "autoload" changes
+where the script is found.  With a relative or absolute path the location does
+not change.
+
+==============================================================================
+*52.3*	Autoloading without import/export
+
+						*write-library-script*
+A mechanism from before import/export is still useful and some users may find
+it a bit simpler.  The idea is that you call a function with a special name.
+That function is then in an autoload script.  We will call that one script a
+library script.
+
+The autoload mechanism is based on a function name that has "#" characters: >
+
+	mylib#myfunction(arg)
+
+Vim will recognize the function name by the embedded "#" character and when
+it is not defined yet search for the script "autoload/mylib.vim" in
+'runtimepath'.  That script must define the "mylib#myfunction()" function.
+Obviously the name "mylib" is the part before the "#" and is used as the name
+of the script, adding ".vim".
+
+You can put many other functions in the mylib.vim script, you are free to
+organize your functions in library scripts.  But you must use function names
+where the part before the '#' matches the script name.  Otherwise Vim would
+not know what script to load.  This is where it differs from the import/export
+mechanism.
+
+If you get really enthusiastic and write lots of library scripts, you may
+want to use subdirectories.  Example: >
+
+	netlib#ftp#read('somefile')
+
+Here the script name is taken from the function name up to the last "#". The
+"#" in the middle are replaced by a slash, the last one by ".vim".  Thus you
+get "netlib/ftp.vim".  For Unix the library script used for this could be:
+
+	~/.vim/autoload/netlib/ftp.vim
+
+Where the function is defined like this: >
+
+	def netlib#ftp#read(fname: string)
+		#  Read the file fname through ftp
+	enddef
+
+Notice that the name the function is defined with is exactly the same as the
+name used for calling the function.  And the part before the last '#'
+exactly matches the subdirectory and script name.
+
+You can use the same mechanism for variables: >
+
+	var weekdays = dutch#weekdays
+
+This will load the script "autoload/dutch.vim", which should contain something
+like: >
+
+	var dutch#weekdays = ['zondag', 'maandag', 'dinsdag', 'woensdag',
+		\ 'donderdag', 'vrijdag', 'zaterdag']
+
+Further reading: |autoload|.
+
+==============================================================================
+*52.4*	Other mechanisms to use
+
+Some may find the use of several files a hassle and prefer to keep everything
+together in one script.  To avoid this resulting in slow startup there is a
+mechanism that only defines a small part and postpones the rest to when it is
+actually used.  *write-plugin-quickload*
+
+The basic idea is that the plugin is loaded twice.  The first time user
+commands and mappings are defined that offer the functionality.  The second
+time the functions that implement the functionality are defined.
+
+It may sound surprising that quickload means loading a script twice.  What we
+mean is that it loads quickly the first time, postponing the bulk of the
+script to the second time, which only happens when you actually use it.  When
+you always use the functionality it actually gets slower!
+
+This uses a FuncUndefined autocommand.  This works differently from the
+|autoload| functionality explained above.
+
+The following example shows how it's done: >
+
+	" Vim global plugin for demonstrating quick loading
+	" Last Change:	2005 Feb 25
+	" Maintainer:	Bram Moolenaar <Bram@vim.org>
+	" License:	This file is placed in the public domain.
+
+	if !exists("s:did_load")
+		command -nargs=* BNRead  call BufNetRead(<f-args>)
+		map <F19> :call BufNetWrite('something')<CR>
+
+		let s:did_load = 1
+		exe 'au FuncUndefined BufNet* source ' .. expand('<sfile>')
+		finish
+	endif
+
+	function BufNetRead(...)
+		echo 'BufNetRead(' .. string(a:000) .. ')'
+		" read functionality here
+	endfunction
+
+	function BufNetWrite(...)
+		echo 'BufNetWrite(' .. string(a:000) .. ')'
+		" write functionality here
+	endfunction
+
+When the script is first loaded "s:did_load" is not set.  The commands between
+the "if" and "endif" will be executed.  This ends in a |:finish| command, thus
+the rest of the script is not executed.
+
+The second time the script is loaded "s:did_load" exists and the commands
+after the "endif" are executed.  This defines the (possible long)
+BufNetRead() and BufNetWrite() functions.
+
+If you drop this script in your plugin directory Vim will execute it on
+startup.  This is the sequence of events that happens:
+
+1. The "BNRead" command is defined and the <F19> key is mapped when the script
+   is sourced at startup.  A |FuncUndefined| autocommand is defined.  The
+   ":finish" command causes the script to terminate early.
+
+2. The user types the BNRead command or presses the <F19> key.  The
+   BufNetRead() or BufNetWrite() function will be called.
+
+3. Vim can't find the function and triggers the |FuncUndefined| autocommand
+   event.  Since the pattern "BufNet*" matches the invoked function, the
+   command "source fname" will be executed.  "fname" will be equal to the name
+   of the script, no matter where it is located, because it comes from
+   expanding "<sfile>" (see |expand()|).
+
+4. The script is sourced again, the "s:did_load" variable exists and the
+   functions are defined.
+
+Notice that the functions that are loaded afterwards match the pattern in the
+|FuncUndefined| autocommand.  You must make sure that no other plugin defines
+functions that match this pattern.
+
+==============================================================================
+*52.5*	Using a Vim9 script from legacy script		*source-vim9-script*
+
+In some cases you have a legacy Vim script where you want to use items from a
+Vim9 script.  For example in your .vimrc you want to initialize a plugin.  The
+best way to do this is to use `:import`.  For example: >
+
+	import 'myNicePlugin.vim'
+	call myNicePlugin.NiceInit('today')
+
+This finds the exported function "NiceInit" in the Vim9 script file and makes
+it available as script-local item "myNicePlugin.NiceInit". `:import` always
+uses the script namespace, even when "s:" is not given.  If "myNicePlugin.vim"
+was already sourced it is not sourced again.
+
+Besides avoiding putting any items in the global namespace (where name clashes
+can cause unexpected errors), this also means the script is sourced only once,
+no matter how many times items from it are imported.
+
+In some cases, e.g. for testing, you may just want to source the Vim9 script.
+That is OK, but then only global items will be available.  The Vim9 script
+will have to make sure to use a unique name for these global items. Example: >
+	source ~/.vim/extra/myNicePlugin.vim
+	call g:NicePluginTest()
+
+==============================================================================
+
+Next chapter: |usr_90.txt|  Installing Vim
+
+
+Copyright: see |manual-copyright|  vim:tw=78:ts=8:noet:ft=help:norl:

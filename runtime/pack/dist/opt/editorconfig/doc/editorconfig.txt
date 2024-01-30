@@ -1,0 +1,238 @@
+*editorconfig.txt*            EditorConfig plugin for vim.
+
+File: editorconfig.txt
+Version: 1.1.1
+Maintainer: EditorConfig Team <http://editorconfig.org>
+Description: EditorConfig vim plugin
+
+CONTENTS~
+                                            *editorconfig-contents*
+----------------------------------------------------------------------------
+1.  Overview                                 |editorconfig-overview|
+2.  Installation                             |editorconfig-installation|
+3.  Commands                                 |editorconfig-commands|
+4.  Settings                                 |editorconfig-settings|
+5.  Advanced                                 |editorconfig-advanced|
+6.  License                                  |editorconfig-license|
+
+
+OVERVIEW~
+                                            *editorconfig-overview*
+----------------------------------------------------------------------------
+This is the EditorConfig plugin for vim.
+
+
+INSTALLATION~
+                                            *editorconfig-installation*
+----------------------------------------------------------------------------
+Follow the instructions in the README.md file to install this plugin.
+
+COMMANDS~
+                                            *editorconfig-commands*
+----------------------------------------------------------------------------
+
+                                            *:EditorConfigReload*
+Command:
+    :EditorConfigReload
+
+Reload the EditorConfig conf files. When `.editorconfig` files are modified,
+this command could prevent you to reload the current edited file to load the
+new configuration.
+
+SETTINGS~
+                                            *editorconfig-settings*
+----------------------------------------------------------------------------
+                                            *g:EditorConfig_core_mode*
+Specify the mode of EditorConfig core. Generally it is OK to leave this option
+empty. Currently, the supported modes are "vim_core" (default) and
+"external_command".
+
+    vim_core:           Use the included VimScript EditorConfig Core.
+    external_command:   Run external EditorConfig Core.
+
+If "g:EditorConfig_core_mode" is not specified, this plugin will automatically
+choose "vim_core".
+
+If you choose "external_command" mode, you must also set
+|g:EditorConfig_exec_path|.
+
+Changes to "g:EditorConfig_core_mode" will not take effect until Vim
+is restarted.
+
+                                            *b:EditorConfig_disable*
+This is a buffer-local variable that disables the EditorConfig plugin for a
+single buffer.
+
+Example: Disable EditorConfig for the current buffer:
+>
+ let b:EditorConfig_disable = 1
+<
+Example: Disable EditorConfig for all git commit messages:
+>
+ au FileType gitcommit let b:EditorConfig_disable = 1
+<
+
+                                            *g:EditorConfig_exclude_patterns*
+This is a list contains file path patterns which will be ignored by
+EditorConfig plugin. When the path of the opened buffer (i.e.
+"expand('%:p')") matches any of the patterns in the list, EditorConfig will
+not load for this file. The default is an empty list.
+
+Example: Avoid loading EditorConfig for any remote files over ssh
+>
+ let g:EditorConfig_exclude_patterns = ['scp://.*']
+<
+
+                                            *g:EditorConfig_exec_path*
+The file path to the EditorConfig core executable. You can set this value in
+your |vimrc| like this:
+>
+ let g:EditorConfig_exec_path = 'Path to your EditorConfig Core executable'
+<
+The default value is empty.
+
+If "g:EditorConfig_exec_path" is not set, the plugin will use the "vim_core"
+mode regardless of the setting of |g:EditorConfig_core_mode|.
+
+Changes to "g:EditorConfig_exec_path" will not take effect until Vim
+is restarted.
+
+                                            *g:EditorConfig_max_line_indicator*
+The way to show the line where the maximal length is reached. Accepted values
+are "line", "fill", "exceeding" and "fillexceeding", otherwise there will be
+no max line indicator.
+
+    "line":          the right column of the max line length column will be
+                     highlighted on all lines, by adding +1 to 'colorcolumn'.
+
+    "fill":          all the columns to the right of the max line length
+                     column will be highlighted on all lines, by setting
+                     'colorcolumn' to a list starting from "max_line_length +
+                     1" to the number of columns on the screen.
+
+    "exceeding":     the right column of the max line length column will be
+                     highlighted on lines that exceed the max line length, by
+                     adding a match for the ColorColumn group.
+
+    "fillexceeding": all the columns to the right of the max line length
+                     column will be highlighted on lines that exceed the max
+                     line length, by adding a match for the ColorColumn group.
+
+    "none":          no max line length indicator will be shown. Recommended
+                     when you do not want any indicator to be shown, but any
+                     value other than those listed above also work as "none".
+
+To set this option, add any of the following lines to your |vimrc| file:
+>
+ let g:EditorConfig_max_line_indicator = "line"
+ let g:EditorConfig_max_line_indicator = "fill"
+ let g:EditorConfig_max_line_indicator = "exceeding"
+ let g:EditorConfig_max_line_indicator = "fillexceeding"
+ let g:EditorConfig_max_line_indicator = "none"
+<
+The default value is "line".
+
+                                            *g:EditorConfig_enable_for_new_buf*
+Set this to 1 if you want EditorConfig plugin to set options
+for new empty buffers too.
+Path to .editorconfig will be determined based on CWD (see |getcwd()|)
+>
+ let g:EditorConfig_enable_for_new_buf = 1
+<
+This option defaults to 0.
+
+                                            *g:EditorConfig_preserve_formatoptions*
+Set this to 1 if you don't want your formatoptions modified when
+max_line_length is set:
+>
+ let g:EditorConfig_preserve_formatoptions = 1
+<
+This option defaults to 0.
+
+                                            *g:EditorConfig_softtabstop_space*
+When spaces are used for indent, Vim's 'softtabstop' feature will make the
+backspace key delete one indent level. If you turn off that feature (by
+setting the option to 0), only a single space will be deleted.
+This option defaults to 1, which enables 'softtabstop' and uses the
+'shiftwidth' value for it. You can also set this to -1 to automatically follow
+the current 'shiftwidth' value (since Vim 7.3.693). Or set this to [] if
+EditorConfig should not touch 'softtabstop' at all.
+
+                                            *g:EditorConfig_softtabstop_tab*
+When tabs are used for indent, Vim's 'softtabstop' feature only applies to
+backspacing over existing runs of spaces.
+This option defaults to 1, so backspace will delete one indent level worth of
+spaces; -1 does the same but automatically follows the current 'shiftwidth'
+value. Set this to 0 to have backspace delete just a single space character.
+Or set this to [] if EditorConfig should not touch 'softtabstop' at all.
+
+                                            *g:EditorConfig_verbose*
+Set this to 1 if you want debug info printed:
+>
+ let g:EditorConfig_verbose = 1
+<
+
+ADVANCED~
+                                            *editorconfig-advanced*
+----------------------------------------------------------------------------
+                                            *editorconfig-hook*
+                                            *EditorConfig#AddNewHook()*
+While this plugin offers several builtin supported properties (as mentioned
+here: https://github.com/editorconfig/editorconfig-vim#supported-properties),
+we are also able to add our own hooks to support additional EditorConfig
+properties, including those not in the EditorConfig standard. For example, we
+are working on an Objective-C project, and all our "*.m" files should be
+Objective-C source files. However, vim sometimes detect "*.m" files as MATLAB
+source files, which causes incorrect syntax highlighting, code indentation,
+etc. To solve the case, we could write the following code into the |vimrc|
+file:
+>
+ function! FiletypeHook(config)
+     if has_key(a:config, 'vim_filetype')
+         let &filetype = a:config['vim_filetype']
+     endif
+
+     return 0   " Return 0 to show no error happened
+ endfunction
+
+ call editorconfig#AddNewHook(function('FiletypeHook'))
+<
+And add the following code to your .editorconfig file:
+>
+ [*.m]
+ vim_filetype = objc
+<
+Then try to open an Objective-C file, you will find the |filetype| is set to
+"objc".
+
+License~
+                                               *editorconfig-license*
+----------------------------------------------------------------------------
+
+License:
+   Copyright (c) 2011-2019 EditorConfig Team
+   All rights reserved.
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimer.
+   2. Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimer in the documentation
+      and/or other materials provided with the distribution.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+   AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+   ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+   LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+   CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+   SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+   INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+   CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+   ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGE.
+
+
+vim:ft=help:tw=78:cc=

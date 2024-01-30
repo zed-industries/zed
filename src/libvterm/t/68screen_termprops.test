@@ -1,0 +1,17 @@
+INIT
+WANTSCREEN p
+
+RESET
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+
+!Cursor visibility
+PUSH "\e[?25h"
+  settermprop 1 true
+PUSH "\e[?25l"
+  settermprop 1 false
+
+!Title
+PUSH "\e]2;Here is my title\a"
+  settermprop 4 ["Here is my title"]

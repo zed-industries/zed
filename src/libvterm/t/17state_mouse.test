@@ -1,0 +1,191 @@
+INIT
+WANTSTATE p
+
+!DECRQM on with mouse off
+PUSH "\e[?1000\$p"
+  output "\e[?1000;2\$y"
+PUSH "\e[?1002\$p"
+  output "\e[?1002;2\$y"
+PUSH "\e[?1003\$p"
+  output "\e[?1003;2\$y"
+
+!Mouse in simple button report mode
+RESET
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+PUSH "\e[?1000h"
+  settermprop 8 1
+
+!Press 1
+MOUSEMOVE 0,0 0
+MOUSEBTN d 1 0
+  output "\e[M\x20\x21\x21"
+
+!Release 1
+MOUSEBTN u 1 0
+  output "\e[M\x23\x21\x21"
+
+!Ctrl-Press 1
+MOUSEBTN d 1 C
+  output "\e[M\x30\x21\x21"
+MOUSEBTN u 1 C
+  output "\e[M\x33\x21\x21"
+
+!Button 2
+MOUSEBTN d 2 0
+  output "\e[M\x21\x21\x21"
+MOUSEBTN u 2 0
+  output "\e[M\x23\x21\x21"
+
+!Position
+MOUSEMOVE 10,20 0
+MOUSEBTN d 1 0
+  output "\e[M\x20\x35\x2b"
+
+MOUSEBTN u 1 0
+  output "\e[M\x23\x35\x2b"
+MOUSEMOVE 10,21 0
+  # no output
+
+!Wheel events
+MOUSEBTN d 4 0
+  output "\e[M\x60\x36\x2b"
+MOUSEBTN d 4 0
+  output "\e[M\x60\x36\x2b"
+MOUSEBTN d 5 0
+  output "\e[M\x61\x36\x2b"
+MOUSEBTN d 6 0
+  output "\e[M\x62\x36\x2b"
+MOUSEBTN d 7 0
+  output "\e[M\x63\x36\x2b"
+
+!DECRQM on mouse button mode
+PUSH "\e[?1000\$p"
+  output "\e[?1000;1\$y"
+PUSH "\e[?1002\$p"
+  output "\e[?1002;2\$y"
+PUSH "\e[?1003\$p"
+  output "\e[?1003;2\$y"
+
+!Drag events
+RESET
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+PUSH "\e[?1002h"
+  settermprop 8 2
+
+MOUSEMOVE 5,5 0
+MOUSEBTN d 1 0
+  output "\e[M\x20\x26\x26"
+MOUSEMOVE 5,6 0
+  output "\e[M\x40\x27\x26"
+MOUSEMOVE 6,6 0
+  output "\e[M\x40\x27\x27"
+MOUSEMOVE 6,6 0
+  # no output
+MOUSEBTN u 1 0
+  output "\e[M\x23\x27\x27"
+MOUSEMOVE 6,7
+  # no output
+
+!DECRQM on mouse drag mode
+PUSH "\e[?1000\$p"
+  output "\e[?1000;2\$y"
+PUSH "\e[?1002\$p"
+  output "\e[?1002;1\$y"
+PUSH "\e[?1003\$p"
+  output "\e[?1003;2\$y"
+
+!Non-drag motion events
+PUSH "\e[?1003h"
+  settermprop 8 3
+
+MOUSEMOVE 6,8 0
+  output "\e[M\x43\x29\x27"
+
+!DECRQM on mouse motion mode
+PUSH "\e[?1000\$p"
+  output "\e[?1000;2\$y"
+PUSH "\e[?1002\$p"
+  output "\e[?1002;2\$y"
+PUSH "\e[?1003\$p"
+  output "\e[?1003;1\$y"
+
+!Bounds checking
+MOUSEMOVE 300,300 0
+  output "\e[M\x43\xff\xff"
+MOUSEBTN d 1 0
+  output "\e[M\x20\xff\xff"
+MOUSEBTN u 1 0
+  output "\e[M\x23\xff\xff"
+
+!DECRQM on standard encoding mode
+PUSH "\e[?1005\$p"
+  output "\e[?1005;2\$y"
+PUSH "\e[?1006\$p"
+  output "\e[?1006;2\$y"
+PUSH "\e[?1015\$p"
+  output "\e[?1015;2\$y"
+
+!UTF-8 extended encoding mode
+# 300 + 32 + 1 = 333 = U+014d = \xc5\x8d
+PUSH "\e[?1005h"
+MOUSEBTN d 1 0
+  output "\e[M\x20\xc5\x8d\xc5\x8d"
+MOUSEBTN u 1 0
+  output "\e[M\x23\xc5\x8d\xc5\x8d"
+
+!DECRQM on UTF-8 extended encoding mode
+PUSH "\e[?1005\$p"
+  output "\e[?1005;1\$y"
+PUSH "\e[?1006\$p"
+  output "\e[?1006;2\$y"
+PUSH "\e[?1015\$p"
+  output "\e[?1015;2\$y"
+
+!SGR extended encoding mode
+PUSH "\e[?1006h"
+MOUSEBTN d 1 0
+  output "\e[<0;301;301M"
+MOUSEBTN u 1 0
+  output "\e[<0;301;301m"
+
+!DECRQM on SGR extended encoding mode
+PUSH "\e[?1005\$p"
+  output "\e[?1005;2\$y"
+PUSH "\e[?1006\$p"
+  output "\e[?1006;1\$y"
+PUSH "\e[?1015\$p"
+  output "\e[?1015;2\$y"
+
+!rxvt extended encoding mode
+PUSH "\e[?1015h"
+MOUSEBTN d 1 0
+  output "\e[0;301;301M"
+MOUSEBTN u 1 0
+  output "\e[3;301;301M"
+
+!DECRQM on rxvt extended encoding mode
+PUSH "\e[?1005\$p"
+  output "\e[?1005;2\$y"
+PUSH "\e[?1006\$p"
+  output "\e[?1006;2\$y"
+PUSH "\e[?1015\$p"
+  output "\e[?1015;1\$y"
+
+!Mouse disabled reports nothing
+RESET
+  settermprop 1 true
+  settermprop 2 true
+  settermprop 7 1
+MOUSEMOVE 0,0 0
+MOUSEBTN d 1 0
+MOUSEBTN u 1 0
+
+!DECSM can set multiple modes at once
+PUSH "\e[?1002;1006h"
+  settermprop 8 2
+MOUSEBTN d 1 0
+  output "\e[<0;1;1M"

@@ -1,0 +1,8 @@
+;gvimdef.def : Declares the module parameters for the DLL.
+
+LIBRARY      gvimext
+; DESCRIPTION  'Vim Shell Extension'
+
+EXPORTS
+    DllCanUnloadNow private
+    DllGetClassObject private

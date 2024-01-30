@@ -1,0 +1,20 @@
+REGEDIT4
+
+[HKEY_CLASSES_ROOT\CLSID\{51EEE242-AD87-11d3-9C1E-0090278BBD99}]
+   @="Vim Shell Extension"
+[HKEY_CLASSES_ROOT\CLSID\{51EEE242-AD87-11d3-9C1E-0090278BBD99}\InProcServer32]
+   @="gvimext.dll"
+   "ThreadingModel"="Apartment"
+
+[HKEY_CLASSES_ROOT\*\shellex\ContextMenuHandlers\gvim]
+   @="{51EEE242-AD87-11d3-9C1E-0090278BBD99}"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved]
+   "{51EEE242-AD87-11d3-9C1E-0090278BBD99}"="Vim Shell Extension"
+
+[HKEY_LOCAL_MACHINE\Software\Vim\Gvim]
+   "path"="gvim.exe"
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Uninstall\Vim 9.1]
+   "DisplayName"="Vim 9.1: Edit with Vim popup menu entry"
+   "UninstallString"="uninstall.exe"

@@ -1,0 +1,515 @@
+*textprop.txt*  For Vim version 9.1.  Last change: 2023 Apr 23
+
+
+		  VIM REFERENCE MANUAL    by Bram Moolenaar
+
+
+Displaying text with properties attached.	*textprop* *text-properties*
+
+
+1. Introduction			|text-prop-intro|
+2. Functions			|text-prop-functions|
+3. When text changes		|text-prop-changes|
+
+
+{not able to use text properties when the |+textprop| feature was
+disabled at compile time}
+
+==============================================================================
+1. Introduction						*text-prop-intro*
+
+Text properties can be attached to text in a buffer.  They will move with the
+text: If lines are deleted or inserted the properties move with the text they
+are attached to.  Also when inserting/deleting text in the line before the
+text property.  And when inserting/deleting text inside the text property, it
+will increase/decrease in size.
+
+The main use for text properties is to highlight text.  This can be seen as a
+replacement for syntax highlighting.  Instead of defining patterns to match
+the text, the highlighting is set by a script, possibly using the output of an
+external parser.  This only needs to be done once, not every time when
+redrawing the screen, thus can be much faster, after the initial cost of
+attaching the text properties.
+
+Text properties can also be used for other purposes to identify text.  For
+example, add a text property on a function name, so that a search can be
+defined to jump to the next/previous function.
+
+A text property is attached at a specific line and column, and has a specified
+length.  The property can span multiple lines.
+
+A text property has these fields:
+	"id"		a number to be used as desired
+	"type"		the name of a property type
+
+
+Property Types ~
+							*E971*
+A text property normally has the name of a property type, which defines
+how to highlight the text.  The property type can have these entries:
+	"highlight"	name of the highlight group to use
+	"combine"	when omitted or TRUE the text property highlighting is
+			combined with any syntax highlighting; when FALSE the
+			text property highlighting replaces the syntax
+			highlighting
+	"priority"	when properties overlap, the one with the highest
+			priority will be used.
+	"start_incl"	when TRUE inserts at the start position will be
+			included in the text property
+	"end_incl"	when TRUE inserts at the end position will be
+			included in the text property
+
+
+Example ~
+
+Suppose line 11 in a buffer has this text (excluding the indent):
+
+	The number 123 is smaller than 4567.
+
+To highlight the numbers in this text: >
+	call prop_type_add('number', {'highlight': 'Constant'})
+	call prop_add(11, 12, {'length': 3, 'type': 'number'})
+	call prop_add(11, 32, {'length': 4, 'type': 'number'})
+
+Try inserting or deleting lines above the text, you will see that the text
+properties stick to the text, thus the line number is adjusted as needed.
+
+Setting "start_incl" and "end_incl" is useful when white space surrounds the
+text, e.g. for a function name.  Using false is useful when the text starts
+and/or ends with a specific character, such as the quote surrounding a string.
+
+	func FuncName(arg) ~
+	     ^^^^^^^^        property with start_incl and end_incl set
+
+	var = "text"; ~
+	      ^^^^^^	     property with start_incl and end_incl not set
+
+Nevertheless, when text is inserted or deleted the text may need to be parsed
+and the text properties updated.  But this can be done asynchronously.
+
+
+Internal error *E967*
+
+If you see E967, please report the bug.  You can do this at Github:
+https://github.com/vim/vim/issues/new
+
+==============================================================================
+2. Functions						*text-prop-functions*
+
+Manipulating text property types:
+
+prop_type_add({name}, {props})		define a new property type
+prop_type_change({name}, {props})	change an existing property type
+prop_type_delete({name} [, {props}])	delete a property type
+prop_type_get({name} [, {props}])	get property type values
+prop_type_list([{props}])		get list of property types
+
+
+Manipulating text properties:
+
+prop_add({lnum}, {col}, {props})	add a text property
+prop_add_list({props}, [{item}, ...])
+					add a text property at multiple
+					positions.
+prop_clear({lnum} [, {lnum-end} [, {bufnr}]])
+					remove all text properties
+prop_find({props} [, {direction}])	search for a text property
+prop_list({lnum} [, {props}])		text properties in {lnum}
+prop_remove({props} [, {lnum} [, {lnum-end}]])
+					remove a text property
+
+						*prop_add()* *E965*
+prop_add({lnum}, {col}, {props})
+		Attach a text property at position {lnum}, {col}.  {col} is
+		counted in bytes, use one for the first column.
+		If {lnum} is invalid an error is given. *E966*
+		If {col} is invalid an error is given. *E964*
+
+		{props} is a dictionary with these fields:
+		   type		name of the text property type
+		   length	length of text in bytes, can only be used
+				for a property that does not continue in
+				another line; can be zero
+		   end_lnum	line number for the end of text (inclusive)
+		   end_col	column just after the text; not used when
+				"length" is present; when {col} and "end_col"
+				are equal, and "end_lnum" is omitted or equal
+				to {lnum}, this is a zero-width text property
+		   bufnr	buffer to add the property to; when omitted
+				the current buffer is used
+		   id		user defined ID for the property; must be a
+				number, should be positive; when using "text"
+				then "id" must not be present and will be set
+				automatically to a negative number; otherwise
+				zero is used
+							*E1305*
+		   text		text to be displayed before {col}, or
+				above/below the line if {col} is zero; prepend
+				and/or append spaces for padding with
+				highlighting; cannot be used with "length",
+				"end_lnum" and "end_col"
+				See |virtual-text| for more information.
+							*E1294*
+		   text_align	when "text" is present and {col} is zero;
+				specifies where to display the text:
+				   after   after the end of the line
+				   right   right aligned in the window (unless
+					   the text wraps to the next screen
+					   line)
+				   below   in the next screen line
+				   above   just above the line
+				When omitted "after" is used.  Only one
+				"right" property can fit in each line, if
+				there are two or more these will go in a
+				separate line (still right aligned).
+		   text_padding_left				*E1296*
+				used when "text" is present and {col} is zero;
+				padding between the end of the text line
+				(leftmost column for "above" and "below") and
+				the virtual text, not highlighted
+		   text_wrap	when "text" is present and {col} is zero,
+				specifies what happens if the text doesn't
+				fit:
+				   wrap      wrap the text to the next line
+				   truncate  truncate the text to make it fit
+				When omitted "truncate" is used.
+				Note that this applies to the individual text
+				property, the 'wrap' option sets the overall
+				behavior
+		All fields except "type" are optional.
+
+		It is an error when both "length" and "end_lnum" or "end_col"
+		are given.  Either use "length" or "end_col" for a property
+		within one line, or use "end_lnum" and "end_col" for a
+		property that spans more than one line.
+		When neither "length" nor "end_col" are given the property
+		will be zero-width.  That means it will move with the text, as
+		a kind of mark.  One character will be highlighted, if the
+		type specifies highlighting.
+		The property can end exactly at the last character of the
+		text, or just after it.  In the last case, if text is appended
+		to the line, the text property size will increase, also when
+		the property type does not have "end_incl" set.
+
+		"type" will first be looked up in the buffer the property is
+		added to. When not found, the global property types are used.
+		If not found an error is given.
+							*virtual-text*
+		When "text" is used and the column is non-zero then this text
+		will be displayed at the specified start location of the text
+		property.  The text of the buffer line will be shifted to make
+		room.  This is called "virtual text".
+		When the column is zero the virtual text will appear above,
+		after or below the buffer text.  The "text_align" and
+		"text_wrap" arguments determine how it is displayed.
+		To separate the virtual text from the buffer text prepend
+		and/or append spaces to the "text" field or use the
+		"text_padding_left" value.
+
+		Make sure to use a highlight that makes clear to the user that
+		this is virtual text, otherwise it will be very confusing that
+		the text cannot be edited.  When using "above" you need to
+		make clear this text belongs to the text line below it, when
+		using "below" you need to make sure it belongs to the text
+		line above it.
+
+		The text will be displayed but it is not part of the actual
+		buffer line, the cursor cannot be placed on it.  A mouse click
+		in the text will move the cursor to the first character after
+		the text, or the last character of the line.
+		Any Tab and other control character in the text will be
+		changed to a space (Rationale: otherwise the size of the text
+		is difficult to compute).
+		A negative "id" will be chosen and is returned.
+
+		Before text properties with text were supported it was
+		possible to use a negative "id", even though this was very
+		rare.  Now that negative "id"s are reserved for text
+		properties with text an error is given when using a negative
+		"id".  When a text property with text already exists using a
+		negative "id" results in *E1293* .  If a negative "id" was
+		used and later a text property with text is added results in
+		*E1339* .
+
+		Can also be used as a |method|: >
+			GetLnum()->prop_add(col, props)
+<
+						*prop_add_list()*
+prop_add_list({props}, [{item}, ...])
+		Similar to prop_add(), but attaches a text property at
+		multiple positions in a buffer.
+
+		{props} is a dictionary with these fields:
+		   bufnr	buffer to add the property to; when omitted
+				the current buffer is used
+		   id		user defined ID for the property; must be a
+				number; when omitted zero is used
+		   type		name of the text property type
+		All fields except "type" are optional.
+
+		The second argument is a List of items, where each {item} is a
+		list that specifies the starting and ending position of the
+		text: [{lnum}, {col}, {end-lnum}, {end-col}]
+		or:   [{lnum}, {col}, {end-lnum}, {end-col}, {id}]
+
+		The first two items {lnum} and {col} specify the starting
+		position of the text where the property will be attached.
+		The next two items {end-lnum} and {end-col} specify the
+		position just after the text.
+		An optional fifth item {id} can be used to give a different ID
+		to a property.  When omitted the ID from {props} is used,
+		falling back to zero if none are present.
+
+		It is not possible to add a text property with a "text" field
+		here.
+
+		Example: >
+			call prop_add_list(#{type: 'MyProp', id: 2},
+					\ [[1, 4, 1, 7],
+					\  [1, 15, 1, 20],
+					\  [2, 30, 3, 30]]
+<
+		Can also be used as a |method|: >
+			GetProp()->prop_add_list([[1, 1, 1, 2], [1, 4, 1, 8]])
+
+
+prop_clear({lnum} [, {lnum-end} [, {props}]])		*prop_clear()*
+		Remove all text properties from line {lnum}.
+		When {lnum-end} is given, remove all text properties from line
+		{lnum} to {lnum-end} (inclusive).
+
+		When {props} contains a "bufnr" item use this buffer,
+		otherwise use the current buffer.
+
+		Can also be used as a |method|: >
+			GetLnum()->prop_clear()
+<
+							*prop_find()*
+prop_find({props} [, {direction}])
+		Search for a text property as specified with {props}:
+		   id		property with this ID
+		   type		property with this type name
+		   both		"id" and "type" must both match
+		   bufnr	buffer to search in; when present a
+				start position with "lnum" and "col"
+				must be given; when omitted the
+				current buffer is used
+		   lnum		start in this line (when omitted start
+				at the cursor)
+		   col		start at this column (when omitted
+				and "lnum" is given: use column 1,
+				otherwise start at the cursor)
+		   skipstart	do not look for a match at the start
+				position
+
+		A property matches when either "id" or "type" matches.
+		{direction} can be "f" for forward and "b" for backward.  When
+		omitted forward search is performed.
+
+		If a match is found then a Dict is returned with the entries
+		as with prop_list(), and additionally an "lnum" entry.
+		If no match is found then an empty Dict is returned.
+
+
+prop_list({lnum} [, {props}])				*prop_list()*
+		Returns a List with all the text properties in line {lnum}.
+
+		The following optional items are supported in {props}:
+		   bufnr	use this buffer instead of the current buffer
+		   end_lnum	return text properties in all the lines
+				between {lnum} and {end_lnum} (inclusive).
+				A negative value is used as an offset from the
+				last buffer line; -1 refers to the last buffer
+				line.
+		   types	List of property type names. Return only text
+				properties that match one of the type names.
+		   ids		List of property identifiers. Return only text
+				properties with one of these identifiers.
+
+		The properties are ordered by starting column and priority.
+		Each property is a Dict with these entries:
+		   lnum		starting line number. Present only when
+				returning text properties between {lnum} and
+				{end_lnum}.
+		   col		starting column
+		   length	length in bytes, one more if line break is
+				included
+		   id		property ID
+		   text		text to be displayed before {col}.  Only
+				present for |virtual-text| properties.
+		   text_align	alignment property of |virtual-text|.
+		   text_padding_left
+				left padding used for virtual text.
+		   text_wrap	specifies whether |virtual-text| is wrapped.
+		   type		name of the property type, omitted if
+				the type was deleted
+		   type_bufnr	buffer number for which this type was defined;
+				0 if the type is global
+		   start	when TRUE property starts in this line
+		   end		when TRUE property ends in this line
+
+		When "start" is zero the property started in a previous line,
+		the current one is a continuation.
+		When "end" is zero the property continues in the next line.
+		The line break after this line is included.
+
+		Returns an empty list on error.
+
+		Examples:
+		   " get text properties placed in line 5
+		   echo prop_list(5)
+		   " get text properties placed in line 20 in buffer 4
+		   echo prop_list(20, {'bufnr': 4})
+		   " get all the text properties between line 1 and 20
+		   echo prop_list(1, {'end_lnum': 20})
+		   " get all the text properties of type 'myprop'
+		   echo prop_list(1, {'types': ['myprop'],
+						\ 'end_lnum': -1})
+		   " get all the text properties of type 'prop1' or 'prop2'
+		   echo prop_list(1, {'types': ['prop1', 'prop2'],
+						\ 'end_lnum': -1})
+		   " get all the text properties with ID 8
+		   echo prop_list(1, {'ids': [8], 'end_lnum': line('$')})
+		   " get all the text properties with ID 10 and 20
+		   echo prop_list(1, {'ids': [10, 20], 'end_lnum': -1})
+		   " get text properties with type 'myprop' and ID 100
+		   " in buffer 4.
+		   echo prop_list(1, {'bufnr': 4, 'types': ['myprop'],
+					\ 'ids': [100], 'end_lnum': -1})
+
+		Can also be used as a |method|: >
+			GetLnum()->prop_list()
+<
+						*prop_remove()* *E968* *E860*
+prop_remove({props} [, {lnum} [, {lnum-end}]])
+		Remove a matching text property from line {lnum}.  When
+		{lnum-end} is given, remove matching text properties from line
+		{lnum} to {lnum-end} (inclusive).
+		When {lnum} is omitted remove matching text properties from
+		all lines (this requires going over all lines, thus will be a
+		bit slow for a buffer with many lines).
+
+		{props} is a dictionary with these fields:
+		   id		remove text properties with this ID
+		   type		remove text properties with this type name
+		   types	remove text properties with type names in this
+				List
+		   both		"id" and "type"/"types" must both match
+		   bufnr	use this buffer instead of the current one
+		   all		when TRUE remove all matching text properties,
+				not just the first one
+		Only one of "type" and "types" may be supplied. *E1295*
+
+		A property matches when either "id" or one of the supplied
+		types matches.
+		If buffer "bufnr" does not exist you get an error message.
+		If buffer "bufnr" is not loaded then nothing happens.
+
+		Returns the number of properties that were removed.
+
+		Can also be used as a |method|: >
+			GetProps()->prop_remove()
+
+
+prop_type_add({name}, {props})		*prop_type_add()* *E969* *E970*
+		Add a text property type {name}.  If a property type with this
+		name already exists an error is given.  Nothing is returned.
+		{props} is a dictionary with these optional fields:
+		   bufnr	define the property only for this buffer; this
+				avoids name collisions and automatically
+				clears the property types when the buffer is
+				deleted.
+		   highlight	name of highlight group to use
+		   priority	when a character has multiple text
+				properties the one with the highest priority
+				will be used; negative values can be used, the
+				default priority is zero
+		   combine	when omitted or TRUE combine the highlight
+				with any syntax highlight; when FALSE syntax
+				highlight will not be used
+		   override	when TRUE the highlight overrides any other,
+				including 'cursorline' and Visual
+		   start_incl	when TRUE inserts at the start position will
+				be included in the text property
+		   end_incl	when TRUE inserts at the end position will be
+				included in the text property
+
+		Can also be used as a |method|: >
+			GetPropName()->prop_type_add(props)
+
+prop_type_change({name}, {props})			*prop_type_change()*
+		Change properties of an existing text property type.  If a
+		property with this name does not exist an error is given.
+		The {props} argument is just like |prop_type_add()|.
+
+		Can also be used as a |method|: >
+			GetPropName()->prop_type_change(props)
+
+prop_type_delete({name} [, {props}])			*prop_type_delete()*
+		Remove the text property type {name}.  When text properties
+		using the type {name} are still in place, they will not have
+		an effect and can no longer be removed by name.
+
+		{props} can contain a "bufnr" item.  When it is given, delete
+		a property type from this buffer instead of from the global
+		property types.
+
+		When text property type {name} is not found there is no error.
+
+		Can also be used as a |method|: >
+			GetPropName()->prop_type_delete()
+
+prop_type_get({name} [, {props}])			*prop_type_get()*
+		Returns the properties of property type {name}.  This is a
+		dictionary with the same fields as was given to
+		prop_type_add().
+		When the property type {name} does not exist, an empty
+		dictionary is returned.
+
+		{props} can contain a "bufnr" item.  When it is given, use
+		this buffer instead of the global property types.
+
+		Can also be used as a |method|: >
+			GetPropName()->prop_type_get()
+
+prop_type_list([{props}])				*prop_type_list()*
+		Returns a list with all property type names.
+
+		{props} can contain a "bufnr" item.  When it is given, use
+		this buffer instead of the global property types.
+
+
+==============================================================================
+3. When text changes				*text-prop-changes*
+
+Vim will do its best to keep the text properties on the text where it was
+attached.  When inserting or deleting text the properties after the change
+will move accordingly.
+
+When text is deleted and a text property no longer includes any text, it is
+deleted.  However, a text property that was defined as zero-width will remain,
+unless the whole line is deleted.
+								*E275*
+When a buffer is unloaded, all the text properties are gone.  There is no way
+to store the properties in a file.  You can only re-create them.  When a
+buffer is hidden the text is preserved and so are the text properties.  It is
+not possible to add text properties to an unloaded buffer.
+
+When using replace mode, the text properties stay on the same character
+positions, even though the characters themselves change.
+
+To update text properties after the text was changed, install a callback with
+`listener_add()`.  E.g, if your plugin does spell checking, you can have the
+callback update spelling mistakes in the changed text.  Vim will move the
+properties below the changed text, so that they still highlight the same text,
+thus you don't need to update these.
+
+
+Text property columns are not updated or copied: ~
+
+- When setting the line with |setline()| or through an interface, such as Lua,
+  Tcl or Python.  Vim does not know what text got inserted or deleted.
+- With a command like `:move`, which takes a line of text out of context.
+
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

@@ -1,0 +1,87 @@
+INIT
+WANTSTATE
+WANTSCREEN
+
+RESET
+
+PUSH "\e#8"
+
+PUSH "\e[9;10H\e[1J"
+PUSH "\e[18;60H\e[0J\e[1K"
+PUSH "\e[9;71H\e[0K"
+
+$SEQ 10 16: PUSH "\e[\#;10H\e[1K\e[\#;71H\e[0K"
+
+PUSH "\e[17;30H\e[2K"
+
+$SEQ 1 80: PUSH "\e[24;\#f*\e[1;\#f*"
+
+PUSH "\e[2;2H"
+
+$REP 22: PUSH "+\e[1D\eD"
+
+PUSH "\e[23;79H"
+$REP 22: PUSH "+\e[1D\eM"
+
+PUSH "\e[2;1H"
+$SEQ 2 23: PUSH "*\e[\#;80H*\e[10D\eE"
+
+PUSH "\e[2;10H\e[42D\e[2C"
+$REP 76: PUSH "+\e[0C\e[2D\e[1C"
+
+PUSH "\e[23;70H\e[42C\e[2D"
+
+$REP 76: PUSH "+\e[1D\e[1C\e[0D\b"
+
+PUSH "\e[1;1H"
+PUSH "\e[10A"
+PUSH "\e[1A"
+PUSH "\e[0A"
+PUSH "\e[24;80H"
+PUSH "\e[10B"
+PUSH "\e[1B"
+PUSH "\e[0B"
+PUSH "\e[10;12H"
+
+$REP 58: PUSH " "
+PUSH "\e[1B\e[58D"
+
+$REP 58: PUSH " "
+PUSH "\e[1B\e[58D"
+
+$REP 58: PUSH " "
+PUSH "\e[1B\e[58D"
+
+$REP 58: PUSH " "
+PUSH "\e[1B\e[58D"
+
+$REP 58: PUSH " "
+PUSH "\e[1B\e[58D"
+
+$REP 58: PUSH " "
+PUSH "\e[1B\e[58D"
+
+PUSH "\e[5A\e[1CThe screen should be cleared,  and have an unbroken bor-"
+PUSH "\e[12;13Hder of *'s and +'s around the edge,   and exactly in the"
+PUSH "\e[13;13Hmiddle  there should be a frame of E's around this  text"
+PUSH "\e[14;13Hwith  one (1) free position around it.    Push <RETURN>"
+
+# And the result is...
+
+!Output
+            ?screen_row  0 = "********************************************************************************"
+            ?screen_row  1 = "*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*"
+$SEQ  2  7: ?screen_row \# = "*+                                                                            +*"
+            ?screen_row  8 = "*+        EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE        +*"
+            ?screen_row  9 = "*+        E                                                          E        +*"
+            ?screen_row 10 = "*+        E The screen should be cleared,  and have an unbroken bor- E        +*"
+            ?screen_row 11 = "*+        E der of *'s and +'s around the edge,   and exactly in the E        +*"
+            ?screen_row 12 = "*+        E middle  there should be a frame of E's around this  text E        +*"
+            ?screen_row 13 = "*+        E with  one (1) free position around it.    Push <RETURN>  E        +*"
+            ?screen_row 14 = "*+        E                                                          E        +*"
+            ?screen_row 15 = "*+        EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE        +*"
+$SEQ 16 21: ?screen_row \# = "*+                                                                            +*"
+            ?screen_row 22 = "*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*"
+            ?screen_row 23 = "********************************************************************************"
+
+?cursor = 13,67

@@ -1,0 +1,1912 @@
+*usr_41.txt*	For Vim version 9.1.  Last change: 2024 Jan 13
+
+		     VIM USER MANUAL - by Bram Moolenaar
+
+			      Write a Vim script
+
+
+The Vim script language is used for the startup vimrc file, syntax files, and
+many other things.  This chapter explains the items that can be used in a Vim
+script.  There are a lot of them, therefore this is a long chapter.
+
+|41.1|	Introduction
+|41.2|	Variables
+|41.3|	Expressions
+|41.4|	Conditionals
+|41.5|	Executing an expression
+|41.6|	Using functions
+|41.7|	Defining a function
+|41.8|	Lists and Dictionaries
+|41.9|	White space
+|41.10|	Line continuation
+|41.11|	Comments
+|41.12|	Fileformat
+
+     Next chapter: |usr_42.txt|  Add new menus
+ Previous chapter: |usr_40.txt|  Make new commands
+Table of contents: |usr_toc.txt|
+
+==============================================================================
+*41.1*	Introduction				*vim-script-intro* *script*
+
+Your first experience with Vim scripts is the vimrc file.  Vim reads it when
+it starts up and executes the commands.  You can set options to the values you
+prefer, define mappings, select plugins and much more.   You can use any colon
+command in it (commands that start with a ":"; these are sometimes referred to
+as Ex commands or command-line commands).
+
+Syntax files are also Vim scripts.  As are files that set options for a
+specific file type.  A complicated macro can be defined by a separate Vim
+script file.  You can think of other uses yourself.
+
+Vim script comes in two flavors: legacy and |Vim9|.  Since this help file is
+for new users, we'll teach you the newer and more convenient |Vim9| syntax.
+While legacy script is particularly for Vim, |Vim9| script looks more like
+other languages, such as JavaScript and TypeScript.
+
+To try out Vim script the best way is to edit a script file and source it.
+Basically: >
+	:edit test.vim
+	[insert the script lines you want]
+	:w
+	:source %
+
+Let's start with a simple example: >
+
+	vim9script
+	var i = 1
+	while i < 5
+	  echo "count is" i
+	  i += 1
+	endwhile
+<
+The output of the example code is:
+
+	count is 1 ~
+	count is 2 ~
+	count is 3 ~
+	count is 4 ~
+
+In the first line the `vim9script` command makes clear this is a new, |Vim9|
+script file.  That matters for how the rest of the file is used.  It is
+recommended to put it in the very fist line, before any comments.
+							*vim9-declarations*
+The `var i = 1` command declares the "i" variable and initializes it.  The
+generic form is: >
+
+	var {name} = {expression}
+
+In this case the variable name is "i" and the expression is a simple value,
+the number one.
+
+The `while` command starts a loop.  The generic form is: >
+
+	while {condition}
+	  {statements}
+	endwhile
+
+The statements until the matching `endwhile` are executed for as long as the
+condition is true.  The condition used here is the expression "i < 5".  This
+is true when the variable i is smaller than five.
+	Note:
+	If you happen to write a while loop that keeps on running, you can
+	interrupt it by pressing CTRL-C (CTRL-Break on MS-Windows).
+
+The `echo` command prints its arguments.  In this case the string "count is"
+and the value of the variable i.  Since i is one, this will print:
+
+	count is 1 ~
+
+Then there is the `i += 1` command.  This does the same thing as "i = i + 1",
+it adds one to the variable i and assigns the new value to the same variable.
+
+The example was given to explain the commands, but would you really want to
+make such a loop, it can be written much more compact: >
+
+	for i in range(1, 4)
+	  echo $"count is {i}"
+	endfor
+
+We won't explain how `for`, `range()`and `$"string"` work until later.  Follow
+the links if you are impatient.
+
+
+TRYING OUT EXAMPLES
+
+You can easily try out most examples in these help files without saving the
+commands to a file.  For example, to try out the "for" loop above do this:
+1. position the cursor on the "for"
+2. start Visual mode with "v"
+3. move down to the "endfor"
+4. press colon, then "so" and Enter
+
+After pressing colon you will see ":'<,'>", which is the range of the Visually
+selected text.
+
+For some commands it matters they are executed as in |Vim9| script.  But typed
+commands normally use legacy script syntax, such as the example below that
+causes the E1004 error.  For that use this fourth step:
+4. press colon, then "vim9 so" and Enter
+
+"vim9" is short for `vim9cmd`, which is a command modifier to execute the
+following command in |Vim9| syntax.
+
+Note that this won't work for examples that require a script context.
+
+
+FOUR KINDS OF NUMBERS
+
+Numbers can be decimal, hexadecimal, octal and binary.
+
+A hexadecimal number starts with "0x" or "0X".  For example "0x1f" is decimal
+31 and "0x1234" is decimal 4660.
+
+An octal number starts with "0o", "0O".  "0o17" is decimal 15.
+
+A binary number starts with "0b" or "0B".  For example "0b101" is decimal 5.
+
+A decimal number is just digits.  Careful: In legacy script don't put a zero
+before a decimal number, it will be interpreted as an octal number!  That's
+one reason to use |Vim9| script.
+
+The `echo` command evaluates its argument and when it is a number always
+prints the decimal form.  Example: >
+
+	echo 0x7f 0o36
+<	127 30 ~
+
+A number is made negative with a minus sign.  This also works for hexadecimal,
+octal and binary numbers: >
+
+	echo -0x7f
+<	-127 ~
+
+A minus sign is also used for subtraction.  This can sometimes lead to
+confusion.  If we put a minus sign before both numbers we get an error: >
+
+	echo -0x7f -0o36
+<	E1004: White space required before and after '-' at "-0o36" ~
+
+Note: if you are not using a |Vim9| script to try out these commands but type
+them directly, they will be executed as legacy script.  Then the echo command
+sees the second minus sign as subtraction.  To get the error, prefix the
+command with `vim9cmd`: >
+
+	vim9cmd echo -0x7f -0o36
+<	E1004: White space required before and after '-' at "-0o36" ~
+
+White space in an expression is often required to make sure it is easy to read
+and avoid errors.  Such as thinking that the "-0o36" above makes the number
+negative, while it is actually seen as a subtraction.
+
+To actually have the minus sign be used for negation, you can put the second
+expression in parentheses: >
+
+	echo -0x7f (-0o36)
+<	-127 -30 ~
+
+==============================================================================
+*41.2*	Variables
+
+A variable name consists of ASCII letters, digits and the underscore.  It
+cannot start with a digit.  Valid variable names are:
+
+	counter
+	_aap3
+	very_long_variable_name_with_underscores
+	CamelCaseName
+	LENGTH
+
+Invalid names are "foo.bar" and "6var".
+
+Some variables are global.  To see a list of currently defined global
+variables type this command: >
+
+	:let
+
+You can use global variables everywhere.  However, it is too easy to use the
+same name in two unrelated scripts.  Therefore variables declared in a script
+are local to that script.  For example, if you have this in "script1.vim": >
+
+	vim9script
+	var counter = 5
+	echo counter
+<	5 ~
+
+And you try to use the variable in "script2.vim": >
+
+	vim9script
+	echo counter
+<	E121: Undefined variable: counter ~
+
+Using a script-local variable means you can be sure that it is only changed in
+that script and not elsewhere.
+
+If you do want to share variables between scripts, use the "g:" prefix and
+assign the value directly, do not use `var`.  And use a specific name to avoid
+mistakes.  Thus in "script1.vim": >
+
+	vim9script
+	g:mash_counter = 5
+	echo g:mash_counter
+<	5 ~
+
+And then in "script2.vim": >
+
+	vim9script
+	echo g:mash_counter
+<	5 ~
+
+Global variables can also be accessed on the command line, E.g. typing this: >
+	echo g:mash_counter
+That will not work for a script-local variable.
+
+More about script-local variables here: |script-variable|.
+
+There are more kinds of variables, see |internal-variables|.  The most often
+used ones are:
+
+	b:name		variable local to a buffer
+	w:name		variable local to a window
+	g:name		global variable (also in a function)
+	v:name		variable predefined by Vim
+
+
+DELETING VARIABLES
+
+Variables take up memory and show up in the output of the `let` command.  To
+delete a global variable use the `unlet` command.  Example: >
+
+	unlet g:counter
+
+This deletes the global variable "g:counter" to free up the memory it uses.
+If you are not sure if the variable exists, and don't want an error message
+when it doesn't, append !: >
+
+	unlet! g:counter
+
+You cannot `unlet` script-local variables in |Vim9| script, only in legacy
+script.
+
+When a script has been processed to the end, the local variables declared
+there will not be deleted.  Functions defined in the script can use them.
+Example:
+>
+	vim9script
+	var counter = 0
+	def g:GetCount(): number
+	  counter += 1
+	  return counter
+	enddef
+
+Every time you call the function it will return the next count: >
+	:echo g:GetCount()
+<	1 ~
+>
+	:echo g:GetCount()
+<	2 ~
+
+If you are worried a script-local variable is consuming too much memory, set
+it to an empty or null value after you no longer need it.  Example: >
+	var lines = readfile(...)
+	...
+	lines = []
+
+Note: below we'll leave out the `vim9script` line from examples, so we can
+concentrate on the relevant commands, but you'll still need to put it at the
+top of your script file.
+
+
+STRING VARIABLES AND CONSTANTS
+
+So far only numbers were used for the variable value.  Strings can be used as
+well.  Numbers and strings are the basic types of variables that Vim supports.
+Example: >
+
+	var name = "Peter"
+	echo name
+<	Peter ~
+
+Every variable has a type.  Very often, as in this example, the type is
+defined by assigning a value.  This is called type inference.  If you do not
+want to give the variable a value yet, you need to specify the type: >
+
+	var name: string
+	var age: number
+	if male
+	   name = "Peter"
+	   age = 42
+	else
+	   name = "Elisa"
+	   age = 45
+	endif
+
+If you make a mistake and try to assign the wrong type of value you'll get an
+error: >
+
+	age = "Peter"
+<	E1012: Type mismatch; expected number but got string ~
+
+More about types in |41.8|.
+
+To assign a string value to a variable, you can use a string constant.  There
+are two types of these.  First the string in double quotes, as we used
+already.  If you want to include a double quote inside the string, put a
+backslash in front of it: >
+
+	var name = "he is \"Peter\""
+	echo name
+<	he is "Peter" ~
+
+To avoid the need for backslashes, you can use a string in single quotes: >
+
+	var name = 'he is "Peter"'
+	echo name
+<	he is "Peter" ~
+
+Inside a single-quote string all the characters are as they are.  Only the
+single quote itself is special: you need to use two to get one.  A backslash
+is taken literally, thus you can't use it to change the meaning of the
+character after it: >
+
+	var name = 'P\e''ter'''
+	echo name
+<	P\e'ter' ~
+
+In double-quote strings it is possible to use special characters.  Here are a
+few useful ones:
+
+	\t		<Tab>
+	\n		<NL>, line break
+	\r		<CR>, <Enter>
+	\e		<Esc>
+	\b		<BS>, backspace
+	\"		"
+	\\		\, backslash
+	\<Esc>		<Esc>
+	\<C-W>		CTRL-W
+
+The last two are just examples.  The  "\<name>" form can be used to include
+the special key "name".
+
+See |expr-quote| for the full list of special items in a string.
+
+==============================================================================
+*41.3*	Expressions
+
+Vim has a fairly standard way to handle expressions.  You can read the
+definition here: |expression-syntax|.  Here we will show the most common
+items.
+
+The numbers, strings and variables mentioned above are expressions by
+themselves.  Thus everywhere an expression is expected, you can use a number,
+string or variable.  Other basic items in an expression are:
+
+	$NAME		environment variable
+	&name		option value
+	@r		register contents
+
+Examples: >
+
+	echo "The value of 'tabstop' is" &ts
+	echo "Your home directory is" $HOME
+	if @a == 'text'
+
+The &name form can also be used to set an option value, do something and
+restore the old value.  Example: >
+
+	var save_ic = &ic
+	set noic
+	s/The Start/The Beginning/
+	&ic = save_ic
+
+This makes sure the "The Start" pattern is used with the 'ignorecase' option
+off.  Still, it keeps the value that the user had set.  (Another way to do
+this would be to add "\C" to the pattern, see |/\C|.)
+
+
+MATHEMATICS
+
+It becomes more interesting if we combine these basic items.  Let's start with
+mathematics on numbers:
+
+	a + b		add
+	a - b		subtract
+	a * b		multiply
+	a / b		divide
+	a % b		modulo
+
+The usual precedence is used.  Example: >
+
+	echo 10 + 5 * 2
+<	20 ~
+
+Grouping is done with parentheses.  No surprises here.  Example: >
+
+	echo (10 + 5) * 2
+<	30 ~
+
+
+OTHERS
+
+Strings can be concatenated with ".." (see |expr6|).  Example: >
+
+	echo "Name: " .. name
+	Name: Peter
+
+When the "echo" command gets multiple arguments, it separates them with a
+space.  In the example the argument is a single expression, thus no space is
+inserted.
+
+If you don't like the concatenation you can use the $"string" form, which
+accepts an expression in curly braces: >
+	echo $"Name: {name}"
+
+See |interpolated-string| for more information.
+
+Borrowed from the C language is the conditional expression: >
+
+	a ? b : c
+
+If "a" evaluates to true "b" is used, otherwise "c" is used.  Example: >
+
+	var nr = 4
+	echo nr > 5 ? "nr is big" : "nr is small"
+<	nr is small ~
+
+The three parts of the constructs are always evaluated first, thus you could
+see it works as: >
+
+	(a) ? (b) : (c)
+
+There is also the falsy operator: >
+	echo name ?? "No name given"
+See |??|.
+
+==============================================================================
+*41.4*	Conditionals
+
+The `if` commands executes the following statements, until the matching
+`endif`, only when a condition is met.  The generic form is:
+
+	if {condition}
+	   {statements}
+	endif
+
+Only when the expression {condition} evaluates to true or one will the
+{statements} be executed.  If they are not executed they must still be valid
+commands.  If they contain garbage, Vim won't be able to find the matching
+`endif`.
+
+You can also use `else`.  The generic form for this is:
+
+	if {condition}
+	   {statements}
+	else
+	   {statements}
+	endif
+
+The second {statements} block is only executed if the first one isn't.
+
+Finally, there is `elseif`
+
+	if {condition}
+	   {statements}
+	elseif {condition}
+	   {statements}
+	endif
+
+This works just like using `else` and then `if`, but without the need for an
+extra `endif`.
+
+A useful example for your vimrc file is checking the 'term' option and doing
+something depending upon its value: >
+
+	if &term == "xterm"
+	  # Do stuff for xterm
+	elseif &term == "vt100"
+	  # Do stuff for a vt100 terminal
+	else
+	  # Do something for other terminals
+	endif
+
+This uses "#" to start a comment, more about that later.
+
+
+LOGIC OPERATIONS
+
+We already used some of them in the examples.  These are the most often used
+ones:
+
+	a == b		equal to
+	a != b		not equal to
+	a >  b		greater than
+	a >= b		greater than or equal to
+	a <  b		less than
+	a <= b		less than or equal to
+
+The result is true if the condition is met and false otherwise.  An example: >
+
+	if v:version >= 800
+	  echo "congratulations"
+	else
+	  echo "you are using an old version, upgrade!"
+	endif
+
+Here "v:version" is a variable defined by Vim, which has the value of the Vim
+version.  800 is for version 8.0, version 8.1 has the value 801.  This is
+useful to write a script that works with multiple versions of Vim.
+See |v:version|.  You can also check for a specific feature with `has()` or a
+specific patch, see |has-patch|.
+
+The logic operators work both for numbers and strings.  When comparing two
+strings, the mathematical difference is used.  This compares byte values,
+which may not be right for some languages.
+
+If you try to compare a string with a number you will get an error.
+
+For strings there are two more useful items:
+
+	str =~ pat		matches with
+	str !~ pat		does not match with
+
+The left item "str" is used as a string.  The right item "pat" is used as a
+pattern, like what's used for searching.  Example: >
+
+	if str =~ " "
+	  echo "str contains a space"
+	endif
+	if str !~ '\.$'
+	  echo "str does not end in a full stop"
+	endif
+
+Notice the use of a single-quote string for the pattern.  This is useful,
+because patterns tend to contain many backslashes and backslashes need to be
+doubled in a double-quote string.
+
+The match is not anchored, if you want to match the whole string start with
+"^" and end with "$".
+
+The 'ignorecase' option is not used when comparing strings.  When you do want
+to ignore case append "?".  Thus "==?" compares two strings to be equal while
+ignoring case.  For the full table see |expr-==|.
+
+
+MORE LOOPING
+
+The `while` command was already mentioned.  Two more statements can be used in
+between the `while` and the `endwhile`:
+
+	continue		Jump back to the start of the while loop; the
+				loop continues.
+	break			Jump forward to the `endwhile`; the loop is
+				discontinued.
+
+Example: >
+
+	var counter = 1
+	while counter < 40
+	  if skip_number(counter)
+	    continue
+	  endif
+	  if last_number(counter)
+	    break
+	  endif
+	  sleep 50m
+	  ++counter
+	endwhile
+
+The `sleep` command makes Vim take a nap.  The "50m" specifies fifty
+milliseconds.  Another example is `sleep 4`, which sleeps for four seconds.
+
+`continue` and `break` can also be used in between `for` and `endfor`.
+Even more looping can be done with the `for` command, see below in |41.8|.
+
+==============================================================================
+*41.5*	Executing an expression
+
+So far the commands in the script were executed by Vim directly.  The
+`execute` command allows executing the result of an expression.  This is a
+very powerful way to build commands and execute them.
+
+An example is to jump to a tag, which is contained in a variable: >
+
+	execute "tag " .. tag_name
+
+The ".." is used to concatenate the string "tag " with the value of variable
+"tag_name".  Suppose "tag_name" has the value "get_cmd", then the command that
+will be executed is: >
+
+	tag get_cmd
+
+The `execute` command can only execute Ex commands.  The `normal` command
+executes Normal mode commands.  However, its argument is not an expression but
+the literal command characters.  Example: >
+
+	normal gg=G
+
+This jumps to the first line with "gg" and formats all lines with the "="
+operator and the "G" movement.
+
+To make `normal` work with an expression, combine `execute` with it.
+Example: >
+
+	execute "normal " .. count .. "j"
+
+This will move the cursor "count" lines down.
+
+Make sure that the argument for `normal` is a complete command.  Otherwise
+Vim will run into the end of the argument and silently abort the command.  For
+example, if you start the delete operator, you must give the movement command
+also.  This works: >
+
+	normal d$
+
+This does nothing: >
+
+	normal d
+
+If you start Insert mode and do not end it with Esc, it will end anyway.  This
+works to insert "new text": >
+
+	execute "normal inew text"
+
+If you want to do something after inserting text you do need to end Insert
+mode: >
+
+	execute "normal inew text\<Esc>b"
+
+This inserts "new text" and puts the cursor on the first letter of "text".
+Notice the use of the special key "\<Esc>".  This avoids having to enter a
+real <Esc> character in your script.  That is where `execute` with a
+double-quote string comes in handy.
+
+If you don't want to execute a string as a command but evaluate it to get the
+result of the expression, you can use the eval() function: >
+
+	var optname = "path"
+	var optvalue = eval('&' .. optname)
+
+A "&" character is prepended to "path", thus the argument to eval() is
+"&path".  The result will then be the value of the 'path' option.
+
+==============================================================================
+*41.6*	Using functions
+
+Vim defines many functions and provides a large amount of functionality that
+way.  A few examples will be given in this section.  You can find the whole
+list below: |function-list|.
+
+A function is called with the parameters in between parentheses, separated by
+commas.  Example: >
+
+	search("Date: ", "W")
+
+This calls the search() function, with arguments "Date: " and "W".  The
+search() function uses its first argument as a search pattern and the second
+one as flags.  The "W" flag means the search doesn't wrap around the end of
+the file.
+
+Using the `call` command is optional in |Vim9| script.  It is required in
+legacy script and on the command line: >
+
+	call search("Date: ", "W")
+
+A function can be called in an expression.  Example: >
+
+	var line = getline(".")
+	var repl = substitute(line, '\a', "*", "g")
+	setline(".", repl)
+
+The getline() function obtains a line from the current buffer.  Its argument
+is a specification of the line number.  In this case "." is used, which means
+the line where the cursor is.
+
+The substitute() function does something similar to the `:substitute` command.
+The first argument "line" is the string on which to perform the substitution.
+The second argument '\a' is the pattern, the third "*" is the replacement
+string.  Finally, the last argument "g" is the flags.
+
+The setline() function sets the line, specified by the first argument, to a
+new string, the second argument.  In this example the line under the cursor is
+replaced with the result of the substitute().  Thus the effect of the three
+statements is equal to: >
+
+	:substitute/\a/*/g
+
+Using the functions becomes interesting when you do more work before and
+after the substitute() call.
+
+
+FUNCTIONS						*function-list*
+
+There are many functions.  We will mention them here, grouped by what they are
+used for.  You can find an alphabetical list here: |builtin-function-list|.
+Use CTRL-] on the function name to jump to detailed help on it.
+
+String manipulation:					*string-functions*
+	nr2char()		get a character by its number value
+	list2str()		get a character string from a list of numbers
+	char2nr()		get number value of a character
+	str2list()		get list of numbers from a string
+	str2nr()		convert a string to a Number
+	str2float()		convert a string to a Float
+	printf()		format a string according to % items
+	escape()		escape characters in a string with a '\'
+	shellescape()		escape a string for use with a shell command
+	fnameescape()		escape a file name for use with a Vim command
+	tr()			translate characters from one set to another
+	strtrans()		translate a string to make it printable
+	keytrans()		translate internal keycodes to a form that
+				can be used by |:map|
+	tolower()		turn a string to lowercase
+	toupper()		turn a string to uppercase
+	charclass()		class of a character
+	match()			position where a pattern matches in a string
+	matchbufline()		all the matches of a pattern in a buffer
+	matchend()		position where a pattern match ends in a string
+	matchfuzzy()		fuzzy matches a string in a list of strings
+	matchfuzzypos()		fuzzy matches a string in a list of strings
+	matchstr()		match of a pattern in a string
+	matchstrlist()		all the matches of a pattern in a List of
+				strings
+	matchstrpos()		match and positions of a pattern in a string
+	matchlist()		like matchstr() and also return submatches
+	stridx()		first index of a short string in a long string
+	strridx()		last index of a short string in a long string
+	strlen()		length of a string in bytes
+	strcharlen()		length of a string in characters
+	strchars()		number of characters in a string
+	strutf16len()		number of UTF-16 code units in a string
+	strwidth()		size of string when displayed
+	strdisplaywidth()	size of string when displayed, deals with tabs
+	setcellwidths()		set character cell width overrides
+	getcellwidths()		get character cell width overrides
+	reverse()		reverse the order of characters in a string
+	substitute()		substitute a pattern match with a string
+	submatch()		get a specific match in ":s" and substitute()
+	strpart()		get part of a string using byte index
+	strcharpart()		get part of a string using char index
+	slice()			take a slice of a string, using char index in
+				Vim9 script
+	strgetchar()		get character from a string using char index
+	expand()		expand special keywords
+	expandcmd()		expand a command like done for `:edit`
+	iconv()			convert text from one encoding to another
+	byteidx()		byte index of a character in a string
+	byteidxcomp()		like byteidx() but count composing characters
+	charidx()		character index of a byte in a string
+	utf16idx()		UTF-16 index of a byte in a string
+	repeat()		repeat a string multiple times
+	eval()			evaluate a string expression
+	execute()		execute an Ex command and get the output
+	win_execute()		like execute() but in a specified window
+	trim()			trim characters from a string
+	gettext()		lookup message translation
+
+List manipulation:					*list-functions*
+	get()			get an item without error for wrong index
+	len()			number of items in a List
+	empty()			check if List is empty
+	insert()		insert an item somewhere in a List
+	add()			append an item to a List
+	extend()		append a List to a List
+	extendnew()		make a new List and append items
+	remove()		remove one or more items from a List
+	copy()			make a shallow copy of a List
+	deepcopy()		make a full copy of a List
+	filter()		remove selected items from a List
+	map()			change each List item
+	mapnew()		make a new List with changed items
+	foreach()		apply function to List items
+	reduce()		reduce a List to a value
+	slice()			take a slice of a List
+	sort()			sort a List
+	reverse()		reverse the order of items in a List
+	uniq()			remove copies of repeated adjacent items
+	split()			split a String into a List
+	join()			join List items into a String
+	range()			return a List with a sequence of numbers
+	string()		String representation of a List
+	call()			call a function with List as arguments
+	index()			index of a value in a List or Blob
+	indexof()		index in a List or Blob where an expression
+				evaluates to true
+	max()			maximum value in a List
+	min()			minimum value in a List
+	count()			count number of times a value appears in a List
+	repeat()		repeat a List multiple times
+	flatten()		flatten a List
+	flattennew()		flatten a copy of a List
+
+Dictionary manipulation:				*dict-functions*
+	get()			get an entry without an error for a wrong key
+	len()			number of entries in a Dictionary
+	has_key()		check whether a key appears in a Dictionary
+	empty()			check if Dictionary is empty
+	remove()		remove an entry from a Dictionary
+	extend()		add entries from one Dictionary to another
+	extendnew()		make a new Dictionary and append items
+	filter()		remove selected entries from a Dictionary
+	map()			change each Dictionary entry
+	mapnew()		make a new Dictionary with changed items
+	foreach()		apply function to Dictionary items
+	keys()			get List of Dictionary keys
+	values()		get List of Dictionary values
+	items()			get List of Dictionary key-value pairs
+	copy()			make a shallow copy of a Dictionary
+	deepcopy()		make a full copy of a Dictionary
+	string()		String representation of a Dictionary
+	max()			maximum value in a Dictionary
+	min()			minimum value in a Dictionary
+	count()			count number of times a value appears
+
+Floating point computation:				*float-functions*
+	float2nr()		convert Float to Number
+	abs()			absolute value (also works for Number)
+	round()			round off
+	ceil()			round up
+	floor()			round down
+	trunc()			remove value after decimal point
+	fmod()			remainder of division
+	exp()			exponential
+	log()			natural logarithm (logarithm to base e)
+	log10()			logarithm to base 10
+	pow()			value of x to the exponent y
+	sqrt()			square root
+	sin()			sine
+	cos()			cosine
+	tan()			tangent
+	asin()			arc sine
+	acos()			arc cosine
+	atan()			arc tangent
+	atan2()			arc tangent
+	sinh()			hyperbolic sine
+	cosh()			hyperbolic cosine
+	tanh()			hyperbolic tangent
+	isinf()			check for infinity
+	isnan()			check for not a number
+
+Blob manipulation:					*blob-functions*
+	blob2list()		get a list of numbers from a blob
+	list2blob()		get a blob from a list of numbers
+	reverse()		reverse the order of numbers in a blob
+
+Other computation:					*bitwise-function*
+	and()			bitwise AND
+	invert()		bitwise invert
+	or()			bitwise OR
+	xor()			bitwise XOR
+	sha256()		SHA-256 hash
+	rand()			get a pseudo-random number
+	srand()			initialize seed used by rand()
+
+Variables:						*var-functions*
+	instanceof()		check if a variable is an instance of a given
+				class
+	type()			type of a variable as a number
+	typename()		type of a variable as text
+	islocked()		check if a variable is locked
+	funcref()		get a Funcref for a function reference
+	function()		get a Funcref for a function name
+	getbufvar()		get a variable value from a specific buffer
+	setbufvar()		set a variable in a specific buffer
+	getwinvar()		get a variable from specific window
+	gettabvar()		get a variable from specific tab page
+	gettabwinvar()		get a variable from specific window & tab page
+	setwinvar()		set a variable in a specific window
+	settabvar()		set a variable in a specific tab page
+	settabwinvar()		set a variable in a specific window & tab page
+	garbagecollect()	possibly free memory
+
+Cursor and mark position:		*cursor-functions* *mark-functions*
+	col()			column number of the cursor or a mark
+	virtcol()		screen column of the cursor or a mark
+	line()			line number of the cursor or mark
+	wincol()		window column number of the cursor
+	winline()		window line number of the cursor
+	cursor()		position the cursor at a line/column
+	screencol()		get screen column of the cursor
+	screenrow()		get screen row of the cursor
+	screenpos()		screen row and col of a text character
+	virtcol2col()		byte index of a text character on screen
+	getcurpos()		get position of the cursor
+	getpos()		get position of cursor, mark, etc.
+	setpos()		set position of cursor, mark, etc.
+	getmarklist()		list of global/local marks
+	byte2line()		get line number at a specific byte count
+	line2byte()		byte count at a specific line
+	diff_filler()		get the number of filler lines above a line
+	screenattr()		get attribute at a screen line/row
+	screenchar()		get character code at a screen line/row
+	screenchars()		get character codes at a screen line/row
+	screenstring()		get string of characters at a screen line/row
+	charcol()		character number of the cursor or a mark
+	getcharpos()		get character position of cursor, mark, etc.
+	setcharpos()		set character position of cursor, mark, etc.
+	getcursorcharpos()	get character position of the cursor
+	setcursorcharpos()	set character position of the cursor
+
+Working with text in the current buffer:		*text-functions*
+	getline()		get a line or list of lines from the buffer
+	setline()		replace a line in the buffer
+	append()		append line or list of lines in the buffer
+	indent()		indent of a specific line
+	cindent()		indent according to C indenting
+	lispindent()		indent according to Lisp indenting
+	nextnonblank()		find next non-blank line
+	prevnonblank()		find previous non-blank line
+	search()		find a match for a pattern
+	searchpos()		find a match for a pattern
+	searchcount()		get number of matches before/after the cursor
+	searchpair()		find the other end of a start/skip/end
+	searchpairpos()		find the other end of a start/skip/end
+	searchdecl()		search for the declaration of a name
+	getcharsearch()		return character search information
+	setcharsearch()		set character search information
+
+Working with text in another buffer:
+	getbufline()		get a list of lines from the specified buffer
+	getbufoneline()		get a one line from the specified buffer
+	setbufline()		replace a line in the specified buffer
+	appendbufline()		append a list of lines in the specified buffer
+	deletebufline()		delete lines from a specified buffer
+
+					*system-functions* *file-functions*
+System functions and manipulation of files:
+	glob()			expand wildcards
+	globpath()		expand wildcards in a number of directories
+	glob2regpat()		convert a glob pattern into a search pattern
+	findfile()		find a file in a list of directories
+	finddir()		find a directory in a list of directories
+	resolve()		find out where a shortcut points to
+	fnamemodify()		modify a file name
+	pathshorten()		shorten directory names in a path
+	simplify()		simplify a path without changing its meaning
+	executable()		check if an executable program exists
+	exepath()		full path of an executable program
+	filereadable()		check if a file can be read
+	filewritable()		check if a file can be written to
+	getfperm()		get the permissions of a file
+	setfperm()		set the permissions of a file
+	getftype()		get the kind of a file
+	isabsolutepath()	check if a path is absolute
+	isdirectory()		check if a directory exists
+	getfsize()		get the size of a file
+	getcwd()		get the current working directory
+	haslocaldir()		check if current window used |:lcd| or |:tcd|
+	tempname()		get the name of a temporary file
+	mkdir()			create a new directory
+	chdir()			change current working directory
+	delete()		delete a file
+	rename()		rename a file
+	system()		get the result of a shell command as a string
+	systemlist()		get the result of a shell command as a list
+	environ()		get all environment variables
+	getenv()		get one environment variable
+	setenv()		set an environment variable
+	hostname()		name of the system
+	readfile()		read a file into a List of lines
+	readblob()		read a file into a Blob
+	readdir()		get a List of file names in a directory
+	readdirex()		get a List of file information in a directory
+	writefile()		write a List of lines or Blob into a file
+
+Date and Time:				*date-functions* *time-functions*
+	getftime()		get last modification time of a file
+	localtime()		get current time in seconds
+	strftime()		convert time to a string
+	strptime()		convert a date/time string to time
+	reltime()		get the current or elapsed time accurately
+	reltimestr()		convert reltime() result to a string
+	reltimefloat()		convert reltime() result to a Float
+
+Autocmds:					*autocmd-functions*
+	autocmd_add()		add a list of autocmds and groups
+	autocmd_delete()	delete a list of autocmds and groups
+	autocmd_get()		return a list of autocmds
+
+			*buffer-functions* *window-functions* *arg-functions*
+Buffers, windows and the argument list:
+	argc()			number of entries in the argument list
+	argidx()		current position in the argument list
+	arglistid()		get id of the argument list
+	argv()			get one entry from the argument list
+	bufadd()		add a file to the list of buffers
+	bufexists()		check if a buffer exists
+	buflisted()		check if a buffer exists and is listed
+	bufload()		ensure a buffer is loaded
+	bufloaded()		check if a buffer exists and is loaded
+	bufname()		get the name of a specific buffer
+	bufnr()			get the buffer number of a specific buffer
+	tabpagebuflist()	return List of buffers in a tab page
+	tabpagenr()		get the number of a tab page
+	tabpagewinnr()		like winnr() for a specified tab page
+	winnr()			get the window number for the current window
+	bufwinid()		get the window ID of a specific buffer
+	bufwinnr()		get the window number of a specific buffer
+	winbufnr()		get the buffer number of a specific window
+	listener_add()		add a callback to listen to changes
+	listener_flush()	invoke listener callbacks
+	listener_remove()	remove a listener callback
+	win_findbuf()		find windows containing a buffer
+	win_getid()		get window ID of a window
+	win_gettype()		get type of window
+	win_gotoid()		go to window with ID
+	win_id2tabwin()		get tab and window nr from window ID
+	win_id2win()		get window nr from window ID
+	win_move_separator()	move window vertical separator
+	win_move_statusline()	move window status line
+	win_splitmove()		move window to a split of another window
+	getbufinfo()		get a list with buffer information
+	gettabinfo()		get a list with tab page information
+	getwininfo()		get a list with window information
+	getchangelist()		get a list of change list entries
+	getjumplist()		get a list of jump list entries
+	swapfilelist()		list of existing swap files in 'directory'
+	swapinfo()		information about a swap file
+	swapname()		get the swap file path of a buffer
+
+Command line:					*command-line-functions*
+	getcmdcompltype()	get the type of the current command line
+				completion
+	getcmdline()		get the current command line
+	getcmdpos()		get position of the cursor in the command line
+	getcmdscreenpos()	get screen position of the cursor in the
+				command line
+	setcmdline()		set the current command line
+	setcmdpos()		set position of the cursor in the command line
+	getcmdtype()		return the current command-line type
+	getcmdwintype()		return the current command-line window type
+	getcompletion()		list of command-line completion matches
+	fullcommand()		get full command name
+
+Quickfix and location lists:			*quickfix-functions*
+	getqflist()		list of quickfix errors
+	setqflist()		modify a quickfix list
+	getloclist()		list of location list items
+	setloclist()		modify a location list
+
+Insert mode completion:				*completion-functions*
+	complete()		set found matches
+	complete_add()		add to found matches
+	complete_check()	check if completion should be aborted
+	complete_info()		get current completion information
+	pumvisible()		check if the popup menu is displayed
+	pum_getpos()		position and size of popup menu if visible
+
+Folding:					*folding-functions*
+	foldclosed()		check for a closed fold at a specific line
+	foldclosedend()		like foldclosed() but return the last line
+	foldlevel()		check for the fold level at a specific line
+	foldtext()		generate the line displayed for a closed fold
+	foldtextresult()	get the text displayed for a closed fold
+
+Syntax and highlighting:	  *syntax-functions* *highlighting-functions*
+	clearmatches()		clear all matches defined by |matchadd()| and
+				the |:match| commands
+	getmatches()		get all matches defined by |matchadd()| and
+				the |:match| commands
+	hlexists()		check if a highlight group exists
+	hlget()			get highlight group attributes
+	hlset()			set highlight group attributes
+	hlID()			get ID of a highlight group
+	synID()			get syntax ID at a specific position
+	synIDattr()		get a specific attribute of a syntax ID
+	synIDtrans()		get translated syntax ID
+	synstack()		get list of syntax IDs at a specific position
+	synconcealed()		get info about concealing
+	diff_hlID()		get highlight ID for diff mode at a position
+	matchadd()		define a pattern to highlight (a "match")
+	matchaddpos()		define a list of positions to highlight
+	matcharg()		get info about |:match| arguments
+	matchdelete()		delete a match defined by |matchadd()| or a
+				|:match| command
+	setmatches()		restore a list of matches saved by
+				|getmatches()|
+
+Spelling:					*spell-functions*
+	spellbadword()		locate badly spelled word at or after cursor
+	spellsuggest()		return suggested spelling corrections
+	soundfold()		return the sound-a-like equivalent of a word
+
+History:					*history-functions*
+	histadd()		add an item to a history
+	histdel()		delete an item from a history
+	histget()		get an item from a history
+	histnr()		get highest index of a history list
+
+Interactive:					*interactive-functions*
+	browse()		put up a file requester
+	browsedir()		put up a directory requester
+	confirm()		let the user make a choice
+	getchar()		get a character from the user
+	getcharstr()		get a character from the user as a string
+	getcharmod()		get modifiers for the last typed character
+	getmousepos()		get last known mouse position
+	getmouseshape()		get name of the current mouse shape
+	echoraw()		output characters as-is
+	feedkeys()		put characters in the typeahead queue
+	input()			get a line from the user
+	inputlist()		let the user pick an entry from a list
+	inputsecret()		get a line from the user without showing it
+	inputdialog()		get a line from the user in a dialog
+	inputsave()		save and clear typeahead
+	inputrestore()		restore typeahead
+
+GUI:						*gui-functions*
+	getfontname()		get name of current font being used
+	getwinpos()		position of the Vim window
+	getwinposx()		X position of the Vim window
+	getwinposy()		Y position of the Vim window
+	balloon_show()		set the balloon content
+	balloon_split()		split a message for a balloon
+	balloon_gettext()	get the text in the balloon
+
+Vim server:					*server-functions*
+	serverlist()		return the list of server names
+	remote_startserver()	run a server
+	remote_send()		send command characters to a Vim server
+	remote_expr()		evaluate an expression in a Vim server
+	server2client()		send a reply to a client of a Vim server
+	remote_peek()		check if there is a reply from a Vim server
+	remote_read()		read a reply from a Vim server
+	foreground()		move the Vim window to the foreground
+	remote_foreground()	move the Vim server window to the foreground
+
+Window size and position:			*window-size-functions*
+	winheight()		get height of a specific window
+	winwidth()		get width of a specific window
+	win_screenpos()		get screen position of a window
+	winlayout()		get layout of windows in a tab page
+	winrestcmd()		return command to restore window sizes
+	winsaveview()		get view of current window
+	winrestview()		restore saved view of current window
+
+Mappings and Menus:			    *mapping-functions*
+	digraph_get()		get |digraph|
+	digraph_getlist()	get all |digraph|s
+	digraph_set()		register |digraph|
+	digraph_setlist()	register multiple |digraph|s
+	hasmapto()		check if a mapping exists
+	mapcheck()		check if a matching mapping exists
+	maparg()		get rhs of a mapping
+	maplist()		get list of all mappings
+	mapset()		restore a mapping
+	menu_info()		get information about a menu item
+	wildmenumode()		check if the wildmode is active
+
+Testing:				    *test-functions*
+	assert_equal()		assert that two expressions values are equal
+	assert_equalfile()	assert that two file contents are equal
+	assert_notequal()	assert that two expressions values are not equal
+	assert_inrange()	assert that an expression is inside a range
+	assert_match()		assert that a pattern matches the value
+	assert_notmatch()	assert that a pattern does not match the value
+	assert_false()		assert that an expression is false
+	assert_true()		assert that an expression is true
+	assert_exception()	assert that a command throws an exception
+	assert_beeps()		assert that a command beeps
+	assert_nobeep()		assert that a command does not cause a beep
+	assert_fails()		assert that a command fails
+	assert_report()		report a test failure
+	test_alloc_fail()	make memory allocation fail
+	test_autochdir()	enable 'autochdir' during startup
+	test_override()		test with Vim internal overrides
+	test_garbagecollect_now()   free memory right now
+	test_garbagecollect_soon()  set a flag to free memory soon
+	test_getvalue()		get value of an internal variable
+	test_gui_event()	generate a GUI event for testing
+	test_ignore_error()	ignore a specific error message
+	test_mswin_event()	generate an MS-Windows event
+	test_null_blob()	return a null Blob
+	test_null_channel()	return a null Channel
+	test_null_dict()	return a null Dict
+	test_null_function()	return a null Funcref
+	test_null_job()		return a null Job
+	test_null_list()	return a null List
+	test_null_partial()	return a null Partial function
+	test_null_string()	return a null String
+	test_settime()		set the time Vim uses internally
+	test_setmouse()		set the mouse position
+	test_feedinput()	add key sequence to input buffer
+	test_option_not_set()	reset flag indicating option was set
+	test_refcount()		return an expression's reference count
+	test_srand_seed()	set the seed value for srand()
+	test_unknown()		return a value with unknown type
+	test_void()		return a value with void type
+
+Inter-process communication:		    *channel-functions*
+	ch_canread()		check if there is something to read
+	ch_open()		open a channel
+	ch_close()		close a channel
+	ch_close_in()		close the in part of a channel
+	ch_read()		read a message from a channel
+	ch_readblob()		read a Blob from a channel
+	ch_readraw()		read a raw message from a channel
+	ch_sendexpr()		send a JSON message over a channel
+	ch_sendraw()		send a raw message over a channel
+	ch_evalexpr()		evaluate an expression over channel
+	ch_evalraw()		evaluate a raw string over channel
+	ch_status()		get status of a channel
+	ch_getbufnr()		get the buffer number of a channel
+	ch_getjob()		get the job associated with a channel
+	ch_info()		get channel information
+	ch_log()		write a message in the channel log file
+	ch_logfile()		set the channel log file
+	ch_setoptions()		set the options for a channel
+	json_encode()		encode an expression to a JSON string
+	json_decode()		decode a JSON string to Vim types
+	js_encode()		encode an expression to a JSON string
+	js_decode()		decode a JSON string to Vim types
+	err_teapot()		give error 418 or 503
+
+Jobs:						*job-functions*
+	job_start()		start a job
+	job_stop()		stop a job
+	job_status()		get the status of a job
+	job_getchannel()	get the channel used by a job
+	job_info()		get information about a job
+	job_setoptions()	set options for a job
+
+Signs:						*sign-functions*
+	sign_define()		define or update a sign
+	sign_getdefined()	get a list of defined signs
+	sign_getplaced()	get a list of placed signs
+	sign_jump()		jump to a sign
+	sign_place()		place a sign
+	sign_placelist()	place a list of signs
+	sign_undefine()		undefine a sign
+	sign_unplace()		unplace a sign
+	sign_unplacelist()	unplace a list of signs
+
+Terminal window:				*terminal-functions*
+	term_start()		open a terminal window and run a job
+	term_list()		get the list of terminal buffers
+	term_sendkeys()		send keystrokes to a terminal
+	term_wait()		wait for screen to be updated
+	term_getjob()		get the job associated with a terminal
+	term_scrape()		get row of a terminal screen
+	term_getline()		get a line of text from a terminal
+	term_getattr()		get the value of attribute {what}
+	term_getcursor()	get the cursor position of a terminal
+	term_getscrolled()	get the scroll count of a terminal
+	term_getaltscreen()	get the alternate screen flag
+	term_getsize()		get the size of a terminal
+	term_getstatus()	get the status of a terminal
+	term_gettitle()		get the title of a terminal
+	term_gettty()		get the tty name of a terminal
+	term_setansicolors()	set 16 ANSI colors, used for GUI
+	term_getansicolors()	get 16 ANSI colors, used for GUI
+	term_dumpdiff()		display difference between two screen dumps
+	term_dumpload()		load a terminal screen dump in a window
+	term_dumpwrite()	dump contents of a terminal screen to a file
+	term_setkill()		set signal to stop job in a terminal
+	term_setrestore()	set command to restore a terminal
+	term_setsize()		set the size of a terminal
+	term_setapi()		set terminal JSON API function name prefix
+
+Popup window:					*popup-window-functions*
+	popup_create()		create popup centered in the screen
+	popup_atcursor()	create popup just above the cursor position,
+				closes when the cursor moves away
+	popup_beval()		at the position indicated by v:beval_
+				variables, closes when the mouse moves away
+	popup_notification()	show a notification for three seconds
+	popup_dialog()		create popup centered with padding and border
+	popup_menu()		prompt for selecting an item from a list
+	popup_hide()		hide a popup temporarily
+	popup_show()		show a previously hidden popup
+	popup_move()		change the position and size of a popup
+	popup_setoptions()	override options of a popup
+	popup_settext()		replace the popup buffer contents
+	popup_close()		close one popup
+	popup_clear()		close all popups
+	popup_filter_menu()	select from a list of items
+	popup_filter_yesno()	block until 'y' or 'n' is pressed
+	popup_getoptions()	get current options for a popup
+	popup_getpos()		get actual position and size of a popup
+	popup_findecho()	get window ID for popup used for `:echowindow`
+	popup_findinfo()	get window ID for popup info window
+	popup_findpreview()	get window ID for popup preview window
+	popup_list()		get list of all popup window IDs
+	popup_locate()		get popup window ID from its screen position
+
+Timers:						*timer-functions*
+	timer_start()		create a timer
+	timer_pause()		pause or unpause a timer
+	timer_stop()		stop a timer
+	timer_stopall()		stop all timers
+	timer_info()		get information about timers
+
+Tags:						*tag-functions*
+	taglist()		get list of matching tags
+	tagfiles()		get a list of tags files
+	gettagstack()		get the tag stack of a window
+	settagstack()		modify the tag stack of a window
+
+Prompt Buffer:					*promptbuffer-functions*
+	prompt_getprompt()	get the effective prompt text for a buffer
+	prompt_setcallback()	set prompt callback for a buffer
+	prompt_setinterrupt()	set interrupt callback for a buffer
+	prompt_setprompt()	set the prompt text for a buffer
+
+Registers:					*register-functions*
+	getreg()		get contents of a register
+	getreginfo()		get information about a register
+	getregtype()		get type of a register
+	setreg()		set contents and type of a register
+	reg_executing()		return the name of the register being executed
+	reg_recording()		return the name of the register being recorded
+
+Text Properties:				*text-property-functions*
+	prop_add()		attach a property at a position
+	prop_add_list()		attach a property at multiple positions
+	prop_clear()		remove all properties from a line or lines
+	prop_find()		search for a property
+	prop_list()		return a list of all properties in a line
+	prop_remove()		remove a property from a line
+	prop_type_add()		add/define a property type
+	prop_type_change()	change properties of a type
+	prop_type_delete()	remove a text property type
+	prop_type_get()		return the properties of a type
+	prop_type_list()	return a list of all property types
+
+Sound:							*sound-functions*
+	sound_clear()		stop playing all sounds
+	sound_playevent()	play an event's sound
+	sound_playfile()	play a sound file
+	sound_stop()		stop playing a sound
+
+Various:					*various-functions*
+	mode()			get current editing mode
+	state()			get current busy state
+	visualmode()		last visual mode used
+	exists()		check if a variable, function, etc. exists
+	exists_compiled()	like exists() but check at compile time
+	has()			check if a feature is supported in Vim
+	changenr()		return number of most recent change
+	cscope_connection()	check if a cscope connection exists
+	did_filetype()		check if a FileType autocommand was used
+	eventhandler()		check if invoked by an event handler
+	getpid()		get process ID of Vim
+	getscriptinfo()		get list of sourced vim scripts
+	getimstatus()		check if IME status is active
+	interrupt()		interrupt script execution
+	windowsversion()	get MS-Windows version
+	terminalprops()		properties of the terminal
+
+	libcall()		call a function in an external library
+	libcallnr()		idem, returning a number
+
+	undofile()		get the name of the undo file
+	undotree()		return the state of the undo tree for a buffer
+
+	shiftwidth()		effective value of 'shiftwidth'
+
+	wordcount()		get byte/word/char count of buffer
+
+	luaeval()		evaluate |Lua| expression
+	mzeval()		evaluate |MzScheme| expression
+	perleval()		evaluate Perl expression (|+perl|)
+	py3eval()		evaluate Python expression (|+python3|)
+	pyeval()		evaluate Python expression (|+python|)
+	pyxeval()		evaluate |python_x| expression
+	rubyeval()		evaluate |Ruby| expression
+
+	debugbreak()		interrupt a program being debugged
+
+==============================================================================
+*41.7*	Defining a function
+
+Vim enables you to define your own functions.  The basic function declaration
+begins as follows: >
+
+	def {name}({var1}, {var2}, ...): return-type
+	  {body}
+	enddef
+<
+	Note:
+	Function names must begin with a capital letter.
+
+Let's define a short function to return the smaller of two numbers.  It starts
+with this line: >
+
+	def Min(num1: number, num2: number): number
+
+This tells Vim that the function is named "Min", it takes two arguments that
+are numbers: "num1" and "num2" and returns a number.
+
+The first thing you need to do is to check to see which number is smaller:
+   >
+	if num1 < num2
+
+Let's assign the variable "smaller" the value of the smallest number: >
+
+	var smaller: number
+	if num1 < num2
+	  smaller = num1
+	else
+	  smaller = num2
+	endif
+
+The variable "smaller" is a local variable.  It is declared to be a number,
+that way Vim can warn you for any mistakes.  Variables used inside a function
+are local unless prefixed by something like "g:", "w:", or "b:".
+
+	Note:
+	To access a global variable from inside a function you must prepend
+	"g:" to it.  Thus "g:today" inside a function is used for the global
+	variable "today", and "today" is another variable, local to the
+	function or the script.
+
+You now use the `return` statement to return the smallest number to the user.
+Finally, you end the function: >
+
+	  return smaller
+	enddef
+
+The complete function definition is as follows: >
+
+	def Min(num1: number, num2: number): number
+	  var smaller: number
+	  if num1 < num2
+	    smaller = num1
+	  else
+	    smaller = num2
+	  endif
+	  return smaller
+	enddef
+
+Obviously this is a verbose example.  You can make it shorter by using two
+return commands: >
+
+	def Min(num1: number, num2: number): number
+	  if num1 < num2
+	    return num1
+	  endif
+	  return num2
+	enddef
+
+And if you remember the conditional expression, you need only one line: >
+
+	def Min(num1: number, num2: number): number
+	  return num1 < num2 ? num1 : num2
+	enddef
+
+A user defined function is called in exactly the same way as a built-in
+function.  Only the name is different.  The Min function can be used like
+this: >
+
+	echo Min(5, 8)
+
+Only now will the function be executed and the lines be parsed by Vim.
+If there are mistakes, like using an undefined variable or function, you will
+now get an error message.  When defining the function these errors are not
+detected.  To get the errors sooner you can tell Vim to compile all the
+functions in the script: >
+
+	defcompile
+
+Compiling functions takes a little time, but does report errors early.  You
+could use `:defcompile` at the end of your script while working on it, and
+comment it out when everything is fine.
+
+For a function that does not return anything simply leave out the return type: >
+
+	def SayIt(text: string)
+	  echo text
+	enddef
+
+If you want to return any kind of value, you can use the "any" return type: >
+	def GetValue(): any
+This disables type checking for the return value, use only when needed.
+
+It is also possible to define a legacy function with `function` and
+`endfunction`.  These do not have types and are not compiled.  Therefore they
+execute much slower.
+
+
+USING A RANGE
+
+A line range can be used with a function call.  The function will be called
+once for every line in the range, with the cursor in that line.  Example: >
+
+	def Number()
+	  echo "line " .. line(".") .. " contains: " .. getline(".")
+	enddef
+
+If you call this function with: >
+
+	:10,15Number()
+
+The function will be called six times, starting on line 10 and ending on line
+15.
+
+
+LISTING FUNCTIONS
+
+The `function` command lists the names and arguments of all user-defined
+functions: >
+
+	:function
+<	def <SNR>86_Show(start: string, ...items: list<string>) ~
+	function GetVimIndent() ~
+	function SetSyn(name) ~
+
+The "<SNR>" prefix means that a function is script-local.  |Vim9| functions
+will start with "def" and include argument and return types.  Legacy functions
+are listed with "function".
+
+To see what a function does, use its name as an argument for `function`: >
+
+	:function SetSyn
+<	1     if &syntax == '' ~
+	2       let &syntax = a:name ~
+	3     endif ~
+	   endfunction ~
+
+To see the "Show" function you need to include the script prefix, since
+multiple "Show" functions can be defined in different scripts.  To find
+the exact name you can use `function`, but the result may be a very long list.
+To only get the functions matching a pattern you can use the `filter` prefix:
+>
+	:filter Show function
+<	def <SNR>86_Show(start: string, ...items: list<string>) ~
+>
+	:function <SNR>86_Show
+<	1    echohl Title ~
+	2    echo "start is " .. start ~
+	etc.
+
+
+DEBUGGING
+
+The line number is useful for when you get an error message or when debugging.
+See |debug-scripts| about debugging mode.
+
+You can also set the 'verbose' option to 12 or higher to see all function
+calls.  Set it to 15 or higher to see every executed line.
+
+
+DELETING A FUNCTION
+
+To delete the SetSyn() function: >
+
+	:delfunction SetSyn
+
+Deleting only works for global functions and functions in legacy script, not
+for functions defined in a |Vim9| script.
+
+You get an error when the function doesn't exist or cannot be deleted.
+
+
+FUNCTION REFERENCES
+
+Sometimes it can be useful to have a variable point to one function or
+another.  You can do it with a function reference variable.  Often shortened
+to "funcref".  Example: >
+
+	def Right(): string
+	  return 'Right!'
+	enddef
+	def Wrong(): string
+	  return 'Wrong!'
+	enddef
+
+	var Afunc = g:result == 1 ? Right : Wrong
+	echo Afunc()
+<	Wrong! ~
+
+This assumes "g:result" is not one.  See |Funcref| for details.
+
+Note that the name of a variable that holds a function reference must start
+with a capital.  Otherwise it could be confused with the name of a builtin
+function.
+
+
+FURTHER READING
+
+Using a variable number of arguments is introduced in section |50.2|.
+
+More information about defining your own functions here: |user-functions|.
+
+==============================================================================
+*41.8*	Lists and Dictionaries
+
+So far we have used the basic types String and Number.  Vim also supports two
+composite types: List and Dictionary.
+
+A List is an ordered sequence of items.  The items can be any kind of value,
+thus you can make a List of numbers, a List of Lists and even a List of mixed
+items.  To create a List with three strings: >
+
+	var alist = ['aap', 'noot', 'mies']
+
+The List items are enclosed in square brackets and separated by commas.  To
+create an empty List: >
+
+	var alist = []
+
+You can add items to a List with the add() function: >
+
+	var alist = []
+	add(alist, 'foo')
+	add(alist, 'bar')
+	echo alist
+<	['foo', 'bar'] ~
+
+List concatenation is done with +: >
+
+	var alist = ['foo', 'bar']
+	alist = alist + ['and', 'more']
+	echo alist
+<	['foo', 'bar', 'and', 'more'] ~
+
+Or, if you want to extend a List with a function, use `extend()`: >
+
+	var alist = ['one']
+	extend(alist, ['two', 'three'])
+	echo alist
+<	['one', 'two', 'three'] ~
+
+Notice that using `add()` will have a different effect than `extend()`: >
+
+	var alist = ['one']
+	add(alist, ['two', 'three'])
+	echo alist
+<	['one', ['two', 'three']] ~
+
+The second argument of add() is added as an item, now you have a nested list.
+
+
+FOR LOOP
+
+One of the nice things you can do with a List is iterate over it: >
+
+	var alist = ['one', 'two', 'three']
+	for n in alist
+	  echo n
+	endfor
+<	one ~
+	two ~
+	three ~
+
+This will loop over each element in List "alist", assigning each value to
+variable "n".  The generic form of a for loop is: >
+
+	for {varname} in {list-expression}
+	  {commands}
+	endfor
+
+To loop a certain number of times you need a List of a specific length.  The
+range() function creates one for you: >
+
+	for a in range(3)
+	  echo a
+	endfor
+<	0 ~
+	1 ~
+	2 ~
+
+Notice that the first item of the List that range() produces is zero, thus the
+last item is one less than the length of the list.  Detail: Internally range()
+does not actually create the list, so that a large range used in a for loop
+works efficiently.  When used elsewhere, the range is turned into an actual
+list, which takes more time for a long list.
+
+You can also specify the maximum value, the stride and even go backwards: >
+
+	for a in range(8, 4, -2)
+	  echo a
+	endfor
+<	8 ~
+	6 ~
+	4 ~
+
+A more useful example, looping over all the lines in the buffer: >
+
+	for line in getline(1, 50)
+	  if line =~ "Date: "
+	    echo line
+	  endif
+	endfor
+
+This looks into lines 1 to 50 (inclusive) and echoes any date found in there.
+
+For further reading see |Lists|.
+
+
+DICTIONARIES
+
+A Dictionary stores key-value pairs.  You can quickly lookup a value if you
+know the key.  A Dictionary is created with curly braces: >
+
+	var uk2nl = {one: 'een', two: 'twee', three: 'drie'}
+
+Now you can lookup words by putting the key in square brackets: >
+
+	echo uk2nl['two']
+<	twee ~
+
+If the key does not have special characters, you can use the dot notation: >
+
+	echo uk2nl.two
+<	twee ~
+
+The generic form for defining a Dictionary is: >
+
+	{<key> : <value>, ...}
+
+An empty Dictionary is one without any keys: >
+
+	{}
+
+The possibilities with Dictionaries are numerous.  There are various functions
+for them as well.  For example, you can obtain a list of the keys and loop
+over them: >
+
+	for key in keys(uk2nl)
+	  echo key
+	endfor
+<	three ~
+	one ~
+	two ~
+
+You will notice the keys are not ordered.  You can sort the list to get a
+specific order: >
+
+	for key in sort(keys(uk2nl))
+	  echo key
+	endfor
+<	one ~
+	three ~
+	two ~
+
+But you can never get back the order in which items are defined.  For that you
+need to use a List, it stores items in an ordered sequence.
+
+For further reading see |Dictionaries|.
+
+==============================================================================
+*41.9*	White space
+
+Blank lines are allowed in a script and ignored.
+
+Leading whitespace characters (blanks and TABs) are ignored, except when using
+|:let-heredoc| without "trim".
+
+Trailing whitespace is often ignored, but not always.  One command that
+includes it is `map`.  You have to watch out for that, it can cause hard to
+understand mistakes.  A generic solution is to never use trailing white space,
+unless you really need it.
+
+To include a whitespace character in the value of an option, it must be
+escaped by a "\" (backslash)  as in the following example: >
+
+	:set tags=my\ nice\ file
+
+If it would be written as: >
+
+	:set tags=my nice file
+
+This will issue an error, because it is interpreted as: >
+
+	:set tags=my
+	:set nice
+	:set file
+
+|Vim9| script is very picky when it comes to white space.  This was done
+intentionally to make sure scripts are easy to read and to avoid mistakes.
+If you use white space sensibly it will just work.  When not you will get an
+error message telling you where white space is missing or should be removed.
+
+==============================================================================
+*41.10*	Line continuation
+
+In legacy Vim script line continuation is done by preceding a continuation
+line with a backslash: >
+	let mylist = [
+			\ 'one',
+			\ 'two',
+			\ ]
+
+This requires the 'cpo' option to exclude the "C" flag.  Normally this is done
+by putting this at the start of the script: >
+	let s:save_cpo = &cpo
+	set cpo&vim
+
+And restore the option at the end of the script: >
+	let &cpo = s:save_cpo
+	unlet s:save_cpo
+
+A few more details can be found here: |line-continuation|.
+
+In |Vim9| script the backslash can still be used, but in most places it is not
+needed: >
+	var mylist = [
+			'one',
+			'two',
+			]
+
+Also, the 'cpo' option does not need to be changed.  See
+|vim9-line-continuation| for details.
+
+==============================================================================
+*41.11*	Comments
+
+In |Vim9| script the character # starts a comment.  That character and
+everything after it until the end-of-line is considered a comment and
+is ignored, except for commands that don't consider comments, as shown in
+examples below.  A comment can start on any character position on the line,
+but not when it is part of the command, e.g. inside a string.
+
+The character " (the double quote mark) starts a comment in legacy script.
+This involves some cleverness to make sure double quoted strings are not
+recognized as comments (just one reason to prefer |Vim9| script).
+
+There is a little "catch" with comments for some commands.  Examples: >
+
+	abbrev dev development	# shorthand
+	map <F3> o#include	# insert include
+	execute cmd		# do it
+	!ls *.c			# list C files
+
+- The abbreviation 'dev' will be expanded to 'development  # shorthand'.
+- The mapping of <F3> will actually be the whole line after the 'o# ....'
+  including the '# insert include'.
+- The `execute` command will give an error.
+- The `!` command will send everything after it to the shell, most likely
+  causing an error.
+
+There can be no comment after `map`, `abbreviate`, `execute` and `!` commands
+(there are a few more commands with this restriction).  For the `map`,
+`abbreviate` and `execute` commands there is a trick: >
+
+	abbrev dev development|# shorthand
+	map <F3> o#include|# insert include
+	execute '!ls *.c'	|# do it
+
+With the '|' character the command is separated from the next one.  And that
+next command is only a comment.  The last command, using `execute` is a
+general solution, it works for all commands that do not accept a comment or a
+'|' to separate the next command.
+
+Notice that there is no white space before the '|' in the abbreviation and
+mapping.  For these commands, any character until the end-of-line or '|' is
+included.  As a consequence of this behavior, you don't always see that
+trailing whitespace is included: >
+
+	map <F4> o#include  
+
+Here it is intended, in other cases it might be accidental.  To spot these
+problems, you can highlight trailing spaces: >
+	match Search /\s\+$/
+
+For Unix there is one special way to comment a line, that allows making a Vim
+script executable, and it also works in legacy script: >
+	#!/usr/bin/env vim -S
+	echo "this is a Vim script"
+	quit
+
+==============================================================================
+*41.12*	Fileformat
+
+The end-of-line character depends on the system.  For Vim scripts it is
+recommended to always use the Unix fileformat.  Lines are then separated with
+the Newline character.  This also works on any other system.  That way you can
+copy your Vim scripts from MS-Windows to Unix and they still work.  See
+|:source_crnl|.  To be sure it is set right, do this before writing the file:
+>
+	:setlocal fileformat=unix
+
+When using "dos" fileformat, lines are separated with CR-NL, two characters.
+The CR character causes various problems, better avoid this.
+
+==============================================================================
+
+Advance information about writing Vim script is in |usr_50.txt|.
+
+Next chapter: |usr_42.txt|  Add new menus
+
+Copyright: see |manual-copyright|  vim:tw=78:ts=8:noet:ft=help:norl:

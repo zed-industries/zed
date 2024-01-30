@@ -1,0 +1,133 @@
+INIT
+UTF8 1
+WANTSTATE
+
+!Reset
+PUSH "\e[m"
+  ?pen bold = off
+  ?pen underline = 0
+  ?pen italic = off
+  ?pen blink = off
+  ?pen reverse = off
+  ?pen font = 0
+  ?pen foreground = rgb(240,240,240,is_default_fg)
+  ?pen background = rgb(0,0,0,is_default_bg)
+
+!Bold
+PUSH "\e[1m"
+  ?pen bold = on
+PUSH "\e[22m"
+  ?pen bold = off
+PUSH "\e[1m\e[m"
+  ?pen bold = off
+
+!Underline
+PUSH "\e[4m"
+  ?pen underline = 1
+PUSH "\e[21m"
+  ?pen underline = 2
+PUSH "\e[24m"
+  ?pen underline = 0
+PUSH "\e[4m\e[4:0m"
+  ?pen underline = 0
+PUSH "\e[4:1m"
+  ?pen underline = 1
+PUSH "\e[4:2m"
+  ?pen underline = 2
+PUSH "\e[4:3m"
+  ?pen underline = 3
+PUSH "\e[4m\e[m"
+  ?pen underline = 0
+
+!Italic
+PUSH "\e[3m"
+  ?pen italic = on
+PUSH "\e[23m"
+  ?pen italic = off
+PUSH "\e[3m\e[m"
+  ?pen italic = off
+
+!Blink
+PUSH "\e[5m"
+  ?pen blink = on
+PUSH "\e[25m"
+  ?pen blink = off
+PUSH "\e[5m\e[m"
+  ?pen blink = off
+
+!Reverse
+PUSH "\e[7m"
+  ?pen reverse = on
+PUSH "\e[27m"
+  ?pen reverse = off
+PUSH "\e[7m\e[m"
+  ?pen reverse = off
+
+!Font Selection
+PUSH "\e[11m"
+  ?pen font = 1
+PUSH "\e[19m"
+  ?pen font = 9
+PUSH "\e[10m"
+  ?pen font = 0
+PUSH "\e[11m\e[m"
+  ?pen font = 0
+
+!Foreground
+PUSH "\e[31m"
+  ?pen foreground = idx(1)
+PUSH "\e[32m"
+  ?pen foreground = idx(2)
+PUSH "\e[34m"
+  ?pen foreground = idx(4)
+PUSH "\e[91m"
+  ?pen foreground = idx(9)
+PUSH "\e[38:2:10:20:30m"
+  ?pen foreground = rgb(10,20,30)
+PUSH "\e[38:5:1m"
+  ?pen foreground = idx(1)
+PUSH "\e[39m"
+  ?pen foreground = rgb(240,240,240,is_default_fg)
+
+!Background
+PUSH "\e[41m"
+  ?pen background = idx(1)
+PUSH "\e[42m"
+  ?pen background = idx(2)
+PUSH "\e[44m"
+  ?pen background = idx(4)
+PUSH "\e[101m"
+  ?pen background = idx(9)
+PUSH "\e[48:2:10:20:30m"
+  ?pen background = rgb(10,20,30)
+PUSH "\e[48:5:1m"
+  ?pen background = idx(1)
+PUSH "\e[49m"
+  ?pen background = rgb(0,0,0,is_default_bg)
+
+!Bold+ANSI colour == highbright
+PUSH "\e[m\e[1;37m"
+  ?pen bold = on
+  ?pen foreground = idx(15)
+PUSH "\e[m\e[37;1m"
+  ?pen bold = on
+  ?pen foreground = idx(15)
+
+!Super/Subscript
+PUSH "\e[73m"
+  ?pen small = on
+  ?pen baseline = raise
+PUSH "\e[74m"
+  ?pen small = on
+  ?pen baseline = lower
+PUSH "\e[75m"
+  ?pen small = off
+  ?pen baseline = normal
+
+!DECSTR resets pen attributes
+PUSH "\e[1;4m"
+  ?pen bold = on
+  ?pen underline = 1
+PUSH "\e[!p"
+  ?pen bold = off
+  ?pen underline = 0

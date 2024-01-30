@@ -1,2 +1,0 @@
-(comment) @comment
-(string) @string

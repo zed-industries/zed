@@ -1,9 +1,0 @@
-{"Put":{"state":"ˇ\nThe quick\nbrown fox "}}
-{"Key":"shift-a"}
-{"Get":{"state":"ˇ\nThe quick\nbrown fox ","mode":"Insert"}}
-{"Put":{"state":"\nThe qˇuick\nbrown fox "}}
-{"Key":"shift-a"}
-{"Get":{"state":"\nThe quickˇ\nbrown fox ","mode":"Insert"}}
-{"Put":{"state":"\nThe quick\nbrown ˇfox "}}
-{"Key":"shift-a"}
-{"Get":{"state":"\nThe quick\nbrown fox ˇ","mode":"Insert"}}

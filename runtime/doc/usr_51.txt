@@ -1,0 +1,694 @@
+*usr_51.txt*	For Vim version 9.1.  Last change: 2022 Jun 03
+
+		     VIM USER MANUAL - by Bram Moolenaar
+
+			      Write plugins
+
+
+Plugins can be used to define settings for a specific type of file, syntax
+highlighting and many other things.  This chapter explains how to write the
+most common Vim plugins.
+
+|51.1|	Writing a generic plugin
+|51.2|	Writing a filetype plugin
+|51.3|	Writing a compiler plugin
+|51.4|	Distributing Vim scripts
+
+     Next chapter: |usr_52.txt|  Write large plugins
+ Previous chapter: |usr_50.txt|  Advanced Vim script writing
+Table of contents: |usr_toc.txt|
+
+==============================================================================
+*51.1*	Writing a generic plugin			*write-plugin*
+
+You can write a Vim script in such a way that many people can use it.  This is
+called a plugin.  Vim users can drop your script in their plugin directory and
+use its features right away |add-plugin|.
+
+There are actually two types of plugins:
+
+  global plugins: For all types of files.
+filetype plugins: Only for files of a specific type.
+
+In this section the first type is explained.  Most items are also relevant for
+writing filetype plugins.  The specifics for filetype plugins are in the next
+section |write-filetype-plugin|.
+
+We will use |Vim9| syntax here, the recommended way to write new plugins.
+Make sure the file starts with the `vim9script` command.
+
+
+NAME
+
+First of all you must choose a name for your plugin.  The features provided
+by the plugin should be clear from its name.  And it should be unlikely that
+someone else writes a plugin with the same name but which does something
+different.
+
+A script that corrects typing mistakes could be called "typecorrect.vim".  We
+will use it here as an example.
+
+For the plugin to work for everybody, it should follow a few guidelines.  This
+will be explained step-by-step.  The complete example plugin is at the end.
+
+
+BODY
+
+Let's start with the body of the plugin, the lines that do the actual work: >
+
+ 12	iabbrev teh the
+ 13	iabbrev otehr other
+ 14	iabbrev wnat want
+ 15	iabbrev synchronisation
+ 16		\ synchronization
+
+The actual list should be much longer, of course.
+
+The line numbers have only been added to explain a few things, don't put them
+in your plugin file!
+
+
+FIRST LINE
+>
+  1	vim9script noclear
+
+You need to use `vim9script` as the very first command.  Best is to put it in
+the very first line.
+
+The script we are writing will have a `finish` command to bail out when it is
+loaded a second time.  To avoid that the items defined in the script are lost
+the "noclear" argument is used.  More info about this at |vim9-reload|.
+
+
+HEADER
+
+You will probably add new corrections to the plugin and soon have several
+versions lying around.  And when distributing this file, people will want to
+know who wrote this wonderful plugin and where they can send remarks.
+Therefore, put a header at the top of your plugin: >
+
+  2	# Vim global plugin for correcting typing mistakes
+  3	# Last Change:	2021 Dec 30
+  4	# Maintainer:	Bram Moolenaar <Bram@vim.org>
+
+About copyright and licensing: Since plugins are very useful and it's hardly
+worth restricting their distribution, please consider making your plugin
+either public domain or use the Vim |license|.  A short note about this near
+the top of the plugin should be sufficient.  Example: >
+
+  5	# License:	This file is placed in the public domain.
+
+
+NOT LOADING
+
+It is possible that a user doesn't always want to load this plugin.  Or the
+system administrator has dropped it in the system-wide plugin directory, but a
+user has their own plugin they want to use.  Then the user must have a chance
+to disable loading this specific plugin.  These lines will make it possible: >
+
+  7	if exists("g:loaded_typecorrect")
+  8	  finish
+  9	endif
+ 10	g:loaded_typecorrect = 1
+
+This also avoids that when the script is loaded twice it would pointlessly
+redefine functions and cause trouble for autocommands that are added twice.
+
+The name is recommended to start with "g:loaded_" and then the file name of
+the plugin, literally.  The "g:" is prepended to make the variable global, so
+that other places can check whether its functionality is available.  Without
+"g:" it would be local to the script.
+
+Using `finish` stops Vim from reading the rest of the file, it's much quicker
+than using if-endif around the whole file, since Vim would still need to parse
+the commands to find the `endif`.
+
+
+MAPPING
+
+Now let's make the plugin more interesting: We will add a mapping that adds a
+correction for the word under the cursor.  We could just pick a key sequence
+for this mapping, but the user might already use it for something else.  To
+allow the user to define which keys a mapping in a plugin uses, the <Leader>
+item can be used: >
+
+ 20	  map <unique> <Leader>a  <Plug>TypecorrAdd;
+
+The "<Plug>TypecorrAdd;" thing will do the work, more about that further on.
+
+The user can set the "g:mapleader" variable to the key sequence that they want
+plugin mappings to start with.  Thus if the user has done: >
+
+	g:mapleader = "_"
+
+the mapping will define "_a".  If the user didn't do this, the default value
+will be used, which is a backslash.  Then a map for "\a" will be defined.
+
+Note that <unique> is used, this will cause an error message if the mapping
+already happened to exist. |:map-<unique>|
+
+But what if the user wants to define their own key sequence?  We can allow
+that with this mechanism: >
+
+ 19	if !hasmapto('<Plug>TypecorrAdd;')
+ 20	  map <unique> <Leader>a  <Plug>TypecorrAdd;
+ 21	endif
+
+This checks if a mapping to "<Plug>TypecorrAdd;" already exists, and only
+defines the mapping from "<Leader>a" if it doesn't.  The user then has a
+chance of putting this in their vimrc file: >
+
+	map ,c  <Plug>TypecorrAdd;
+
+Then the mapped key sequence will be ",c" instead of "_a" or "\a".
+
+
+PIECES
+
+If a script gets longer, you often want to break up the work in pieces.  You
+can use functions or mappings for this.  But you don't want these functions
+and mappings to interfere with the ones from other scripts.  For example, you
+could define a function Add(), but another script could try to define the same
+function.  To avoid this, we define the function local to the script.
+Fortunately, in |Vim9| script this is the default.  In a legacy script you
+would need to prefix the name with "s:".
+
+We will define a function that adds a new typing correction: >
+
+ 28	def Add(from: string, correct: bool)
+ 29	  var to = input($"type the correction for {from}: ")
+ 30	  exe $":iabbrev {from} {to}"
+ ...
+ 34	enddef
+
+Now we can call the function Add() from within this script.  If another
+script also defines Add(), it will be local to that script and can only
+be called from that script.  There can also be a global g:Add() function,
+which is again another function.
+
+<SID> can be used with mappings.  It generates a script ID, which identifies
+the current script.  In our typing correction plugin we use it like this: >
+
+ 22	noremap <unique> <script> <Plug>TypecorrAdd;  <SID>Add
+ ...
+ 26	noremap <SID>Add  :call <SID>Add(expand("<cword>"), true)<CR>
+
+Thus when a user types "\a", this sequence is invoked: >
+
+	\a  ->  <Plug>TypecorrAdd;  ->  <SID>Add  ->  :call <SID>Add(...)
+
+If another script also maps <SID>Add, it will get another script ID and
+thus define another mapping.
+
+Note that instead of Add() we use <SID>Add() here.  That is because the
+mapping is typed by the user, thus outside of the script context.  The <SID>
+is translated to the script ID, so that Vim knows in which script to look for
+the Add() function.
+
+This is a bit complicated, but it's required for the plugin to work together
+with other plugins.  The basic rule is that you use <SID>Add() in mappings and
+Add() in other places (the script itself, autocommands, user commands).
+
+We can also add a menu entry to do the same as the mapping: >
+
+ 24	noremenu <script> Plugin.Add\ Correction      <SID>Add
+
+The "Plugin" menu is recommended for adding menu items for plugins.  In this
+case only one item is used.  When adding more items, creating a submenu is
+recommended.  For example, "Plugin.CVS" could be used for a plugin that offers
+CVS operations "Plugin.CVS.checkin", "Plugin.CVS.checkout", etc.
+
+Note that in line 28 ":noremap" is used to avoid that any other mappings cause
+trouble.  Someone may have remapped ":call", for example.  In line 24 we also
+use ":noremap", but we do want "<SID>Add" to be remapped.  This is why
+"<script>" is used here.  This only allows mappings which are local to the
+script. |:map-<script>|  The same is done in line 26 for ":noremenu".
+|:menu-<script>|
+
+
+<SID> AND <Plug>					*using-<Plug>*
+
+Both <SID> and <Plug> are used to avoid that mappings of typed keys interfere
+with mappings that are only to be used from other mappings.  Note the
+difference between using <SID> and <Plug>:
+
+<Plug>	is visible outside of the script.  It is used for mappings which the
+	user might want to map a key sequence to.  <Plug> is a special code
+	that a typed key will never produce.
+	To make it very unlikely that other plugins use the same sequence of
+	characters, use this structure: <Plug> scriptname mapname
+	In our example the scriptname is "Typecorr" and the mapname is "Add".
+	We add a semicolon as the terminator.  This results in
+	"<Plug>TypecorrAdd;".  Only the first character of scriptname and
+	mapname is uppercase, so that we can see where mapname starts.
+
+<SID>	is the script ID, a unique identifier for a script.
+	Internally Vim translates <SID> to "<SNR>123_", where "123" can be any
+	number.  Thus a function "<SID>Add()" will have a name "<SNR>11_Add()"
+	in one script, and "<SNR>22_Add()" in another.  You can see this if
+	you use the ":function" command to get a list of functions.  The
+	translation of <SID> in mappings is exactly the same, that's how you
+	can call a script-local function from a mapping.
+
+
+USER COMMAND
+
+Now let's add a user command to add a correction: >
+
+ 36	if !exists(":Correct")
+ 37	  command -nargs=1  Correct  :call Add(<q-args>, false)
+ 38	endif
+
+The user command is defined only if no command with the same name already
+exists.  Otherwise we would get an error here.  Overriding the existing user
+command with ":command!" is not a good idea, this would probably make the user
+wonder why the command they defined themselves doesn't work.  |:command|
+If it did happen you can find out who to blame with: >
+
+	verbose command Correct
+
+
+SCRIPT VARIABLES
+
+When a variable starts with "s:" it is a script variable.  It can only be used
+inside a script.  Outside the script it's not visible.  This avoids trouble
+with using the same variable name in different scripts.  The variables will be
+kept as long as Vim is running.  And the same variables are used when sourcing
+the same script again. |s:var|
+
+The nice thing about |Vim9| script is that variables are local to the script
+by default.  You can prepend "s:" if you like, but you do not need to.  And
+functions in the script can also use the script variables without a prefix
+(they must be declared before the function for this to work).
+
+Script-local variables can also be used in functions, autocommands and user
+commands that are defined in the script.  Thus they are the perfect way to
+share information between parts of your plugin, without it leaking out.  In
+our example we can add a few lines to count the number of corrections: >
+
+ 17	var count = 4
+ ...
+ 28	def Add(from: string, correct: bool)
+ ...
+ 32	  count += 1
+ 33	  echo "you now have " .. count .. " corrections"
+ 34	enddef
+
+"count" is declared and initialized to 4 in the script itself.  When later
+the Add() function is called, it increments "count".  It doesn't matter from
+where the function was called, since it has been defined in the script, it
+will use the local variables from this script.
+
+
+THE RESULT
+
+Here is the resulting complete example: >
+
+  1	vim9script noclear
+  2	# Vim global plugin for correcting typing mistakes
+  3	# Last Change:	2021 Dec 30
+  4	# Maintainer:	Bram Moolenaar <Bram@vim.org>
+  5	# License:	This file is placed in the public domain.
+  6
+  7	if exists("g:loaded_typecorrect")
+  8	  finish
+  9	endif
+ 10	g:loaded_typecorrect = 1
+ 11
+ 12	iabbrev teh the
+ 13	iabbrev otehr other
+ 14	iabbrev wnat want
+ 15	iabbrev synchronisation
+ 16		\ synchronization
+ 17	var count = 4
+ 18
+ 19	if !hasmapto('<Plug>TypecorrAdd;')
+ 20	  map <unique> <Leader>a  <Plug>TypecorrAdd;
+ 21	endif
+ 22	noremap <unique> <script> <Plug>TypecorrAdd;  <SID>Add
+ 23
+ 24	noremenu <script> Plugin.Add\ Correction      <SID>Add
+ 25
+ 26	noremap <SID>Add  :call <SID>Add(expand("<cword>"), true)<CR>
+ 27
+ 28	def Add(from: string, correct: bool)
+ 29	  var to = input("type the correction for " .. from .. ": ")
+ 30	  exe ":iabbrev " .. from .. " " .. to
+ 31	  if correct | exe "normal viws\<C-R>\" \b\e" | endif
+ 32	  count += 1
+ 33	  echo "you now have " .. count .. " corrections"
+ 34	enddef
+ 35
+ 36	if !exists(":Correct")
+ 37	  command -nargs=1  Correct  call Add(<q-args>, false)
+ 38	endif
+
+Line 31 wasn't explained yet.  It applies the new correction to the word under
+the cursor.  The |:normal| command is used to use the new abbreviation.  Note
+that mappings and abbreviations are expanded here, even though the function
+was called from a mapping defined with ":noremap".
+
+
+DOCUMENTATION						*write-local-help*
+
+It's a good idea to also write some documentation for your plugin.  Especially
+when its behavior can be changed by the user.  See |add-local-help| for how
+they are installed.
+
+Here is a simple example for a plugin help file, called "typecorrect.txt": >
+
+  1	*typecorrect.txt*	Plugin for correcting typing mistakes
+  2
+  3	If you make typing mistakes, this plugin will have them corrected
+  4	automatically.
+  5
+  6	There are currently only a few corrections.  Add your own if you like.
+  7
+  8	Mappings:
+  9	<Leader>a   or   <Plug>TypecorrAdd;
+ 10		Add a correction for the word under the cursor.
+ 11
+ 12	Commands:
+ 13	:Correct {word}
+ 14		Add a correction for {word}.
+ 15
+ 16							*typecorrect-settings*
+ 17	This plugin doesn't have any settings.
+
+The first line is actually the only one for which the format matters.  It will
+be extracted from the help file to be put in the "LOCAL ADDITIONS:" section of
+help.txt |local-additions|.  The first "*" must be in the first column of the
+first line.  After adding your help file do ":help" and check that the entries
+line up nicely.
+
+You can add more tags inside ** in your help file.  But be careful not to use
+existing help tags.  You would probably use the name of your plugin in most of
+them, like "typecorrect-settings" in the example.
+
+Using references to other parts of the help in || is recommended.  This makes
+it easy for the user to find associated help.
+
+
+SUMMARY							*plugin-special*
+
+Summary of special things to use in a plugin:
+
+var name		Variable local to the script.
+
+<SID>			Script-ID, used for mappings and functions local to
+			the script.
+
+hasmapto()		Function to test if the user already defined a mapping
+			for functionality the script offers.
+
+<Leader>		Value of "mapleader", which the user defines as the
+			keys that plugin mappings start with.
+
+map <unique>		Give a warning if a mapping already exists.
+
+noremap <script>	Use only mappings local to the script, not global
+			mappings.
+
+exists(":Cmd")		Check if a user command already exists.
+
+==============================================================================
+*51.2*	Writing a filetype plugin	*write-filetype-plugin* *ftplugin*
+
+A filetype plugin is like a global plugin, except that it sets options and
+defines mappings for the current buffer only.  See |add-filetype-plugin| for
+how this type of plugin is used.
+
+First read the section on global plugins above |51.1|.  All that is said there
+also applies to filetype plugins.  There are a few extras, which are explained
+here.  The essential thing is that a filetype plugin should only have an
+effect on the current buffer.
+
+
+DISABLING
+
+If you are writing a filetype plugin to be used by many people, they need a
+chance to disable loading it.  Put this at the top of the plugin: >
+
+	# Only do this when not done yet for this buffer
+	if exists("b:did_ftplugin")
+	  finish
+	endif
+	b:did_ftplugin = 1
+
+This also needs to be used to avoid that the same plugin is executed twice for
+the same buffer (happens when using an ":edit" command without arguments).
+
+Now users can disable loading the default plugin completely by making a
+filetype plugin with only these lines: >
+
+	vim9script
+	b:did_ftplugin = 1
+
+This does require that the filetype plugin directory comes before $VIMRUNTIME
+in 'runtimepath'!
+
+If you do want to use the default plugin, but overrule one of the settings,
+you can write the different setting in a script: >
+
+	setlocal textwidth=70
+
+Now write this in the "after" directory, so that it gets sourced after the
+distributed "vim.vim" ftplugin |after-directory|.  For Unix this would be
+"~/.vim/after/ftplugin/vim.vim".  Note that the default plugin will have set
+"b:did_ftplugin", it is ignored here.
+
+
+OPTIONS
+
+To make sure the filetype plugin only affects the current buffer use the >
+
+	setlocal
+
+command to set options.  And only set options which are local to a buffer (see
+the help for the option to check that).  When using `:setlocal` for global
+options or options local to a window, the value will change for many buffers,
+and that is not what a filetype plugin should do.
+
+When an option has a value that is a list of flags or items, consider using
+"+=" and "-=" to keep the existing value.  Be aware that the user may have
+changed an option value already.  First resetting to the default value and
+then changing it is often a good idea.  Example: >
+
+	setlocal formatoptions& formatoptions+=ro
+
+
+MAPPINGS
+
+To make sure mappings will only work in the current buffer use the >
+
+	map <buffer>
+
+command.  This needs to be combined with the two-step mapping explained above.
+An example of how to define functionality in a filetype plugin: >
+
+	if !hasmapto('<Plug>JavaImport;')
+	  map <buffer> <unique> <LocalLeader>i <Plug>JavaImport;
+	endif
+	noremap <buffer> <unique> <Plug>JavaImport; oimport ""<Left><Esc>
+
+|hasmapto()| is used to check if the user has already defined a map to
+<Plug>JavaImport;.  If not, then the filetype plugin defines the default
+mapping.  This starts with |<LocalLeader>|, which allows the user to select
+the key(s) they want filetype plugin mappings to start with.  The default is a
+backslash.
+"<unique>" is used to give an error message if the mapping already exists or
+overlaps with an existing mapping.
+|:noremap| is used to avoid that any other mappings that the user has defined
+interferes.  You might want to use ":noremap <script>" to allow remapping
+mappings defined in this script that start with <SID>.
+
+The user must have a chance to disable the mappings in a filetype plugin,
+without disabling everything.  Here is an example of how this is done for a
+plugin for the mail filetype: >
+
+	# Add mappings, unless the user didn't want this.
+	if !exists("g:no_plugin_maps") && !exists("g:no_mail_maps")
+	  # Quote text by inserting "> "
+	  if !hasmapto('<Plug>MailQuote;')
+	    vmap <buffer> <LocalLeader>q <Plug>MailQuote;
+	    nmap <buffer> <LocalLeader>q <Plug>MailQuote;
+	  endif
+	  vnoremap <buffer> <Plug>MailQuote; :s/^/> /<CR>
+	  nnoremap <buffer> <Plug>MailQuote; :.,$s/^/> /<CR>
+	endif
+
+Two global variables are used:
+|g:no_plugin_maps|	disables mappings for all filetype plugins
+|g:no_mail_maps|	disables mappings for the "mail" filetype
+
+
+USER COMMANDS
+
+To add a user command for a specific file type, so that it can only be used in
+one buffer, use the "-buffer" argument to |:command|.  Example: >
+
+	command -buffer  Make  make %:r.s
+
+
+VARIABLES
+
+A filetype plugin will be sourced for each buffer of the type it's for.  Local
+script variables will be shared between all invocations.  Use local buffer
+variables |b:var| if you want a variable specifically for one buffer.
+
+
+FUNCTIONS
+
+When defining a function, this only needs to be done once.  But the filetype
+plugin will be sourced every time a file with this filetype will be opened.
+This construct makes sure the function is only defined once: >
+
+	if !exists("*Func")
+	  def Func(arg)
+	    ...
+	  enddef
+	endif
+<
+Don't forget to use "noclear" with the `vim9script` command to avoid that the
+function is deleted when the script is sourced a second time.
+
+
+UNDO						*undo_indent* *undo_ftplugin*
+
+When the user does ":setfiletype xyz" the effect of the previous filetype
+should be undone.  Set the b:undo_ftplugin variable to the commands that will
+undo the settings in your filetype plugin.  Example: >
+
+	b:undo_ftplugin = "setlocal fo< com< tw< commentstring<"
+		\ .. "| unlet b:match_ignorecase b:match_words b:match_skip"
+
+Using ":setlocal" with "<" after the option name resets the option to its
+global value.  That is mostly the best way to reset the option value.
+
+For undoing the effect of an indent script, the b:undo_indent variable should
+be set accordingly.
+
+Both these variables use legacy script syntax, not |Vim9| syntax.
+
+
+FILE NAME
+
+The filetype must be included in the file name |ftplugin-name|.  Use one of
+these three forms:
+
+	.../ftplugin/stuff.vim
+	.../ftplugin/stuff_foo.vim
+	.../ftplugin/stuff/bar.vim
+
+"stuff" is the filetype, "foo" and "bar" are arbitrary names.
+
+
+FILETYPE DETECTION					*plugin-filetype*
+
+If your filetype is not already detected by Vim, you should create a filetype
+detection snippet in a separate file.  It is usually in the form of an
+autocommand that sets the filetype when the file name matches a pattern.
+Example: >
+
+	au BufNewFile,BufRead *.foo		setlocal filetype=foofoo
+
+Write this single-line file as "ftdetect/foofoo.vim" in the first directory
+that appears in 'runtimepath'.  For Unix that would be
+"~/.vim/ftdetect/foofoo.vim".  The convention is to use the name of the
+filetype for the script name.
+
+You can make more complicated checks if you like, for example to inspect the
+contents of the file to recognize the language.  Also see |new-filetype|.
+
+
+SUMMARY							*ftplugin-special*
+
+Summary of special things to use in a filetype plugin:
+
+<LocalLeader>		Value of "maplocalleader", which the user defines as
+			the keys that filetype plugin mappings start with.
+
+map <buffer>		Define a mapping local to the buffer.
+
+noremap <script>	Only remap mappings defined in this script that start
+			with <SID>.
+
+setlocal		Set an option for the current buffer only.
+
+command -buffer		Define a user command local to the buffer.
+
+exists("*s:Func")	Check if a function was already defined.
+
+Also see |plugin-special|, the special things used for all plugins.
+
+==============================================================================
+*51.3*	Writing a compiler plugin		*write-compiler-plugin*
+
+A compiler plugin sets options for use with a specific compiler.  The user can
+load it with the |:compiler| command.  The main use is to set the
+'errorformat' and 'makeprg' options.
+
+Easiest is to have a look at examples.  This command will edit all the default
+compiler plugins: >
+
+	next $VIMRUNTIME/compiler/*.vim
+
+Type `:next` to go to the next plugin file.
+
+There are two special items about these files.  First is a mechanism to allow
+a user to overrule or add to the default file.  The default files start with: >
+
+	vim9script
+	if exists("g:current_compiler")
+	  finish
+	endif
+	g:current_compiler = "mine"
+
+When you write a compiler file and put it in your personal runtime directory
+(e.g., ~/.vim/compiler for Unix), you set the "current_compiler" variable to
+make the default file skip the settings.
+							*:CompilerSet*
+The second mechanism is to use ":set" for ":compiler!" and ":setlocal" for
+":compiler".  Vim defines the ":CompilerSet" user command for this.  However,
+older Vim versions don't, thus your plugin should define it then.  This is an
+example: >
+
+  if exists(":CompilerSet") != 2
+    command -nargs=* CompilerSet setlocal <args>
+  endif
+  CompilerSet errorformat&		" use the default 'errorformat'
+  CompilerSet makeprg=nmake
+
+When you write a compiler plugin for the Vim distribution or for a system-wide
+runtime directory, use the mechanism mentioned above.  When
+"current_compiler" was already set by a user plugin nothing will be done.
+
+When you write a compiler plugin to overrule settings from a default plugin,
+don't check "current_compiler".  This plugin is supposed to be loaded
+last, thus it should be in a directory at the end of 'runtimepath'.  For Unix
+that could be ~/.vim/after/compiler.
+
+==============================================================================
+*51.4*	Distributing Vim scripts			*distribute-script*
+
+Vim users will look for scripts on the Vim website: http://www.vim.org.
+If you made something that is useful for others, share it!
+
+Another place is github.  But there you need to know where to find it!  The
+advantage is that most plugin managers fetch plugins from github.  You'll have
+to use your favorite search engine to find them.
+
+Vim scripts can be used on any system.  However, there might not be a tar or
+gzip command.  If you want to pack files together and/or compress them the
+"zip" utility is recommended.
+
+For utmost portability use Vim itself to pack scripts together.  This can be
+done with the Vimball utility.  See |vimball|.
+
+It's good if you add a line to allow automatic updating.  See |glvs-plugins|.
+
+==============================================================================
+
+Next chapter: |usr_52.txt|  Write large plugins
+
+Copyright: see |manual-copyright|  vim:tw=78:ts=8:noet:ft=help:norl:

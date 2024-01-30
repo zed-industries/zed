@@ -1,0 +1,506 @@
+/*
+ * config.h.in.  Originally generated automatically from configure.ac by
+ * autoheader and manually changed after that.
+ */
+
+/* Define if we have EBCDIC code */
+#undef EBCDIC
+
+/* Define unless no X support found */
+#undef HAVE_X11
+
+/* Define when terminfo support found */
+#undef TERMINFO
+
+/* Define when termcap.h contains ospeed */
+#undef HAVE_OSPEED
+
+/* Define when ospeed can be extern */
+#undef OSPEED_EXTERN
+
+/* Define when termcap.h contains UP, BC and PC */
+#undef HAVE_UP_BC_PC
+
+/* Define when UP, BC and PC can be extern */
+#undef UP_BC_PC_EXTERN
+
+/* Define when termcap.h defines outfuntype */
+#undef HAVE_OUTFUNTYPE
+
+/* Define when del_curterm() is available */
+#undef HAVE_DEL_CURTERM
+
+/* Define when __DATE__ " " __TIME__ can be used */
+#undef HAVE_DATE_TIME
+
+/* Defined from $SOURCE_DATE_EPOCH, used as the build date */
+#undef BUILD_DATE
+
+/* Define when __attribute__((unused)) can be used */
+#undef HAVE_ATTRIBUTE_UNUSED
+
+/* defined always when using configure */
+#undef UNIX
+
+/* Defined to the size of an int */
+#undef VIM_SIZEOF_INT
+
+/* Defined to the size of a long */
+#undef VIM_SIZEOF_LONG
+
+/* Defined to the size of off_t */
+#undef SIZEOF_OFF_T
+
+/* Defined to the size of time_t */
+#undef SIZEOF_TIME_T
+
+/* Define when wchar_t is only 2 bytes. */
+#undef SMALL_WCHAR_T
+
+/*
+ * If we cannot trust one of the following from the libraries, we use our
+ * own safe but probably slower vim_memmove().
+ */
+#undef USEBCOPY
+#undef USEMEMMOVE
+#undef USEMEMCPY
+
+/* Define when "man -s 2" is to be used */
+#undef USEMAN_S
+
+/* Define to empty if the keyword does not work.  */
+#undef const
+
+/* Define to empty if the keyword does not work.  */
+#undef volatile
+
+/* Define to `int' if <sys/types.h> doesn't define.  */
+#undef mode_t
+
+/* Define to `long' if <sys/types.h> doesn't define.  */
+#undef off_t
+
+/* Define to `long' if <sys/types.h> doesn't define.  */
+#undef pid_t
+
+/* Define to `unsigned' if <sys/types.h> doesn't define.  */
+#undef size_t
+
+/* Define to `int' if <sys/types.h> doesn't define.  */
+#undef uid_t
+
+/* Define to `unsigned int' or other type that is 32 bit.  */
+#undef uint32_t
+
+/* Define to `int' if <sys/types.h> doesn't define.  */
+#undef gid_t
+
+/* Define to `long' if <sys/types.h> doesn't define.  */
+#undef ino_t
+
+/* Define to `unsigned' if <sys/types.h> doesn't define.  */
+#undef dev_t
+
+/* Define on big-endian machines */
+#undef WORDS_BIGENDIAN
+
+/* Define to `unsigned long' if <sys/types.h> doesn't define.  */
+#undef rlim_t
+
+/* Define to `struct sigaltstack' if <signal.h> doesn't define.  */
+#undef stack_t
+
+/* Define if stack_t has the ss_base field. */
+#undef HAVE_SS_BASE
+
+/* Define if you can safely include both <sys/time.h> and <time.h>.  */
+#undef TIME_WITH_SYS_TIME
+
+/* Define if you can safely include both <sys/time.h> and <sys/select.h>.  */
+#undef SYS_SELECT_WITH_SYS_TIME
+
+/* Define to a typecast for select() arguments 2, 3 and 4. */
+#undef SELECT_TYPE_ARG234
+
+/* Define if you have /dev/ptc */
+#undef HAVE_DEV_PTC
+
+/* Define if you have Sys4 ptys */
+#undef HAVE_SVR4_PTYS
+
+/* Define to range of pty names to try */
+#undef PTYRANGE0
+#undef PTYRANGE1
+
+/* Define if struct sigcontext is present */
+#undef HAVE_SIGCONTEXT
+
+/* Define if toupper/tolower only work on lower/uppercase characters */
+#undef BROKEN_TOUPPER
+
+/* Define if stat() ignores a trailing slash */
+#undef STAT_IGNORES_SLASH
+
+/* Define to nanoseconds field of struct stat */
+#undef ST_MTIM_NSEC
+
+/* Define if tgetstr() has a second argument that is (char *) */
+#undef TGETSTR_CHAR_P
+
+/* Define if tgetent() returns zero for an error */
+#undef TGETENT_ZERO_ERR
+
+/* Define if the getcwd() function should not be used.  */
+#undef BAD_GETCWD
+
+/* Define if you the function: */
+#undef HAVE_FCHDIR
+#undef HAVE_FCHOWN
+#undef HAVE_FCHMOD
+#undef HAVE_FSEEKO
+#undef HAVE_FSYNC
+#undef HAVE_FTRUNCATE
+#undef HAVE_GETCWD
+#undef HAVE_GETPGID
+#undef HAVE_GETPSEUDOTTY
+#undef HAVE_GETPWENT
+#undef HAVE_GETPWNAM
+#undef HAVE_GETPWUID
+#undef HAVE_GETRLIMIT
+#undef HAVE_GETTIMEOFDAY
+#undef HAVE_GETWD
+#undef HAVE_ICONV
+#undef HAVE_INET_NTOP
+#undef HAVE_LOCALTIME_R
+#undef HAVE_LSTAT
+#undef HAVE_MEMSET
+#undef HAVE_MKDTEMP
+#undef HAVE_NANOSLEEP
+#undef HAVE_NL_LANGINFO_CODESET
+#undef HAVE_OPENDIR
+#undef HAVE_POSIX_OPENPT
+#undef HAVE_PUTENV
+#undef HAVE_QSORT
+#undef HAVE_READLINK
+#undef HAVE_RENAME
+#undef HAVE_SELECT
+#undef HAVE_SELINUX
+#undef HAVE_SETENV
+#undef HAVE_SETPGID
+#undef HAVE_SETSID
+#undef HAVE_SIGACTION
+#undef HAVE_SIGALTSTACK
+#undef HAVE_SIGSET
+#undef HAVE_SIGSETJMP
+#undef HAVE_SIGSTACK
+#undef HAVE_SIGPROCMASK
+#undef HAVE_SIGVEC
+#undef HAVE_SMACK
+#undef HAVE_STRCASECMP
+#undef HAVE_STRCOLL
+#undef HAVE_STRERROR
+#undef HAVE_STRFTIME
+#undef HAVE_STRICMP
+#undef HAVE_STRNCASECMP
+#undef HAVE_STRNICMP
+#undef HAVE_STRPBRK
+#undef HAVE_STRPTIME
+#undef HAVE_STRTOL
+#undef HAVE_CANBERRA
+#undef HAVE_SODIUM
+#undef HAVE_ST_BLKSIZE
+#undef HAVE_SYSCONF
+#undef HAVE_SYSCTL
+#undef HAVE_SYSINFO
+#undef HAVE_SYSINFO_MEM_UNIT
+#undef HAVE_SYSINFO_UPTIME
+#undef HAVE_TGETENT
+#undef HAVE_TOWLOWER
+#undef HAVE_TOWUPPER
+#undef HAVE_ISWUPPER
+#undef HAVE_TZSET
+#undef HAVE_UNSETENV
+#undef HAVE_USLEEP
+#undef HAVE_UTIME
+#undef HAVE_BIND_TEXTDOMAIN_CODESET
+#undef HAVE_MBLEN
+#undef HAVE_TIMER_CREATE
+#undef HAVE_CLOCK_GETTIME
+#undef HAVE_XATTR
+
+/* Define, if needed, for accessing large files. */
+#undef _LARGE_FILES
+#undef _FILE_OFFSET_BITS
+#undef _LARGEFILE_SOURCE
+
+/* Define if you do not have utime(), but do have the utimes() function. */
+#undef HAVE_UTIMES
+
+/* Define if you have the header file: */
+#undef HAVE_DIRENT_H
+#undef HAVE_DISPATCH_DISPATCH_H
+#undef HAVE_ERRNO_H
+#undef HAVE_FCNTL_H
+#undef HAVE_FRAME_H
+#undef HAVE_ICONV_H
+#undef HAVE_INTTYPES_H
+#undef HAVE_LANGINFO_H
+#undef HAVE_LIBC_H
+#undef HAVE_LIBGEN_H
+#undef HAVE_LIBINTL_H
+#undef HAVE_LOCALE_H
+#undef HAVE_MATH_H
+#undef HAVE_NDIR_H
+#undef HAVE_POLL_H
+#undef HAVE_PTHREAD_NP_H
+#undef HAVE_PWD_H
+#undef HAVE_SETJMP_H
+#undef HAVE_SGTTY_H
+#undef HAVE_STDINT_H
+#undef HAVE_STRINGS_H
+#undef HAVE_STROPTS_H
+#undef HAVE_SYS_ACCESS_H
+#undef HAVE_SYS_ACL_H
+#undef HAVE_SYS_DIR_H
+#undef HAVE_SYS_IOCTL_H
+#undef HAVE_SYS_NDIR_H
+#undef HAVE_SYS_PARAM_H
+#undef HAVE_SYS_POLL_H
+#undef HAVE_SYS_PTEM_H
+#undef HAVE_SYS_PTMS_H
+#undef HAVE_SYS_RESOURCE_H
+#undef HAVE_SYS_SELECT_H
+#undef HAVE_SYS_STATFS_H
+#undef HAVE_SYS_STREAM_H
+#undef HAVE_SYS_SYSCTL_H
+#undef HAVE_SYS_SYSINFO_H
+#undef HAVE_SYS_SYSTEMINFO_H
+#undef HAVE_SYS_TIME_H
+#undef HAVE_SYS_TYPES_H
+#undef HAVE_SYS_UTSNAME_H
+#undef HAVE_TERMCAP_H
+#undef HAVE_TERMIOS_H
+#undef HAVE_TERMIO_H
+#undef HAVE_WCHAR_H
+#undef HAVE_WCTYPE_H
+#undef HAVE_UNISTD_H
+#undef HAVE_UTIL_DEBUG_H
+#undef HAVE_UTIL_MSGI18N_H
+#undef HAVE_UTIME_H
+#undef HAVE_X11_SUNKEYSYM_H
+#undef HAVE_XM_XM_H
+#undef HAVE_XM_XPMP_H
+#undef HAVE_XM_TRAITP_H
+#undef HAVE_XM_MANAGER_H
+#undef HAVE_XM_UNHIGHLIGHTT_H
+#undef HAVE_XM_JOINSIDET_H
+#undef HAVE_XM_NOTEBOOK_H
+#undef HAVE_X11_XPM_H
+#undef HAVE_X11_XMU_EDITRES_H
+#undef HAVE_X11_SM_SMLIB_H
+
+/* Define to the type of the XpmAttributes type. */
+#undef XPMATTRIBUTES_TYPE
+
+/* Define if you have <sys/wait.h> that is POSIX.1 compatible.  */
+#undef HAVE_SYS_WAIT_H
+
+/* Define if you have a <sys/wait.h> that is not POSIX.1 compatible. */
+#undef HAVE_UNION_WAIT
+
+/* This is currently unused in vim: */
+/* Define if you have the ANSI C header files. */
+/* #undef STDC_HEADERS */
+
+/* instead, we check a few STDC things ourselves */
+#undef HAVE_STDLIB_H
+#undef HAVE_STRING_H
+
+/* Define if strings.h cannot be included when strings.h already is */
+#undef NO_STRINGS_WITH_STRING_H
+
+/* Define if you want tiny features. */
+#undef FEAT_TINY
+
+/* Define if you want normal features. */
+#undef FEAT_NORMAL
+
+/* Define if you want huge features. */
+#undef FEAT_HUGE
+
+/* Define if you want to include the Lua interpreter. */
+#undef FEAT_LUA
+
+/* Define for linking via dlopen() or LoadLibrary() */
+#undef DYNAMIC_LUA
+
+/* Define if you want to include the MzScheme interpreter. */
+#undef FEAT_MZSCHEME
+
+/* Define if you want to include the Perl interpreter. */
+#undef FEAT_PERL
+
+/* Define for linking via dlopen() or LoadLibrary() */
+#undef DYNAMIC_PERL
+
+/* Define if you want to include the Python interpreter. */
+#undef FEAT_PYTHON
+
+/* Define if you want to include the Python3 interpreter. */
+#undef FEAT_PYTHON3
+
+/* Define for linking via dlopen() or LoadLibrary() */
+#undef DYNAMIC_PYTHON
+
+/* Define for linking via dlopen() or LoadLibrary() */
+#undef DYNAMIC_PYTHON3
+
+/* Define if compiled against Python 3 stable ABI / limited API */
+#undef DYNAMIC_PYTHON3_STABLE_ABI
+
+/* Define if dynamic python does not require RTLD_GLOBAL */
+#undef PY_NO_RTLD_GLOBAL
+
+/* Define if dynamic python3 does not require RTLD_GLOBAL */
+#undef PY3_NO_RTLD_GLOBAL
+
+/* Define if you want to include the Ruby interpreter. */
+#undef FEAT_RUBY
+
+/* Define for linking via dlopen() or LoadLibrary() */
+#undef DYNAMIC_RUBY
+
+/* Define if you want to include the Tcl interpreter. */
+#undef FEAT_TCL
+
+/* Define for linking via dlopen() or LoadLibrary() */
+#undef DYNAMIC_TCL
+
+/* Define if you want to add support for ACL */
+#undef HAVE_POSIX_ACL
+#undef HAVE_SOLARIS_ZFS_ACL
+#undef HAVE_SOLARIS_ACL
+#undef HAVE_AIX_ACL
+
+/* Define if pango_shape_full() is available. */
+#undef HAVE_PANGO_SHAPE_FULL
+
+/* Define if you want to add support of GPM (Linux console mouse daemon) */
+#undef HAVE_GPM
+
+/* Define if you want to add support of sysmouse (*BSD console mouse) */
+#undef HAVE_SYSMOUSE
+
+/* Define if you want to include the Cscope interface. */
+#undef FEAT_CSCOPE
+
+/* Define if you don't want to include right-left support. */
+#undef DISABLE_RIGHTLEFT
+
+/* Define if you don't want to include Arabic support. */
+#undef DISABLE_ARABIC
+
+/* Define if you want to always define a server name at vim startup. */
+#undef FEAT_AUTOSERVERNAME
+
+/* Define if you want to include fontset support. */
+#undef FEAT_XFONTSET
+
+/* Define if you want to include XIM support. */
+#undef FEAT_XIM
+
+/* Define if you use GTK and want GNOME support. */
+#undef FEAT_GUI_GNOME
+
+/* Define if you use KDE and want KDE Toolbar support. */
+#undef FEAT_KDETOOLBAR
+
+/* Define if your X has own locale library */
+#undef X_LOCALE
+
+/* Define if we have dlfcn.h. */
+#undef HAVE_DLFCN_H
+
+/* Define if there is a working gettext(). */
+#undef HAVE_GETTEXT
+
+/* Define if _nl_msg_cat_cntr is present. */
+#undef HAVE_NL_MSG_CAT_CNTR
+
+/* Define if we have dlopen() */
+#undef HAVE_DLOPEN
+
+/* Define if we have dlsym() */
+#undef HAVE_DLSYM
+
+/* Define if we have dl.h. */
+#undef HAVE_DL_H
+
+/* Define if we have shl_load() */
+#undef HAVE_SHL_LOAD
+
+/* Define if we can use IPv6 networking. */
+#undef FEAT_IPV6
+
+/* Define if you want to include NetBeans integration. */
+#undef FEAT_NETBEANS_INTG
+
+/* Define if you want to include process communication. */
+#undef FEAT_JOB_CHANNEL
+
+/* Define if you want to include terminal emulator support. */
+#undef FEAT_TERMINAL
+
+// Define default global runtime path.
+#undef RUNTIME_GLOBAL
+
+// Define default global runtime after path.
+#undef RUNTIME_GLOBAL_AFTER
+
+/* Define name of who modified a released Vim */
+#undef MODIFIED_BY
+
+/* Define if you want XSMP interaction as well as vanilla swapfile safety */
+#undef USE_XSMP_INTERACT
+
+/* Define if fcntl()'s F_SETFD command knows about FD_CLOEXEC */
+#undef HAVE_FD_CLOEXEC
+
+/* Define if /proc/self/exe or similar can be read */
+#undef PROC_EXE_LINK
+
+/* Define if you want Cygwin to use the WIN32 clipboard, not compatible with X11*/
+#undef FEAT_CYGWIN_WIN32_CLIPBOARD
+
+/* Define if we have AvailabilityMacros.h on Mac OS X */
+#undef HAVE_AVAILABILITYMACROS_H
+
+/* Define if Xutf8SetWMProperties() is in an X library. */
+#undef HAVE_XUTF8SETWMPROPERTIES
+
+/* Define if GResource is used to load icons */
+#undef USE_GRESOURCE
+
+/* Define if GTK+ GUI is to be linked against GTK+ 3 */
+#undef USE_GTK3
+
+/* Define if we have isinf() */
+#undef HAVE_ISINF
+
+/* Define if we have isnan() */
+#undef HAVE_ISNAN
+
+/* Define if we have dirfd() */
+#undef HAVE_DIRFD
+
+/* Define if we have flock() */
+#undef HAVE_FLOCK
+
+/* Define to inline symbol or empty */
+#undef inline
+
+/* Define if _SC_SIGSTKSZ is available via sysconf() */
+#undef HAVE_SYSCONF_SIGSTKSZ
+
+/* Define if you want to load libgpm dynamically */
+#undef DYNAMIC_GPM

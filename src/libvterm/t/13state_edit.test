@@ -1,0 +1,304 @@
+INIT
+UTF8 1
+WANTSTATE seb
+
+!ICH
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "ACD"
+PUSH "\e[2D"
+  ?cursor = 0,1
+PUSH "\e[@"
+  scrollrect 0..1,1..80 => +0,-1
+  ?cursor = 0,1
+PUSH "B"
+  ?cursor = 0,2
+PUSH "\e[3@"
+  scrollrect 0..1,2..80 => +0,-3
+
+!ICH with DECSLRM
+PUSH "\e[?69h"
+PUSH "\e[;50s"
+PUSH "\e[20G\e[@"
+  scrollrect 0..1,19..50 => +0,-1
+
+!ICH outside DECSLRM
+PUSH "\e[70G\e[@"
+  # nothing happens
+
+!DCH
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "ABBC"
+PUSH "\e[3D"
+  ?cursor = 0,1
+PUSH "\e[P"
+  scrollrect 0..1,1..80 => +0,+1
+  ?cursor = 0,1
+PUSH "\e[3P"
+  scrollrect 0..1,1..80 => +0,+3
+  ?cursor = 0,1
+
+!DCH with DECSLRM
+PUSH "\e[?69h"
+PUSH "\e[;50s"
+PUSH "\e[20G\e[P"
+  scrollrect 0..1,19..50 => +0,+1
+
+!DCH outside DECSLRM
+PUSH "\e[70G\e[P"
+  # nothing happens
+
+!ECH
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "ABC"
+PUSH "\e[2D"
+  ?cursor = 0,1
+PUSH "\e[X"
+  erase 0..1,1..2
+  ?cursor = 0,1
+PUSH "\e[3X"
+  erase 0..1,1..4
+  ?cursor = 0,1
+# ECH more columns than there are should be bounded
+PUSH "\e[100X"
+  erase 0..1,1..80
+
+!IL
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "A\r\nC"
+  ?cursor = 1,1
+PUSH "\e[L"
+  scrollrect 1..25,0..80 => -1,+0
+  # TODO: ECMA-48 says we should move to line home, but neither xterm nor
+  # xfce4-terminal do this
+  ?cursor = 1,1
+PUSH "\rB"
+  ?cursor = 1,1
+PUSH "\e[3L"
+  scrollrect 1..25,0..80 => -3,+0
+
+!IL with DECSTBM
+PUSH "\e[5;15r"
+PUSH "\e[5H\e[L"
+  scrollrect 4..15,0..80 => -1,+0
+
+!IL outside DECSTBM
+PUSH "\e[20H\e[L"
+  # nothing happens
+
+!IL with DECSTBM+DECSLRM
+PUSH "\e[?69h"
+PUSH "\e[10;50s"
+PUSH "\e[5;10H\e[L"
+  scrollrect 4..15,9..50 => -1,+0
+
+!DL
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "A\r\nB\r\nB\r\nC"
+  ?cursor = 3,1
+PUSH "\e[2H"
+  ?cursor = 1,0
+PUSH "\e[M"
+  scrollrect 1..25,0..80 => +1,+0
+  ?cursor = 1,0
+PUSH "\e[3M"
+  scrollrect 1..25,0..80 => +3,+0
+  ?cursor = 1,0
+
+!DL with DECSTBM
+PUSH "\e[5;15r"
+PUSH "\e[5H\e[M"
+  scrollrect 4..15,0..80 => +1,+0
+
+!DL outside DECSTBM
+PUSH "\e[20H\e[M"
+  # nothing happens
+
+!DL with DECSTBM+DECSLRM
+PUSH "\e[?69h"
+PUSH "\e[10;50s"
+PUSH "\e[5;10H\e[M"
+  scrollrect 4..15,9..50 => +1,+0
+
+!DECIC
+RESET
+  erase 0..25,0..80
+PUSH "\e[20G\e[5'}"
+  scrollrect 0..25,19..80 => +0,-5
+
+!DECIC with DECSTBM+DECSLRM
+PUSH "\e[?69h"
+PUSH "\e[4;20r\e[20;60s"
+PUSH "\e[4;20H\e[3'}"
+  scrollrect 3..20,19..60 => +0,-3
+
+!DECIC outside DECSLRM
+PUSH "\e[70G\e['}"
+  # nothing happens
+
+!DECDC
+RESET
+  erase 0..25,0..80
+PUSH "\e[20G\e[5'~"
+  scrollrect 0..25,19..80 => +0,+5
+
+!DECDC with DECSTBM+DECSLRM
+PUSH "\e[?69h"
+PUSH "\e[4;20r\e[20;60s"
+PUSH "\e[4;20H\e[3'~"
+  scrollrect 3..20,19..60 => +0,+3
+
+!DECDC outside DECSLRM
+PUSH "\e[70G\e['~"
+  # nothing happens
+
+!EL 0
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "ABCDE"
+PUSH "\e[3D"
+  ?cursor = 0,2
+PUSH "\e[0K"
+  erase 0..1,2..80
+  ?cursor = 0,2
+
+!EL 1
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "ABCDE"
+PUSH "\e[3D"
+  ?cursor = 0,2
+PUSH "\e[1K"
+  erase 0..1,0..3
+  ?cursor = 0,2
+
+!EL 2
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "ABCDE"
+PUSH "\e[3D"
+  ?cursor = 0,2
+PUSH "\e[2K"
+  erase 0..1,0..80
+  ?cursor = 0,2
+
+!SEL
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "\e[11G"
+  ?cursor = 0,10
+PUSH "\e[?0K"
+  erase 0..1,10..80 selective
+  ?cursor = 0,10
+PUSH "\e[?1K"
+  erase 0..1,0..11 selective
+  ?cursor = 0,10
+PUSH "\e[?2K"
+  erase 0..1,0..80 selective
+  ?cursor = 0,10
+
+!ED 0
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "\e[2;2H"
+  ?cursor = 1,1
+PUSH "\e[0J"
+  erase 1..2,1..80
+  erase 2..25,0..80
+  ?cursor = 1,1
+
+!ED 1
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "\e[2;2H"
+  ?cursor = 1,1
+PUSH "\e[1J"
+  erase 0..1,0..80
+  erase 1..2,0..2
+  ?cursor = 1,1
+
+!ED 2
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "\e[2;2H"
+  ?cursor = 1,1
+PUSH "\e[2J"
+  erase 0..25,0..80
+  ?cursor = 1,1
+
+!ED 3
+PUSH "\e[3J"
+  sb_clear
+
+!SED
+RESET
+  erase 0..25,0..80
+PUSH "\e[5;5H"
+  ?cursor = 4,4
+PUSH "\e[?0J"
+  erase 4..5,4..80 selective
+  erase 5..25,0..80 selective
+  ?cursor = 4,4
+PUSH "\e[?1J"
+  erase 0..4,0..80 selective
+  erase 4..5,0..5 selective
+  ?cursor = 4,4
+PUSH "\e[?2J"
+  erase 0..25,0..80 selective
+  ?cursor = 4,4
+
+!DECRQSS on DECSCA
+PUSH "\e[2\"q"
+PUSH "\eP\$q\"q\e\\"
+  output "\eP1\$r2\"q\e\\"
+
+WANTSTATE -s+m
+
+!ICH move+erase emuation
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "ACD"
+PUSH "\e[2D"
+  ?cursor = 0,1
+PUSH "\e[@"
+  moverect 0..1,1..79 -> 0..1,2..80
+  erase 0..1,1..2
+  ?cursor = 0,1
+PUSH "B"
+  ?cursor = 0,2
+PUSH "\e[3@"
+  moverect 0..1,2..77 -> 0..1,5..80
+  erase 0..1,2..5
+
+!DCH move+erase emulation
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "ABBC"
+PUSH "\e[3D"
+  ?cursor = 0,1
+PUSH "\e[P"
+  moverect 0..1,2..80 -> 0..1,1..79
+  erase 0..1,79..80
+  ?cursor = 0,1
+PUSH "\e[3P"
+  moverect 0..1,4..80 -> 0..1,1..77
+  erase 0..1,77..80
+  ?cursor = 0,1

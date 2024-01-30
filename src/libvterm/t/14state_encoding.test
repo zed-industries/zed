@@ -1,0 +1,105 @@
+INIT
+WANTSTATE g
+
+!Default
+RESET
+PUSH "#"
+  putglyph 0x23 1 0,0
+
+!Designate G0=UK
+RESET
+PUSH "\e(A"
+PUSH "#"
+  putglyph 0x00a3 1 0,0
+
+!Designate G0=DEC drawing
+RESET
+PUSH "\e(0"
+PUSH "a"
+  putglyph 0x2592 1 0,0
+
+!Designate G1 + LS1
+RESET
+PUSH "\e)0"
+PUSH "a"
+  putglyph 0x61 1 0,0
+PUSH "\x0e"
+PUSH "a"
+  putglyph 0x2592 1 0,1
+!LS0
+PUSH "\x0f"
+PUSH "a"
+  putglyph 0x61 1 0,2
+
+!Designate G2 + LS2
+PUSH "\e*0"
+PUSH "a"
+  putglyph 0x61 1 0,3
+PUSH "\en"
+PUSH "a"
+  putglyph 0x2592 1 0,4
+PUSH "\x0f"
+PUSH "a"
+  putglyph 0x61 1 0,5
+
+!Designate G3 + LS3
+PUSH "\e+0"
+PUSH "a"
+  putglyph 0x61 1 0,6
+PUSH "\eo"
+PUSH "a"
+  putglyph 0x2592 1 0,7
+PUSH "\x0f"
+PUSH "a"
+  putglyph 0x61 1 0,8
+
+!SS2
+PUSH "a\x{8e}aa"
+  putglyph 0x61 1 0,9
+  putglyph 0x2592 1 0,10
+  putglyph 0x61 1 0,11
+
+!SS3
+PUSH "a\x{8f}aa"
+  putglyph 0x61 1 0,12
+  putglyph 0x2592 1 0,13
+  putglyph 0x61 1 0,14
+
+!LS1R
+RESET
+PUSH "\e~"
+PUSH "\xe1"
+  putglyph 0x61 1 0,0
+PUSH "\e)0"
+PUSH "\xe1"
+  putglyph 0x2592 1 0,1
+
+!LS2R
+RESET
+PUSH "\e}"
+PUSH "\xe1"
+  putglyph 0x61 1 0,0
+PUSH "\e*0"
+PUSH "\xe1"
+  putglyph 0x2592 1 0,1
+
+!LS3R
+RESET
+PUSH "\e|"
+PUSH "\xe1"
+  putglyph 0x61 1 0,0
+PUSH "\e+0"
+PUSH "\xe1"
+  putglyph 0x2592 1 0,1
+
+UTF8 1
+
+!Mixed US-ASCII and UTF-8
+# U+0108 == 0xc4 0x88
+RESET
+PUSH "\e(B"
+PUSH "AB\xc4\x88D"
+  putglyph 0x0041 1 0,0
+  putglyph 0x0042 1 0,1
+  putglyph 0x0108 1 0,2
+  putglyph 0x0044 1 0,3

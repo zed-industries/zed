@@ -1,0 +1,13 @@
+*os_beos.txt*	For Vim version 9.1.  Last change: 2020 Jun 07
+
+
+		  VIM REFERENCE MANUAL    by Bram Moolenaar
+
+
+						*beos* *BeOS* *BeBox*
+This file used to contain particularities for the BeOS port of Vim.
+
+The BeOS support was removed in patch 8.2.0849.
+
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

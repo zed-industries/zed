@@ -1,0 +1,102 @@
+# Aap recipe for German Vim spell files.
+#
+# Since there is a big discussion about whether to use the old or the new
+# spelling rules, both have been included.
+#    "de": new German spelling
+# "de_de": old and new German spelling
+# "de_19": old German spelling
+# "de_20": new German spelling
+# "de_AT": Austrian spelling
+# "de_CH": Swiss spelling
+
+# Use a freshly compiled Vim if it exists.
+@if os.path.exists('../../../src/vim'):
+    VIM = ../../../src/vim
+@else:
+    :progsearch VIM vim
+
+REGIONS = DE 19 20 AT CH
+DE_REGIONS = de_$*REGIONS
+
+SPELLDIR   = ..
+FILES      = de_$*(REGIONS).aff de_$*(REGIONS).dic
+
+# The de_20 is the same as de_DE dictionary and only uses the
+# new revised orthography
+FILE_DE_AFF = de_DE_frami.aff
+FILE_DE_DIC = de_DE_frami.dic
+FILE_20_AFF = de_DE_frami.aff
+FILE_20_DIC = de_DE_frami.dic
+FILE_AT_AFF = de_AT_frami.aff
+FILE_AT_DIC = de_AT_frami.dic
+FILE_CH_AFF = de_CH_frami.aff
+FILE_CH_DIC = de_CH_frami.dic
+#ZIPFILES   = $ZIPFILE_DE $ZIPFILE_20 $ZIPFILE_AT $ZIPFILE_CH
+ZIPFILE_19 = de_OLDSPELL.zip   # unmaintained
+DICT_FILES = $FILE_20_AFF $FILE_20_DIC $FILE_AT_AFF $FILE_AT_DIC $FILE_CH_AFF $FILE_CH_DIC
+
+# frami files adjusted for Vim are found here
+YAMAGIDIR = https://raw.githubusercontent.com/Yamagi/vim-german-dictionaries/master
+
+READMES    = README.md
+:attr {fetch = $YAMAGIDIR/%file%} $READMES
+
+all: $SPELLDIR/de.latin1.spl $SPELLDIR/de.utf-8.spl ../README_de.txt
+
+$SPELLDIR/de.latin1.spl : $FILES
+        :sys env LANG=de_DE.ISO-8859-1
+		$VIM -u NONE -e -c "mkspell! $SPELLDIR/de $DE_REGIONS" -c q
+
+$SPELLDIR/de.utf-8.spl : $FILES
+        :sys env LANG=de_DE.UTF-8
+		$VIM -u NONE -e -c "mkspell! $SPELLDIR/de $DE_REGIONS" -c q
+
+../README_de.txt: $READMES
+        :fetch $READMES
+        :print README.md            >! $target
+        :cat README.md             >> $target
+
+#
+# Fetching the files from the LibreOffices github repository.
+# The OLDSPELL file comes from elsewhere
+#
+DEDIR = http://www.j3e.de/myspell
+:attr {fetch = $YAMAGIDIR/src/%file%} $DICT_FILES
+:attr {fetch = $DEDIR/%file%} $ZIPFILE_19
+
+de_DE.aff de_DE.dic de_20.aff de_20.dic: {buildcheck=}
+        :fetch $FILE_DE_AFF
+        :fetch $FILE_DE_DIC
+        :move de_DE_frami.aff de_DE.aff
+        :move de_DE_frami.dic de_DE.dic
+        :copy de_DE.aff de_20.aff
+        :copy de_DE.dic de_20.dic
+
+de_19.aff de_19.dic: {buildcheck=}
+        :assertpkg unzip patch
+        :fetch $ZIPFILE_19
+        :sys $UNZIP $ZIPFILE_19
+        :delete $ZIPFILE_19
+        :move de_OLDSPELL.aff de_19.aff
+        :move de_OLDSPELL.dic de_19.dic
+        @if not os.path.exists('de_19.orig.aff'):
+            :copy de_19.aff de_19.orig.aff
+        @if not os.path.exists('de_19.orig.dic'):
+            :copy de_19.dic de_19.orig.dic
+        @if os.path.exists('de_19.diff'):
+            :sys patch <de_19.diff
+
+de_AT.aff de_AT.dic: {buildcheck=}
+        :fetch $FILE_AT_AFF
+        :fetch $FILE_AT_DIC
+        :move $FILE_AT_AFF de_AT.aff
+        :move $FILE_AT_DIC de_AT.dic
+
+de_CH.aff de_CH.dic: {buildcheck=}
+        :fetch $FILE_CH_AFF
+        :fetch $FILE_CH_DIC
+        :move $FILE_CH_AFF de_CH.aff
+        :move $FILE_CH_DIC de_CH.dic
+
+
+# vim: set sts=4 sw=4 :

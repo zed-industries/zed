@@ -1,0 +1,19 @@
+*farsi.txt*     For Vim version 9.1.  Last change: 2019 May 05
+
+
+		  VIM REFERENCE MANUAL    by Mortaza Ghassab Shiran
+
+
+Right to Left and Farsi Mapping for Vim		*farsi* *Farsi*
+
+
+						*E27*
+Farsi support has been removed in patch 8.1.0932.  At that time it was
+outdated and unused.
+
+If you would like to bring Farsi support back, please have a look at the old
+Farsi code, as it was present at the 8.1 release.  It should be merged with
+Arabic support using the Unicode character set.
+
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

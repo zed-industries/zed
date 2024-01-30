@@ -1,0 +1,1009 @@
+===============================================================================
+=         Ī s a          p a m ā c ī b a        V I M     -   Versija 1.7     =
+===============================================================================
+
+   Vim ir jaudīgs teksta redaktors ar pārāk daudzām komandām, lai to
+   aprakstītu tik īsā aprakstā kā šis. Šī pamācība ir paredzēta, lai
+   spētu iemācīties tik daudz, cik nepieciešams, lietojot Vim, kā plaša
+   pielietojuma teksta redaktoru.
+
+   Atkarībā no tā, cik daudz laika veltīsiet eksperimentiem,
+   šīs pamācības aptuvenais izpildīšanas laiks  ir 25 — 30 minūtes.
+
+   UZMANĪBU:
+   Darbojoties ar komandām, jūs izmainīsiet šo tekstu, tāpēc izveidojiet šī
+   faila kopiju (ja jūs palaidāt "vimtutor" komandu, šī jau ir kopija).
+
+   Svarīgi atcerēties, ka šo pamācību ir paredzēts izpildīt praktiski!
+   Ja jūs tikai lasīsiet šo tekstu, jūs komandas aizmirsīsiet!
+
+   Tagad pārliecinieties, ka tastatūrai nav nospiesti SHIFT vai
+   CAPS-LOCK taustiņi un spiediet j taustiņu, līdz pilnībā redzat
+
+   1.1 nodarbības saturu
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    1.1 nodarbība: KURSORA PĀRVIETOŠANA
+
+    ** Lai pārvietotu kursoru, spiediet taustiņus h, j, k, l  **
+
+  Lai atcerētos,
+  izmantojiet vārdus:        k          "Kaugšup"
+                             ^
+            pa "Heisi"  h  <   >  l  pa "Labi"
+                             v
+                             j          "Jejup"
+
+  1. Pārvietojiet kursoru pa ekrānu tik ilgi, kamēr pierodat.
+
+  2. Turiet j taustiņu tik ilgi, kamēr ieslēdzas tā auto-atkārtošana.
+     Un dodieties uz nākamo nodarbību.
+
+PIEZĪME: Ja neesat pārliecināts par nospiesto taustiņu, spiediet <ESC>,
+      lai atgrieztos normālajā režīmā, un spiediet vajadzīgo taustiņu atkal.
+
+PIEZĪME: Kursora vadībai var izmantot arī bultiņu taustiņus, bet ticiet —
+      iemācīties vadīt ar j, k, l, h taustiņiem ir daudz parocīgāk!
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    1.2 nodarbība: IZIEŠANA NO VIM
+
+  !! PIEZĪME: Pirms izpildīt šīs nodarbības soļus, izlasiet visu instrukciju!
+
+  1. Lai būtu drošs, ka esat normālajā režīmā, nospiediet <ESC> taustiņu.
+
+  2. Ievadiet komandu:   :q! <ENTER>.
+     Ievadot šo komandu, jūs iziesiet no redaktora nesaglabājot izmaiņas.
+
+  3. Ja palaidāt vim komandrindā, tad pēc tam atkal to izsauciet, ievadot
+     vimtutor <ENTER>
+
+  4. Kad esat iegaumējis 1. — 3. soli, izpildiet tos, lai atgrieztos
+     redaktorā.
+
+PIEZĪME:  :q! <ENTER> komanda atceļ visas failā radītās izmaiņas. Pēc dažām
+       nodarbībām jūs uzzināsiet, kā izmaiņas varat saglabāt.
+
+  5. Pārvietojiet kursoru, uz 1.3 nodarbību.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    1.3 nodarbība: TEKSTA REDIĢĒŠANA – DZĒŠANA
+
+	   ** Lai izdzēstu zem kursora atrodošos burtu, spiediet  x  **
+
+  1. Pārvietojiet kursoru uz līniju ar atzīmi --->.
+
+  2. Lai izlabotu kļūdas, pārvietojiet kursoru uz vajadzīgo burtu.
+
+  3. Spiediet x taustiņu, lai izdzēstu nevajadzīgo burtu.
+
+  4. Atkārtojiet 2. līdz 4. soļus, līdz teksts ir pareizs.
+
+---> Hiiipijiiii čččauuukstiiina celllofānu.
+
+  5. Kad augstāk parādītā rinda ir izlabota, dodieties uz 1.4. nodarbību.
+
+PIEZĪME: Izpildot šo pamācību, centieties mācīties nevis domājot,
+         bet gan praktiski trenējot kustību atmiņu.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    1.4 nodarbība: TEKSTA REDIĢĒŠANA — IEVIETOŠANA
+
+			** Lai ievietotu tekstu, spiediet i **
+
+  1. Pārvietojiet kursoru uz pirmo līniju ar atzīmi --->.
+
+  2. Lai ierakstītu tekstu augšējā rindā tieši tādu pašu kā apakšējā,
+     novietojiet kursoru tieši PĒC ievietojamā teksta.
+
+  3. Spiediet i un ievadiet visu nepieciešamo tekstu.
+
+  4. Pēc katra papildinājuma, spiediet <ESC> lai atgrieztos normālajā režīmā.
+     Atkārtojiet 2. līdz 4. soļus, līdz teksts ir pareizs.
+
+---> Šaā lnij no tksta rūkt dai buti.
+     Šajā līnijā no teksta trūkst daži burti.
+
+  5. Kad esat apguvis šīs darbības, dodieties uz 1.5. nodarbību.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    1.5 nodarbība: TEKSTA REDIĢĒŠANA — PIEVIENOŠANA
+
+			** Lai pievienotu tekstu, spiediet A **
+
+  1. Pārvietojiet kursoru uz pirmo līniju ar atzīmi --->.
+     Nav svarīgi, uz kura šīs rindas burta atrodas kursors.
+
+  2. Spiediet A un pievienojiet iztrūkstošo tekstu.
+
+  3. Kad nepieciešamais teksts ir pievienots, spiediet <ESC>,
+     lai atgrieztos normālajā režīmā.
+
+  4. Pārvietojiet kursoru uz otro līniju ar atzīmi --->
+     un atkārtojiet 2. un 3. soļus.
+
+---> Šajā līnijā tekstam
+     Šajā līnijā tekstam pietrūkst beigas.
+---> Šajā līnijā t
+     Šajā līnijā tekstam pietrūkst beigas.
+
+  5. Kad esat apguvis šīs darbības, dodieties uz 1.6. nodarbību.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    1.6 nodarbība: FAILA SAGLABĀŠANA
+
+        ** Lai saglabātu failu un izietu no redaktora, spiediet :wq **
+
+  !! PIEZĪME: Pirms izpildīt šo nodarbību, izlasiet visus tās soļus!
+
+  1. Pārliecinieties, ka esat pareizi izpildījis visas iepriekšējās nodarbības.
+
+  2. Ja neesat pārliecināts, izejiet no redaktora, kā 1.2. nodarbībā ar komandu:
+     :q!
+
+  3. Tad atkal palaidiet pamācību, un, ja nepieciešams, veiciet failā izmaiņas.
+
+  4. Saglabājiet faila izmaiņas, redaktorā ievadot  :w tutor <ENTER>
+     Izejiet no redaktora, ievadot komandu  :wq <ENTER>
+
+  5. Palaidiet atkal šo pamācību, terminālī ievadot komandu: vim tutor
+     Šajā komandā vārds "vim" izsauc teksta redaktoru, bet
+     vārds "tutor" ir faila nosaukums, kurā ir saglabāta izmainītā pamācība.
+
+  5. Kad esat sapratis veicamās darbības, izpildiet tās.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    1. nodarbības APKOPOJUMS
+
+
+  1. Kursoru pārvieto ar bultiņu vai arī h,j,k,l taustiņiem:
+	 h (pa kreisi)   j (lejup)     k (augšup)   l (pa labi)
+
+  2. Lai ar Vim rediģētu noteiktu failu, ievadiet komandu:  vim fails <ENTER>
+
+  3. Lai izietu no Vim ievadiet:
+     <ESC>   :q!         <ENTER>   lai pazaudētu izmaiņas.
+     <ESC>   :wq         <ENTER>   lai saglabātu izmaiņas.
+
+  4. Lai izdzēstu burtu zem kursora, spiediet x
+
+  5. Lai ievietotu vai pievienotu tekstu, spiediet:
+	 i   ievadāmais teksts          <ESC>   lai ievietotu pirms kursora
+	 A   pievienojamais teksts      <ESC>   lai pievienotu rindas beigās
+
+PIEZĪME: <ESC> spiešana atgriezīs jūs normālajā režīmā, vai arī atcels
+         nepareizu vai daļēji ievadītu komandu.
+
+Tagad dodieties uz 2. nodarbību.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    2.1 nodarbība: DZĒŠANAS KOMANDAS
+
+
+		       ** Lai izdzēstu vārdu, spiediet dw **
+
+  1. Nospiediet <ESC> lai pārliecinātos, ka esat normālajā režīmā.
+
+  2. Pārvietojiet kursoru uz rindu ar atzīmi --->.
+
+  3. Pārvietojiet kursoru uz izdzēšamā vārda sākumu.
+
+  4. Ievadiet   dw    lai izdzēstu nepieciešamo vārdu.
+
+PIEZĪME: Nospiežot d, ekrāna labajā apakšējā stūrī parādīsies d burts.
+         Tas ir tāpēc, ka Vim gaida nākamo komandu (burtu w).
+         Ja jūs redzat citu burtu, vai neredzat neko, esat kaut ko izdarījis
+         nepareizi. Tad spiediet <ESC> un sāciet no sākuma.
+
+---> Šajā kuku teikumā ir tata daži lala vārdi, kuri mumu nav vajadzīgi.
+
+  5. Izpildiet 3. — 4. soļus, līdz teksts ir pareizs un dodieties uz 2.2. nodarbību.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    2.2 nodarbība: CITAS DZĒŠANAS KOMANDAS
+
+
+	   ** Lai izdzēstu līdz rindas beigām, spiediet d$ **
+
+  1. Nospiediet <ESC> lai pārliecinātos, ka esat normālajā režīmā.
+
+  2. Pārvietojiet kursoru uz rindu ar atzīmi --->.
+
+  3. Pārvietojiet kursoru līdz pirmā teikuma beigām (PĒC pirmā punkta).
+
+  4. Ievadiet d$  lai izdzēstu tekstu no kursora līdz rindas beigām.
+
+---> Kāds ir ievadījis teikuma beigas divreiz. ievadījis teikuma beigas divreiz.
+
+
+  5. Dodieties uz 2.3 nodarbību, lai labāk izprastu, kā tas notiek.
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    2.3 nodarbība: OPERATORI UN KOMANDAS
+
+
+  Daudzas tekstu mainošās komandas sastāv no operatora un kustības.
+  Dzēšanas komanda, kuru izsauc ar d operatoru vispārīgā gadījumā ir sekojoša:
+
+        d kustība
+
+  Kur:
+    d       - ir dzēšanas operators.
+    kustība - ir operators, kas nosaka dzēšanas veidu.
+
+  Biežāk izplatītās kustības ir:
+    w - līdz nākamā vārda sākumam, NEIESKAITOT tā pirmo burtu.
+    e - līdz tekošā vārda beigām, IESKAITOT pēdējo burtu.
+    $ - līdz rindas beigām, IESKAITOT tās pēdējo burtu.
+
+  Piemēram, ievadot  de  tiks izdzēsts teksts no kursora līdz rindas beigām.
+
+PIEZĪME: Ievadot kustības komandu normālajā režīmā, tā pārvietos kursoru uz
+         norādīto vietu.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    2.4 nodarbība: KUSTĪBAS SKAITA IZMANTOŠANA
+
+
+   ** Pirms kustības ievadot skaitli, tā tiks atkārtota norādās reizes. **
+
+  1. Pārvietojiet kursoru uz līniju ar atzīmi --->.
+
+  2. Ievadiet  2w  lai pārvietotu kursoru par 2 vārdiem uz priekšu.
+
+  3. Ievadiet  3e  lai pārvietotu kursoru par 3 vārdiem atpakaļ.
+
+  4. Ievadiet  0  (nulli), lai pārvietotu kursoru uz rindas sākumu.
+
+  5. Atkārtojiet 2. — 3. soļus ar dažādiem skaitļiem.
+
+---> Šī ir rinda ar vārdiem, kurā jūs varat pārvietoties.
+
+  6. Dodieties uz nodarbību 2.5.
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    2.5 nodarbība: SKAITĻA IZMANTOŠANA DZĒŠANAI
+
+
+   ** Ievadot skaitli pirms operatora, tas tiks atkārtots norādītās reizes. **
+
+  Pirms augšminētajām dzēšanas un pārvietošanās darbībām
+  var ievadīt skaitli, lai norādītu cik reizes to izpildīt, formā:
+	 d   skaitlis  kustība
+
+  1. Pārvietojiet kursoru uz pirmo vārdu ar LIELAJIEM BURTIEM rindā ar atzīmi --->.
+
+  2. Ievadiet komandu d2w lai izdzēstu divus vārdus ar LIELAJIEM BURTIEM
+
+  3. Atkārtojiet pirmo soli, dzēšanas komandai norādot dažādus skaitļus,
+     lai izdzēstu visus vārdus ar LIELAJIEM BURTIEM
+
+--->  šajā ABC DE rindā FGHI JK LMN OP ir jāizdzēš liekie Q RS TUV vārdi
+
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    2.6 nodarbība: DARBĪBAS AR RINDĀM
+
+
+		   ** Ievadiet   dd   lai izdzēstu visu teksta rindu. **
+
+  Tā kā veselas rindas izdzēšana ir izplatīta darbība, Vi dizaineri nolēma
+  tās dzēšanu realizēt ar dubultu d ievadīšanu.
+
+  1. Pārvietojiet kursoru uz otro rindu ar atzīmi --->
+  2. Ievadiet  dd  lai izdzēstu rindu.
+  3. Pārvietojiet kursoru uz ceturto rindu.
+  4. Ievadiet  2dd   lai izdzēstu divas rindas.
+
+--->  1)  Astoņi kustoņi,
+--->  2)  astoņi kustoņi,
+--->  3)  kas tos astoņus kustoņus pirks?
+--->  4)  Zirgs.
+--->  5)  Astoņi kustoņi,
+--->  6)  astoņi kustoņi,
+--->  7)  kas tos astoņus kustoņus pirks?
+--->  8)  Cirks.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    2.7 nodarbība: ATCELŠANAS KOMANDA
+
+
+   ** Lai atceltu darbību, spiediet  u  **
+   ** Lai atceltu visas darbības tekošajā rindā, spiediet  U  **
+
+  1. Pārvietojiet kursoru uz rindu ar atzīmi ---> un novietojiet to uz
+     pirmās kļūdas.
+  2. Pārvietojiet kursoru un ievadiet  x  lai izdzēstu visus liekos burtus.
+  3. Ievadiet  u  lai atceltu iepriekšējo komandu.
+  4. Šī darbība atcels iepriekšējo darbību, kuru veicāt, ievadot  x
+  5. Ievadiet  U  lai atgrieztos sākuma stāvoklī.
+  6. Ievadiet  u  vairākas reizes, lai atceltu  U  un iepriekšējās komandas.
+  7. Ievadiet  CTRL-R  t.i.:
+     nospiediet CTRL un, to neatlaižot, Shift un to neatlaižot un r
+     vairākas reizes, lai atceltu atcelšanas darbības.
+
+---> Iizlabojiet kļūudas šaajā riindā, aatceliet tās un aatceliet aatcelšanu.
+
+  8. Šīs ir svarīgas un noderīgas iespējas.
+     Tagad pārejiet uz 2. nodarbības apkopojumu.
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    2. nodarbības APKOPOJUMS
+
+
+  1. Lai izdzēstu vārdu, uz kura atrodas kursors, ievada:    dw
+  2. Lai izdzēstu rindu no kursora līdz tās beigām, ievada:  d$
+  3. Lai izdzēstu visu rindu, ievada:                        dd
+  4. Lai atkārtotu kustības darbību, pirms tās ievada skaitli, piemēram:
+                                                             2w
+
+  5. Lai atkārtotu izmaiņu darbību, komandu formāts ir sekojošs:
+       operators   [skaitlis]   kustība
+     kur:
+       operators  - ir veicamā darbība, piemēram,  d  lai dzēstu
+       [skaitlis] - ir neobligāts darbības atkārtojumu skaits
+       kustība    - pārvieto kursoru tik tālu, cik ir veicama darbība, piem:
+                      w  lai pārvietotos par vienu vārdu,
+		      $  lai pārvietotos līdz rindas beigām u.tml.
+
+  6. Lai pārvietotos uz rindas sākumu, ievada:          0   (nulli)
+
+  7. Lai atceltu iepriekšējo darbību, ievada:           u  (mazo u)
+     Lai atceltu visas rindā veiktās izmaiņas, ievada:  U  (Shift+U)
+     Lai atceltu atcelšanas darbības, ievada:      CTRL-R  (Ctrl+Shift+r)
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    3.1 nodarbība: IEVIETOŠANAS DARBĪBA
+
+
+       ** Lai pēc kursora ievietotu iepriekš izdzēstu tekstu, spiediet  p  **
+
+  1. Pārvietojiet kursoru uz pirmo rindu ar atzīmi --->
+
+  2. Ievadiet  dd  lai izdzēstu visu rindu un saglabātu to reģistrā.
+
+  3. Pārvietojiet kursoru uz c) rindu (virs vietas, kur būtu jāievieto
+     dzēstā rinda).
+
+  4. Spiediet  p  lai ievietotu reģistrā saglabāto rindu.
+
+  5. Atkārtojiet soļus 2 līdz 4 līdz rindas ir pareizajā secībā.
+
+---> d)  Zirgs.
+---> c)  kas tos astoņus kustoņus pirks?
+---> b)  astoņi kustoņi,
+---> a)  Astoņi kustoņi,
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    3.2 nodarbība: AIZVIETOŠANAS KOMANDA
+
+
+       ** Lai aizvietotu burtu ar citu, ievadiet r un nepieciešamo burtu. **
+
+  1. Pārvietojiet kursoru uz pirmo rindu ar atzīmi --->
+
+  2. Pārvietojiet kursoru, lai iezīmētu pirmo nepareizo burtu.
+
+  3. Ievadiet  r  un tad burtu, uz kuru iezīmēto ir nepieciešams nomainīt.
+
+  4. Atkārtojiet soļus 2 un 3 līdz ir pirmā rinda atbilst otrajai rindai.
+
+--->  Iavadut šo rixdu, kuds ar nuspeedis napariizus teusteņus!
+--->  Ievadot šo rindu, kāds ir nospiedis nepareizus taustiņus!
+
+  5. Tagad dodieties uz 3.3. nodarbību.
+
+PIEZĪME: Atcerieties, ka jums ir jāmācās darbojoties,
+         nevis vienkārši mēģinot atcerēties!
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    3.3 nodarbība: IZMAIŅU DARBĪBA
+
+
+	   ** Lai izmainītu tekstu līdz vārda beigām, spiediet  ce  **
+
+  1. Pārvietojiet kursoru uz pirmo rindu ar atzīmi --->
+
+  2. Novietojiet kursoru virs pirmā Š vārdā Šma.
+
+  3. Ievadiet  ce  un izlabojiet vārdu uz pareizu (šajā gad. "Šīs").
+
+  4. Spiediet <ESC> un pārvietojiet kursoru uz nākamo maināmo vārdu.
+
+  5. Atkārtojiet soļus 3 un 4 līdz pirmā un otrā rinda ir vienādas.
+
+---> Šma rindas vamula nepieciešams šimahaļ, lietojot šašābiļabita darbību.
+---> Šīs rindas vārdus nepieciešams izlabot, lietojot izmainīšanas darbību.
+
+Ievērojiet, ka pēc  ce  un vārda ievades jūs paliekat ievietošanas režīmā.
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    3.4 nodarbība: CITAS MAINĪŠANAS DARBĪBAS AR c
+
+
+     ** Izmaiņu kustības operatoru lieto tieši tāpat kā dzēšanai. **
+
+  1. Izmaiņu kustības operators darbojas tāpat kā dzēšanai. Formāts ir:
+
+         c    [skaitlis]   kustība
+
+  2. Var lietot tos pašus kustības operatorus  w (vārds) un  $ (rindas beigas).
+
+  3. Pārvietojiet kursoru uz pirmo rindu ar atzīmi --->.
+
+  4. Pārvietojiet kursoru uz pirmo kļūdu.
+
+  5. Ievadiet  c$ rakstiet nomaināmo tekstu līdz rindas beigām un spiediet <ESC>.
+
+---> Šī teksta beigas nepieciešams izlabot, lietojot c$ komandu.
+---> Šī teksta beigas nepieciešams izlabot, lietojot c$ šari-vari-traļi-muļi.
+
+PIEZĪME:  Lai labotu nepareizi ievadītu tekstu, spiediet <BACKSPACE> taustiņu.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    3. NODARBĪBAS APKOPOJUMS
+
+
+  1. Lai ievietotu izdzēsto tekstu, spiediet  p  taustiņu. Ar to ievietosiet
+     dzēsto tekstu PĒC kursora. (Ja bija izdzēsta vesela rinda, tā tiks
+     ievietota rindā VIRS kursora.)
+
+  2. Lai izmainītu burtu zem kursora, spiediet  r  un pēc tam
+     jums nepieciešamo rakstzīmi.
+
+  3. Izmaiņu operators ļauj jums nomainīt tekstu no kursora līdz
+     kustības operatora norādītajai vietai. Piemēram,
+     ievadot  ce  jūs izmaināt tekstu no kursora līdz VĀRDA beigām, bet
+     ievadot  c$  jūs nomaināt tekstu no kursora līdz RINDAS beigām.
+
+  4. Izmaiņu komandas formāts ir:
+
+	 c   [skaitlis]   kustība
+
+Tagad dodieties uz nākamo nodarbību.
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    4.1 nodarbība: KURSORA VIETA FAILĀ UN FAILA STATUSS
+
+  ** Lai noteiktu kursora atrašanās vietu failā un faila statusu, spiediet  CTRL-g
+     Lai pārvietotu kursoru uz noteiktu faila rindu, spiediet  G  **
+
+  PIEZĪME: Pirms pildīt šo uzdevumu, izlasiet visas tā darbības līdz beigām!
+
+  1. Spiediet Ctrl taustiņu, un neatlaižot to, spiediet g  saīsināti CTRL-g.
+     Redaktora ekrāna apakšā parādīsies statusa rinda, ar faila statusu
+     un rindu kurā atrodas kursors, kā arī citu informāciju.
+     Atcerieties šo vietu, lai izpildītu 3. darbību.
+
+PIEZĪME: Jūs varat redzēt kursora atrašanās vietu failā vienmēr ekrāna
+       labajā apakšējā stūrī, ja redaktoram ir ieslēgta ruler opcija.
+       (Skatiet palīdzību par šo komandu, ievadot  :help 'ruler')
+
+  2. Lai pārvietotu kursoru uz faila beigām, ievadiet  G
+     Lai pārvietotu kursoru uz faila sākumu, ievadiet  gg
+
+  3. Ievadiet iepriekš iegaumētās rindas numuru un tad ievadiet  G
+     Ar šo jūs pārvietosiet kursoru atpakaļ rindā, kurā jūs sākāt
+     šo nodarbību.
+
+  4. Atkārtojiet darbības 1. — 3. tik ilgi, kamēr droši atceraties šīs komandas.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    4.2 nodarbība: MEKLĒŠANAS KOMANDA
+
+
+     ** Lai meklētu tekstā, spiediet  /  un ievadiet meklējamo frāzi. **
+
+  1. Normālajā režīmā spiediet  /  taustiņu. Ievērojiet, ka kursors pārvietojas
+     uz redaktora apakšējo rindu, līdzīgi, kā nospiežot taustiņu  :
+     lai ievadītu dažādas komandas.
+
+  2. Tad ievadiet vārdu  kļūūūda  un spiediet <ENTER>.
+     Ar šo jūs izgaismosiet atrasto meklējamo redaktorā.
+
+  3. Lai atrastu nākošo vārdu, spiediet  n  taustiņu.
+     Lai pārvietotu kursoru uz nākamo atrasto vietu tekstā uz augšu,
+     ievadiet  N
+
+  4. Lai meklētu frāzi augšupejošā virzienā  /  vietā lietojiet  ?
+
+  5. Lai atgrieztos uz vietu, kurā sākāt meklēšanu, spiediet CTRL-O
+     (spiediet Ctrl, tad, to neatlaižot spiediet arī o). To var turpināt,
+     lai dotos tālāk atpakaļ, vai arī spiest CTRL-i, lai dotos uz priekšu.
+
+--->  "kļūūūda" nav pareizs vārds; kļūda ir vienkārši kļūda.
+
+PIEZĪME: Ja ir atrasta pēdējā meklējamā frāze faila beigās vai sākumā,
+      pēc nākamā meklējuma tiks atrasta pirmā/pēdējā faila sākumā/beigās,
+      ja vien nav atslēgta wrapscan opcija.
+
+PIEZĪME: Ja vairs nevēlaties izgaismot meklējamo tekstu, spiediet  /
+      un ievadiet nesakarīgu/neatrodamu frāzi. (VIM speciālisti parasti
+      piekārto savu taustiņu kombināciju šai darbībai.)
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    4.3 nodarbība: SAISTĪTO IEKAVU MEKLĒŠANA
+
+
+	      ** Lai atrastu saistīto ),], vai } iekavu, ievadiet  %  **
+
+  1. Novietojiet kursoru uz iekavām (, [, { rindā ar atzīmi --->.
+
+  2. Ievadiet % simbolu.
+
+  3. Kursors pārvietosies uz izvēlētajai iekavai atbilstošo pretējo iekavu.
+
+  4. Ievadiet % lai pārvietotos atpakaļ uz atbilstošo pretējo iekavu.
+
+  5. Pārvietojiet kursoru uz cita veida iekavu (,),[,],{ or } un pārbaudiet,
+     kas notiek atkārtoti ievadot %
+
+---> Šī ir (testa rinda ar dažādām (-veida, [-veida] un {-veida} iekavām.))
+
+
+PIEZĪME: Šī iespēja ir ļoti noderīga, lai pārbaudītu nelīdzsvarotas iekavas
+         programmas kodā
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    4.4 nodarbība: AIZVIETOŠANAS KOMANDA
+
+
+	** Ievadiet  :s/vecais/jaunais/g  lai aizvietotu 'vecais' ar 'jaunais'. **
+
+  1. Novietojiet kursoru rindā ar atzīmi --->.
+
+  2. Ievadiet :s/ss/s<ENTER>
+     Ievērojiet, ka šī komanda nomaina tikai pirmo atrasto frāzi.
+
+  3. Tagad ievadiet :s/ss/s/g<ENTER>
+     Ievērojiet, ka slēdzis g liek aizvietot frāzi visās atrastajās vietās.
+
+---> visslabākaiss laikss vērot ziedus ir pavassariss.
+
+  4. Aizvietošanas komandai var norādīt darbības diapazonu:
+
+     ievadiet :#,#s/vecais/jaunais/g  kur #,# ir diapazona sākuma un beigu rinda
+     ievadiet :%s/vecais/jaunais/g    lai aizvietotu frāzi visā failā
+     ievadiet :%s/vecais/jaunais/gc   lai aizvietotu visā failā ar uzaicinājumu
+                                      apstiprināt katru aizvietošanu
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    4.5 nodarbība: DARBĪBAS ATKĀRTOŠANA
+
+       ** Lai atkārtotu iepriekšējo darbību, spiediet  .  **
+
+  Atšķirībā no citiem teksta redaktoriem, Vim par vienu darbību uzskata
+  vairāku ievadīto komandu virkni ārpus normālā režīma (t.i. ievietošanas,
+  aizstāšanas u.tml.). Tas ļauj viegli atkārtot sarežģītas darbības, spiežot
+  .  taustiņu.
+
+  1. Pārliecinieties, ka esat normālajā režīmā, spiežot <ESC>.
+
+  2. Sameklējiet pirmo skaitli rindā ar --->, ievadot:  /11 
+
+  3. Ievadiet komandu 2sll un atgriezieties normālajā režīmā.
+
+  4. Lai sameklētu nākamo skaitli un atkārtotu iepriekšējo aizstāšanas darbību,
+     spiediet:  n.
+
+---> ba11e ce11e ha11e le11e ka11a mu11a nu11e ra11ijs šte11e ti11s ze11is
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    4. nodarbības APKOPOJUMS
+
+  1. CTRL-G   statusa rindā parāda faila nosaukumu, statusu un kursora atrašanās
+              vietu
+              G  pārvieto kursoru uz faila beigām.
+     skaitlis G  pārvieto kursoru uz norādīto rindu.
+              gg pārvieto kursoru uz faila sākumu.
+
+  2. Ievadot  / un frāzi, to meklē failā uz priekšu
+     Ievadot  ? un frāzi, to meklē failā atpakaļ
+     Pēc pirmās atrastās frāzes, spiežot n sameklē nākamo frāzi tajā pašā virzienā
+     vai arī, spiežot N, sameklē nākamo frāzi pretējā virzienā.
+     CTRL-o pārvieto kursoru uz iepriekšējo izmaiņu vietu, CTRL-i uz nākamo vietu.
+     .  atkārto iepriekšējo darbību, ko var apvienot ar meklēšanu:  n. vai  N.
+
+  3. Ja kursors atrodas uz  (,),[,],{, vai }, ievadot % kursors pārvietojas uz
+     pretējo iekavu.
+
+  4. Lai aizvietotu frāzi tekošajā rindā vienreiz, ievadiet: :s/vecais/jaunais
+     Lai aizvietotu visas frāzes tekošajā rindā, ievadiet:   :s/vecais/jaunais/g
+     Lai aizvietotu visas frāzes starp norādītajām rindām:   :#,#s/vecais/jaunais/g
+     Lai aizvietotu visas frāzes failā, ievadiet:            :%s/vecais/jaunais/g
+     Lai aizvietotu visas frāzes failā ar apstiprinājumu:    :%s/vecais/jaunais/gc
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    5.1 nodarbība: KĀ IZPILDĪT ĀRĒJU KOMANDU
+
+
+   ** Ievadiet :! un pēc tam sekojošo ārējo komandu. **
+
+  1. Nospiediet ierasto  :  lai parādītu uzaicinājumu statusa rindā
+
+  2. Šajā rindā ievadiet !  (izsaukuma zīmi). Tā norāda VIM, ka būs jāizpilda
+     ārēja (komandrindas čaulas) komanda
+
+  3. Pēc tam ievadiet, piemēram  ls un spiediet <ENTER>
+     Šī komanda ekrāna apakšējā daļā parādīs failu sarakstu.
+     Ja lietojat Windows, ls komandas vietā ievadiet dir
+
+PIEZĪME: Izsaucamās komandas izpilda nospiežot <ENTER> taustiņu, kopš šī brīža
+         mēs to vairs īpaši neuzsvērsim. Lai aizvērtu komandas izvadīto saturu,
+         arī jāspiež <ENTER> taustiņš.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    5.2 nodarbība: VAIRĀK PAR FAILU SAGLABĀŠANU
+
+   ** Lai saglabātu failu ar noteiktu nosaukumu, ievadiet :w NOSAUKUMS **
+
+  1. Ievadiet  :!ls  (vai :!dir), lai apskatītu failu sarakstu.
+     Atcerieties, ka pēc komandu nosaukuma ievades jānospiež <ENTER>!
+
+  2. Izdomājiet jaunu faila nosaukumu, piemēram, test
+
+  3. Tagad ievadiet:  :w test1  (kur test ir jūsu izvēlētais faila nosaukums)
+
+  4. Šī komanda saglabās vim pamācību failā test
+     Lai pārbaudītu, ievadiet  :!ls  vai  :!dir un sameklējiet failu sarakstā
+
+PIEZĪME: Ja jūs iziesiet no vim un palaidīsiet to ar komandu  vim test
+     vim atvērs jūsu saglabāto test failu.
+
+  5. Tagad izdzēsiet šo failu, ievadot komandu:    :!rm test
+     Vai, ja lietojat Windows, komandu:            :!del test
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    5.3 nodarbība: TEKSTA DAĻĒJA SAGLABĀŠANA
+
+	** Lai saglabātu tikai daļu no faila, ievadiet:  v  kustība :w fails **
+
+  1. Pārvietojiet kursoru uz šo rindu
+
+  2. Spiediet  v  un pārvietojiet kursoru līdz piektajam punktam.
+
+  3. Spiediet  :  simbolu.  Statusa rindā parādīsies  :'<,'>
+
+  4. Ievadiet  w test  kur test ir izvēlētais faila nosaukums.
+     Pirms spiest <ENTER>, pārliecinieties, ka  redzat :'<,'>w test
+
+  5. Vim saglabās iezīmēto tekstu failā test.
+     Neizdzēsiet šo failu, mēs to izmantosim nākošajā nodarbībā!
+
+PIEZĪME: Spiežot v VIM pārslēdzas vizuālā iezīmēšanas režīmā. Jūs varat izmantot
+       kursora pārvietošanas komandas, lai iezīmētu nepieciešamo tekstu.
+       Pēc teksta iezīmēšanas, jūs varat izmantot dažādus operatorus, lai
+       kaut ko darītu ar iezīmēto tekstu. Piemēram, spiežot  d  jūs izdzēsīsit
+       iezīmēto tekstu.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    5.4 nodarbība: FAILU SATURA IEGŪŠANA UN APVIENOŠANA
+
+       ** Lai ievietotu faila saturu, ievadiet  :r fails  **
+
+  1. Novietojiet kursoru tieši virs šīs rindas.
+
+PIEZĪME:  Pēc 2. soļa izpildes, jūs redzēsiet tekstu no 5.3 nodarbības.
+       Pēc tam pārvietojiet kursoru uz leju, lai lasītu tālāk šīs
+       nodarbības saturu.
+
+  2. Iegūstiet test faila saturu, ievadot komandas   :r test
+     kur test ir jūsu iepriekšējā nodarbībā saglabātais fails.
+     Ielasītā faila saturs tiek ievietots zem kursora.
+
+  3. Lai pārbaudītu, ka darbība ir izdevusies, pārliecinieties, ka 5.4
+     nodarbības aprakstā ir saturs no 5.3 nodarbības.
+
+PIEZĪME: Jūs varat ievadīt saturu failā, izpildot ārēju komandu.
+       Piemēram, ar komandu   :r !ls
+       jūs ievietosiet failā tekošās mapes failu sarakstu.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    5. nodarbības APKOPOJUMS
+
+  1.  :!komanda  izpilda ārēju komandu
+
+      Daži noderīgi piemēri:
+	 (MS-DOS)         (Unix)
+	  :!dir            :!ls         -  parāda mapes saturu
+	  :!del fails      :!rm fails   -  izdzēš norādīto failu
+
+  2.  :w fails  saglabā tekošo failu failā ar norādīto nosaukumu.
+
+  3.  v  kustība :w fails  saglabā vizuāli iezīmēto tekstu norādītajā failā.
+
+  4.  :r fails  ielasa faila saturu tekošajā failā zem kursora.
+
+  5.  :r !ls  ielasa izpildītās komandas atgriezto saturu failā zem kursora.
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    6.1 nodarbība: ATVĒRŠANAS KOMANDA
+
+ ** Ievadiet o  lai ievadītu jaunu rindu virs kursora un pārietu ievades režīmā. **
+
+  1. Pārvietojiet kursoru uz rindu ar atzīmi --->.
+
+  2. Ievadiet mazo  o  lai ievadītu jaunu rindu virs kursora un pārslēgtos
+     ievades režīmā.
+
+  3. Ievadiet kādu tekstu un spiediet <ESC>, lai izietu no ievades režīma.
+
+---> Ievadot  o  izveidosiet rindu virs šīs un pāriesiet ievades režīmā.
+
+  4. Lai izveidotu rindu ZEM kursora, ievadiet lielo  O.
+
+---> Ievadot  O  izveidosiet rindu zem šīs un pāriesiet ievades režīmā.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    6.2 nodarbība: PIEVIENOŠANAS KOMANDA
+
+	     ** Ievadiet  a  lai ievietotu jaunu tekstu PĒC kursora. **
+
+  1. Pārvietojiet kursoru uz pirmo rindu ar atzīmi --->.
+
+  2. Spiediet  e līdz kursors ir pirmā nepabeigtā vārda beigās.
+
+  3. Ievadiet  a  (mazo a), lai pievienotu tekstu pēc kursora.
+
+  4. Ievadiet tekstu, lai abas rindas ar atzīmi ---> sakrīt.
+     Spiediet <ESC>, lai pārietu normālajā režīmā.
+
+  5. Ievadiet e, lai novietotu kursoru nākamā nepabiegtā vārda beigās,
+     un atkārtojiet soļus 3 un 4.
+
+---> Šī rin ju palīd praktiz tekst pievienoš vārd bei
+---> Šī rinda jums palīdzēs praktizēties teksta pievienošanā vārdu beigās.
+
+PIEZĪME:  No normālā režīma pāriet uz ievades režīmu ievadot a, i, A un I.
+       Atšķirība ir tikai tā, kur tiek uzsākta teksta ievade: a – pēc kursora,
+       i — pirms kursora, A — rindas beigās, I — rindas sākumā.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    6.3 nodarbība: VĒL VIENS AIZVIETOŠANAS VEIDS
+
+      ** Lai aizvietotu vairāk kā vienu rakstzīmi, spiediet R **
+
+  1. Pārvietojiet kursoru uz rindu ar atzīmi --->.
+
+  2. Pārvietojiet kursoru uz pirmo no xxx
+
+  3. Spiediet  R  un ievadiet skaitli, kas norādīts apakšējā rindā tā,
+     lai ievadītie cipari pārraksta xxx.
+
+  4. Lai izietu no aizvietošanas režīma, spiediet <ESC>.
+     Pārliecinieties, ka pārējais rindas saturs nav izmainīts.
+
+  5. Atkārtojiet 2. — 4. soļa darbības, lai līdzīgi aizvietotu pārējos xxx.
+
+---> Saskaitot xxx ar xxx iegūstam xxx.
+---> Saskaitot 123 ar 456 iegūstam 579.
+
+PIEZĪME: Aizvietošanas režīms darbojas līdzīgi ievietošanas režīmam, ar
+         tikai ievadītās rakstzīmes aizvieto esošās.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    6.4 nodarbība: TEKSTA KOPĒŠANA UN IEVIETOŠANA
+
+	  ** Lai kopētu tekstu, izmantojiet y, bet lai ievietotu — p **
+
+  1. Pārvietojiet kursoru uz rindu ar atzīmi ---> un novietojiet kursoru
+     pēc "a)"
+
+  2. Ieslēdziet vizuālo režīmu, spiežot v un pārvietojiet kursoru līdz
+     "pirmais" (to neskaitot)
+
+  3. Spiediet  y  lai iekopētu izcelto tekstu
+
+  4. Pārvietojiet kursoru uz nākamās rindas beigām, spiežot j$
+
+  5. Spiediet  p lai ievietotu nokopēto tekstu. Pēc tam spiediet <ESC>
+
+  6. Ierakstiet otrās rindas beigās vārdu "otrais"
+
+  7. Līdzīgi, lietojot v y un p, nokopējiet vārdu "simtdivdesmitpiecgadnieks",
+     lai iegūtu rindu: šis ir otrais simtdivdesmitpiecgadnieks.
+
+--->  a) šis ir pirmais simtdivdesmitpiecgadnieks.
+      b)
+
+  PIEZĪME: y var lietot kopā ar pārvietošanās operatoru, piemēram,
+           spiežot yw var nokopēt izvēlēto vārdu.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    6.5 nodarbība: IESTATĪJUMU MAIŅA
+
+ ** Iestatiet meklēšana un aizstāšana, neievērojot lielos/mazos burtus **
+
+  1. Sameklējiet vārdu 'neievērot', ievadot:   /neievērot  <ENTER>
+     Atkārtojiet meklēšanu, spiežot n
+
+  2. Iestatiet 'ic' (Neievērot lielos/mazos burtus) iestatījumu, ievadot:  :set ic
+
+  3. Tagad sameklējiet 'neievērot' atkārtoti, spiežot  n
+     Ievērojiet, ka tiek atrasti vārdi Neievērot un NEIEVĒROT.
+
+  4. Iestatiet 'hlsearch' un 'incsearch' opcijas, ievadot:  :set hls is
+
+  5. Ievadiet atkal sekojošo komandu, un skatieties, kas notiek:  /neievērot <ENTER>
+
+  6. Lai atceltu lielo/mazo burtu neievērošanu, ievadiet:   :set noic
+
+PIEZĪME:  Lai atceltu atrasto vietu izcelšanu, ievadiet:    :nohlsearch
+PIEZĪME:  Ja vēlaties meklēt gan lielos, gan mazos burtus vienā meklējumā,
+          ievadiet papildu komandu  \c
+          Piemēram:   /neievērot\c  <ENTER>
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    6. nodarbības APKOPOJUMS
+
+  Lai pārietu uz ievietošanas režīmu un:
+
+  1. lai ievietotu jaunu rindu zem tekošās, ievadiet   o
+     lai ievietotu jaunu rindu virs tekošās, ievadiet  O
+
+  2. Lai ievietotu tekstu pēc kursora, ievadiet        a
+     Lai ievietotu tekstu rindas beigās, ievadiet      A
+
+  Normālajā režīmā:
+
+  3.  e  komanda pārvieto kursoru uz vārda beigām.
+
+  4.  y  komanda nokopē tekstu, bet  p  komanda ievieto to.
+
+  5.  R  ieslēdz aizvietošanas režīmu, līdz tiek nospiests <ESC>.
+
+  6. Ievadot ":set xxx" iestata "xxx" opciju. Dažas no tām ir sekojošas:
+        'ic' 'ignorecase'       meklējot neievēro lielos/mazos burtus.
+	'is' 'incsearch'        uzreiz meklē daļēji ievadīto frāzi.
+	'hls' 'hlsearch'        izgaismo atrastās frāzes.
+     Var norādīt gan īso, gan garo opcijas nosaukumu.
+
+  7. Lai opciju izslēgtu, pievieno priedēkli "no". Piemēram,  :set noic
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    7.1 nodarbība: PALĪDZĪBAS IEGŪŠANA
+
+
+		      ** Iebūvētās palīdzības izmantošana **
+
+  Vim ir plaša iebūvētā palīdzības sistēma. Lai sāktu to lietot, ievadiet vieno
+  no sekojošām komandām:
+	- spiediet <HELP> taustiņu (ja jūsu tastatūrā tāds pastāv)
+	- spiediet <F1> taustiņu (ja jūsu tastatūrai ir tāds)
+	- ievadiet   :help <ENTER>
+
+  Izlasiet palīdzības aprakstu, lai saprastu, kā tas darbojas.
+  Ievadiet  CTRL-W CTRL-W   lai pārslēgtos uz citu logu.
+  Ievadiet  :q <ENTER>      lai aizvērtu palīdzības logu.
+
+  Jūs varat atrast konkrētu palīdzību par jebkuru komandu, ievadot:
+  ":help" komanda.  Piemēram (neaizmirstiet komandas beigās nospiest <ENTER>):
+
+	:help w
+	:help c_CTRL-D
+	:help insert-index
+	:help user-manual
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    7.2 nodarbība: IZVEIDOJIET SĀKŠANAS SKRIPTU
+
+			  ** Ieslēdziet Vim iespējas **
+
+  Vim ir daudz plašākas iespējas, nekā Vi, bet vairums no tām,
+  pēc noklusēšanas, nav ieslēgtas. Lai tās ieslēgtu, izveidojiet "vimrc" failu.
+
+  1. Atkarībā no lietotās operētājsistēmas, atveriet "vimrc" failu sekojoši:
+	:e ~/.vimrc          Unix-veidīgā (t.sk. MacOS un Linux)
+	:e ~/_vimrc          VMS-veidīgā (t.sk. MS-Windows)
+
+  2. Ielasiet "vimrc" šablona faila saturu, ievadot:
+	:r $VIMRUNTIME/vimrc_example.vim
+
+  3. Saglabājiet šablona saturu savā iestatījumu failā:
+	:w
+
+  Kad nākamo reizi atvērsiet Vim, tajā tiks izmantota sintakses izgaismošana.
+  Jūs varat ievietot arī citas iestatījumu iespējas savā "vimrc" failā.
+  Papildu informācijai ievadiet   :help vimrc-intro
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    7.3 nodarbība: AUTOMĀTISKĀ PABEIGŠANA
+
+      ** Automātisko pabeigšanu komandrindā izsauc ar CTRL-D un <TAB> **
+
+  1. Pārliecinieties, ka Vim ir ar Vi nesavietojamā režīmā:  :set nocp
+
+  2. Apskatiet tekošās mapes saturu Vim, ievadot:   :!ls   vai  :!dir
+
+  3. Ievadiet komandas sākumu ar:  :e
+
+  4. Spiediet CTRL-D  un Vim parādīs visas komandas, kuras sākas ar "e".
+
+  5. Spiediet <TAB>   un Vim automātiski pabeigs komandu uz ":edit".
+
+  6. Spiediet atstarpes taustiņu un sāciet ievadīt faila nosaukumu,
+     piemēram:  :edit FIL
+
+  7. Spiediet <TAB>   un Vim pabeigs faila nosaukumu,
+     ja norādītais sākums ir unikāls.
+
+PIEZĪME:  Pabeigšana strādā dažādām komandām.
+          Vienkārši mēģiniet spiest CTRL-D un <TAB>.
+          Šī iespēja var būt īpaši noderīga, ievadot  :help .
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    7. nodarbības APKOPOJUMS
+
+
+  1. Lai atvērtu palīdzības logu, ievadiet  :help  vai spiediet <F1> vai <Help>
+
+  2. Lai atvērtu palīdzību par "komanda", ievadiet  :help komanda
+
+  3. Lai pārslēgtos uz citu logu, spiediet:  CTRL-W CTRL-W
+
+  4. Lai aizvērtu tekošo logu, ievadiet:    :q
+
+  5. Izveidojiet savu "vimrc" sākšanas skriptu ar saviem iestatījumiem.
+
+  6. Ievadot  :  komanda  spiediet CTRL-D, lai apskatītu iespējamos pabeigšanas
+     veidus. Lai pabeigtu komandu, spiediet <TAB> .
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Ar šo Vim ievads ir pabeigts. Tajā tika sniegts īss Vim redaktora apraksts,
+  ar kuru pietiek, lai Vim lietotu vienkāršām darbībām.
+  Vim iespējas ir daudz plašākas, un tajā ir daudz vairāk komandu. Lai apskatītu
+  tās,  ievadiet:  ":help user-manual".
+
+  Tālākai apmācībai tiek rekomendētas sekojošas grāmatas:
+
+  Vim - Vi Improved, Steve Oualline, New Riders
+
+  Šī grāmata ir tieši par Vim, un ir ļoti ieteicama iesācējiem.
+  Daudzi piemēri un attēli no tās pieejami: https://iccf-holland.org/click5.html
+
+  Otra, vecāka grāmata ir par Vi, nevis Vim, bet arī ir ļoti noderīga:
+
+  Learning the Vi Editor, Linda Lamb, O'Reilly & Associates Inc.
+
+  Tajā ir visplašākais Vi iespēju apraksts, grāmatas sestajā laidienā ir
+  aprakstītas arī Vim iespējas.
+
+  Šīs pamācības variantu angļu valodā izveidoja:
+
+  * Michael C. Pierce,
+  * Robert K. Ware,
+  * Charles Smith,
+  * Bram Moolenaar.
+
+  Pamācību latviešu valodā tulkoja:
+
+  * Valdis Vītoliņš
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

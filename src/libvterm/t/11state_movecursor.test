@@ -1,0 +1,224 @@
+INIT
+UTF8 1
+WANTSTATE
+
+!Implicit
+PUSH "ABC"
+  ?cursor = 0,3
+!Backspace
+PUSH "\b"
+  ?cursor = 0,2
+!Horizontal Tab
+PUSH "\t"
+  ?cursor = 0,8
+!Carriage Return
+PUSH "\r"
+  ?cursor = 0,0
+!Linefeed
+PUSH "\n"
+  ?cursor = 1,0
+
+!Backspace bounded by lefthand edge
+PUSH "\e[4;2H"
+  ?cursor = 3,1
+PUSH "\b"
+  ?cursor = 3,0
+PUSH "\b"
+  ?cursor = 3,0
+
+!Backspace cancels phantom
+PUSH "\e[4;80H"
+  ?cursor = 3,79
+PUSH "X"
+  ?cursor = 3,79
+PUSH "\b"
+  ?cursor = 3,78
+
+!HT bounded by righthand edge
+PUSH "\e[1;78H"
+  ?cursor = 0,77
+PUSH "\t"
+  ?cursor = 0,79
+PUSH "\t"
+  ?cursor = 0,79
+
+RESET
+
+!Index
+PUSH "ABC\eD"
+  ?cursor = 1,3
+!Reverse Index
+PUSH "\eM"
+  ?cursor = 0,3
+!Newline
+PUSH "\eE"
+  ?cursor = 1,0
+
+RESET
+
+!Cursor Forward
+PUSH "\e[B"
+  ?cursor = 1,0
+PUSH "\e[3B"
+  ?cursor = 4,0
+PUSH "\e[0B"
+  ?cursor = 5,0
+
+!Cursor Down
+PUSH "\e[C"
+  ?cursor = 5,1
+PUSH "\e[3C"
+  ?cursor = 5,4
+PUSH "\e[0C"
+  ?cursor = 5,5
+
+!Cursor Up
+PUSH "\e[A"
+  ?cursor = 4,5
+PUSH "\e[3A"
+  ?cursor = 1,5
+PUSH "\e[0A"
+  ?cursor = 0,5
+
+!Cursor Backward
+PUSH "\e[D"
+  ?cursor = 0,4
+PUSH "\e[3D"
+  ?cursor = 0,1
+PUSH "\e[0D"
+  ?cursor = 0,0
+
+!Cursor Next Line
+PUSH "   "
+  ?cursor = 0,3
+PUSH "\e[E"
+  ?cursor = 1,0
+PUSH "   "
+  ?cursor = 1,3
+PUSH "\e[2E"
+  ?cursor = 3,0
+PUSH "\e[0E"
+  ?cursor = 4,0
+
+!Cursor Previous Line
+PUSH "   "
+  ?cursor = 4,3
+PUSH "\e[F"
+  ?cursor = 3,0
+PUSH "   "
+  ?cursor = 3,3
+PUSH "\e[2F"
+  ?cursor = 1,0
+PUSH "\e[0F"
+  ?cursor = 0,0
+
+!Cursor Horizontal Absolute
+PUSH "\n"
+  ?cursor = 1,0
+PUSH "\e[20G"
+  ?cursor = 1,19
+PUSH "\e[G"
+  ?cursor = 1,0
+
+!Cursor Position
+PUSH "\e[10;5H"
+  ?cursor = 9,4
+PUSH "\e[8H"
+  ?cursor = 7,0
+PUSH "\e[H"
+  ?cursor = 0,0
+
+!Cursor Position cancels phantom
+PUSH "\e[10;78H"
+  ?cursor = 9,77
+PUSH "ABC"
+  ?cursor = 9,79
+PUSH "\e[10;80H"
+PUSH "C"
+  ?cursor = 9,79
+PUSH "X"
+  ?cursor = 10,1
+
+RESET
+
+!Bounds Checking
+PUSH "\e[A"
+  ?cursor = 0,0
+PUSH "\e[D"
+  ?cursor = 0,0
+PUSH "\e[25;80H"
+  ?cursor = 24,79
+PUSH "\e[B"
+  ?cursor = 24,79
+PUSH "\e[C"
+  ?cursor = 24,79
+PUSH "\e[E"
+  ?cursor = 24,0
+PUSH "\e[H"
+  ?cursor = 0,0
+PUSH "\e[F"
+  ?cursor = 0,0
+PUSH "\e[999G"
+  ?cursor = 0,79
+PUSH "\e[99;99H"
+  ?cursor = 24,79
+
+RESET
+
+!Horizontal Position Absolute
+PUSH "\e[5`"
+  ?cursor = 0,4
+
+!Horizontal Position Relative
+PUSH "\e[3a"
+  ?cursor = 0,7
+
+!Horizontal Position Backward
+PUSH "\e[3j"
+  ?cursor = 0,4
+
+!Horizontal and Vertical Position
+PUSH "\e[3;3f"
+  ?cursor = 2,2
+
+!Vertical Position Absolute
+PUSH "\e[5d"
+  ?cursor = 4,2
+
+!Vertical Position Relative
+PUSH "\e[2e"
+  ?cursor = 6,2
+
+!Vertical Position Backward
+PUSH "\e[2k"
+  ?cursor = 4,2
+
+RESET
+
+!Horizontal Tab
+PUSH "\t"
+  ?cursor = 0,8
+PUSH "   "
+  ?cursor = 0,11
+PUSH "\t"
+  ?cursor = 0,16
+PUSH "       "
+  ?cursor = 0,23
+PUSH "\t"
+  ?cursor = 0,24
+PUSH "        "
+  ?cursor = 0,32
+PUSH "\t"
+  ?cursor = 0,40
+
+!Cursor Horizontal Tab
+PUSH "\e[I"
+  ?cursor = 0,48
+PUSH "\e[2I"
+  ?cursor = 0,64
+
+!Cursor Backward Tab
+PUSH "\e[Z"
+  ?cursor = 0,56
+PUSH "\e[2Z"
+  ?cursor = 0,40

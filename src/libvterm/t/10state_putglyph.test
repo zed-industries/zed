@@ -1,0 +1,74 @@
+INIT
+UTF8 1
+WANTSTATE g
+
+!Low
+RESET
+PUSH "ABC"
+  putglyph 0x41 1 0,0
+  putglyph 0x42 1 0,1
+  putglyph 0x43 1 0,2
+
+!UTF-8 1 char
+# U+00C1 = 0xC3 0x81  name: LATIN CAPITAL LETTER A WITH ACUTE
+# U+00E9 = 0xC3 0xA9  name: LATIN SMALL LETTER E WITH ACUTE
+RESET
+PUSH "\xC3\x81\xC3\xA9"
+  putglyph 0xc1 1 0,0
+  putglyph 0xe9 1 0,1
+
+!UTF-8 split writes
+RESET
+PUSH "\xC3"
+PUSH "\x81"
+  putglyph 0xc1 1 0,0
+
+!UTF-8 wide char
+# U+FF10 = 0xEF 0xBC 0x90  name: FULLWIDTH DIGIT ZERO
+RESET
+PUSH "\xEF\xBC\x90 "
+  putglyph 0xff10 2 0,0
+  putglyph 0x20 1 0,2
+
+!UTF-8 emoji wide char
+# U+1F600 = 0xF0 0x9F 0x98 0x80  name: GRINNING FACE
+RESET
+PUSH "\xF0\x9F\x98\x80 "
+  putglyph 0x1f600 2 0,0
+  putglyph 0x20 1 0,2
+
+!UTF-8 combining chars
+# U+0301 = 0xCC 0x81  name: COMBINING ACUTE
+RESET
+PUSH "e\xCC\x81Z"
+  putglyph 0x65,0x301 1 0,0
+  putglyph 0x5a 1 0,1
+
+!Combining across buffers
+RESET
+PUSH "e"
+  putglyph 0x65 1 0,0
+PUSH "\xCC\x81Z"
+  putglyph 0x65,0x301 1 0,0
+  putglyph 0x5a 1 0,1
+
+!Spare combining chars get truncated
+RESET
+PUSH "e" . "\xCC\x81" x 10
+  putglyph 0x65,0x301,0x301,0x301,0x301,0x301 1 0,0
+  # and nothing more
+
+RESET
+PUSH "e"
+  putglyph 0x65 1 0,0
+PUSH "\xCC\x81"
+  putglyph 0x65,0x301 1 0,0
+PUSH "\xCC\x82"
+  putglyph 0x65,0x301,0x302 1 0,0
+
+!DECSCA protected
+RESET
+PUSH "A\e[1\"qB\e[2\"qC"
+  putglyph 0x41 1 0,0
+  putglyph 0x42 1 0,1 prot
+  putglyph 0x43 1 0,2

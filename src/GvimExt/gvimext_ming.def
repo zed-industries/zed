@@ -1,0 +1,10 @@
+;gvimdef_ming.def : Declares the module parameters for the DLL.
+;The mingw environment doesn't know anything about private declarations
+;Hence this is the same file as gvimext.def with private removed
+
+LIBRARY      gvimext
+; DESCRIPTION  'Vim Shell Extension build with MinGW'
+
+EXPORTS
+    DllCanUnloadNow = DllCanUnloadNow@0
+    DllGetClassObject  = DllGetClassObject@12

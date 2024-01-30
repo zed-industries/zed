@@ -1,0 +1,46 @@
+.TH VIMDIFF 1 "30 marzo 2001"
+.SH NOME
+vimdiff \- modifica da due, fino a otto versioni di un file con Vim, visualizzando le differenze
+.SH SINTASSI
+.br
+.B vimdiff
+[opzioni] file1 file2 [file3 [file4 [file5 [file6 [file7 [file8]]]]]]
+.PP
+.B gvimdiff
+.SH DESCRIZIONE
+.B Vimdiff
+inizia
+.B Vim
+per due e fino a otto file.
+Ogni file ha una sua finestra.
+Le differenze fra file sono evidenziate.
+È una maniera elegante per controllare modifiche e applicare modifiche
+a qualche altra versione dello stesso file.
+.PP
+Vedere vim(1) per dettagli su Vim in sé.
+.PP
+Se iniziato con
+.B gvimdiff
+la GUI sarà utilizzata, se disponibile.
+.PP
+In ogni finestra l'opzione 'diff' è impostata, in modo da evidenziare le
+differenze fra le versioni
+.br
+Le opzioni 'wrap' e 'scrollbind' sono impostate per favorire la visibilità del testo.
+.br
+L'opzione 'foldmethod' è impostata al valore "diff", che mette i gruppi di
+linee uguali fra i diversi file in una piegatura. 'foldcolumn' è impostato
+a due per poter facilmente visualizzare le piegature, aprirle e chiuderle.
+.SH OPZIONI
+Lo schermo è diviso verticalmente, come quando si usa l'opzione "\-O".
+Per dividerlo orizzontalmente, usare invece l'opzione "\-o".
+.PP
+Per tutti gli altri argomenti, vedere vim(1).
+.SH VEDERE ANCHE
+vim(1)
+.SH AUTORE
+Buona parte di
+.B Vim
+è stato scritto da Bram Moolenaar, con molto aiuto da parte di altri.
+Vedere ":help credits" in
+.B Vim.

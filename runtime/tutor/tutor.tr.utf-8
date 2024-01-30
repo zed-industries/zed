@@ -1,0 +1,987 @@
+================================================================================
+=     V I M   T u t o r ' a   h o ş   g e l d i n i z !    --    Sürüm 1.7     =
+================================================================================
+
+  Vim, böyle bir eğitmen ile açıklanması gereken çok fazla komut barındıran,
+  oldukça kuvvetli bir metin düzenleyicidir. Bu eğitmen Vim'i çok amaçlı bir
+  düzenleyici olarak kolaylıkla kullanabileceğiniz yeterli sayıda komutu
+  açıklamak için tasarlanmıştır.
+
+  Eğitmeni tamamlama süresi yapacağınız denemelere bağlı olarak 25-30
+  dakikadır.
+
+  DİKKAT:
+  Derslerdeki komutlar bu metni değiştirecektir. Üzerinde çalışmak için
+  bu dosyanın bir kopyasını alın (eğer "vimtutor" uygulamasını
+  çalıştırdıysanız zaten bir kopyasını almış oldunuz).
+
+  Bu eğitmenin kullanarak öğretmek için tasarlandığını unutmamak önemlidir.
+  Bu şu anlama gelir; komutları öğrenmek için doğru bir şekilde çalıştırma-
+  nız gerekir. Eğer sadece yazılanları okursanız komutları unutursunuz.
+
+  Şimdi Caps Lock düğmenizin basılı olmadığına emin olun ve Ders 1.1'in
+  ekranı tamamen doldurması için j düğmesine yeterli miktarda basın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 1.1: İMLECİ HAREKET ETTİRMEK
+
+
+Çevirmen Notu: Tüm derslerde <ENTER> gördüğünüzde bu düğmeye basın. 
+
+  ** İmleci hareket ettirmek için h,j,k,l düğmelerine basın. **
+        ^
+        k		İpucu:  h düğmesi soldadır ve sola doğru hareket eder.
+    < h	  l >		        l düğmesi sağdadır ve sağa doğru hareket eder.
+        j		        j düğmesi aşağı doğru bir oka benzer.
+        v
+
+  1. İmleci kendinizi rahat hissedinceye dek ekranda dolaştırın.
+
+  2. j düğmesine basın ve ekranın aşağıya kaydığını görün.
+
+  3. Aşağı düğmesini kullanarak, Ders 1.2'ye geçin.
+
+  NOT: Eğer yazdığınız bir şeyden emin değilseniz Normal kipe geçmek için
+       <ESC> düğmesine basın. Daha sonra istediğiniz komutu yeniden yazın.
+
+  NOT: Ok düğmeleri de aynı işe yarar. Ancak hjkl düğmelerini kullanarak çok
+       daha hızlı hareket edebilirsiniz. Gerçekten.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 1.2: VİM'DEN ÇIKIŞ
+
+
+  !! NOT: Aşağıdaki adımları yapmadan önce, bu dersi tamamen okuyun.
+
+  1. Normal kipte olduğunuzdan emin olmak için <ESC> düğmesine basın.
+
+  2. :q! yazın ve <ENTER>'a basın'.
+     Bu düzenleyiciden çıkar ve yaptığınız değişiklikleri KAYDETMEZ.
+
+  3. vimtutor yazarak yeniden bu belgeyi açın.
+
+  4. Eğer bu adımları ezberlediyseniz ve kendinizden eminseniz, 1'den 3'e
+     kadar olan adımları yeniden uygulayın.
+
+  NOT: :q! <ENTER>, yaptığınız tüm değişiklikleri atar. Birkaç ders sonra,
+       değişiklikleri dosyaya kaydetmeyi öğreneceksiniz.
+
+  5. İmleci Ders 1.3'e taşıyın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 1.3: METİN DÜZENLEME - METİN SİLME
+
+
+  ** Normal kipteyken imlecin altındaki karakteri silmek için x'e basın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş satıra götürün.
+
+  2. Düzeltmeler için imleci silinmesi gereken karakterin üzerine getirin.
+
+  3. İstenmeyen karakteri silmek için x düğmesine basın.
+
+  4. Tümce düzelene kadar 2'den 4'e kadar olan adımları tekrar edin.
+
+---> İinek ayyın üzzerinden attladı.
+
+  5. Şimdi satır düzeldi; Ders 1.4'e geçin.
+
+  NOT: Bu eğitmende ilerledikçe ezberlemeye çalışmayın, deneyerek öğrenin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 1.4: METİN DÜZENLEME - METİN GİRME
+
+
+  ** Normal kipteyken metin eklemek için i'ye basın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş İLK satıra götürün.
+
+  2. İlk satırı ikincisinin aynısı gibi yapmak için, imleci eklenmesi
+     gereken metinden sonraki ilk karakterin üzerine götürün.
+
+  3. i'ye basın ve gerekli eklemeleri yapın.
+
+  4. Düzeltilen her hatadan sonra <ESC> düğmesine basarak Normal kipe dönün.
+     Tümceyi düzeltmek için 2'den 4'e kadar olan adımları tekrar edin.
+
+---> Bu metinde eksk.
+---> Bu metinde bir şey eksik.
+
+  5. Artık yapabildiğinizi düşünüyorsanız bir sonraki bölüme geçin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 1.5: METİN DÜZENLEME - METİN EKLEME
+
+
+  ** Metin eklemek için A düğmesine basın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş İLK satıra götürün. İmlecin hangi
+     karakterin üzerinde olduğu önemli değildir.
+
+  2. A'ya basın ve gerekli eklemeleri yapın.
+
+  3. Metin eklemeyi bitirdiğinizde <ESC>'ye basın ve Normal kipe dönün.
+
+  4. İmleci aşağıda ---> ile imlenmiş İKİNCİ satıra götürün ve ikinci ve
+     üçüncü adımları tekrarlayarak tümceyi düzeltin.
+
+---> Bu satırda bazı met
+     Bu satırda bazı metinler eksik.
+---> Bu satırda da bazı metinl
+     Bu satırda da bazı metinler eksik gibi görünüyor.
+
+  5. Artık rahatça metin ekleyebildiğinizi düşünüyorsanız Ders 1.6'ya geçin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 1.6: DOSYA DÜZENLEME
+
+
+  ** :wq yazmak açık olan dosyayı kaydeder ve Vim'den çıkar.
+
+  !! NOT: Aşağıdaki adımları uygulamadan önce tüm bu bölümü iyice okuyun!
+
+  1. Bu eğitmeni Ders 1.2'de yaptığınız gibi :q! yazarak kapatın. Veya başka
+     bir uçbirime erişiminiz varsa orada yapın.
+
+  2. Komut istemi ekranında şu komutu girin: vim tutor <ENTER>. 'vim', Vim
+     düzenleyicisini açmak için kullanacağınız komut olup 'tutor' da
+     düzenlemek istediğiniz dosyanın adıdır. Değiştirilebilen bir dosya
+     kullanın.
+
+  3. Daha önceki derslerde öğrendiğiniz gibi metin girip/ekleyip silin.
+
+  4. :wq <ENTER> yazarak değişiklikleri kaydedin ve Vim'den çıkın.
+
+  5. Eğer vimtutor'dan birinci adımda çıktıysanız yeniden açın ve aşağıdaki
+     özet bölüme gelin.
+
+  6. Yukarıdaki adımları okuduktan ve anladıktan sonra YAPIN.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 1: ÖZET
+
+
+  1. İmleç ok düğmeleri veya hjkl düğmeleri kullanılarak hareket ettirilir.
+
+     h (sol) / j (aşağı) / k (yukarı) / l (sağ)
+
+  2. Vim'i komut isteminden başlatmak için:
+
+     vim <ENTER>
+     veya
+     vim DOSYA_ADI <ENTER> kullanın.
+
+  3. Vim'den çıkmak için önce <ESC>'ye basıp sonra:
+
+     :q! <ENTER> (değişiklikleri kaydetmeden çıkar)
+     :wq <ENTER> (değişiklikleri kaydedip çıkar) komutlarını kullanın.
+
+  4. İmlecin üzerinde olduğu karakteri silmek için x düğmesine basın.
+
+  5. Metin girmek veya eklemek için:
+
+     i metin girin <ESC> imleçten önce girer
+     A metin girin <ESC> satırdan sonra ekler
+
+  NOT: <ESC> düğmesine basmak sizi Normal kipe geri döndürür veya istenmeyen
+       veya yarım yazılmış bir komutu iptal eder.
+
+  Şimdi Ders 2 ile bu eğitmeni sürdürün.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 2.1: SİLME KOMUTLARI
+
+
+  ** Bir sözcüğü silmek için dw yazın. **
+
+  1. Normal kipte olduğunuzdan emin olmak için <ESC> düğmesine basın.
+
+  2. İmleci aşağıda ---> ile imlenmiş satıra götürün.
+
+  3. İmleci silinmesi gereken sözcüğün başına götürün.
+
+  4. Sözcüğü silmek için dw yazın.
+
+  NOT: d harfi siz yazdıkça ekranın son satırında görülecektir. Vim sizin w
+       yazmanızı bekleyecektir. Eğer d'den başka bir şey görürseniz yanlış
+       yazmışsınız demektir, <ESC> düğmesine basın ve baştan başlayın.
+
+---> Bu satırda çerez tümceye ait olmayan leblebi sözcükler var.
+
+  5. Tümce düzelene kadar adım 3 ve 4'ü tekrar edin ve Ders 2.2'ye geçin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 2.2: DAHA FAZLA SİLME KOMUTLARI
+
+
+  ** Satırı sonuna kadar silmek için d$ yazın. **
+
+  1. Normal kipte olduğunuzdan emin olmak için <ESC> düğmesine basın.
+
+  2. İmleci aşağıda ---> ile imlenmiş satıra götürün.
+
+  3. İmleci doğru olan satırın sonuna götürün. (Birinci noktadan SONRAKİ)
+
+  4. Satırı en sona kadar silmek için d$ yazın. $ imini yazmak için:
+
+     Türkçe Q klavyede <ALT GR> 4,
+     Türkçe F klavyede <SHIFT> 4 ikililerini kullanın.
+
+---> Birileri bu satırın sonunu iki defa yazmış. satırın sonunu iki
+     defa yazmış.
+
+  5. Neler olduğunu anlamak için Ders 2.3'e gidin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 2.3: İŞLEÇLER VE HAREKETLER
+
+
+  Metin değiştiren birçok komut işleçler ve eklerden oluşur. Bir d işleci
+  içeren silme komutu için kullanılan biçim aşağıdaki gibidir:
+
+    d hareket
+
+  Burada:
+
+    d         - silme işlecidir.
+    hareket   - işlecin neyi işleteceğidir (aşağıda listelenmiştir).
+
+  Hareketlerin kısa bir listesi için:
+
+    w - bir sonraki sözcüğün başlangıcına kadar, ilk karakteri DAHİL OLMADAN
+    e - şu anki sözcüğün sonuna kadar, son karakteri DAHİL OLARAK
+    $ - satırın sonuna kadar, son karakteri DAHİL OLARAK
+
+  Demeli ki, de komutunu girmek imleçten sözcüğün sonuna kadar siler.
+
+  NOT: Normal kipte hiçbir hareket olmadan yalnızca işleci girmek imleci
+       yukarıda belirtildiği gibi hareket ettirir.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 2.4: BİR HAREKET İLE BİRLİKTE SAYIM KULLANMAK
+
+
+  ** Bir hareketten önce sayı kullanmak o hareketi sayıca tekrarlatır. **
+
+  1. İmleci aşağıda ---> ile imlenmiş satırın BAŞINA götürün.
+
+  2. 2w yazarak imleci iki sözcük ileriye taşıyın.
+
+  3. 3e yazarak imleci üç sözcük ilerideki sözcüğün sonuna taşıyın.
+
+  4. 0 yazarak imleci satırın başına taşıyın.
+
+  5. İkinci ve üçüncü adımları değişik sayılar kullanarak tekrarlayın.
+
+---> Bu üzerinde hoplayıp zıplayabileceğiniz naçizane bir satır.
+
+  6. Ders 2.5'e geçin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 2.5: BİR SAYIM KULLANARAK DAHA FAZLA SİLME İŞLEMİ
+
+
+  ** Bir işleç ile birlikte sayı kullanmak işleci o kadar tekrarlatır. **
+
+  Yukarıda sözü edilen silme işleci ve hareketinin arasına sayı ekleyerek
+  yapılan işlemi o sayı kadar tekrarlatabilirsiniz.
+
+    d [sayı] hareket
+
+  1. İmleci aşağıda ---> ile imlenen satırdaki ilk BÜYÜK HARFTEN oluşan
+     sözcüğün başına getirin.
+
+  2. d2w yazarak iki BÜYÜK HARFLİ sözcüğü silin.
+
+  3. Birinci ve ikinci adımları başka bir sayı kullanarak BÜYÜK
+     HARFLİ sözcükleri tek bir komutta silmek için yeniden uygulayın.
+
+---> Bu ABC ÇDE satırdaki FGĞ HIİ JKLM NOÖ PRSŞT sözcükler UÜ VY temizlenmiştir.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 2.6: SATIRLARDA İŞLEM YAPMA
+
+
+  ** Bütün bir satırı silmek için dd yazın. **
+
+  Bütün bir satır silme işlemi çok sık kullanıldığından dolayı, Vi
+  tasarımcıları bir satırı tamamen silmek için iki d yazmanın daha kolay
+  olduğuna karar vermişler.
+
+  1. İmleci aşağıdaki tümceciğin ikinci satırına götürün.
+
+  2. Satırı silmek için dd yazın.
+
+  3. Şimdi de dördüncü satıra gidin.
+
+  4. İki satırı birden silmek için 2dd yazın.
+
+---> 1) Güller kırmızıdır,
+---> 2) Çamur eğlenceli,
+---> 3) Menekşeler mavi,
+---> 4) Bir arabam var,
+---> 5) Saat zamanı söyler,
+---> 6) Şeker tatlıdır
+---> 7) Ve sen de öylesin
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 2.7: GERİ AL KOMUTU
+
+
+  ** Komutu geri almak için u, bütün bir satırı düzeltmek için U yazın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş satırda ve ilk hatanın üzerine koyun.
+
+  2. İlk istenmeyen karakteri silmek için x yazın.
+
+  3. Şimdi son çalıştırılan komutu geri almak için u yazın.
+
+  4. Bu sefer x komutunu kullanarak satırdaki tüm hataları düzeltin.
+
+  5. Şimdi satırı ilk haline çevirmek için büyük U yazın.
+
+  6. Şimdi U ve daha önceki komutları geri almak için birkaç defa u yazın.
+
+  7. Birkaç defa <CTRL> R (<CTRL>'yi basılı tutarken R ye basın) yazarak
+     geri almaları da geri alın.
+
+---> Buu satıırdaki hataları düüzeltinn ve sonra koomutu geri alllın.
+
+  8. Bunlar son derece kullanışlı komutlardır. Şimdi Ders 2 Özete geçin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 2: ÖZET
+
+
+  1. İmleçten itibaren bir sözcüğü silmek için dw yazın.
+
+  2. İmleçten itibaren bir sözcüğün sonuna kadar silmek için de yazın.
+
+  3. İmleçten itibaren bir satırı silmek için d$ yazın.
+
+  4. Bütün bir satırı silmek için dd yazın.
+
+  5. Bir hareketi yenilemek için önüne sayı takısı getirin, 2w gibi.
+
+  6. Normal kipte bir komut biçimi şöyledir:
+
+      işleç [sayı] hareket
+
+    burada:
+      işleç   - ne yapılacağı, silmek için d örneğinde olduğu gibi
+      [sayı]  - komutun kaç kere tekrar edeceğini gösteren isteğe bağlı sayı
+      hareket - işlecin nice davranacağı; w (sözcük), e (sözcük sonu),
+                $ (satır sonu) gibi
+
+  7. Bir satırın başına gelmek için sıfır (0) kullanın.
+
+  8. Önceki hareketleri geri almak için u (küçük u) yazın.
+     Bir satırdaki tüm değişiklikleri geri almak için U (büyük U) yazın.
+     Geri almaları geri almak için <CTRL> R kullanın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 3.1: KOY KOMUTU
+
+
+  ** Son yaptığınız silmeyi imleçten sonraya yerleştirmek için p yazın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş tümceciğe götürün.
+
+  2. Satırı silip Vim'in arabelleğine yerleştirmek için dd yazın.
+
+  3. İmleci, silinmiş satırı nereye yerleştirmek istiyorsanız, o satırın
+     ÜZERİNE götürün.
+
+  4. Normal kipteyken satırı yerleştirmek için p yazın.
+
+  5. Tüm satırları doğru sıraya koymak için 2'den 4'e kadar olan adımları
+     tekrar edin.
+
+---> d) Sen de öğrendin mi?
+---> b) Menekşeler mavidir,
+---> c) Akıl öğrenilir,
+---> a) Güller kırmızıdır,
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 3.2: DEĞİŞTİR KOMUTU
+
+
+  ** İmlecin altındaki karakteri başkası ile değiştirmek için rx yapın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş İLK satıra götürün.
+
+  2. İmleci satırdaki ilk hatanın üzerine götürün.
+
+  3. Hatayı düzeltmek için önce r ardından da doğru karakteri yazın.
+
+  4. İlk satır düzelene kadar adım 2 ve 3'ü tekrar edin.
+
+--->  Bu satıv yazılıvken, bivileri yamlış düğmetere basmış.
+--->  Bu satır yazılırken, birileri yanlış düğmelere basmış.
+
+  5. Ders 3.3'ye geçin.
+
+  NOT: Unutmayın, ezberleyerek değil deneyerek öğrenin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 3.3: DEĞİŞTİR İŞLECİ
+
+
+  ** Bir sözcüğü imleçten sözcük sonuna kadar değiştirmek için ce yapın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş İLK satıra götürün.
+
+  2. İmleci "sutar" daki u'nun üzerine yerleştirin.
+
+  3. Önce ce ardından doğru harfleri girin (bu durumda 'atır').
+
+  4. <ESC> düğmesine basın ve değişmesi gereken bir sonraki karaktere gidin.
+
+  5. İlk cümle ikincisiyle aynı olana kadar adım 3 ve 4'ü tekrar edin.
+
+---> Bu sutar değiştir komutu ile değişneli gereken birkaç mözgüç içeriyor.
+---> Bu satır değiştir komutu ile değişmesi gereken birkaç sözcük içeriyor.
+
+  ce'nin sadece sözcüğü değiştirmediğini, aynı zamanda sizi EKLE kipine
+  aldığına da dikkat edin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 3.4: c'Yİ KULLANARAK DAHA FAZLA DEĞİŞTİRME
+
+
+  ** Değiştir işleci sil komutu ile aynı hareketlerle kullanılır. **
+
+  1. Değiştir işleci sil ile aynı yolla çalışır. Biçim şöyledir:
+
+      c [sayı] hareket
+
+  2. Hareketler de aynıdır. Örneğin w (sözcük), $ (satır sonu) gibi.
+
+  3. İmleci aşağıda ---> ile imlenmiş İLK satıra götürün.
+
+  4. İmleci ilk hataya götürün.
+
+  5. Satırın geri kalan kısmını ikincisi gibi yapmak için c$ yazın ve daha
+     sonra <ESC> düğmesine basın.
+
+---> Bu satırın sonu düzeltilmek için biraz yardıma ihtiyaç duyuyor.
+---> Bu satırın sonu düzeltilmek için c$ komutu kullanılarak yardıma ihtiyaç
+     duyuyor.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 3: ÖZET
+
+
+  1. Silinmiş olan bir metni geri yerleştirmek için p yazın. Bu silinmiş
+     metni imleçten hemen SONRA geri yerleştirir (eğer bir satır silinmişse
+     hemen imlecin altındaki satıra yerleştirilecektir).
+
+  2. İmlecin altındaki karakteri değiştirmek için önce r ardından da
+     yazmak istediğiniz karakteri yazın.
+
+  3. Değiştir işleci belirlenen nesneyi, imleçten hareketin sonuna kadar
+     değiştirme imkanı verir. Örneğin, bir sözcüğü imleçten sözcük sonuna
+     kadar değiştirmek için cw, bir satırın tamamını değiştirmek içinse c$
+     yazın.
+
+  4. Değiştir için biçim şöyledir:
+
+      c [sayı] hareket
+
+  Şimdi bir sonraki derse geçin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 4.1: İMLEÇ KONUMU VE DOSYA DURUMU
+
+
+** <CTRL> G dosya içerisindeki konumunuzu ve dosya durumunu gösterir. Dosya
+   içerisindeki bir satıra gitmek için G yazın. **
+
+  NOT: Adımlardan herhangi birini yapmadan önce dersin tamamını okuyun!
+
+  1. <CTRL> düğmesini basılı tutun ve g'ye basın. Biz buna <CTRL> G diyoruz.
+     Dosyanın sonunda dosya adını ve bulunduğunuz konumu gösteren bir durum
+     satırı görünecektir. Adım 3 için satır numarasını unutmayın.
+
+  NOT: İmleç konumunu ekranın sağ alt köşesinde görebilirsiniz. Bu 'ruler'
+       seçeneği etkin olduğunda görülür (bilgi için :help 'ruler' yazın).
+
+  2. Dosyanın sonuna gitmek için G'ye basın. Dosyanın başına gitmek için
+     gg komutunu kullanın.
+
+  3. Daha önce bulunduğunuz satır numarasını yazın ve daha sonra G'ye
+     basın. Bu sizi ilk <CTRL> g'ye bastığınız satıra geri götürecektir.
+
+  4. Yapabileceğinizi düşündüğünüzde, adım 1'den 3'e kadar yapın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 4.2: ARAMA KOMUTU
+
+
+  ** Bir sözcük öbeğini aramak için / ve aranacak öbeği girin. **
+
+  1. Normal kipteyken / yazın. / karakterinin ve imlecin ekranın sonunda
+     göründüğüne dikkat edin.
+
+  2. 'hatttaa' yazıp <ENTER>'a basın. Bu sizin aramak istediğiniz sözcüktür.
+
+  3. Aynı sözcük öbeğini tekrar aramak için n yazın.
+     Aynı sözcük öbeğini zıt yönde aramak için N yazın.
+
+  4. Eğer zıt yöne doğru bir arama yapmak istiyorsanız / komutu yerine ?
+     komutunu kullanın.
+
+---> "hatttaa" hatayı yazmanın doğru yolu değil; hatttaa bir hata.
+
+Not: Arama dosyanın sonuna ulaştığında dosyanın başından sürecektir. Bunu
+     devre dışı bırakmak için 'wrapscan' seçeneğini sıfırlayın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 4.3: UYAN AYRAÇLAR ARAMASI
+
+
+  ** Uyan bir (, [ veya { bulmak için % yazın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş satırda bir (, [ veya { imine götürün.
+
+  2. Şimdi % karakterini yazın.
+
+  3. İmleç uyan ayracın üzerine gider.
+
+  4. Uyan ilk parantezin üzerine geri dönmek için yine % yazın.
+
+  5. İmleci başka bir (), [] veya {} üzerine götürün ve % işlecinin neler
+     yaptığını gözlemleyin.
+
+---> Bu içerisinde ( )'ler, ['ler ] ve {'ler } bulunan bir satırdır.
+
+  NOT: Bu içerisinde eşi olmayan ayraçlar bulunan bir programın hatalarını
+       ayıklamak için son derece yararlıdır.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 4.4: BUL/DEĞİŞTİR KOMUTU
+
+
+  ** 'eski' yerine 'yeni' yerleştirmek için :s/eski/yeni/g yazın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş satıra götürün.
+
+  2. :s/buu/bu yazıp <ENTER>'a basın. Bu komutun sadece satırdaki ilk
+     uyan karşılaşmayı düzelttiğine dikkat edin.
+
+  3. Şimdi satırdaki tüm değişiklikleri bir anda yapmak için :s/buu/bu/g
+     yazarak tüm "buu" oluşumlarını değiştirin.
+
+---> Buu birinci, buu ikinci, buu üçüncü bölüm.
+
+  4. İki satır arasındaki tüm karakter katarı oluşumlarını değiştirmek için:
+
+      :#,#s/eski/yeni/g yazın. #,# burada değişikliğin yapılacağı aralığın
+      satır numaralarıdır.
+      :%s/eski/yeni/g yazın. Bu tüm dosyadaki her oluşumu değiştirir.
+      :%s/eski/yeni/gc yazın. Bu tüm dosyadaki her oluşumu değiştirir ancak
+      her birini değiştirmeden önce bize sorar.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 4: ÖZET
+
+
+  1. <CTRL> G sizin dosyadaki konumunuzu ve dosya durumunu gösterir.
+     G dosyanın sonuna gider.
+     [sayı] G belirtilen satır numarasına gider.
+     gg ilk satıra gider.
+
+  2. Sözcük öbeğinden önce / yazmak, İLERİ yönde o öbeği aratır.
+     Sözcük öbeğinden önce ? yazmak, GERİ yönde o öbeği aratır.
+     Aramadan sonra, aynı yöndeki bir sonraki karşılaşmayı bulmak için n,
+     veya zıt yöndekini bulmak için N yazın.
+     <CTRL> O sizi eski konumlara, <CTRL> I daha yeni konumlara götürür.
+
+  3. İmleç bir (), [], {} ayracı üzerindeyken % yazmak, uyan diğer eş
+     ayracı bulur.
+
+  4. Satırdaki ilk 'eski'yi 'yeni' ile değiştirmek için :s/eski/yeni,
+     Satırdaki tüm 'eski'leri 'yeni' ile değiştirmek için :s/eski/yeni/g,
+     İki satır arasındaki öbekleri değiştirmek için :#,#s/eski/yeni/g,
+     Dosyadaki tüm karşılaşmaları değiştirmek için :%s/eski/yeni/g yazın.
+     Her seferinde onay sorması için :%s/eski/yeni/gc kullanın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 5.1: BIR DIŞ KOMUT ÇALIŞTIRMAK
+
+
+  ** Bir dış komutu çalıştırmak için :! ve ardından dış komutu yazın. **
+
+  1. İmleci ekranın altına götürmek için : komutunu yazın. Bu size bir komut
+     yazma imkanı verir.
+
+  2. Şimdi ! (ünlem) karakterini yazın. Bu size bir dış komut çalıştırma
+     olanağı verir.
+
+  3. Örnek olarak ! karakterini takiben ls yazın ve <ENTER>'a basın. Bu size
+     o anda bulunduğunuz dizindeki dosyaları gösterecektir. Veya ls
+     çalışmazsa :!dir komutunu kullanın.
+
+  NOT: Herhangi bir dış komutu bu yolla çalıştırmak mümkündür.
+
+  NOT: Tüm : komutlarından sonra <ENTER> düğmesine basılmalıdır. Bundan
+       sonra bunu her zaman anımsatmayacağız.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 5.2: DOSYA YAZMAYA DEVAM
+
+
+  ** Dosyaya yapılan değişikliği kaydetmek için :w DOSYA_ADI yazın. **
+
+  1. Bulunduğunuz dizini listelemek için :!dir veya :!ls yazın.
+     Komuttan sonra <ENTER> düğmesine basacağınızı zaten biliyorsunuz.
+
+  2. Mevcut olmayan bir dosya adı seçin, örneğin DENEME.
+
+  3. Şimdi :w DENEME yazın (DENEME sizin seçtiğiniz dosya adıdır).
+
+  4. Bu tüm dosyayı (Vim Tutor) DENEME isminde başka bir dosyaya yazar.
+     Bunu doğrulamak için, :!ls veya :!dir yazın ve yeniden bulunduğunuz
+     dizini listeleyin.
+
+  NOT: Eğer Vim'den çıkıp kaydettiğiniz DENEME dosyasını açarsanız, bunun
+       kaydettiğiniz vimtutor'un gerçek bir kopyası olduğunu görürsünüz.
+
+  5. Şimdi dosyayı şu komutları vererek silin:
+	    Windows:                       :!del DENEME
+	    Unix (macOS, Linux, Haiku):    :!rm DENEME
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 5.3: YAZMA İÇİN METİN SEÇME
+
+
+  ** Dosyanın bir bölümünü kaydetmek için, v hareket :w DOSYA_ADI yazın. **
+
+  1. İmleci bu satırın üzerine getirin.
+
+  2. v düğmesine basarak imleci aşağıdaki beşinci adıma taşıyın. Metnin
+     seçildiğine dikkat edin.
+
+  3. : karakterini yazın. Ekranın alt kısmında :'<'> çıkacaktır.
+
+  4. w DENEME yazın; DENEME burada henüz var olmayan bir dosyadır. <ENTER>
+     düğmesine basmadan önce :'<'>w DENEME gördüğünüzden emin olun.
+
+  5. Vim seçilen satırları DENEME dosyasına yazacaktır. :!ls veya :!dir ile
+     bakarak dosyayı görün. Henüz silmeyin; bir sonraki derste kullanacağız.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 5.4: DOSYALARI BİRLEŞTİRME VE BÖLÜM EKLEME
+
+
+  ** Bir dosyanın içeriğini eklemek için :r DOSYA_ADI yazın. **
+
+  1. İmleci bu satırın hemen bir üstüne koyun.
+
+  NOT: İkinci adımdan sonra Ders 5.3'ün metnini göreceksiniz.
+       Sonrasında AŞAĞI düğmesi ile bu derse geri gelin.
+
+  2. Şimdi :r DENEME komutunu kullanarak DENEME dosyasını bu dosyanın içine
+     getirin. Getirdiğiniz dosya imlecin hemen altına yerleştirilir.
+
+  3. Dosyanın getirildiğini doğrulamak için YUKARI düğmesini kullanarak
+ 	 Ders 5.3'ün iki adet kopyası olduğunu görün, özgün sürümü ve kopyası.
+
+  NOT: Bu komutu kullanarak bir dış komutun çıktısını da dosyanın içine
+       koyabilirsiniz. Örneğin :r !ls yazmak ls komutunun vereceği çıktıyı
+       dosyanın içinde hemen imlecin altındaki satıra koyar.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 5: ÖZET
+
+
+  1. :!komut bir dış komut çalıştırır.
+     Bazı yararlı örnekler:
+	 (MS-DOS)	(Unix)
+	 :!dir		:!ls		- bir dizini listeler.
+	 :!del DOSYA	:!rm DOSYA	- DOSYA'yı siler.
+
+  2. :w DOSYA_ADI o anki Vim dosyasını diske DOSYA_ADI ile kaydeder.
+
+  3. v hareket :w DOSYA_ADI seçilmiş satır aralığını DOSYA_ADI ile kaydeder.
+
+  4. :r DOSYA_ADI imlecin altından başlayarak DOSYA_ADI isimli dosyanın
+     içeriğini ekler.
+
+  5. :r !dir veya !ls bu iki komutun (dosyaları listeleme) içeriklerini
+     okur ve dosyanın içine yerleştirir.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 6.1: AÇ KOMUTU
+
+
+  ** İmlecin aşağısına satır açmak ve EKLE kipine geçmek için o yazın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş satıra götürün.
+
+  2. İmlecin aşağısına bir satır açmak ve EKLE kipine geçmek için o
+     (küçük harfle) yazın.
+
+  3. Şimdi herhangi bir metin girin ve EKLE kipinden çıkmak için <ESC>
+     düğmesine basın.
+
+---> o yazdıktan sonra imleç EKLE kipinde açılan satırın üzerine gider. 
+
+  4. İmlecin üzerinde bir satır açmak için, yalnızca  büyük O yazın. Bunu
+     aşağıdaki satırda deneyin.
+
+---> Bu satırın üzerine bir satır açmak için imleç bu satırdayken O  yazın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 6.2: EKLE KOMUTU
+
+
+  ** İmleçten sonra metin eklemek için a yazın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş satıra götürün.
+
+  2. İmleç satırın sonuna gelinceye dek e düğmesine basın.
+
+  3. İmleçten SONRA metin eklemek için a yazın.
+
+  4. Şimdi ilk satırı ikincisi gibi tamamlayın. EKLE kipinden çıkmak için
+     <ESC> düğmesine basın.
+
+  5. e düğmesini kullanarak bir sonraki yarım sözcüğe gidin ve adım 3 ve 4'ü
+     tekrarlayın.
+
+---> Bu satı çalışabilirsiniz. Çalı met ekl
+---> Bu satırda çalışabilirsiniz. Çalışırken metin eklemeyi kullanın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 6.3: BİR BAŞKA DEĞİŞTİR KOMUTU
+
+
+  ** Birden fazla karakter değiştirmek için büyük R yazın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş İLK satıra götürün. İmleci ilk xxx'in
+     başına getirin.
+
+  2. Şimdi R düğmesine basın ve ikinci satırdaki sayıyı ilk satırdaki xxx'in
+     yerine yazın.
+
+  3. <ESC> düğmesine basarak DEĞİŞTİR kipinden çıkın. Satırın geri kalanının
+     değişmediğini gözlemleyin.
+
+  4. Kalan xxx'i de değiştirmek için adımları tekrarlayın.
+
+---> 123 sayısına xxx eklemek size yyy toplamını verir.
+---> 123 sayısına 456 eklemek size 579 toplamını verir.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 6.4: METİN KOPYALA VE YAPIŞTIR
+
+
+  ** y işlecini kullanarak metin kopyalayın ve p kullanarak yapıştırın. **
+
+  1. İmleci aşağıda ---> ile imlenmiş satıra getirin, "a)"nın ardına koyun.
+
+  2. v ile GÖRSEL kipe geçin ve imleci "ilk" sözcüğünün öncesine getirin.
+
+  3. y düğmesine basarak seçili metni kopyalayın.
+
+  4. İmleci bir sonraki satırın sonuna j$ ile getirin.
+
+  5. p düğmesine basarak metni yapıştırın. Akabinde <ESC> düğmesine basın.
+
+  6. GÖRSEL kipe geçerek "öge" sözcüğünü seçin, y ile kopyalayın, j$ ile
+     ikinci satırın sonuna gidin ve p ile sözcüğü yapıştırın.
+
+---> a) Bu ilk öge
+---> b)
+
+  NOT: y komutunu bir işleç olarak da kullanabilirsiniz; yw komutu yalnızca
+       bir sözcüğü kopyalar.
+  
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 6.4: SET KOMUTU
+
+
+  ** Arama veya değiştirme işlemlerinin büyük/küçük harf durumunu görmezden
+     gelmesi için SET komutunu kullanın.
+  
+  1. 'yoksay' sözcüğünü aramak için /ignore yazın. Bunu n düğmesine basarak
+     birkaç kez yenileyin.
+
+  2. :set ic yazarak 'ic' (BÜYÜK/küçük harf yoksay) ayarını seçin.
+
+  3. Yeniden n düğmesine basarak 'yoksay' sözcüğünü aramayı sürdürün. Artık
+     YOKSAY ve yoksay örneklerinin de bulunduğunu gözlemleyin. 
+
+  4. :set hls is yazarak 'hlsearch' ve 'incsearch' ayarlarını seçin.
+
+  5. /ignore yazarak arama komutunu tekrar verin ve ne olacağını görün.
+
+  6. BÜYÜK/küçük harf ayrımsız arama ayarını kapatmak için :set noic yazın.
+
+  NOT: Sonuçların ekranda vurgulanmasını istemiyorsanız :nohlsearch yazın.
+  NOT: Eğer yalnızca bir arama işlemi için BÜYÜK/küçük harf ayrımsız arama
+       yapmak istiyorsanız /ignore\c komutunu kullanın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	DERS 6 ÖZET
+
+
+  1. o komutu imlecin altında bir satır açar ve imleci bu açılmış satıra
+     EKLE kipinde yerleştirir.
+     O komutu imlecin üzerinde bir satır açar.
+
+  2. a komutu imleçten sonra metin girişine olanak verir.
+     A komutu geçerli satırın sonuna giderek metin girişine olanak verir.
+
+  3. e komutu imleci bir sözcüğün sonuna taşır.
+
+  4. y işleci metni kopyalar, p işleci yapıştırır.
+
+  5. R komutu DEĞİŞTİR kipine girer ve <ESC>'ye basılana kadar kalır.
+
+  6. ":set xxx" yazmak "xxx" seçeneğini ayarlar. Bazı seçenekler:
+     'ic' 'ignorecase' BÜYÜK/küçük harf ayrımını arama yaparken kapatır.
+     'is' 'incsearch' Bir arama metninin tüm uyan kısımlarını gösterir.
+     'hls' 'hlsearch' Uyan sonuçların üzerini vurgular.
+     Ayarlama yaparken ister kısa ister uzun sürümleri kullanabilirsiniz.
+
+  7. Bir ayarı kapatmak için "no" ekleyin, örneğin :set noic.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 7.1: YARDIM KAYNAKLARI
+
+
+  ** Çevrimiçi yardım sistemini kullanın **
+
+  Vim geniş bir çevrimiçi yardım sistemine sahiptir. Başlamak için şu üçünü
+  deneyebilirsiniz:
+
+    - (eğer varsa) <HELP> düğmesine basın
+    - (eğer varsa) <F1> düğmesine basın
+    - :help yazın ve <ENTER> düğmesine basın
+
+  Yardım penceresindeki metinleri okuyarak yardım sisteminin nasıl
+  çalıştığını öğrenin. 
+  Bir pencereden diğerine geçmek için <CTRL> W ikilisini kullanın.
+  Yardım penceresini kapatmak için :q yazıp <ENTER> düğmesine basın.
+
+  ":help" komutuna değişken (argüman) vererek herhangi bir konu hakkında
+  yardım alabilirsiniz. Şunları deneyin:
+
+    :help w
+    :help c_<CTRL> D
+    :help insert-index
+    :help user-manual
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 7.2: BİR BAŞLANGIÇ BETİĞİ OLUŞTURUN
+
+
+  ** Vim'in özelliklerine bakın **
+
+  Vim Vi'dan çok daha fazla özelliğe sahiptir fakat birçoğu öntanımlı olarak
+  kapalıdır. Daha fazla özellik kullanabilmek için bir "vimrc" dosyası
+  oluşturmalısınız.
+
+  1. "vimrc" dosyasını düzenlemeye başlayın. İşletim sistemlerine göre:
+
+    :e ~/.vimrc		Unix için
+    :e ~/_vimrc		Windows için
+
+  2. Şimdi örnek "vimrc" dosyası içeriğini okuyun:
+
+    :r $VIMRUNTIME/vimrc_example.vim
+
+  3. Dosyayı :w ile kaydedin.
+
+  Vim'i bir sonraki çalıştırılmasında sözdizim vurgulaması kullanacaktır.
+  Tüm tercih ettiğiniz ayarları bu "vimrc" dosyasına ekleyebilirsiniz.
+  Daha fazla bilgi için :help vimrc-intro yazın.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 7.3: TAMAMLAMA
+
+
+  ** <CTRL> D ve <TAB> ile komut istemi ekranında tamamlama **
+
+  1. :set nocp komutunu kullanarak Vim'in uyumlu kipte olmadığından
+     emin olun.
+
+  2. Bulunduğunuz dizindeki dosyalara :!ls veya :!dir ile bakın.
+
+  3. Bir komutun baş kısmını yazın, örneğin :e.
+
+  4. <CTRL> D'ye bastığınızda Vim size e ile başlayan komutları
+     gösterecektir.
+
+  5. d <TAB> kullandığınızda Vim komutu kendinden :edit olarak
+     tamamlayacaktır.
+
+  6. Şimdi bir boşluk ekleyin ve var olan bir dosyanın baş harflerini yazın.
+     Örneğin :edit DOS.
+  
+  7. <TAB> düğmesine basın. Eğer yalnızca bu dosyadan bir tane varsa Vim
+     sizin için dosya adının geri kalanını tamamlayacaktır.
+
+  NOT: Tamamlama birçok komut için çalışır. Yalnızca <CTRL> D ve <TAB>
+       ikililerini deneyin. Özellikle :help için çok yararlıdır.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	Ders 7: ÖZET
+
+
+  1. :help yazmak veya <F1> veya <HELP> düğmelerine basmak yardım
+     penceresini açar.
+
+  2. :help cmd yazarak cmd hakkında bilgi sahibi olabilirsiniz.
+
+  3. <CTRL> W kullanarak başka pencerelere geçebilirsiniz.
+
+  4. :q kullanarak yardım penceresini kapatabilirsiniz.
+
+  5. Bir vimrc başlangıç betiği oluşturarak yeğlenen ayarlarınızı
+     saklayabilirsiniz.
+
+  6. Bir : komutu girerken <CTRL> D'ye basarak olanaklı tamamlama
+     seçeneklerini görebilirsiniz. <TAB>'a basarak tamamlamayı seçin.
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Böylece Vim Eğitmeni tamamlanmış oldu. Eğitmendeki amaç Vim düzenleyicisi
+  hakkında kısa bir bilgi vermek ve onu kolayca kullanmanızı sağlamaktı.
+  Vim'in tamamını öğretmek çok zordur zira Vim birçok komuta sahiptir.
+  Bundan sonra ":help user-manual" komutu ile kullanıcı kılavuzunu
+  okumalısınız.
+
+  Daha fazla okuma ve çalışma için şu kitabı öneriyoruz:
+
+	Vim - Vi Improved - by Steve Oualline
+	Publisher: New Riders
+
+  Tümüyle Vim için hazırlanmış ilk kitaptır. Özellikle ilk kullanıcılar için
+  çok uygundur.
+  Kitapta birçok örnek ve resim bulunmaktadır.
+  https://iccf-holland.org/click5.html adresine bakabilirsiniz.
+
+  Bu kitap daha eskidir ve Vim'den daha çok Vi içindir ancak tavsiye edilir:
+
+	Learning the Vi Editor - by Linda Lamb
+	Publisher: O'Reilly & Associates Inc.
+
+  Vi hakkında bilmek isteyeceğiniz neredeyse her şeyin bulunduğu bir kitap.
+  6. Basım aynı zamanda Vim hakkında da bilgi içermektedir.
+
+  Bu eğitmen Michael C. Pierce ve Robert K. Ware tarafından yazıldı,
+  Charles Smith tarafından sağlanan fikirlerle Colorado School Of Mines,
+  Colorado State University.  E-posta: bware@mines.colorado.edu
+
+  Vim için değiştiren: Bram Moolenaar
+
+  Türkçe çeviri:
+  Serkan "heartsmagic" Çalış (2005), adresimeyaz (at) yahoo (dot) com
+  
+  2019 güncellemesi:
+  Emir SARI, bitigchi (at) me (dot) com
+
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

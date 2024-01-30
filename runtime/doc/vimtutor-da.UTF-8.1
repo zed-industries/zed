@@ -1,0 +1,53 @@
+.TH VIMTUTOR 1 "2. april 2001"
+.SH NAVN
+vimtutor \- Vim-vejledningen
+.SH SYNOPSIS
+.br
+.B vimtutor [\-g] [sprog]
+.SH BESKRIVELSE
+.B Vimtutor
+starter
+.B Vim\c
+-vejledningen.
+Det kopierer først vejledningsfilen, så den kan ændres uden at ændre
+den originale fil.
+.PP
+.B Vimtutor
+er nyttig til personer der vil lære deres første
+.B Vim\c
+-kommandoer.
+.PP
+Det valgfrie argument \-g starter vimtutor med gvim fremfor vim, hvis
+GUI-versionen af vim er tilgængelig, ellers bruges Vim hvis ikke gvim findes.
+.PP
+Det valgfrie [sprog]-argument er navnet på et sprog, på 2 bogstaver, såsom
+"da" eller "fi".
+Hvis [sprog]-argumentet mangler, bruges sproget fra den nuværende lokalitet.
+Hvis der findes er en vejledning på dette sprog, så bruges den.
+Ellers bruges den engelske version.
+.PP
+.B Vim
+startes altid i Vi-kompatibel tilstand.
+.SH FILER
+.TP 15
+/usr/local/lib/vim/tutor/tutor[.sprog]
+.B Vimtutor\c
+-tekstfilerne.
+.TP 15
+/usr/local/lib/vim/tutor/tutor.vim
+Vim-scriptet som bruges til at kopiere
+.B Vimtutor\c
+-tekstfilen.
+.SH FORFATTER
+.B Vimtutor
+blev oprindeligt skrevet til Vi af Michael C. Pierce og Robert K. Ware,
+Colorado School of Mines med ideer af Charles Smith,
+Colorado State University.
+E-mail: bware@mines.colorado.edu.
+.br
+Den blev ændret til
+.B Vim
+af Bram Moolenaar.
+Oversætternes navne kan ses i tutor-filerne.
+.SH SE OGSÅ
+vim(1)

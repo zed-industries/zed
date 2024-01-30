@@ -1,0 +1,31 @@
+/* XPM */
+static char * tb_ctags_xpm[] = {
+/* width height ncolors cpp [x_hot y_hot] */
+"18 18 7 1 0 0",
+/* colors */
+" 	s none	m none	c none",
+".	s iconColor1	m black	c #000000",
+"X	s iconColor2	m none	c #FFFFFF",
+"o	s bottomShadowColor	m black	c #5D6069",
+"O	m black	c #888800",
+"+	s topShadowColor	m none	c #DCDEE5",
+"@	s iconColor6	m none	c #FFFF00",
+/* pixels */
+"     .. .....     ",
+"    .XX.XXXXX.    ",
+"    .XXXXXXXXX.   ",
+"    .XX.XXXX..X.  ",
+"     .. ....o ..  ",
+"   OO++O+...+O+.+ ",
+"  Oo@@@@@...o@@@.o",
+" Oo@@@@@@...o@@@.o",
+"Oo@+o+@@@...o@@@.o",
+"O@@o.o@@@...o@@@.o",
+"o@@+o+@@@...o@@@.o",
+"o.@@@@@@@...o@@@.o",
+" o.@@@@@@...o@@@.o",
+"  o.........o....o",
+"   oooooo...oooooo",
+"         ...o     ",
+"         ...o     ",
+"          ooo     "};

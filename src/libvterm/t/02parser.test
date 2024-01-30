@@ -1,0 +1,266 @@
+INIT
+UTF8 0
+WANTPARSER
+
+!Basic text
+PUSH "hello"
+  text 0x68, 0x65, 0x6c, 0x6c, 0x6f
+
+!C0
+PUSH "\x03"
+  control 3
+
+PUSH "\x1f"
+  control 0x1f
+
+!C1 8bit
+PUSH "\x83"
+  control 0x83
+
+PUSH "\x99"
+  control 0x99
+
+!C1 7bit
+PUSH "\e\x43"
+  control 0x83
+
+PUSH "\e\x59"
+  control 0x99
+
+!High bytes
+PUSH "\xa0\xcc\xfe"
+  text 0xa0, 0xcc, 0xfe
+
+!Mixed
+PUSH "1\n2"
+  text 0x31
+  control 10
+  text 0x32
+
+!Escape
+PUSH "\e="
+  escape "="
+
+!Escape 2-byte
+PUSH "\e(X"
+  escape "(X"
+
+!Split write Escape
+PUSH "\e("
+PUSH "Y"
+  escape "(Y"
+
+!Escape cancels Escape, starts another
+PUSH "\e(\e)Z"
+  escape ")Z"
+
+!CAN cancels Escape, returns to normal mode
+PUSH "\e(\x{18}AB"
+  text 0x41, 0x42
+
+!C0 in Escape interrupts and continues
+PUSH "\e(\nX"
+  control 10
+  escape "(X"
+
+!CSI 0 args
+PUSH "\e[a"
+  csi 0x61 *
+
+!CSI 1 arg
+PUSH "\e[9b"
+  csi 0x62 9
+
+!CSI 2 args
+PUSH "\e[3;4c"
+  csi 0x63 3,4
+
+!CSI 1 arg 1 sub
+PUSH "\e[1:2c"
+  csi 0x63 1+,2
+
+!CSI many digits
+PUSH "\e[678d"
+  csi 0x64 678
+
+!CSI leading zero
+PUSH "\e[007e"
+  csi 0x65 7
+
+!CSI qmark
+PUSH "\e[?2;7f"
+  csi 0x66 L=3f 2,7
+
+!CSI greater
+PUSH "\e[>c"
+  csi 0x63 L=3e *
+
+!CSI SP
+PUSH "\e[12 q"
+  csi 0x71 12 I=20
+
+!Mixed CSI
+PUSH "A\e[8mB"
+  text 0x41
+  csi 0x6d 8
+  text 0x42
+
+!Split write
+PUSH "\e"
+PUSH "[a"
+  csi 0x61 *
+PUSH "foo\e["
+  text 0x66, 0x6f, 0x6f
+PUSH "4b"
+  csi 0x62 4
+PUSH "\e[12;"
+PUSH "3c"
+  csi 0x63 12,3
+
+!Escape cancels CSI, starts Escape
+PUSH "\e[123\e9"
+  escape "9"
+
+!CAN cancels CSI, returns to normal mode
+PUSH "\e[12\x{18}AB"
+  text 0x41, 0x42
+
+!C0 in Escape interrupts and continues
+PUSH "\e[12\n;3X"
+  control 10
+  csi 0x58 12,3
+
+!OSC BEL
+PUSH "\e]1;Hello\x07"
+  osc [1 "Hello"]
+
+!OSC ST (7bit)
+PUSH "\e]1;Hello\e\\"
+  osc [1 "Hello"]
+
+!OSC ST (8bit)
+PUSH "\x{9d}1;Hello\x9c"
+  osc [1 "Hello"]
+
+!OSC in parts
+PUSH "\e]52;abc"
+  osc [52 "abc"
+PUSH "def"
+  osc "def"
+PUSH "ghi\e\\"
+  osc "ghi"]
+
+!OSC BEL without semicolon 
+PUSH "\e]1234\x07"
+  osc [1234 ]
+
+!OSC ST without semicolon 
+PUSH "\e]1234\e\\"
+  osc [1234 ]
+
+!Escape cancels OSC, starts Escape
+PUSH "\e]Something\e9"
+  escape "9"
+
+!CAN cancels OSC, returns to normal mode
+PUSH "\e]12\x{18}AB"
+  text 0x41, 0x42
+
+!C0 in OSC interrupts and continues
+PUSH "\e]2;\nBye\x07"
+  osc [2 ""
+  control 10
+  osc "Bye"]
+
+!DCS BEL
+PUSH "\ePHello\x07"
+  dcs ["Hello"]
+
+!DCS ST (7bit)
+PUSH "\ePHello\e\\"
+  dcs ["Hello"]
+
+!DCS ST (8bit)
+PUSH "\x{90}Hello\x9c"
+  dcs ["Hello"]
+
+!Split write of 7bit ST
+PUSH "\ePABC\e"
+  dcs ["ABC"
+PUSH "\\"
+  dcs ]
+
+!Escape cancels DCS, starts Escape
+PUSH "\ePSomething\e9"
+  escape "9"
+
+!CAN cancels DCS, returns to normal mode
+PUSH "\eP12\x{18}AB"
+  text 0x41, 0x42
+
+!C0 in OSC interrupts and continues
+PUSH "\ePBy\ne\x07"
+  dcs ["By"
+  control 10
+  dcs "e"]
+
+!APC BEL
+PUSH "\e_Hello\x07"
+  apc ["Hello"]
+
+!APC ST (7bit)
+PUSH "\e_Hello\e\\"
+  apc ["Hello"]
+
+!APC ST (8bit)
+PUSH "\x{9f}Hello\x9c"
+  apc ["Hello"]
+
+!PM BEL
+PUSH "\e^Hello\x07"
+  pm ["Hello"]
+
+!PM ST (7bit)
+PUSH "\e^Hello\e\\"
+  pm ["Hello"]
+
+!PM ST (8bit)
+PUSH "\x{9e}Hello\x9c"
+  pm ["Hello"]
+
+!SOS BEL
+PUSH "\eXHello\x07"
+  sos ["Hello"]
+
+!SOS ST (7bit)
+PUSH "\eXHello\e\\"
+  sos ["Hello"]
+
+!SOS ST (8bit)
+PUSH "\x{98}Hello\x9c"
+  sos ["Hello"]
+
+!SOS can contain any C0 or C1 code
+PUSH "\eXABC\x01DEF\e\\"
+  sos ["ABC\x01DEF"]
+PUSH "\eXABC\x99DEF\e\\"
+  sos ["ABC\x{99}DEF"]
+
+!NUL ignored
+PUSH "\x{00}"
+
+!NUL ignored within CSI
+PUSH "\e[12\x{00}3m"
+  csi 0x6d 123
+
+!DEL ignored
+PUSH "\x{7f}"
+
+!DEL ignored within CSI
+PUSH "\e[12\x{7f}3m"
+  csi 0x6d 123
+
+!DEL inside text"
+PUSH "AB\x{7f}C"
+  text 0x41,0x42
+  text 0x43

@@ -1,0 +1,21 @@
+# Test of cursor-control characters inside ESC sequences
+INIT
+WANTSTATE
+WANTSCREEN
+
+RESET
+
+PUSH "A B C D E F G H I"
+PUSH "\x0d\x0a"
+PUSH "A\e[2\bCB\e[2\bCC\e[2\bCD\e[2\bCE\e[2\bCF\e[2\bCG\e[2\bCH\e[2\bCI"
+PUSH "\x0d\x0a"
+PUSH "A \e[\x0d2CB\e[\x0d4CC\e[\x0d6CD\e[\x0d8CE\e[\x0d10CF\e[\x0d12CG\e[\x0d14CH\e[\x0d16CI"
+PUSH "\x0d\x0a"
+PUSH "A \e[1\x0bAB \e[1\x0bAC \e[1\x0bAD \e[1\x0bAE \e[1\x0bAF \e[1\x0bAG \e[1\x0bAH \e[1\x0bAI \e[1\x0bA"
+
+!Output
+
+$SEQ 0 2: ?screen_row \# = "A B C D E F G H I"
+          ?screen_row  3 = "A B C D E F G H I "
+
+?cursor = 3,18

@@ -1,0 +1,186 @@
+#
+# config.mk.in -- autoconf template for Vim on Unix		vim:ts=8:sw=8:
+#
+# DO NOT EDIT config.mk!!  It will be overwritten by configure.
+# Edit Makefile and run "make" or run ./configure with other arguments.
+#
+# Configure does not edit the makefile directly. This method is not the
+# standard use of GNU autoconf, but it has two advantages:
+#   a) The user can override every choice made by configure.
+#   b) Modifications to the makefile are not lost when configure is run.
+#
+# I hope this is worth being nonstandard. jw.
+
+@SET_MAKE@
+
+VIMNAME		= @VIMNAME@
+EXNAME		= @EXNAME@
+VIEWNAME	= @VIEWNAME@
+
+CC		= @CC@
+DEFS		= @DEFS@
+CFLAGS		= @CFLAGS@
+CPPFLAGS	= @CPPFLAGS@
+srcdir		= @srcdir@
+VPATH		= @srcdir@
+LDFLAGS		= @LDFLAGS@
+LIBS		= @LIBS@
+TAGPRG		= @TAGPRG@
+
+CPP		= @CPP@
+CPP_MM		= @CPP_MM@
+DEPEND_CFLAGS_FILTER = @DEPEND_CFLAGS_FILTER@
+LINK_AS_NEEDED	= @LINK_AS_NEEDED@
+X_CFLAGS	= @X_CFLAGS@
+X_LIBS_DIR	= @X_LIBS@
+X_PRE_LIBS	= @X_PRE_LIBS@
+X_EXTRA_LIBS	= @X_EXTRA_LIBS@
+X_LIBS		= @X_LIB@
+
+XDIFF_OBJS_USED	= @XDIFF_OBJS_USED@
+
+LUA_LIBS	= @LUA_LIBS@
+LUA_SRC		= @LUA_SRC@
+LUA_OBJ		= @LUA_OBJ@
+LUA_CFLAGS	= @LUA_CFLAGS@
+LUA_CFLAGS_EXTRA	= @LUA_CFLAGS_EXTRA@
+LUA_PRO		= @LUA_PRO@
+
+MZSCHEME_LIBS	= @MZSCHEME_LIBS@
+MZSCHEME_SRC	= @MZSCHEME_SRC@
+MZSCHEME_OBJ	= @MZSCHEME_OBJ@
+MZSCHEME_CFLAGS	= @MZSCHEME_CFLAGS@
+MZSCHEME_PRO	= @MZSCHEME_PRO@
+MZSCHEME_EXTRA	= @MZSCHEME_EXTRA@
+MZSCHEME_MZC	= @MZSCHEME_MZC@
+
+PERL		= @vi_cv_path_perl@
+PERLLIB		= @vi_cv_perllib@
+PERL_XSUBPP	= @vi_cv_perl_xsubpp@
+PERL_LIBS	= @PERL_LIBS@
+SHRPENV		= @shrpenv@
+PERL_SRC	= @PERL_SRC@
+PERL_OBJ	= @PERL_OBJ@
+PERL_PRO	= @PERL_PRO@
+PERL_CFLAGS	= @PERL_CFLAGS@
+PERL_CFLAGS_EXTRA	= @PERL_CFLAGS_EXTRA@
+
+PYTHON_SRC	= @PYTHON_SRC@
+PYTHON_OBJ	= @PYTHON_OBJ@
+PYTHON_CFLAGS	= @PYTHON_CFLAGS@
+PYTHON_CFLAGS_EXTRA	= @PYTHON_CFLAGS_EXTRA@
+PYTHON_LIBS	= @PYTHON_LIBS@
+
+PYTHON3_SRC	= @PYTHON3_SRC@
+PYTHON3_OBJ	= @PYTHON3_OBJ@
+PYTHON3_CFLAGS	= @PYTHON3_CFLAGS@
+PYTHON3_CFLAGS_EXTRA	= @PYTHON3_CFLAGS_EXTRA@
+PYTHON3_LIBS	= @PYTHON3_LIBS@
+
+TCL		= @vi_cv_path_tcl@
+TCL_SRC		= @TCL_SRC@
+TCL_OBJ		= @TCL_OBJ@
+TCL_PRO		= @TCL_PRO@
+TCL_CFLAGS	= @TCL_CFLAGS@
+TCL_CFLAGS_EXTRA	= @TCL_CFLAGS_EXTRA@
+TCL_LIBS	= @TCL_LIBS@
+
+NETBEANS_SRC	= @NETBEANS_SRC@
+NETBEANS_OBJ	= @NETBEANS_OBJ@
+CHANNEL_SRC	= @CHANNEL_SRC@
+CHANNEL_OBJ	= @CHANNEL_OBJ@
+TERM_SRC	= @TERM_SRC@
+TERM_OBJ	= @TERM_OBJ@
+TERM_TEST	= @TERM_TEST@
+
+RUBY		= @vi_cv_path_ruby@
+RUBY_SRC	= @RUBY_SRC@
+RUBY_OBJ	= @RUBY_OBJ@
+RUBY_PRO	= @RUBY_PRO@
+RUBY_CFLAGS	= @RUBY_CFLAGS@
+RUBY_CFLAGS_EXTRA	= @RUBY_CFLAGS_EXTRA@
+RUBY_LIBS	= @RUBY_LIBS@
+
+AWK		= @AWK@
+
+STRIP		= @STRIP@
+
+EXEEXT		= @EXEEXT@
+CROSS_COMPILING = @CROSS_COMPILING@
+
+COMPILEDBY	= @compiledby@
+
+INSTALLVIMDIFF	= @dovimdiff@
+INSTALLGVIMDIFF	= @dogvimdiff@
+INSTALL_LANGS	= @INSTALL_LANGS@
+INSTALL_TOOL_LANGS	= @INSTALL_TOOL_LANGS@
+
+### sed command to fix quotes while creating pathdef.c
+QUOTESED        = @QUOTESED@
+
+### Line break character as octal number for "tr"
+NL		= @line_break@
+
+### Top directory for everything
+prefix		= @prefix@
+
+### Top directory for the binary
+exec_prefix	= @exec_prefix@
+
+### Prefix for location of data files
+BINDIR		= @bindir@
+
+### For autoconf 2.60 and later (avoid a warning)
+datarootdir	= @datarootdir@
+
+### Prefix for location of data files
+DATADIR		= @datadir@
+
+### Prefix for location of man pages
+MANDIR		= @mandir@
+
+### Do we have a GUI
+GUI_INC_LOC	= @GUI_INC_LOC@
+GUI_LIB_LOC	= @GUI_LIB_LOC@
+GUI_SRC		= $(@GUITYPE@_SRC)
+GUI_OBJ		= $(@GUITYPE@_OBJ)
+GUI_DEFS	= $(@GUITYPE@_DEFS)
+GUI_IPATH	= $(@GUITYPE@_IPATH)
+GUI_LIBS_DIR	= $(@GUITYPE@_LIBS_DIR)
+GUI_LIBS1	= $(@GUITYPE@_LIBS1)
+GUI_LIBS2	= $(@GUITYPE@_LIBS2)
+GUI_INSTALL	= $(@GUITYPE@_INSTALL)
+GUI_TARGETS	= $(@GUITYPE@_TARGETS)
+GUI_MAN_TARGETS	= $(@GUITYPE@_MAN_TARGETS)
+GUI_TESTTARGET	= $(@GUITYPE@_TESTTARGET)
+GUI_TESTARG	= $(@GUITYPE@_TESTARG)
+GUI_BUNDLE	= $(@GUITYPE@_BUNDLE)
+NARROW_PROTO	= @NARROW_PROTO@
+GUI_X_LIBS	= @GUI_X_LIBS@
+MOTIF_LIBNAME	= @MOTIF_LIBNAME@
+GTK_LIBNAME	= @GTK_LIBNAME@
+
+GLIB_COMPILE_RESOURCES = @GLIB_COMPILE_RESOURCES@
+GRESOURCE_SRC = @GRESOURCE_SRC@
+GRESOURCE_OBJ = @GRESOURCE_OBJ@
+
+GTK_UPDATE_ICON_CACHE = @GTK_UPDATE_ICON_CACHE@
+UPDATE_DESKTOP_DATABASE = @UPDATE_DESKTOP_DATABASE@
+
+### Any OS dependent extra source and object file
+OS_EXTRA_SRC	= @OS_EXTRA_SRC@
+OS_EXTRA_OBJ	= @OS_EXTRA_OBJ@
+
+### If the *.po files are to be translated to *.mo files.
+MAKEMO		= @MAKEMO@
+
+MSGFMT		= @MSGFMT@
+MSGFMT_DESKTOP	= @MSGFMT_DESKTOP@
+
+### set if $SOURCE_DATE_EPOCH was set when running configure
+BUILD_DATE_MSG	= @BUILD_DATE_MSG@
+
+
+# Make sure that "make first" will run "make all" once configure has done its
+# work.  This is needed when using the Makefile in the top directory.
+first: all

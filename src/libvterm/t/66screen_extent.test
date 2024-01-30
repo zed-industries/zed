@@ -1,0 +1,11 @@
+INIT
+WANTSCREEN 
+
+!Bold extent
+RESET
+PUSH "AB\e[1mCD\e[mE"
+  ?screen_attrs_extent 0,0 = 0,0-1,1
+  ?screen_attrs_extent 0,1 = 0,0-1,1
+  ?screen_attrs_extent 0,2 = 0,2-1,3
+  ?screen_attrs_extent 0,3 = 0,2-1,3
+  ?screen_attrs_extent 0,4 = 0,4-1,79

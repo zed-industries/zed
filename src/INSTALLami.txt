@@ -1,0 +1,19 @@
+INSTALLami.txt - Installation of Vim from source on Amiga and MorphOS
+
+This file contains instructions for compiling Vim. If you already have an
+executable version of Vim, you don't need this.
+
+The file "feature.h" can be edited to match your preferences. You can skip
+this, then you will get the default behavior as is documented, which should
+be fine for most people.
+
+Summary:
+make -f Make_ami.mak        gcc
+make -f Make_ami.mak CC=vc  vbcc
+
+Please note that currently only gcc has been tested. VBCC would need its own
+CFLAGS, but should otherwise work out of the box. For cross-compiling, UNM
+can be used to override uname and thereby set the target. An example is shown
+below:
+
+make -f Make_ami.mak CC=ppc-morphos-gcc UNM=MorphOS

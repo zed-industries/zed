@@ -1,0 +1,131 @@
+*usr_50.txt*	For Vim version 9.1.  Last change: 2022 Jun 20
+
+		     VIM USER MANUAL - by Bram Moolenaar
+
+			 Advanced Vim script writing
+
+
+|50.1|	Exceptions
+|50.2|	Function with variable number of arguments
+|50.3|	Restoring the view
+
+     Next chapter: |usr_51.txt|  Create a plugin
+ Previous chapter: |usr_45.txt|  Select your language (local)
+Table of contents: |usr_toc.txt|
+
+==============================================================================
+*50.1*	Exceptions
+
+Let's start with an example: >
+
+	try
+	   read ~/templates/pascal.tmpl
+	catch /E484:/
+	   echo "Sorry, the Pascal template file cannot be found."
+	endtry
+
+The `read` command will fail if the file does not exist.  Instead of
+generating an error message, this code catches the error and gives the user a
+message with more information.
+
+For the commands in between `try` and `endtry` errors are turned into
+exceptions.  An exception is a string.  In the case of an error the string
+contains the error message.  And every error message has a number.  In this
+case, the error we catch contains "E484:".  This number is guaranteed to stay
+the same (the text may change, e.g., it may be translated).
+
+Besides being able to give a nice error message, Vim will also continue
+executing commands after the `:endtry`.  Otherwise, once an uncaught error is
+encountered, execution of the script/function/mapping will be aborted.
+
+When the `read` command causes another error, the pattern "E484:" will not
+match in it.  Thus this exception will not be caught and result in the usual
+error message and execution is aborted.
+
+You might be tempted to do this: >
+
+	try
+	   read ~/templates/pascal.tmpl
+	catch
+	   echo "Sorry, the Pascal template file cannot be found."
+	endtry
+
+This means all errors are caught.  But then you will not see an error that
+would indicate a completely different problem, such as "E21: Cannot make
+changes, 'modifiable' is off".  Think twice before you catch any error!
+
+Another useful mechanism is the `finally` command: >
+
+	var tmp = tempname()
+	try
+	   exe ":.,$write " .. tmp
+	   exe "!filter " .. tmp
+	   :.,$delete
+	   exe ":$read " .. tmp
+	finally
+	   delete(tmp)
+	endtry
+
+This filters the lines from the cursor until the end of the file through the
+"filter" command, which takes a file name argument.  No matter if the
+filtering works, if something goes wrong in between `try` and `finally` or the
+user cancels the filtering by pressing CTRL-C, the `delete(tmp)` call is
+always executed.  This makes sure you don't leave the temporary file behind.
+
+The `finally` does not catch the exception, the error will still abort
+further execution.
+
+More information about exception handling can be found in the reference
+manual: |exception-handling|.
+
+==============================================================================
+*50.2*	Function with variable number of arguments
+
+Vim enables you to define functions that have a variable number of arguments.
+The following command, for instance, defines a function that must have 1
+argument (start) and can have up to 20 additional arguments: >
+
+	def Show(start: string, ...items: list<string>)
+
+The variable "items" will be a list in the function containing the extra
+arguments.  You can use it like any list, for example: >
+
+	def Show(start: string, ...items: list<string>)
+	  echohl Title
+	  echo "start is " .. start
+	  echohl None
+	  for index in range(len(items))
+	    echon $"  Arg {index} is {items[index]}"
+	  endfor
+	  echo
+	enddef
+
+You can call it like this: >
+
+	Show('Title', 'one', 'two', 'three')
+<	start is Title  Arg 0 is one  Arg 1 is two  Arg 2 is three ~
+
+This uses the `echohl` command to specify the highlighting used for the
+following `echo` command.  `echohl None` stops it again.  The `echon` command
+works like `echo`, but doesn't output a line break.
+
+If you call it with one argument the "items" list will be empty.
+`range(len(items))` returns a list with the indexes, what `for` loops over,
+we'll explain that further down.
+
+==============================================================================
+*50.3*	Restoring the view
+
+Sometimes you want to jump around, make a change and then go back to the same
+position and view.  For example to change something in the file header.  This
+can be done with two functions: >
+
+	var view = winsaveview()
+	# Move around, make changes
+	winrestview(view)
+
+==============================================================================
+
+Next chapter: |usr_51.txt|  Create a plugin
+
+Copyright: see |manual-copyright|  vim:tw=78:ts=8:noet:ft=help:norl:

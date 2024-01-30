@@ -1,0 +1,29 @@
+/* XPM */
+static char * tb_save_all_xpm[] = {
+/* width height ncolors cpp [x_hot y_hot] */
+"18 18 5 1 0 0",
+/* colors */
+" 	s iconColor1	m black	c #000000",
+".	s none	m none	c none",
+"X	s iconGray2	m none	c #bdbdbd",
+"o	s iconColor2	m none	c #FFFFFF",
+"O	s bottomShadowColor	m black	c #5D6069",
+/* pixels */
+"              ....",
+" X oooooooo o ....",
+" X oooooooo   O...",
+" X               .",
+" X  X oooooooo o .",
+" X  X oooooooo   O",
+" X  X oooooooo X O",
+" XX X oooooooo X O",
+" XX X oooooooo X O",
+" XX X oooooooo X O",
+" XX XX        XX O",
+" XX XXXXXXXXXXXX O",
+" XX XX         X O",
+".   XX      oo X O",
+"..O XX      oo X O",
+"... XX      oo X O",
+"....             O",
+".....OOOOOOOOOOOO."};

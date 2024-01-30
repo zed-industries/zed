@@ -1,0 +1,33 @@
+/* arglist.c */
+void alist_clear(alist_T *al);
+void alist_init(alist_T *al);
+void alist_unlink(alist_T *al);
+void alist_new(void);
+void alist_expand(int *fnum_list, int fnum_len);
+void alist_set(alist_T *al, int count, char_u **files, int use_curbuf, int *fnum_list, int fnum_len);
+void alist_add(alist_T *al, char_u *fname, int set_fnum);
+void alist_slash_adjust(void);
+int get_arglist_exp(char_u *str, int *fcountp, char_u ***fnamesp, int wig);
+void set_arglist(char_u *str);
+int editing_arg_idx(win_T *win);
+void check_arg_idx(win_T *win);
+void ex_args(exarg_T *eap);
+void ex_previous(exarg_T *eap);
+void ex_rewind(exarg_T *eap);
+void ex_last(exarg_T *eap);
+void ex_argument(exarg_T *eap);
+void do_argfile(exarg_T *eap, int argn);
+void ex_next(exarg_T *eap);
+void ex_argdedupe(exarg_T *eap);
+void ex_argedit(exarg_T *eap);
+void ex_argadd(exarg_T *eap);
+void ex_argdelete(exarg_T *eap);
+char_u *get_arglist_name(expand_T *xp, int idx);
+char_u *alist_name(aentry_T *aep);
+void ex_all(exarg_T *eap);
+char_u *arg_all(void);
+void f_argc(typval_T *argvars, typval_T *rettv);
+void f_argidx(typval_T *argvars, typval_T *rettv);
+void f_arglistid(typval_T *argvars, typval_T *rettv);
+void f_argv(typval_T *argvars, typval_T *rettv);
+/* vim: set ft=c : */

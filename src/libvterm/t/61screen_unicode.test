@@ -1,0 +1,47 @@
+INIT
+UTF8 1
+WANTSCREEN
+
+!Single width UTF-8
+# U+00C1 = 0xC3 0x81  name: LATIN CAPITAL LETTER A WITH ACUTE
+# U+00E9 = 0xC3 0xA9  name: LATIN SMALL LETTER E WITH ACUTE
+RESET
+PUSH "\xC3\x81\xC3\xA9"
+  ?screen_row 0 = 0xc1,0xe9
+  ?screen_text 0,0,1,80 = 0xc3,0x81,0xc3,0xa9
+  ?screen_cell 0,0 = {0xc1} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Wide char
+# U+FF10 = 0xEF 0xBC 0x90  name: FULLWIDTH DIGIT ZERO
+RESET
+PUSH "0123\e[H"
+PUSH "\xEF\xBC\x90"
+  ?screen_row 0 = 0xff10,0x32,0x33
+  ?screen_text 0,0,1,80 = 0xef,0xbc,0x90,0x32,0x33
+  ?screen_cell 0,0 = {0xff10} width=2 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Combining char
+# U+0301 = 0xCC 0x81  name: COMBINING ACUTE
+RESET
+PUSH "0123\e[H"
+PUSH "e\xCC\x81"
+  ?screen_row 0 = 0x65,0x301,0x31,0x32,0x33
+  ?screen_text 0,0,1,80 = 0x65,0xcc,0x81,0x31,0x32,0x33
+  ?screen_cell 0,0 = {0x65,0x301} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!10 combining accents should not crash
+RESET
+PUSH "e\xCC\x81\xCC\x82\xCC\x83\xCC\x84\xCC\x85\xCC\x86\xCC\x87\xCC\x88\xCC\x89\xCC\x8A"
+  ?screen_cell 0,0 = {0x65,0x301,0x302,0x303,0x304,0x305} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!40 combining accents in two split writes of 20 should not crash
+RESET
+PUSH "e\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81"
+PUSH  "\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81"
+  ?screen_cell 0,0 = {0x65,0x301,0x301,0x301,0x301,0x301} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+
+!Outputting CJK doublewidth in 80th column should wraparound to next line and not crash"
+RESET
+PUSH "\e[80G\xEF\xBC\x90"
+  ?screen_cell 0,79 = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 1,0 = {0xff10} width=2 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)

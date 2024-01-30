@@ -1,0 +1,33 @@
+/* XPM */
+static char * tb_save_session_xpm[] = {
+/* width height ncolors cpp [x_hot y_hot] */
+"18 18 9 1 0 0",
+/* colors */
+" 	s none	m none	c none",
+".	m black	c #880000",
+"X	s iconColor3	m black	c #FF0000",
+"o	s iconColor1	m black	c #000000",
+"O	s iconColor2	m none	c #FFFFFF",
+"+	s iconGray2	m none	c #bdbdbd",
+"@	s iconGray5	m black	c #737373",
+"#	s iconGray4	m none	c #949494",
+"$	s bottomShadowColor	m black	c #5D6069",
+/* pixels */
+"       ....       ",
+"       .XX.       ",
+"       .XX.       ",
+"       .XX.       ",
+"     ...XX...     ",
+"      .XXXX.      ",
+"       .XX.       ",
+"        ..        ",
+"   ooooooooooooo  ",
+"  oOOOOOOOOOO++@o ",
+" oOOOOOOOOOOOO#@o ",
+" oO+++++++++XX#@o ",
+" oO+++++++++++#@o ",
+" oOoooooooooo+#@o$",
+" oOOOOOOOOOOO+#@o$",
+" o+###########@o$ ",
+"  ooooooooooooo$  ",
+"    $$$$$$$$$$$   "};

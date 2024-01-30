@@ -1,0 +1,37 @@
+/* job.c */
+void clear_job_options(jobopt_T *opt);
+void free_job_options(jobopt_T *opt);
+int get_job_options(typval_T *tv, jobopt_T *opt, int supported, int supported2);
+void job_free_all(void);
+int job_any_running(void);
+int win32_build_cmd(list_T *l, garray_T *gap);
+void job_cleanup(job_T *job);
+int set_ref_in_job(int copyID);
+void job_unref(job_T *job);
+int free_unused_jobs_contents(int copyID, int mask);
+void free_unused_jobs(int copyID, int mask);
+job_T *job_alloc(void);
+void job_set_options(job_T *job, jobopt_T *opt);
+void job_stop_on_exit(void);
+int has_pending_job(void);
+int job_check_ended(void);
+job_T *job_start(typval_T *argvars, char **argv_arg, jobopt_T *opt_arg, job_T **term_job);
+char *job_status(job_T *job);
+int job_stop(job_T *job, typval_T *argvars, char *type);
+void invoke_prompt_callback(void);
+int invoke_prompt_interrupt(void);
+char_u *prompt_text(void);
+void init_prompt(int cmdchar_todo);
+int prompt_curpos_editable(void);
+void f_prompt_setcallback(typval_T *argvars, typval_T *rettv);
+void f_prompt_setinterrupt(typval_T *argvars, typval_T *rettv);
+void f_prompt_getprompt(typval_T *argvars, typval_T *rettv);
+void f_prompt_setprompt(typval_T *argvars, typval_T *rettv);
+void f_job_getchannel(typval_T *argvars, typval_T *rettv);
+void f_job_info(typval_T *argvars, typval_T *rettv);
+void f_job_setoptions(typval_T *argvars, typval_T *rettv);
+void f_job_start(typval_T *argvars, typval_T *rettv);
+void f_job_status(typval_T *argvars, typval_T *rettv);
+void f_job_stop(typval_T *argvars, typval_T *rettv);
+char_u *job_to_string_buf(typval_T *varp, char_u *buf);
+/* vim: set ft=c : */

@@ -1,0 +1,86 @@
+INIT
+UTF8 1
+WANTSTATE gme
+
+!Insert/Replace Mode
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "AC\e[DB"
+  putglyph 0x41 1 0,0
+  putglyph 0x43 1 0,1
+  putglyph 0x42 1 0,1
+PUSH "\e[4h"
+PUSH "\e[G"
+PUSH "AC\e[DB"
+  moverect 0..1,0..79 -> 0..1,1..80
+  erase 0..1,0..1
+  putglyph 0x41 1 0,0
+  moverect 0..1,1..79 -> 0..1,2..80
+  erase 0..1,1..2
+  putglyph 0x43 1 0,1
+  moverect 0..1,1..79 -> 0..1,2..80
+  erase 0..1,1..2
+  putglyph 0x42 1 0,1
+
+!Insert mode only happens once for UTF-8 combining
+PUSH "e"
+  moverect 0..1,2..79 -> 0..1,3..80
+  erase 0..1,2..3
+  putglyph 0x65 1 0,2
+PUSH "\xCC\x81"
+  putglyph 0x65,0x301 1 0,2
+
+!Newline/Linefeed mode
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "\e[5G\n"
+  ?cursor = 1,4
+PUSH "\e[20h"
+PUSH "\e[5G\n"
+  ?cursor = 2,0
+
+!DEC origin mode
+RESET
+  erase 0..25,0..80
+  ?cursor = 0,0
+PUSH "\e[5;15r"
+PUSH "\e[H"
+  ?cursor = 0,0
+PUSH "\e[3;3H"
+  ?cursor = 2,2
+PUSH "\e[?6h"
+PUSH "\e[H"
+  ?cursor = 4,0
+PUSH "\e[3;3H"
+  ?cursor = 6,2
+
+!DECRQM on DECOM
+PUSH "\e[?6h"
+PUSH "\e[?6\$p"
+  output "\e[?6;1\$y"
+PUSH "\e[?6l"
+PUSH "\e[?6\$p"
+  output "\e[?6;2\$y"
+
+!Origin mode with DECSLRM
+PUSH "\e[?6h"
+PUSH "\e[?69h"
+PUSH "\e[20;60s"
+PUSH "\e[H"
+  ?cursor = 4,19
+
+PUSH "\e[?69l"
+
+!Origin mode bounds cursor to scrolling region
+PUSH "\e[H"
+PUSH "\e[10A"
+  ?cursor = 4,0
+PUSH "\e[20B"
+  ?cursor = 14,0
+
+!Origin mode without scroll region
+PUSH "\e[?6l"
+PUSH "\e[r\e[?6h"
+  ?cursor = 0,0

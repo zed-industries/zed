@@ -1,0 +1,6156 @@
+# Hungarian translation for Vim.
+#
+# Do ":help uganda"  in Vim to read copying and usage conditions.
+# Do ":help credits" in Vim to see a list of people who contributed.
+# 
+# This file is distributed under the same license as the Vim package.
+# FIRST AUTHOR Zoltan Arpadffy <zoltan.arpadffy@gmail.com>, 2023.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Vim 9.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2023-12-26 14:27+0200\n"
+"PO-Revision-Date: 2023-12-26 14:52\n"
+"Last-Translator: Zoltan Arpadffy <zoltan.arpadffy@gmail.com>\n"
+"Language-Team: Hungarian http://polarhome.com/vim/\n"
+"Language: hu\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "E82: Cannot allocate any buffer, exiting..."
+msgstr "E82: Nem lehet pufferet lefoglalni, kilépés..."
+
+msgid "E83: Cannot allocate buffer, using other one..."
+msgstr "E83: Nem lehet pufferet lefoglalni, másikat használ..."
+
+msgid "E515: No buffers were unloaded"
+msgstr "E515: Egyetlen puffer sem lett kipakolva"
+
+msgid "E516: No buffers were deleted"
+msgstr "E516: Egyetlen puffer sem lett törölve"
+
+msgid "E517: No buffers were wiped out"
+msgstr "E517: Egyetlen puffer sem lett kitörölve"
+
+msgid "1 buffer unloaded"
+msgstr "1 puffer kipakolva"
+
+#, c-format
+msgid "%d buffers unloaded"
+msgstr "%d puffer kipakolva"
+
+msgid "1 buffer deleted"
+msgstr "1 puffer törölve"
+
+#, c-format
+msgid "%d buffers deleted"
+msgstr "%d puffer törölve"
+
+msgid "1 buffer wiped out"
+msgstr "1 puffer kitörölve"
+
+#, c-format
+msgid "%d buffers wiped out"
+msgstr "%d puffer kitörölve"
+
+msgid "E84: No modified buffer found"
+msgstr "E84: Nem található módosított puffer"
+
+#. back where we started, didn't find anything.
+msgid "E85: There is no listed buffer"
+msgstr "E85: Nincs listázott puffer"
+
+#, c-format
+msgid "E86: Buffer %ld does not exist"
+msgstr "E86: A(z) %ld puffer nem létezik"
+
+msgid "E87: Cannot go beyond last buffer"
+msgstr "E87: Nem lehet túllépni az utolsó pufferen"
+
+msgid "E88: Cannot go before first buffer"
+msgstr "E88: Nem lehet visszalépni az első puffer előtt"
+
+#, c-format
+msgid "E89: No write since last change for buffer %ld (add ! to override)"
+msgstr "E89: Nincs írás az utolsó változtatás óta a(z) %ld pufferen (adjon hozzá ! jelet a felülbíráláshoz)"
+
+msgid "E90: Cannot unload last buffer"
+msgstr "E90: Nem lehet kipakolni az utolsó puffert"
+
+msgid "W14: Warning: List of file names overflow"
+msgstr "W14: Figyelem: A fájlnevek listája túlcsordult"
+
+#, c-format
+msgid "E92: Buffer %ld not found"
+msgstr "E92: A(z) %ld puffer nem található"
+
+#, c-format
+msgid "E93: More than one match for %s"
+msgstr "E93: Több találat is van %s-re"
+
+#, c-format
+msgid "E94: No matching buffer for %s"
+msgstr "E94: Nincs megfelelő puffer %s-hez"
+
+#, c-format
+msgid "line %ld"
+msgstr "%ld sor"
+
+msgid "E95: Buffer with this name already exists"
+msgstr "E95: Már létezik ilyen nevű puffer"
+
+msgid " [Modified]"
+msgstr " [Módosítva]"
+
+msgid "[Not edited]"
+msgstr "[Nem szerkesztett]"
+
+msgid "[New file]"
+msgstr "[Új fájl]"
+
+msgid "[Read errors]"
+msgstr "[Olvasási hibák]"
+
+msgid "[readonly]"
+msgstr "[csak olvasható]"
+
+#, c-format
+msgid "1 line --%d%%--"
+msgstr "1 sor --%d%%--"
+
+#, c-format
+msgid "%ld lines --%d%%--"
+msgstr "%ld sor --%d%%--"
+
+#, c-format
+msgid "line %ld of %ld --%d%%-- col "
+msgstr "%ld sor a(z) %ld-ból --%d%%-- oszlop "
+
+msgid "[No Name]"
+msgstr "[Nincs név]"
+
+#. must be a help buffer
+msgid "help"
+msgstr "segítség"
+
+msgid "[Help]"
+msgstr "[Segítség]"
+
+msgid "[Preview]"
+msgstr "[Előnézet]"
+
+msgid "All"
+msgstr "Összes"
+
+msgid "Bot"
+msgstr "Alja"
+
+msgid "Top"
+msgstr "Teteje"
+
+#, c-format
+msgid ""
+"\n"
+"# Buffer list:\n"
+msgstr ""
+"\n"
+"# Buffertlista:\n"
+
+msgid "[Location List]"
+msgstr "[Helylista]"
+
+msgid "[Quickfix List]"
+msgstr "[Gyorsjavítás lista]"
+
+msgid ""
+"\n"
+"--- Signs ---"
+msgstr ""
+"\n"
+"--- Jel ---"
+
+#, c-format
+msgid "Signs for %s:"
+msgstr "Jelek %s-hez:"
+
+#, c-format
+msgid "    line=%ld  id=%d  name=%s"
+msgstr "    sor=%ld  id=%d  név=%s"
+
+#, c-format
+msgid "E96: Can not diff more than %ld buffers"
+msgstr "E96: Nem lehet több mint %ld puffert összehasonlítani"
+
+msgid "E97: Cannot create diffs"
+msgstr "E97: Nem lehet különbségeket létrehozni"
+
+msgid "Patch file"
+msgstr "Javítófájl"
+
+msgid "E98: Cannot read diff output"
+msgstr "E98: Nem lehet olvasni a diff kimenetet"
+
+msgid "E99: Current buffer is not in diff mode"
+msgstr "E99: Az aktuális puffer nem diff módban van"
+
+msgid "E793: No other buffer in diff mode is modifiable"
+msgstr "E793: Nincs más módosítható puffer diff módban"
+
+msgid "E100: No other buffer in diff mode"
+msgstr "E100: Nincs más puffer diff módban"
+
+msgid "E101: More than two buffers in diff mode, don't know which one to use"
+msgstr "E101: Több mint két puffer van diff módban, nem tudom, melyiket használjam"
+
+#, c-format
+msgid "E102: Can't find buffer \"%s\""
+msgstr "E102: Nem találom a(z) \"%s\" puffert"
+
+#, c-format
+msgid "E103: Buffer \"%s\" is not in diff mode"
+msgstr "E103: A(z) \"%s\" puffer nem diff módban van"
+
+msgid "E787: Buffer changed unexpectedly"
+msgstr "E787: A puffer váratlanul megváltozott"
+
+msgid "E104: Escape not allowed in digraph"
+msgstr "E104: Escape nem engedélyezett digráfban"
+
+msgid "E544: Keymap file not found"
+msgstr "E544: Nem található a billentyűzetfájl"
+
+msgid "E105: Using :loadkeymap not in a sourced file"
+msgstr "E105: A :loadkeymap nem használható egy betöltött fájlban"
+
+msgid "E791: Empty keymap entry"
+msgstr "E791: Üres billentyűzetbejegyzés"
+
+msgid " Keyword completion (^N^P)"
+msgstr " Kulcsszó kiegészítés (^N^P)"
+
+#. ctrl_x_mode == 0, ^P/^N compl.
+msgid " ^X mode (^]^D^E^F^I^K^L^N^O^Ps^U^V^Y)"
+msgstr " ^X mód (^]^D^E^F^I^K^L^N^O^Ps^U^V^Y)"
+
+msgid " Whole line completion (^L^N^P)"
+msgstr " Teljes sor kiegészítés (^L^N^P)"
+
+msgid " File name completion (^F^N^P)"
+msgstr " Fájlnév kiegészítés (^F^N^P)"
+
+msgid " Tag completion (^]^N^P)"
+msgstr " Címke kiegészítés (^]^N^P)"
+
+msgid " Path pattern completion (^N^P)"
+msgstr " Útvonal minta kiegészítés (^N^P)"
+
+msgid " Definition completion (^D^N^P)"
+msgstr " Definíció kiegészítés (^D^N^P)"
+
+msgid " Dictionary completion (^K^N^P)"
+msgstr " Szótár kiegészítés (^K^N^P)"
+
+msgid " Thesaurus completion (^T^N^P)"
+msgstr " Tezaurusz kiegészítés (^T^N^P)"
+
+msgid " Command-line completion (^V^N^P)"
+msgstr " Parancssor kiegészítés (^V^N^P)"
+
+msgid " User defined completion (^U^N^P)"
+msgstr " Felhasználó által definiált kiegészítés (^U^N^P)"
+
+msgid " Omni completion (^O^N^P)"
+msgstr " Omni kiegészítés (^O^N^P)"
+
+msgid " Spelling suggestion (s^N^P)"
+msgstr " Helyesírási javaslat (s^N^P)"
+
+msgid " Keyword Local completion (^N^P)"
+msgstr " Kulcsszó helyi kiegészítés (^N^P)"
+
+msgid "Hit end of paragraph"
+msgstr "Elértük a bekezdés végét"
+
+msgid "'dictionary' option is empty"
+msgstr "A 'dictionary' opció üres"
+
+msgid "'thesaurus' option is empty"
+msgstr "A 'thesaurus' opció üres"
+
+#, c-format
+msgid "Scanning dictionary: %s"
+msgstr "Szótár átvizsgálása: %s"
+
+msgid " (insert) Scroll (^E/^Y)"
+msgstr " (beszúrás) Görgetés (^E/^Y)"
+
+msgid " (replace) Scroll (^E/^Y)"
+msgstr " (cserélés) Görgetés (^E/^Y)"
+
+#, c-format
+msgid "Scanning: %s"
+msgstr "Átvizsgálás: %s"
+
+#, c-format
+msgid "Scanning tags."
+msgstr "Címkék átvizsgálása."
+
+msgid " Adding"
+msgstr " Hozzáadás"
+
+#. showmode might reset the internal line pointers, so it must
+#. * be called before line = ml_get(), or when this address is no
+#. * longer needed.  -- Acevedo.
+#.
+msgid "-- Searching..."
+msgstr "-- Keresés..."
+
+msgid "Back at original"
+msgstr "Vissza az eredetihez"
+
+msgid "Word from other line"
+msgstr "Szó másik sorból"
+
+msgid "The only match"
+msgstr "Az egyetlen találat"
+
+#, c-format
+msgid "match %d of %d"
+msgstr "%d találat a(z) %d-ből"
+
+#, c-format
+msgid "match %d"
+msgstr "%d találat"
+
+msgid "E18: Unexpected characters in :let"
+msgstr "E18: Váratlan karakterek a :let-ben"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E684: List index out of range: %ld"
+msgstr "E684: A lista indexe kívül esik a tartományon: %ld"
+
+#, c-format
+msgid "E121: Undefined variable: %s"
+msgstr "E121: Nem definiált változó: %s"
+
+msgid "E111: Missing ']'"
+msgstr "E111: Hiányzó ']'"
+
+#, c-format
+msgid "E686: Argument of %s must be a List"
+msgstr "E686: A(z) %s argumentuma egy Lista kell legyen"
+
+#, c-format
+msgid "E712: Argument of %s must be a List or Dictionary"
+msgstr "E712: A(z) %s argumentuma egy Lista vagy Szótár kell legyen"
+
+msgid "E713: Cannot use empty key for Dictionary"
+msgstr "E713: Nem használhat üres kulcsot Szótárhoz"
+
+msgid "E714: List required"
+msgstr "E714: Lista szükséges"
+
+msgid "E715: Dictionary required"
+msgstr "E715: Szótár szükséges"
+
+#, c-format
+msgid "E118: Too many arguments for function: %s"
+msgstr "E118: Túl sok argumentum a függvényhez: %s"
+
+#, c-format
+msgid "E716: Key not present in Dictionary: %s"
+msgstr "E716: Nincs ilyen kulcs a Szótárban: %s"
+
+#, c-format
+msgid "E122: Function %s already exists, add ! to replace it"
+msgstr "E122: A(z) %s függvény már létezik, adjon hozzá ! jelet a felülíráshoz"
+
+msgid "E717: Dictionary entry already exists"
+msgstr "E717: A Szótár bejegyzés már létezik"
+
+msgid "E718: Funcref required"
+msgstr "E718: Funcref szükséges"
+
+msgid "E719: Cannot use [:] with a Dictionary"
+msgstr "E719: Nem használható [:] egy Szótárral"
+
+#, c-format
+msgid "E734: Wrong variable type for %s="
+msgstr "E734: Rossz változótípus %s="
+
+#, c-format
+msgid "E130: Unknown function: %s"
+msgstr "E130: Ismeretlen függvény: %s"
+
+#, c-format
+msgid "E461: Illegal variable name: %s"
+msgstr "E461: Illegális változónév: %s"
+
+msgid "E687: Less targets than List items"
+msgstr "E687: Kevesebb cél, mint Lista elem"
+
+msgid "E688: More targets than List items"
+msgstr "E688: Több cél, mint Lista elem"
+
+msgid "Double ; in list of variables"
+msgstr "Dupla ; a változók listájában"
+
+#, c-format
+msgid "E738: Can't list variables for %s"
+msgstr "E738: Nem lehet kilistázni a változókat %s-hez"
+
+msgid "E689: Can only index a List or Dictionary"
+msgstr "E689: Csak egy Listát vagy Szótárat lehet indexelni"
+
+msgid "E708: [:] must come last"
+msgstr "E708: [:] utoljára kell jönnie"
+
+msgid "E709: [:] requires a List value"
+msgstr "E709: [:] egy Lista értéket igényel"
+
+msgid "E710: List value has more items than target"
+msgstr "E710: A Lista értéknek több eleme van, mint a cél"
+
+msgid "E711: List value has not enough items"
+msgstr "E711: A Lista értéknek nincs elég eleme"
+
+msgid "E690: Missing \"in\" after :for"
+msgstr "E690: Hiányzó \"in\" a :for után"
+
+#, c-format
+msgid "E107: Missing parentheses: %s"
+msgstr "E107: Hiányzó zárójel: %s"
+
+#, c-format
+msgid "E108: No such variable: \"%s\""
+msgstr "E108: Nincs ilyen változó: \"%s\""
+
+# TODO: Capitalise first word of message?
+msgid "E743: Variable nested too deep for (un)lock"
+msgstr "E743: A változó túl mélyen ágyazott a (fel)zárásához"
+
+msgid "E109: Missing ':' after '?'"
+msgstr "E109: Hiányzó ':' a '?' után"
+
+msgid "E691: Can only compare List with List"
+msgstr "E691: Csak Listát lehet összehasonlítani Listával"
+
+msgid "E692: Invalid operation for List"
+msgstr "E692: Érvénytelen művelet Listára"
+
+msgid "E735: Can only compare Dictionary with Dictionary"
+msgstr "E735: Csak Szótárat lehet összehasonlítani Szótárral"
+
+msgid "E736: Invalid operation for Dictionary"
+msgstr "E736: Érvénytelen művelet Szótárra"
+
+msgid "E693: Can only compare Funcref with Funcref"
+msgstr "E693: Csak Funcref-et lehet összehasonlítani Funcref-el"
+
+msgid "E694: Invalid operation for Funcrefs"
+msgstr "E694: Érvénytelen művelet Funcref-ekre"
+
+msgid "E110: Missing ')'"
+msgstr "E110: Hiányzó ')'"
+
+msgid "E695: Cannot index a Funcref"
+msgstr "E695: Nem lehet indexelni egy Funcref-et"
+
+#, c-format
+msgid "E112: Option name missing: %s"
+msgstr "E112: Hiányzó opció név: %s"
+
+#, c-format
+msgid "E113: Unknown option: %s"
+msgstr "E113: Ismeretlen opció: %s"
+
+#, c-format
+msgid "E114: Missing quote: %s"
+msgstr "E114: Hiányzó idézőjel: %s"
+
+#, c-format
+msgid "E115: Missing quote: %s"
+msgstr "E115: Hiányzó idézőjel: %s"
+
+#, c-format
+msgid "E696: Missing comma in List: %s"
+msgstr "E696: Hiányzó vessző a Listában: %s"
+
+#, c-format
+msgid "E697: Missing end of List ']': %s"
+msgstr "E697: Hiányzó Lista vége ']': %s"
+
+#, c-format
+msgid "E720: Missing colon in Dictionary: %s"
+msgstr "E720: Hiányzó kettőspont a Szótárban: %s"
+
+#, c-format
+msgid "E721: Duplicate key in Dictionary: \"%s\""
+msgstr "E721: Dupla kulcs a Szótárban: \"%s\""
+
+#, c-format
+msgid "E722: Missing comma in Dictionary: %s"
+msgstr "E722: Hiányzó vessző a Szótárban: %s"
+
+#, c-format
+msgid "E723: Missing end of Dictionary '}': %s"
+msgstr "E723: Hiányzó Szótár vége '}': %s"
+
+# TODO: Capitalise first word of message?
+msgid "E724: Variable nested too deep for displaying"
+msgstr "E724: A változó túl mélyen ágyazott a megjelenítéshez"
+
+#, c-format
+msgid "E117: Unknown function: %s"
+msgstr "E117: Ismeretlen függvény: %s"
+
+#, c-format
+msgid "E119: Not enough arguments for function: %s"
+msgstr "E119: Nincs elég argumentum a függvényhez: %s"
+
+#, c-format
+msgid "E120: Using <SID> not in a script context: %s"
+msgstr "E120: A <SID> használata nem script környezetben: %s"
+
+#, c-format
+msgid "E725: Calling dict function without Dictionary: %s"
+msgstr "E725: Szótár nélkül hívott dict függvény: %s"
+
+msgid "E699: Too many arguments"
+msgstr "E699: Túl sok argumentum"
+
+msgid "E785: complete() can only be used in Insert mode"
+msgstr "E785: A complete() csak Beszúrás módban használható"
+
+#.
+#. * Yes this is ugly, I don't particularly like it either.  But doing it
+#. * this way has the compelling advantage that translations need not to
+#. * be touched at all.  See below what 'ok' and 'ync' are used for.
+#.
+msgid "&Ok"
+msgstr "&Ok"
+
+#, c-format
+msgid "E737: Key already exists: %s"
+msgstr "E737: A kulcs már létezik: %s"
+
+#, c-format
+msgid "+-%s%3ld lines: "
+msgstr "+-%s%3ld sor: "
+
+#, c-format
+msgid "E700: Unknown function: %s"
+msgstr "E700: Ismeretlen függvény: %s"
+
+msgid ""
+"&OK\n"
+"&Cancel"
+msgstr ""
+"&OK\n"
+"&Vissza"
+
+msgid "called inputrestore() more often than inputsave()"
+msgstr "Többször hívtad az inputrestore()-t, mint az inputsave()-t"
+
+msgid "E786: Range not allowed"
+msgstr "E786: Tartomány nem engedélyezett"
+
+msgid "E701: Invalid type for len()"
+msgstr "E701: Érvénytelen típus a len()-hez"
+
+msgid "E726: Stride is zero"
+msgstr "E726: A lépésköz nulla"
+
+msgid "E727: Start past end"
+msgstr "E727: A kezdés túl van a végén"
+
+msgid "<empty>"
+msgstr "<üres>"
+
+msgid "E240: No connection to Vim server"
+msgstr "E240: Nincs kapcsolat a Vim szerverrel"
+
+#, c-format
+msgid "E241: Unable to send to %s"
+msgstr "E241: Nem lehet elküldeni %s-nek"
+
+msgid "E277: Unable to read a server reply"
+msgstr "E277: Nem lehet olvasni a szerver válaszát"
+
+msgid "E655: Too many symbolic links (cycle?)"
+msgstr "E655: Túl sok szimbolikus link (ciklus?)"
+
+msgid "E258: Unable to send to client"
+msgstr "E258: Nem lehet elküldeni a kliensnek"
+
+msgid "E702: Sort compare function failed"
+msgstr "E702: A rendezési összehasonlító függvény hibát adott"
+
+msgid "(Invalid)"
+msgstr "(Érvénytelen)"
+
+msgid "E677: Error writing temp file"
+msgstr "E677: Hiba a temp fájl írásakor"
+
+msgid "E703: Using a Funcref as a Number"
+msgstr "E703: Egy Funcref-et használ számként"
+
+msgid "E745: Using a List as a Number"
+msgstr "E745: Egy Listát használ számként"
+
+msgid "E728: Using a Dictionary as a Number"
+msgstr "E728: Egy Szótárat használ számként"
+
+msgid "E729: using Funcref as a String"
+msgstr "E729: Egy Funcref-et használ szövegként"
+
+msgid "E730: using List as a String"
+msgstr "E730: Egy Listát használ szövegként"
+
+msgid "E731: using Dictionary as a String"
+msgstr "E731: Egy Szótárat használ szövegként"
+
+#, c-format
+msgid "E704: Funcref variable name must start with a capital: %s"
+msgstr "E704: A Funcref változónévnek nagybetűvel kell kezdődnie: %s"
+
+#, c-format
+msgid "E705: Variable name conflicts with existing function: %s"
+msgstr "E705: A változónév ütközik egy létező függvénnyel: %s"
+
+#, c-format
+msgid "E706: Variable type mismatch for: %s"
+msgstr "E706: Változótípus eltérés: %s"
+
+#, c-format
+msgid "E795: Cannot delete variable %s"
+msgstr "E795: Nem lehet törölni a változót: %s"
+
+#, c-format
+msgid "E741: Value is locked: %s"
+msgstr "E741: Az érték zárolva van: %s"
+
+msgid "Unknown"
+msgstr "Ismeretlen"
+
+#, c-format
+msgid "E742: Cannot change value of %s"
+msgstr "E742: Nem lehet megváltoztatni az értékét: %s"
+
+# TODO: Capitalise first word of message?
+msgid "E698: Variable nested too deep for making a copy"
+msgstr "E698: A változó túl mélyen ágyazott a másoláshoz"
+
+#, c-format
+msgid "E124: Missing '(': %s"
+msgstr "E124: Hiányzó '(': %s"
+
+#, c-format
+msgid "E125: Illegal argument: %s"
+msgstr "E125: Illegális argumentum: %s"
+
+msgid "E126: Missing :endfunction"
+msgstr "E126: Hiányzó :endfunction"
+
+#, c-format
+msgid "E746: Function name does not match script file name: %s"
+msgstr "E746: A függvénynév nem egyezik a script fájl nevével: %s"
+
+msgid "E129: Function name required"
+msgstr "E129: Függvénynév szükséges"
+
+#, c-format
+msgid "E128: Function name must start with a capital or contain a colon: %s"
+msgstr "E128: A függvénynévnek nagybetűvel kell kezdődnie vagy tartalmaznia kell egy kettőspontot: %s"
+
+#, c-format
+msgid "E131: Cannot delete function %s: It is in use"
+msgstr "E131: Nem lehet törölni a függvényt: %s: Használatban van"
+
+msgid "E132: Function call depth is higher than 'maxfuncdepth'"
+msgstr "E132: A függvényhívás mélysége nagyobb, mint a 'maxfuncdepth'"
+
+#, c-format
+msgid "calling %s"
+msgstr "%s hívása"
+
+#, c-format
+msgid "%s aborted"
+msgstr "%s megszakítva"
+
+#, c-format
+msgid "%s returning #%ld"
+msgstr "%s visszatér #%ld"
+
+#, c-format
+msgid "%s returning %s"
+msgstr "%s visszatér %s"
+
+#, c-format
+msgid "continuing in %s"
+msgstr "folytatás %s-ben"
+
+msgid "E133: :return not inside a function"
+msgstr "E133: :return nem függvényen belül"
+
+#, c-format
+msgid ""
+"\n"
+"# global variables:\n"
+msgstr ""
+"\n"
+"# globalis változók:\n"
+
+msgid ""
+"\n"
+"\tLast set from "
+msgstr ""
+"\n"
+"\tUtolsó érték innen:"
+
+msgid "Entering Debug mode.  Type \"cont\" to continue."
+msgstr "Hibakereső mód.  Írja be a \"cont\"-ot a folytatáshoz."
+
+#, c-format
+msgid "line %ld: %s"
+msgstr "%ld sor: %s"
+
+#, c-format
+msgid "cmd: %s"
+msgstr "cmd: %s"
+
+#, c-format
+msgid "Breakpoint in \"%s%s\" line %ld"
+msgstr "Töréspont a \"%s%s\" fájlban %ld sorban"
+
+#, c-format
+msgid "E161: Breakpoint not found: %s"
+msgstr "E161: Nem található töréspont: %s"
+
+msgid "No breakpoints defined"
+msgstr "Nincsenek meghatározva töréspontok"
+
+#, c-format
+msgid "%3d  %s %s  line %ld"
+msgstr "%3d  %s %s  %ld sor"
+
+msgid "E750: First use :profile start <fname>"
+msgstr "E750: Először használja a :profile start <fname> parancsot"
+
+msgid "Save As"
+msgstr "Mentés másként"
+
+#, c-format
+msgid "Save changes to \"%s\"?"
+msgstr "Menti a változásokat a \"%s\" fájlban?"
+
+msgid "Untitled"
+msgstr "Névtelen"
+
+#, c-format
+msgid "E162: No write since last change for buffer \"%s\""
+msgstr "E162: Nincs írás az utolsó változtatás óta a \"%s\" pufferben"
+
+msgid "Warning: Entered other buffer unexpectedly (check autocommands)"
+msgstr "Figyelem: Váratlanul másik pufferbe lépett (ellenőrizze az automatikus parancsokat)"
+
+msgid "E163: There is only one file to edit"
+msgstr "E163: Csak egy fájl van szerkesztésre"
+
+msgid "E164: Cannot go before first file"
+msgstr "E164: Nem lehet visszalépni az első fájl előtt"
+
+msgid "E165: Cannot go beyond last file"
+msgstr "E165: Nem lehet túllépni az utolsó fájlon"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E666: Compiler not supported: %s"
+msgstr "E666: Nem támogatott fordító: %s"
+
+#, c-format
+msgid "Searching for \"%s\" in \"%s\""
+msgstr "Keresés a \"%s\"-ben a \"%s\"-ban"
+
+#, c-format
+msgid "Searching for \"%s\""
+msgstr "Keresés a \"%s\"-ban"
+
+#, c-format
+msgid "not found in 'runtimepath': \"%s\""
+msgstr "nem található a 'runtimepath'-ban: \"%s\""
+
+msgid "Source Vim script"
+msgstr "Vim script betöltése"
+
+#, c-format
+msgid "Cannot source a directory: \"%s\""
+msgstr "Nem lehet betölteni egy könyvtárat: \"%s\""
+
+#, c-format
+msgid "could not source \"%s\""
+msgstr "nem sikerült betölteni \"%s\""
+
+#, c-format
+msgid "line %ld: could not source \"%s\""
+msgstr "%ld sor: nem sikerült betölteni \"%s\""
+
+#, c-format
+msgid "sourcing \"%s\""
+msgstr "betöltés \"%s\""
+
+#, c-format
+msgid "line %ld: sourcing \"%s\""
+msgstr "%ld sor: betöltés \"%s\""
+
+#, c-format
+msgid "finished sourcing %s"
+msgstr "befejeződött a %s betöltése"
+
+msgid "modeline"
+msgstr "modeline"
+
+msgid "--cmd argument"
+msgstr "--cmd argumentum"
+
+msgid "-c argument"
+msgstr "-c argumentum"
+
+msgid "environment variable"
+msgstr "környezeti változó"
+
+msgid "error handler"
+msgstr "hibakezelő"
+
+msgid "W15: Warning: Wrong line separator, ^M may be missing"
+msgstr "W15: Figyelem: Rossz sorválasztó, ^M hiányozhat"
+
+msgid "E167: :scriptencoding used outside of a sourced file"
+msgstr "E167: :scriptencoding nem használható egy betöltött fájlon kívül"
+
+msgid "E168: :finish used outside of a sourced file"
+msgstr "E168: :finish nem használható egy betöltött fájlon kívül"
+
+#, c-format
+msgid "Current %slanguage: \"%s\""
+msgstr "Aktuális %snyelv: \"%s\""
+
+#, c-format
+msgid "E197: Cannot set language to \"%s\""
+msgstr "E197: Nem lehet beállítani a nyelvet \"%s\"-re"
+
+#, c-format
+msgid "<%s>%s%s  %d,  Hex %02x,  Octal %03o"
+msgstr "<%s>%s%s  %d,  Hex %02x,  Oktális %03o"
+
+#, c-format
+msgid "> %d, Hex %04x, Octal %o"
+msgstr "> %d, Hex %04x, Oktális %o"
+
+#, c-format
+msgid "> %d, Hex %08x, Octal %o"
+msgstr "> %d, Hex %08x, Oktális %o"
+
+msgid "E134: Move lines into themselves"
+msgstr "E134: Sorokat nem lehet önmagukba mozgatni"
+
+msgid "1 line moved"
+msgstr "1 sor mozgatva"
+
+#, c-format
+msgid "%ld lines moved"
+msgstr "%ld sor mozgatva"
+
+#, c-format
+msgid "%ld lines filtered"
+msgstr "%ld sor szűrve"
+
+msgid "E135: *Filter* Autocommands must not change current buffer"
+msgstr "E135: A szűrő automatikus parancsok nem változtathatják meg az aktuális puffert"
+
+msgid "[No write since last change]\n"
+msgstr "[Nincs írás az utolsó változtatás óta]\n"
+
+#, c-format
+msgid "%sviminfo: %s in line: "
+msgstr "%sviminfo: %s a sorban: "
+
+msgid "E136: viminfo: Too many errors, skipping rest of file"
+msgstr "E136: viminfo: Túl sok hiba, a fájl többi részét kihagyja"
+
+#, c-format
+msgid "Reading viminfo file \"%s\"%s%s%s"
+msgstr "Viminfo fájl olvasása \"%s\"%s%s%s"
+
+msgid " info"
+msgstr " info"
+
+msgid " marks"
+msgstr " jelek"
+
+msgid " FAILED"
+msgstr " SIKERTELEN"
+
+#. avoid a wait_return for this message, it's annoying
+#, c-format
+msgid "E137: Viminfo file is not writable: %s"
+msgstr "E137: A viminfo fájl nem írható: %s"
+
+#, c-format
+msgid "E138: Can't write viminfo file %s!"
+msgstr "E138: Nem lehet írni a viminfo fájlt %s!"
+
+#, c-format
+msgid "Writing viminfo file \"%s\""
+msgstr "Viminfo fájl írása \"%s\""
+
+#. Write the info:
+#, c-format
+msgid "# This viminfo file was generated by Vim %s.\n"
+msgstr "# Ez a viminfo fájl a Vim %s által készült.\n"
+
+#, c-format
+msgid ""
+"# You may edit it if you're careful!\n"
+"\n"
+msgstr ""
+"# Szerkesztheted, ha óvatos vagy!\n"
+"\n"
+
+#, c-format
+msgid "# Value of 'encoding' when this file was written\n"
+msgstr "# Az 'encoding' értéke, amikor ez a fájl íródott\n"
+
+msgid "Illegal starting char"
+msgstr "Illegális kezdő karakter"
+
+msgid "Write partial file?"
+msgstr "Részleges fájl írása?"
+
+msgid "E140: Use ! to write partial buffer"
+msgstr "E140: Használjon ! jelet a részleges puffer írásához"
+
+#, c-format
+msgid "Overwrite existing file \"%s\"?"
+msgstr "Felülírja a meglévő fájlt \"%s\"?"
+
+#, c-format
+msgid "Swap file \"%s\" exists, overwrite anyway?"
+msgstr "Csere fájl \"%s\" létezik, akkor is felülírja?"
+
+#, c-format
+msgid "E768: Swap file exists: %s (:silent! overrides)"
+msgstr "E768: Csere fájl létezik: %s (:silent! felülbírálja)"
+
+#, c-format
+msgid "E141: No file name for buffer %ld"
+msgstr "E141: Nincs fájlnév a(z) %ld pufferhez"
+
+msgid "E142: File not written: Writing is disabled by 'write' option"
+msgstr "E142: Fájl nem íródott: Az írás tiltva van a 'write' opcióval"
+
+#, c-format
+msgid ""
+"'readonly' option is set for \"%s\".\n"
+"Do you wish to write anyway?"
+msgstr ""
+"A 'readonly' beállítás a következőre van beállítva: \"%s\".\n"
+"Akarsz mégis írni?"
+
+msgid "Edit File"
+msgstr "Fájl szerkesztése"
+
+#, c-format
+msgid "E143: Autocommands unexpectedly deleted new buffer %s"
+msgstr "E143: Az automatikus parancsok váratlanul törölték az új puffert %s"
+
+# TODO: Capitalise first word of message?
+msgid "E144: Non-numeric argument to :z"
+msgstr "E144: Nem numerikus argumentum a :z-hez"
+
+msgid "E145: Shell commands not allowed in rvim"
+msgstr "E145: Shell parancsok nem engedélyezettek rvim-ben"
+
+msgid "E146: Regular expressions can't be delimited by letters"
+msgstr "E146: A reguláris kifejezéseket nem lehet betűkkel határolni"
+
+#, c-format
+msgid "replace with %s (y/n/a/q/l/^E/^Y)?"
+msgstr "cserélje %s-re (y/n/a/q/l/^E/^Y)?"
+
+msgid "(Interrupted) "
+msgstr "(Megszakítva) "
+
+msgid "1 match"
+msgstr "1 találat"
+
+msgid "1 substitution"
+msgstr "1 cserélés"
+
+#, c-format
+msgid "%ld matches"
+msgstr "%ld találat"
+
+#, c-format
+msgid "%ld substitutions"
+msgstr "%ld cserélés"
+
+msgid " on 1 line"
+msgstr " 1 soron"
+
+#, c-format
+msgid " on %ld lines"
+msgstr " %ld soron"
+
+msgid "E147: Cannot do :global recursive"
+msgstr "E147: Nem lehet :global rekurzívan"
+
+msgid "E148: Regular expression missing from global"
+msgstr "E148: Hiányzó reguláris kifejezés a global-ból"
+
+#, c-format
+msgid "Pattern found in every line: %s"
+msgstr "Minta minden sorban megtalálható: %s"
+
+#, c-format
+msgid ""
+"\n"
+"# Last Substitute String:\n"
+"$"
+msgstr ""
+"\n"
+"# Utolsó helyettesítő karakterlánc:\n"
+"$"
+
+msgid "E478: Don't panic!"
+msgstr "E478: Ne pánikoljon!"
+
+#, c-format
+msgid "E661: Sorry, no '%s' help for %s"
+msgstr "E661: Sajnos nincs '%s' segítség %s-hez"
+
+#, c-format
+msgid "E149: Sorry, no help for %s"
+msgstr "E149: Sajnos nincs segítség %s-hez"
+
+#, c-format
+msgid "Sorry, help file \"%s\" not found"
+msgstr "Sajnos a segítség fájl \"%s\" nem található"
+
+#, c-format
+msgid "E150: Not a directory: %s"
+msgstr "E150: Nem könyvtár: %s"
+
+#, c-format
+msgid "E152: Cannot open %s for writing"
+msgstr "E152: Nem lehet megnyitni %s-t írásra"
+
+#, c-format
+msgid "E153: Unable to open %s for reading"
+msgstr "E153: Nem lehet megnyitni %s-t olvasásra"
+
+#, c-format
+msgid "E670: Mix of help file encodings within a language: %s"
+msgstr "E670: Segítség fájl kódolások keveredése egy nyelven belül: %s"
+
+#, c-format
+msgid "E154: Duplicate tag \"%s\" in file %s/%s"
+msgstr "E154: Dupla címke \"%s\" a fájlban %s/%s"
+
+#, c-format
+msgid "E160: Unknown sign command: %s"
+msgstr "E160: Ismeretlen jel parancs: %s"
+
+msgid "E156: Missing sign name"
+msgstr "E156: Hiányzó jel név"
+
+msgid "E612: Too many signs defined"
+msgstr "E612: Túl sok jel definiálva"
+
+#, c-format
+msgid "E239: Invalid sign text: %s"
+msgstr "E239: Érvénytelen jel szöveg: %s"
+
+#, c-format
+msgid "E155: Unknown sign: %s"
+msgstr "E155: Ismeretlen jel: %s"
+
+msgid "E159: Missing sign number"
+msgstr "E159: Hiányzó jel szám"
+
+#, c-format
+msgid "E158: Invalid buffer name: %s"
+msgstr "E158: Érvénytelen puffer név: %s"
+
+#, c-format
+msgid "E157: Invalid sign ID: %ld"
+msgstr "E157: Érvénytelen jel ID: %ld"
+
+msgid " (NOT FOUND)"
+msgstr " (NEM TALÁLHATÓ)"
+
+msgid " (not supported)"
+msgstr " (nem támogatott)"
+
+msgid "[Deleted]"
+msgstr "[Törölve]"
+
+msgid "Entering Ex mode.  Type \"visual\" to go to Normal mode."
+msgstr "Ex módba lépés.  Írja be a \"visual\"-t a Normál módhoz való visszatéréshez."
+
+msgid "E501: At end-of-file"
+msgstr "E501: Fájl vége"
+
+msgid "E169: Command too recursive"
+msgstr "E169: Túl rekurzív parancs"
+
+#, c-format
+msgid "E605: Exception not caught: %s"
+msgstr "E605: Nem elkapott kivétel: %s"
+
+msgid "End of sourced file"
+msgstr "A betöltött fájl vége"
+
+msgid "End of function"
+msgstr "A függvény vége"
+
+msgid "E464: Ambiguous use of user-defined command"
+msgstr "E464: Kétértelmű felhasználó által definiált parancs használata"
+
+msgid "E492: Not an editor command"
+msgstr "E492: Nem szerkesztő parancs"
+
+msgid "E493: Backwards range given"
+msgstr "E493: Visszafelé tartomány megadva"
+
+msgid "Backwards range given, OK to swap"
+msgstr "Visszafelé tartomány megadva, OK a cseréhez"
+
+msgid "E494: Use w or w>>"
+msgstr "E494: Használja a w vagy w>> parancsot"
+
+msgid "E319: Sorry, the command is not available in this version"
+msgstr "E319: Sajnálom, a parancs nem elérhető ebben a verzióban"
+
+msgid "E172: Only one file name allowed"
+msgstr "E172: Csak egy fájlnév megengedett"
+
+msgid "1 more file to edit.  Quit anyway?"
+msgstr "Még 1 fájl szerkesztésre.  Kilépjen így is?"
+
+#, c-format
+msgid "%d more files to edit.  Quit anyway?"
+msgstr "Még %d fájl szerkesztésre.  Kilépjen így is?"
+
+msgid "E173: 1 more file to edit"
+msgstr "E173: Még 1 fájl szerkesztésre"
+
+#, c-format
+msgid "E173: %ld more files to edit"
+msgstr "E173: Még %ld fájl szerkesztésre"
+
+msgid "E174: Command already exists: add ! to replace it"
+msgstr "E174: A parancs már létezik: adjon hozzá ! jelet a felülíráshoz"
+
+msgid ""
+"\n"
+"    Name        Args Range Complete  Definition"
+msgstr ""
+"\n"
+"    Név         Args Tartomány Teljes Definíció"
+
+msgid "No user-defined commands found"
+msgstr "Nem található felhasználó által definiált parancs"
+
+msgid "E175: No attribute specified"
+msgstr "E175: Nincs megadva attribútum"
+
+msgid "E176: Invalid number of arguments"
+msgstr "E176: Érvénytelen argumentumok száma"
+
+msgid "E177: Count cannot be specified twice"
+msgstr "E177: A szám nem adható meg kétszer"
+
+msgid "E178: Invalid default value for count"
+msgstr "E178: Érvénytelen alapérték a számhoz"
+
+# TODO: Capitalise first word of message?
+msgid "E179: Argument required for -complete"
+msgstr "E179: Argumentum szükséges a -complete-hez"
+
+#, c-format
+msgid "E181: Invalid attribute: %s"
+msgstr "E181: Érvénytelen attribútum: %s"
+
+msgid "E182: Invalid command name"
+msgstr "E182: Érvénytelen parancsnév"
+
+msgid "E183: User defined commands must start with an uppercase letter"
+msgstr "E183: A felhasználó által definiált parancsoknak nagybetűvel kell kezdődniük"
+
+#, c-format
+msgid "E184: No such user-defined command: %s"
+msgstr "E184: Nincs ilyen felhasználó által definiált parancs: %s"
+
+#, c-format
+msgid "E180: Invalid complete value: %s"
+msgstr "E180: Érvénytelen complete érték: %s"
+
+msgid "E468: Completion argument only allowed for custom completion"
+msgstr "E468: A kiegészítés argumentuma csak egyéni kiegészítéshez engedélyezett"
+
+msgid "E467: Custom completion requires a function argument"
+msgstr "E467: Az egyéni kiegészítés függvény argumentumot igényel"
+
+#, c-format
+msgid "E185: Cannot find color scheme %s"
+msgstr "E185: Nem található színséma %s"
+
+msgid "Greetings, Vim user!"
+msgstr "Üdvözöljük, Vim felhasználó!"
+
+msgid "E784: Cannot close last tab page"
+msgstr "E784: Nem lehet bezárni az utolsó lapot"
+
+msgid "Already only one tab page"
+msgstr "Már csak egy lap van"
+
+msgid "Edit File in new window"
+msgstr "Fájl szerkesztése új ablakban"
+
+#, c-format
+msgid "Tab page %d"
+msgstr "%d lap"
+
+msgid "No swap file"
+msgstr "Nincs csere fájl"
+
+msgid "Append File"
+msgstr "Fájl hozzáfűzése"
+
+msgid "E747: Cannot change directory, buffer is modified (add ! to override)"
+msgstr "E747: Nem lehet megváltoztatni a könyvtárat, a puffer módosítva van (adjon hozzá ! jelet a felülbíráláshoz)"
+
+msgid "E186: No previous directory"
+msgstr "E186: Nincs előző könyvtár"
+
+msgid "E187: Unknown"
+msgstr "E187: Ismeretlen"
+
+msgid "E465: :winsize requires two number arguments"
+msgstr "E465: A :winsize két szám argumentumot igényel"
+
+#, c-format
+msgid "Window position: X %d, Y %d"
+msgstr "Ablak pozíció: X %d, Y %d"
+
+msgid "E188: Obtaining window position not implemented for this platform"
+msgstr "E188: Az ablak pozíciójának lekérdezése nem implementált ezen a platformon"
+
+msgid "E466: :winpos requires two number arguments"
+msgstr "E466: A :winpos két szám argumentumot igényel"
+
+msgid "Save Redirection"
+msgstr "Átirányítás mentése"
+
+msgid "Save View"
+msgstr "Nézet mentése"
+
+msgid "Save Session"
+msgstr "Munkamenet mentése"
+
+msgid "Save Setup"
+msgstr "Beállítás mentése"
+
+#, c-format
+msgid "E739: Cannot create directory: %s"
+msgstr "E739: Nem lehet létrehozni a könyvtárat: %s"
+
+#, c-format
+msgid "E189: \"%s\" exists (add ! to override)"
+msgstr "E189: \"%s\" létezik (adjon hozzá ! jelet a felülbíráláshoz)"
+
+#, c-format
+msgid "E190: Cannot open \"%s\" for writing"
+msgstr "E190: Nem lehet megnyitni \"%s\"-t írásra"
+
+#. set mark
+msgid "E191: Argument must be a letter or forward/backward quote"
+msgstr "E191: Az argumentumnak betűnek vagy előre/hátra idézőjelnek kell lennie"
+
+msgid "E192: Recursive use of :normal too deep"
+msgstr "E192: Túl mély rekurzív használata a :normal-nak"
+
+msgid "E194: No alternate file name to substitute for '#'"
+msgstr "E194: Nincs alternatív fájlnév a '#'-ra helyettesítendő"
+
+# TODO: Capitalise first word of message?
+msgid "E495: No autocommand file name to substitute for \"<afile>\""
+msgstr "E495: Nincs automatikus parancs fájlnév a \"<afile>\"-ra helyettesítendő"
+
+# TODO: Capitalise first word of message?
+msgid "E496: No autocommand buffer number to substitute for \"<abuf>\""
+msgstr "E496: Nincs automatikus parancs puffer szám a \"<abuf>\"-ra helyettesítendő"
+
+# TODO: Capitalise first word of message?
+msgid "E497: No autocommand match name to substitute for \"<amatch>\""
+msgstr "E497: Nincs automatikus parancs illeszkedés név a \"<amatch>\"-ra helyettesítendő"
+
+# TODO: Capitalise first word of message?
+msgid "E498: No :source file name to substitute for \"<sfile>\""
+msgstr "E498: Nincs :forrás fájlnév a(z) \"<sfile>\" helyettesítéséhez"
+
+#, no-c-format
+msgid "E499: Empty file name for '%' or '#', only works with \":p:h\""
+msgstr "E499: Üres fájlnév a(z) '%' vagy '#', csak a \":p:h\"-val működik"
+
+msgid "E500: Evaluates to an empty string"
+msgstr "E500: Üres karakterlánc értékelése"
+
+msgid "E195: Cannot open viminfo file for reading"
+msgstr "E195: Nem lehet olvasni a viminfo fájlt"
+
+msgid "E196: No digraphs in this version"
+msgstr "E196: Nincsenek digraphok ebben a verzióban"
+
+msgid "E608: Cannot :throw exceptions with 'Vim' prefix"
+msgstr "E608: Nem lehet :throw kivételeket használni a 'Vim' előtaggal"
+
+#. always scroll up, don't overwrite
+#, c-format
+msgid "Exception thrown: %s"
+msgstr "Kivétel dobva: %s"
+
+#, c-format
+msgid "Exception finished: %s"
+msgstr "Kivétel befejezve: %s"
+
+#, c-format
+msgid "Exception discarded: %s"
+msgstr "Kivétel eldobva: %s"
+
+#, c-format
+msgid "%s, line %ld"
+msgstr "%s, %ld. sor"
+
+#. always scroll up, don't overwrite
+#, c-format
+msgid "Exception caught: %s"
+msgstr "Kivétel elkapva: %s"
+
+#, c-format
+msgid "%s made pending"
+msgstr "%s felfüggesztve"
+
+#, c-format
+msgid "%s resumed"
+msgstr "%s folytatva"
+
+#, c-format
+msgid "%s discarded"
+msgstr "%s eldobva"
+
+msgid "Exception"
+msgstr "Kivétel"
+
+msgid "Error and interrupt"
+msgstr "Hiba és megszakítás"
+
+msgid "Error"
+msgstr "Hiba"
+
+#. if (pending & CSTP_INTERRUPT)
+msgid "Interrupt"
+msgstr "Megszakítás"
+
+# TODO: Capitalise first word of message?
+msgid "E579: :if nesting too deep"
+msgstr "E579: :if túl mélyen ágyazott"
+
+msgid "E580: :endif without :if"
+msgstr "E580: :endif nélkül :if"
+
+msgid "E581: :else without :if"
+msgstr "E581: :else nélkül :if"
+
+msgid "E582: :elseif without :if"
+msgstr "E582: :elseif nélkül :if"
+
+# TODO: Capitalise first word of message?
+msgid "E583: Multiple :else"
+msgstr "E583: Többszörös :else"
+
+msgid "E584: :elseif after :else"
+msgstr "E584: :elseif :else után"
+
+msgid "E585: :while/:for nesting too deep"
+msgstr "E585: :while/:for túl mélyen ágyazott"
+
+msgid "E586: :continue without :while or :for"
+msgstr "E586: :continue :while vagy :for nélkül"
+
+msgid "E587: :break without :while or :for"
+msgstr "E587: :break :while vagy :for nélkül"
+
+msgid "E732: Using :endfor with :while"
+msgstr "E732: :endfor használata :while-val"
+
+msgid "E733: Using :endwhile with :for"
+msgstr "E733: :endwhile használata :for-val"
+
+msgid "E601: :try nesting too deep"
+msgstr "E601: :try túl mélyen ágyazott"
+
+msgid "E603: :catch without :try"
+msgstr "E603: :catch nélkül :try"
+
+#. Give up for a ":catch" after ":finally" and ignore it.
+#. * Just parse.
+msgid "E604: :catch after :finally"
+msgstr "E604: :catch :finally után"
+
+msgid "E606: :finally without :try"
+msgstr "E606: :finally nélkül :try"
+
+#. Give up for a multiple ":finally" and ignore it.
+# TODO: Capitalise first word of message?
+msgid "E607: Multiple :finally"
+msgstr "E607: Többszörös :finally"
+
+msgid "E602: :endtry without :try"
+msgstr "E602: :endtry nélkül :try"
+
+msgid "E193: :endfunction not inside a function"
+msgstr "E193: :endfunction nem függvényen belül"
+
+msgid "E788: Not allowed to edit another buffer now"
+msgstr "E788: Jelenleg nem szerkeszthet másik puffert"
+
+msgid "tagname"
+msgstr "címkeneve"
+
+msgid " kind file\n"
+msgstr " fájl típusa\n"
+
+msgid "'history' option is zero"
+msgstr "A 'history' opció nulla"
+
+#, c-format
+msgid ""
+"\n"
+"# %s History (newest to oldest):\n"
+msgstr ""
+"\n"
+"# %s Történelem (legújabbtól a legrégebbig):\n"
+
+msgid "Command Line"
+msgstr "Parancssor"
+
+msgid "Search String"
+msgstr "Keresősztring"
+
+msgid "Expression"
+msgstr "Kifejezés"
+
+msgid "Input Line"
+msgstr "Bemeneti sor"
+
+msgid "E198: cmd_pchar beyond the command length"
+msgstr "E198: cmd_pchar a parancs hosszát meghaladja"
+
+msgid "E199: Active window or buffer deleted"
+msgstr "E199: Aktív ablak vagy puffert törölték"
+
+msgid "Illegal file name"
+msgstr "Érvénytelen fájlnév"
+
+msgid "is a directory"
+msgstr "könyvtár"
+
+msgid "is not a file"
+msgstr "nem fájl"
+
+msgid "is a device (disabled with 'opendevice' option)"
+msgstr "eszköz (letiltva az 'opendevice' opcióval)"
+
+msgid "[New File]"
+msgstr "[Új fájl]"
+
+msgid "[New DIRECTORY]"
+msgstr "[Új KÖNYVTÁR]"
+
+msgid "[File too big]"
+msgstr "[Túl nagy fájl]"
+
+msgid "[Permission Denied]"
+msgstr "[Engedély megtagadva]"
+
+msgid "E200: *ReadPre autocommands made the file unreadable"
+msgstr "E200: *ReadPre autóparancsok miatt az állomány olvashatatlan"
+
+msgid "E201: *ReadPre autocommands must not change current buffer"
+msgstr "E201: *ReadPre autóparancsok nem változtathatják meg az aktuális puffert"
+
+msgid "Vim: Reading from stdin...\n"
+msgstr "Vim: Olvasás stdin-ből...\n"
+
+msgid "Reading from stdin..."
+msgstr "Olvasás stdin-ből..."
+
+#. Re-opening the original file failed!
+msgid "E202: Conversion made file unreadable!"
+msgstr "E202: A konvertálás olvashatatlanná tette a fájlt!"
+
+msgid "[fifo/socket]"
+msgstr "[fifo/socket]"
+
+msgid "[fifo]"
+msgstr "[fifo]"
+
+msgid "[socket]"
+msgstr "[socket]"
+
+msgid "[RO]"
+msgstr "[RO]"
+
+msgid "[CR missing]"
+msgstr "[CR hiányzik]"
+
+msgid "[NL found]"
+msgstr "[NL található]"
+
+msgid "[long lines split]"
+msgstr "[hosszú sorok felosztva]"
+
+msgid "[NOT converted]"
+msgstr "[NEM konvertált]"
+
+msgid "[converted]"
+msgstr "[konvertált]"
+
+msgid "[crypted]"
+msgstr "[titkosított]"
+
+#, c-format
+msgid "[CONVERSION ERROR in line %ld]"
+msgstr "[KONVERTÁLÁSI HIBA a(z) %ld sorban]"
+
+#, c-format
+msgid "[ILLEGAL BYTE in line %ld]"
+msgstr "[ÉRVÉNYTELEN BÁJT a(z) %ld sorban]"
+
+msgid "[READ ERRORS]"
+msgstr "[OLVASÁSI HIBÁK]"
+
+msgid "Can't find temp file for conversion"
+msgstr "Nem található ideiglenes fájl a konvertáláshoz"
+
+msgid "Conversion with 'charconvert' failed"
+msgstr "A 'charconvert' konvertálása sikertelen"
+
+msgid "can't read output of 'charconvert'"
+msgstr "nem lehet olvasni a 'charconvert' kimenetét"
+
+msgid "E676: No matching autocommands for acwrite buffer"
+msgstr "E676: Nincs megfelelő autokommandó az acwrite pufferhez"
+
+msgid "E203: Autocommands deleted or unloaded buffer to be written"
+msgstr "E203: Az autokommandók törölték vagy levették a pufferből a mentendő fájlt"
+
+msgid "E204: Autocommand changed number of lines in unexpected way"
+msgstr "E204: Az autokommandó váratlanul megváltoztatta a sorok számát"
+
+msgid "NetBeans disallows writes of unmodified buffers"
+msgstr "A NetBeans nem engedi a módosítatlan pufferok írását"
+
+msgid "Partial writes disallowed for NetBeans buffers"
+msgstr "A NetBeans pufferokhoz nem engedélyezett a részleges írás"
+
+msgid "is not a file or writable device"
+msgstr "nem fájl vagy írható eszköz"
+
+msgid "writing to device disabled with 'opendevice' option"
+msgstr "az 'opendevice' opcióval letiltották az írást az eszközre"
+
+msgid "is read-only (add ! to override)"
+msgstr "írásvédett (adjon hozzá ! jelet a felülbíráláshoz)"
+
+msgid "E506: Can't write to backup file (add ! to override)"
+msgstr "E506: Nem lehet írni a biztonsági mentés fájlba (adjon hozzá ! jelet a felülbíráláshoz)"
+
+msgid "E507: Close error for backup file (add ! to override)"
+msgstr "E507: Zárási hiba a biztonsági mentés fájlhoz (adjon hozzá ! jelet a felülbíráláshoz)"
+
+msgid "E508: Can't read file for backup (add ! to override)"
+msgstr "E508: Nem lehet olvasni a fájlt a biztonsági mentéshez (adjon hozzá ! jelet a felülbíráláshoz)"
+
+msgid "E509: Cannot create backup file (add ! to override)"
+msgstr "E509: Nem lehet létrehozni a biztonsági mentés fájlt (adjon hozzá ! jelet a felülbíráláshoz)"
+
+msgid "E510: Can't make backup file (add ! to override)"
+msgstr "E510: Nem lehet biztonsági mentés fájlt készíteni (adjon hozzá ! jelet a felülbíráláshoz)"
+
+msgid "E214: Can't find temp file for writing"
+msgstr "E214: Nem található ideiglenes fájl az íráshoz"
+
+msgid "E213: Cannot convert (add ! to write without conversion)"
+msgstr "E213: Nem lehet konvertálni (adjon hozzá ! jelet az íráshoz konvertálás nélkül)"
+
+msgid "E166: Can't open linked file for writing"
+msgstr "E166: Nem lehet megnyitni a linkelt fájlt írásra"
+
+msgid "E212: Can't open file for writing"
+msgstr "E212: Nem lehet megnyitni a fájlt írásra"
+
+msgid "E667: Fsync failed"
+msgstr "E667: Fsync sikertelen"
+
+msgid "E512: Close failed"
+msgstr "E512: Zárás sikertelen"
+
+# TODO: Capitalise first word of message?
+msgid "E513: Write error, conversion failed (make 'fenc' empty to override)"
+msgstr "E513: Írási hiba, a konvertálás sikertelen (tegye üressé a 'fenc'-et a felülbíráláshoz)"
+
+# TODO: Capitalise first word of message?
+msgid "E514: Write error (file system full?)"
+msgstr "E514: Írási hiba (a fájlrendszer tele?)"
+
+msgid " CONVERSION ERROR"
+msgstr " KONVERTÁLÁSI HIBA"
+
+msgid "[Device]"
+msgstr "[Eszköz]"
+
+msgid "[New]"
+msgstr "[Új]"
+
+msgid " [a]"
+msgstr " [a]"
+
+msgid " appended"
+msgstr " hozzáadva"
+
+msgid " [w]"
+msgstr " [w]"
+
+msgid " written"
+msgstr " írva"
+
+msgid "E205: Patchmode: can't save original file"
+msgstr "E205: Patchmode: nem lehet elmenteni az eredeti fájlt"
+
+# TODO: Capitalise first word of message?
+msgid "E206: Patchmode: can't touch empty original file"
+msgstr "E206: Patchmode: nem lehet megérinteni az üres eredeti fájlt"
+
+msgid "E207: Can't delete backup file"
+msgstr "E207: Nem lehet törölni a biztonsági mentés fájlt"
+
+msgid ""
+"\n"
+"WARNING: Original file may be lost or damaged\n"
+msgstr ""
+"\n"
+"FIGYELEM: Az eredeti fájl elveszhet vagy megsérülhet\n"
+
+msgid "don't quit the editor until the file is successfully written!"
+msgstr "ne lépjen ki a szerkesztőből, amíg a fájl sikeresen el nem mentődik!"
+
+msgid "[dos]"
+msgstr "[dos]"
+
+msgid "[dos format]"
+msgstr "[dos formátum]"
+
+msgid "[mac]"
+msgstr "[mac]"
+
+msgid "[mac format]"
+msgstr "[mac formátum]"
+
+msgid "[unix]"
+msgstr "[unix]"
+
+msgid "[unix format]"
+msgstr "[unix formátum]"
+
+msgid "1 line, "
+msgstr "1 sor, "
+
+#, c-format
+msgid "%ld lines, "
+msgstr "%ld sor, "
+
+msgid "1 character"
+msgstr "1 karakter"
+
+#, c-format
+msgid "%ld characters"
+msgstr "%ld karakter"
+
+msgid "[noeol]"
+msgstr "[noeol]"
+
+msgid "[Incomplete last line]"
+msgstr "[Hiányos utolsó sor]"
+
+#. don't overwrite messages here
+#. must give this prompt
+#. don't use emsg() here, don't want to flush the buffers
+msgid "WARNING: The file has been changed since reading it!!!"
+msgstr "FIGYELEM: A fájl megváltozott az olvasás óta!!!"
+
+msgid "Do you really want to write to it"
+msgstr "Valóban írni akarja"
+
+#, c-format
+msgid "E208: Error writing to \"%s\""
+msgstr "E208: Hiba a(z) \"%s\" írásakor"
+
+#, c-format
+msgid "E209: Error closing \"%s\""
+msgstr "E209: Hiba a(z) \"%s\" bezárásakor"
+
+#, c-format
+msgid "E210: Error reading \"%s\""
+msgstr "E210: Hiba a(z) \"%s\" olvasásakor"
+
+msgid "E246: FileChangedShell autocommand deleted buffer"
+msgstr "E246: A FileChangedShell autokommandó törölte a puffert"
+
+#, c-format
+msgid "E211: File \"%s\" no longer available"
+msgstr "E211: A(z) \"%s\" fájl már nem elérhető"
+
+#, c-format
+msgid ""
+"W12: Warning: File \"%s\" has changed and the buffer was changed in Vim as "
+"well"
+msgstr ""
+"W12: Figyelem: A \"%s\" fájl megváltozott, és a puffer is megváltozott a Vim-ben"
+
+msgid "See \":help W12\" for more info."
+msgstr "Lásd a \":help W12\"-t további információkért."
+
+#, c-format
+msgid "W11: Warning: File \"%s\" has changed since editing started"
+msgstr "W11: Figyelem: A(z) \"%s\" fájl megváltozott a szerkesztés kezdete óta"
+
+msgid "See \":help W11\" for more info."
+msgstr "Lásd a \":help W11\"-t további információkért."
+
+#, c-format
+msgid "W16: Warning: Mode of file \"%s\" has changed since editing started"
+msgstr "W16: Figyelem: A(z) \"%s\" fájl módja megváltozott a szerkesztés kezdete óta"
+
+msgid "See \":help W16\" for more info."
+msgstr "Lásd a \":help W16\"-t további információkért."
+
+#, c-format
+msgid "W13: Warning: File \"%s\" has been created after editing started"
+msgstr "W13: Figyelem: A(z) \"%s\" fájl létrejött a szerkesztés kezdete után"
+
+msgid "Warning"
+msgstr "Figyelem"
+
+msgid ""
+"&OK\n"
+"&Load File"
+msgstr ""
+"&OK\n"
+"&Fájl betöltése"
+
+#, c-format
+msgid "E462: Could not prepare for reloading \"%s\""
+msgstr "E462: Nem sikerült előkészíteni az \"%s\" újratöltését"
+
+#, c-format
+msgid "E321: Could not reload \"%s\""
+msgstr "E321: Nem sikerült újratölteni az \"%s\"-t"
+
+msgid "--Deleted--"
+msgstr "--Törölve--"
+
+#, c-format
+msgid "auto-removing autocommand: %s <buffer=%d>"
+msgstr "Automatikus autokommandó eltávolítása: %s <buffer=%d>"
+
+#. the group doesn't exist
+#, c-format
+msgid "E367: No such group: \"%s\""
+msgstr "E367: Nincs ilyen csoport: \"%s\""
+
+#, c-format
+msgid "E215: Illegal character after *: %s"
+msgstr "E215: Illegális karakter * után: %s"
+
+#, c-format
+msgid "E216: No such event: %s"
+msgstr "E216: Nincs ilyen esemény: %s"
+
+#, c-format
+msgid "E216: No such group or event: %s"
+msgstr "E216: Nincs ilyen csoport vagy esemény: %s"
+
+#. Highlight title
+msgid ""
+"\n"
+"--- Autocommands ---"
+msgstr ""
+"\n"
+"--- Autokommandók ---"
+
+#, c-format
+msgid "E680: <buffer=%d>: invalid buffer number "
+msgstr "E680: <buffer=%d>: érvénytelen puffer szám "
+
+msgid "E217: Can't execute autocommands for ALL events"
+msgstr "E217: Nem lehet végrehajtani az autokommandókat MINDEN eseményre"
+
+msgid "No matching autocommands"
+msgstr "Nincs megfelelő autokommandó"
+
+# TODO: Capitalise first word of message?
+msgid "E218: Autocommand nesting too deep"
+msgstr "E218: Autokommandó egymásba ágyazása túl mély"
+
+#, c-format
+msgid "%s Autocommands for \"%s\""
+msgstr "%s Autokommandók a \"%s\"-hez"
+
+#, c-format
+msgid "Executing %s"
+msgstr "Végrehajtás: %s"
+
+#, c-format
+msgid "autocommand %s"
+msgstr "autokommandó %s"
+
+msgid "E219: Missing {."
+msgstr "E219: Hiányzik a {."
+
+msgid "E220: Missing }."
+msgstr "E220: Hiányzik a }."
+
+msgid "E490: No fold found"
+msgstr "E490: Nincs hajtogatás"
+
+msgid "E350: Cannot create fold with current 'foldmethod'"
+msgstr "E350: Nem lehet hajtogatást létrehozni a jelenlegi 'foldmethod'-dal"
+
+msgid "E351: Cannot delete fold with current 'foldmethod'"
+msgstr "E351: Nem lehet törölni a hajtogatást a jelenlegi 'foldmethod'-dal"
+
+#, c-format
+msgid "+--%3ld lines folded "
+msgstr "+--%3ld sor hajtogatva "
+
+msgid "E222: Add to read buffer"
+msgstr "E222: Hozzáadás az olvasási pufferhez"
+
+# TODO: Capitalise first word of message?
+msgid "E223: Recursive mapping"
+msgstr "E223: Rekurzív leképezés"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E224: Global abbreviation already exists for %s"
+msgstr "E224: Globális rövidítés már létezik a %s-hez"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E225: Global mapping already exists for %s"
+msgstr "E225: Globális leképezés már létezik a %s-hez"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E226: Abbreviation already exists for %s"
+msgstr "E226: Rövidítés már létezik a %s-hez"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E227: Mapping already exists for %s"
+msgstr "E227: Leképezés már létezik a %s-hez"
+
+msgid "No abbreviation found"
+msgstr "Nincs rövidítés"
+
+msgid "No mapping found"
+msgstr "Nincs leképezés"
+
+msgid "E228: makemap: Illegal mode"
+msgstr "E228: makemap: Illegális mód"
+
+msgid "<cannot open> "
+msgstr "<nem lehet megnyitni> "
+
+#, c-format
+msgid "E616: vim_SelFile: can't get font %s"
+msgstr "E616: vim_SelFile: nem lehet betölteni a %s betűtípust"
+
+msgid "E614: vim_SelFile: can't return to current directory"
+msgstr "E614: vim_SelFile: nem lehet visszatérni az aktuális könyvtárba"
+
+msgid "Pathname:"
+msgstr "Fájlnév:"
+
+msgid "E615: vim_SelFile: can't get current directory"
+msgstr "E615: vim_SelFile: nem lehet lekérni az aktuális könyvtárat"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Cancel"
+msgstr "Mégse"
+
+msgid "Vim dialog"
+msgstr "Vim párbeszédablak"
+
+msgid "Scrollbar Widget: Could not get geometry of thumb pixmap."
+msgstr "Görgetősáv Widget: Nem lehet lekérni a hüvelykujj pixmap geometriáját."
+
+msgid "E232: Cannot create BalloonEval with both message and callback"
+msgstr "E232: Nem lehet létrehozni BalloonEval-t üzenettel és visszahívással együtt"
+
+msgid "E229: Cannot start the GUI"
+msgstr "E229: Nem lehet elindítani a GUI-t"
+
+#, c-format
+msgid "E230: Cannot read from \"%s\""
+msgstr "E230: Nem lehet olvasni a \"%s\"-ból"
+
+msgid "E665: Cannot start GUI, no valid font found"
+msgstr "E665: Nem lehet elindítani a GUI-t, nincs érvényes betűtípus"
+
+msgid "E231: 'guifontwide' invalid"
+msgstr "E231: 'guifontwide' érvénytelen"
+
+msgid "E599: Value of 'imactivatekey' is invalid"
+msgstr "E599: Az 'imactivatekey' értéke érvénytelen"
+
+#, c-format
+msgid "E254: Cannot allocate color %s"
+msgstr "E254: Nem lehet színt lefoglalni a %s-hez"
+
+msgid "No match at cursor, finding next"
+msgstr "Nincs találat a kurzornál, következő keresése"
+
+msgid "Vim dialog..."
+msgstr "Vim párbeszédablak..."
+
+msgid ""
+"&Yes\n"
+"&No\n"
+"&Cancel"
+msgstr ""
+"&Igen\n"
+"&Nem\n"
+"&Vissza"
+
+msgid "Input _Methods"
+msgstr "Beviteli _Módszerek"
+
+msgid "VIM - Search and Replace..."
+msgstr "VIM - Keresés és csere..."
+
+msgid "VIM - Search..."
+msgstr "VIM - Keresés..."
+
+msgid "Find what:"
+msgstr "Keresendő:"
+
+msgid "Replace with:"
+msgstr "Csere erre:"
+
+#. whole word only button
+msgid "Match whole word only"
+msgstr "Csak egész szavakra illeszkedjen"
+
+#. match case button
+msgid "Match case"
+msgstr "Kis- és nagybetűk figyelembevétele"
+
+msgid "Direction"
+msgstr "Irány"
+
+#. 'Up' and 'Down' buttons
+msgid "Up"
+msgstr "Fel"
+
+msgid "Down"
+msgstr "Le"
+
+msgid "Find Next"
+msgstr "Következő keresése"
+
+msgid "Replace"
+msgstr "Csere"
+
+msgid "Replace All"
+msgstr "Összes cseréje"
+
+msgid "Vim: Received \"die\" request from session manager\n"
+msgstr "Vim: \"die\" kérést kapott a munkamenet-kezelőtől\n"
+
+msgid "Close"
+msgstr "Bezárás"
+
+msgid "New tab"
+msgstr "Új lap"
+
+msgid "Open Tab..."
+msgstr "Lap megnyitása..."
+
+msgid "Vim: Main window unexpectedly destroyed\n"
+msgstr "Vim: A főablak váratlanul megsemmisült\n"
+
+msgid "Font Selection"
+msgstr "Betűtípus választás"
+
+msgid "Used CUT_BUFFER0 instead of empty selection"
+msgstr "A CUT_BUFFER0-t használta az üres kijelölés helyett"
+
+msgid "&Filter"
+msgstr "&Szűrő"
+
+msgid "&Cancel"
+msgstr "&Mégse"
+
+msgid "Directories"
+msgstr "Könyvtárak"
+
+msgid "Filter"
+msgstr "Szűrő"
+
+msgid "&Help"
+msgstr "&Súgó"
+
+msgid "Files"
+msgstr "Fájlok"
+
+msgid "&OK"
+msgstr "&OK"
+
+msgid "Selection"
+msgstr "Kijelölés"
+
+msgid "Find &Next"
+msgstr "Következő &keresése"
+
+msgid "&Replace"
+msgstr "&Csere"
+
+msgid "Replace &All"
+msgstr "Összes &cseréje"
+
+msgid "&Undo"
+msgstr "&Visszavonás"
+
+#, c-format
+msgid "E671: Cannot find window title \"%s\""
+msgstr "E671: Nem található ablakcím \"%s\""
+
+#, c-format
+msgid "E243: Argument not supported: \"-%s\"; Use the OLE version."
+msgstr "E243: Nem támogatott argumentum: \"-%s\"; Használja az OLE verziót."
+
+msgid "E672: Unable to open window inside MDI application"
+msgstr "E672: Nem lehet ablakot megnyitni MDI alkalmazáson belül"
+
+msgid "Close tab"
+msgstr "Lap bezárása"
+
+msgid "Open tab..."
+msgstr "Lap megnyitása..."
+
+msgid "Find string (use '\\\\' to find  a '\\')"
+msgstr "Karakterlánc keresése (használjon '\\\\'-t a '\\' kereséséhez)"
+
+msgid "Find & Replace (use '\\\\' to find  a '\\')"
+msgstr "Keresés & csere (használjon '\\\\'-t a '\\' kereséséhez)"
+
+#. We fake this: Use a filter that doesn't select anything and a default
+#. * file name that won't be used.
+msgid "Not Used"
+msgstr "Nem használt"
+
+msgid "Directory\t*.nothing\n"
+msgstr "Könyvtár\t*.nothing\n"
+
+msgid "Vim E458: Cannot allocate colormap entry, some colors may be incorrect"
+msgstr "Vim E458: Nem lehet színtérkép bejegyzést lefoglalni, néhány szín lehet, hogy nem megfelelő"
+
+#, c-format
+msgid "E250: Fonts for the following charsets are missing in fontset %s:"
+msgstr "E250: A következő karakterkészletekhez hiányoznak a betűtípusok a %s betűtípuskészletben:"
+
+#, c-format
+msgid "E252: Fontset name: %s"
+msgstr "E252: Betűtípuskészlet neve: %s"
+
+#, c-format
+msgid "Font '%s' is not fixed-width"
+msgstr "A '%s' betűtípus nem fix szélességű"
+
+#, c-format
+msgid "E253: Fontset name: %s\n"
+msgstr "E253: Betűtípuskészlet neve: %s\n"
+
+#, c-format
+msgid "Font0: %s\n"
+msgstr "Font0: %s\n"
+
+#, c-format
+msgid "Font1: %s\n"
+msgstr "Font1: %s\n"
+
+#, c-format
+msgid "Font%ld width is not twice that of font0\n"
+msgstr "Font%ld szélessége nem kétszerese a font0-nak\n"
+
+#, c-format
+msgid "Font0 width: %ld\n"
+msgstr "Font0 szélessége: %ld\n"
+
+#, c-format
+msgid ""
+"Font1 width: %ld\n"
+"\n"
+msgstr ""
+"Font1 szélessége: %ld\n"
+"\n"
+
+msgid "Invalid font specification"
+msgstr "Érvénytelen betűtípus specifikáció"
+
+msgid "&Dismiss"
+msgstr "&Elutasít"
+
+msgid "no specific match"
+msgstr "Nincs konkrét találat"
+
+msgid "Vim - Font Selector"
+msgstr "Vim - Betűtípus választó"
+
+msgid "Name:"
+msgstr "Név:"
+
+#. create toggle button
+msgid "Show size in Points"
+msgstr "Méret pontban megadva"
+
+msgid "Encoding:"
+msgstr "Kódolás:"
+
+msgid "Font:"
+msgstr "Betűtípus:"
+
+msgid "Style:"
+msgstr "Stílus:"
+
+msgid "Size:"
+msgstr "Méret:"
+
+msgid "E256: Hangul automata ERROR"
+msgstr "E256: Hangul automata HIBA"
+
+msgid "E550: Missing colon"
+msgstr "E550: Hiányzó kettőspont"
+
+msgid "E551: Illegal component"
+msgstr "E551: Illegális összetevő"
+
+# TODO: Capitalise first word of message?
+msgid "E552: Digit expected"
+msgstr "E552: Számjegy várt"
+
+#, c-format
+msgid "Page %d"
+msgstr "%d. oldal"
+
+msgid "No text to be printed"
+msgstr "Nincs nyomtatható szöveg"
+
+#, c-format
+msgid "Printing page %d (%d%%)"
+msgstr "%d. oldal nyomtatása (%d%%)"
+
+#, c-format
+msgid " Copy %d of %d"
+msgstr " %d. példány a %d-ből"
+
+#, c-format
+msgid "Printed: %s"
+msgstr "Nyomtatva: %s"
+
+msgid "Printing aborted"
+msgstr "Nyomtatás megszakítva"
+
+msgid "E455: Error writing to PostScript output file"
+msgstr "E455: Hiba a PostScript kimeneti fájl írásakor"
+
+#, c-format
+msgid "E624: Can't open file \"%s\""
+msgstr "E624: Nem lehet megnyitni a fájlt: \"%s\""
+
+#, c-format
+msgid "E457: Can't read PostScript resource file \"%s\""
+msgstr "E457: Nem lehet olvasni a PostScript erőforrás fájlt: \"%s\""
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E618: File \"%s\" is not a PostScript resource file"
+msgstr "E618: A \"%s\" fájl nem PostScript fájl"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E619: File \"%s\" is not a supported PostScript resource file"
+msgstr "E619: A \"%s\" fájl nem támogatott PostScript fájl"
+
+#, c-format
+msgid "E621: \"%s\" resource file has wrong version"
+msgstr "E621: A \"%s\" erőforrás fájl rossz verziójú"
+
+msgid "E673: Incompatible multi-byte encoding and character set."
+msgstr "E673: Nem kompatibilis több bájtos kódolás és karakterkészlet."
+
+msgid "E674: printmbcharset cannot be empty with multi-byte encoding."
+msgstr "E674: A printmbcharset nem lehet üres több bájtos kódolással."
+
+msgid "E675: No default font specified for multi-byte printing."
+msgstr "E675: Nincs alapértelmezett betűtípus megadva a több bájtos nyomtatáshoz."
+
+msgid "E324: Can't open PostScript output file"
+msgstr "E324: Nem lehet megnyitni a PostScript kimeneti fájlt"
+
+#, c-format
+msgid "E456: Can't open file \"%s\""
+msgstr "E456: Nem lehet megnyitni a fájlt: \"%s\""
+
+msgid "E456: Can't find PostScript resource file \"prolog.ps\""
+msgstr "E456: Nem található a PostScript erőforrás fájl: \"prolog.ps\""
+
+msgid "E456: Can't find PostScript resource file \"cidfont.ps\""
+msgstr "E456: Nem található a PostScript erőforrás fájl: \"cidfont.ps\""
+
+#, c-format
+msgid "E456: Can't find PostScript resource file \"%s.ps\""
+msgstr "E456: Nem található a PostScript erőforrás fájl: \"%s.ps\""
+
+#, c-format
+msgid "E620: Unable to convert to print encoding \"%s\""
+msgstr "E620: Nem lehet konvertálni a nyomtatási kódolásra: \"%s\""
+
+msgid "Sending to printer..."
+msgstr "Küldés a nyomtatóhoz..."
+
+msgid "E365: Failed to print PostScript file"
+msgstr "E365: Nem sikerült nyomtatni a PostScript fájlt"
+
+msgid "Print job sent."
+msgstr "Nyomtatási feladat elküldve."
+
+msgid "Add a new database"
+msgstr "Új adatbázis hozzáadása"
+
+msgid "Query for a pattern"
+msgstr "Minta keresése"
+
+msgid "Show this message"
+msgstr "Ezt az üzenetet mutatja"
+
+msgid "Kill a connection"
+msgstr "Kapcsolat megszüntetése"
+
+msgid "Reinit all connections"
+msgstr "Összes kapcsolat újraindítása"
+
+msgid "Show connections"
+msgstr "Kapcsolatok megjelenítése"
+
+#, c-format
+msgid "E560: Usage: cs[cope] %s"
+msgstr "E560: Használat: cs[cope] %s"
+
+msgid "This cscope command does not support splitting the window.\n"
+msgstr "Ez a cscope parancs nem támogatja az ablak felosztását.\n"
+
+msgid "E562: Usage: cstag <ident>"
+msgstr "E562: Használat: cstag <azonosító>"
+
+# TODO: Capitalise first word of message?
+msgid "E257: cstag: Tag not found"
+msgstr "E257: cstag: Címke nem található"
+
+#, c-format
+msgid "E563: stat(%s) error: %d"
+msgstr "E563: stat(%s) hiba: %d"
+
+msgid "E563: stat error"
+msgstr "E563: stat hiba"
+
+#, c-format
+msgid "E564: %s is not a directory or a valid cscope database"
+msgstr "E564: %s nem könyvtár vagy érvényes cscope adatbázis"
+
+#, c-format
+msgid "Added cscope database %s"
+msgstr "Cscope adatbázis hozzáadva: %s"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E262: Error reading cscope connection %ld"
+msgstr "E262: Hiba a cscope kapcsolat %ld olvasásakor"
+
+# TODO: Capitalise first word of message?
+msgid "E561: Unknown cscope search type"
+msgstr "E561: Ismeretlen cscope keresési típus"
+
+msgid "E566: Could not create cscope pipes"
+msgstr "E566: Nem lehet létrehozni a cscope csöveket"
+
+msgid "E622: Could not fork for cscope"
+msgstr "E622: Nem lehet elágazni a cscope-hoz"
+
+msgid "cs_create_connection exec failed"
+msgstr "cs_create_connection exec sikertelen"
+
+msgid "E623: Could not spawn cscope process"
+msgstr "E623: Nem lehet létrehozni a cscope folyamatot"
+
+msgid "cs_create_connection: fdopen for to_fp failed"
+msgstr "cs_create_connection: fdopen a to_fp-hez sikertelen"
+
+msgid "cs_create_connection: fdopen for fr_fp failed"
+msgstr "cs_create_connection: fdopen a fr_fp-hez sikertelen"
+
+# TODO: Capitalise first word of message?
+msgid "E567: No cscope connections"
+msgstr "E567: Nincs cscope kapcsolat"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E259: No matches found for cscope query %s of %s"
+msgstr "E259: Nincs találat a cscope lekérdezésre %s a %s-ből"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E469: Invalid cscopequickfix flag %c for %c"
+msgstr "E469: Érvénytelen cscopequickfix jelző %c a %c-hez"
+
+msgid "cscope commands:\n"
+msgstr "cscope parancsok:\n"
+
+#, c-format
+msgid "%-5s: %-30s (Usage: %s)"
+msgstr "%-5s: %-30s (Használat: %s)"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E625: Cannot open cscope database: %s"
+msgstr "E625: Nem lehet megnyitni a cscope adatbázist: %s"
+
+# TODO: Capitalise first word of message?
+msgid "E626: Cannot get cscope database information"
+msgstr "E626: Nem lehet lekérni a cscope adatbázis információt"
+
+# TODO: Capitalise first word of message?
+msgid "E568: Duplicate cscope database not added"
+msgstr "E568: Duplikált cscope adatbázis nem lett hozzáadva"
+
+msgid "E569: maximum number of cscope connections reached"
+msgstr "E569: elérve a cscope kapcsolatok maximális számát"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E261: Cscope connection %s not found"
+msgstr "E261: Cscope kapcsolat %s nem található"
+
+#, c-format
+msgid "cscope connection %s closed"
+msgstr "cscope kapcsolat %s lezárva"
+
+#. should not reach here
+# TODO: Capitalise first word of message?
+msgid "E570: Fatal error in cs_manage_matches"
+msgstr "E570: Végzetes hiba a cs_manage_matches-ben"
+
+#, c-format
+msgid "Cscope tag: %s"
+msgstr "Cscope címke: %s"
+
+msgid ""
+"\n"
+"   #   line"
+msgstr ""
+"\n"
+"   #   sor"
+
+msgid "filename / context / line\n"
+msgstr "fájlnév / környezet / sor\n"
+
+#, c-format
+msgid "E609: Cscope error: %s"
+msgstr "E609: Cscope hiba: %s"
+
+msgid "All cscope databases reset"
+msgstr "Összes cscope adatbázis alaphelyzetbe állítva"
+
+msgid "no cscope connections\n"
+msgstr "nincs cscope kapcsolat\n"
+
+msgid " # pid    database name                       prepend path\n"
+msgstr " # pid    adatbázis név                       előtag út\n"
+
+msgid ""
+"???: Sorry, this command is disabled, the MzScheme library could not be "
+"loaded."
+msgstr ""
+"???: Ez a parancs le van tiltva, az MzScheme könyvtár nem tölthető be"
+
+msgid "invalid expression"
+msgstr "érvénytelen kifejezés"
+
+msgid "expressions disabled at compile time"
+msgstr "kifejezések letiltva a fordításkor"
+
+msgid "hidden option"
+msgstr "rejtett opció"
+
+msgid "unknown option"
+msgstr "ismeretlen opció"
+
+msgid "window index is out of range"
+msgstr "ablak index kívül esik a tartományon"
+
+msgid "couldn't open buffer"
+msgstr "nem lehet megnyitni a puffert"
+
+msgid "cannot save undo information"
+msgstr "nem lehet menteni a visszavonási információt"
+
+msgid "cannot delete line"
+msgstr "nem lehet törölni a sort"
+
+msgid "cannot replace line"
+msgstr "nem lehet cserélni a sort"
+
+msgid "cannot insert line"
+msgstr "nem lehet beszúrni a sort"
+
+msgid "string cannot contain newlines"
+msgstr "a karakterlánc nem tartalmazhat újsorokat"
+
+msgid "Vim error: ~a"
+msgstr "Vim hiba: ~a"
+
+msgid "Vim error"
+msgstr "Vim hiba"
+
+msgid "buffer is invalid"
+msgstr "a puffer érvénytelen"
+
+msgid "window is invalid"
+msgstr "az ablak érvénytelen"
+
+msgid "linenr out of range"
+msgstr "sorszám kívül esik a tartományon"
+
+msgid "not allowed in the Vim sandbox"
+msgstr "nem engedélyezett a Vim homokozóban"
+
+msgid ""
+"E263: Sorry, this command is disabled, the Python library could not be "
+"loaded."
+msgstr ""
+"E263: Ez a parancs le van tiltva, a Python könyvtár nem tölthető be"
+
+msgid "E659: Cannot invoke Python recursively"
+msgstr "E659: Nem lehet rekurzívan meghívni a Pythont"
+
+msgid "can't delete OutputObject attributes"
+msgstr "nem lehet törölni az OutputObject attribútumokat"
+
+msgid "softspace must be an integer"
+msgstr "a softspace egész számnak kell lennie"
+
+msgid "invalid attribute"
+msgstr "érvénytelen attribútum"
+
+msgid "writelines() requires list of strings"
+msgstr "a writelines() karakterláncok listáját igényli"
+
+msgid "E264: Python: Error initialising I/O objects"
+msgstr "E264: Python: Hiba az I/O objektumok inicializálásakor"
+
+msgid "attempt to refer to deleted buffer"
+msgstr "megpróbál hivatkozni egy törölt pufferre"
+
+msgid "line number out of range"
+msgstr "sorszám kívül esik a tartományon"
+
+#, c-format
+msgid "<buffer object (deleted) at %8lX>"
+msgstr "<puffer objektum (törölve) a %8lX-nél>"
+
+msgid "invalid mark name"
+msgstr "érvénytelen jelölés név"
+
+msgid "no such buffer"
+msgstr "nincs ilyen puffer"
+
+msgid "attempt to refer to deleted window"
+msgstr "megpróbál hivatkozni egy törölt ablakra"
+
+msgid "readonly attribute"
+msgstr "írásvédett attribútum"
+
+msgid "cursor position outside buffer"
+msgstr "kurzor pozíció a pufferen kívül"
+
+#, c-format
+msgid "<window object (deleted) at %.8lX>"
+msgstr "<ablak objektum (törölve) a %.8lX-nél>"
+
+#, c-format
+msgid "<window object (unknown) at %.8lX>"
+msgstr "<ablak objektum (ismeretlen) a %.8lX-nél>"
+
+#, c-format
+msgid "<window %d>"
+msgstr "<ablak %d>"
+
+msgid "no such window"
+msgstr "nincs ilyen ablak"
+
+msgid "E265: $_ must be an instance of String"
+msgstr "E265: $_ String példánynak kell lennie"
+
+msgid ""
+"E266: Sorry, this command is disabled, the Ruby library could not be loaded."
+msgstr ""
+"E266: Ez a parancs le van tiltva, a Ruby könyvtár nem tölthető be"
+
+# TODO: Capitalise first word of message?
+msgid "E267: Unexpected return"
+msgstr "E267: Váratlan return"
+
+# TODO: Capitalise first word of message?
+msgid "E268: Unexpected next"
+msgstr "E268: Váratlan next"
+
+# TODO: Capitalise first word of message?
+msgid "E269: Unexpected break"
+msgstr "E269: Váratlan break"
+
+# TODO: Capitalise first word of message?
+msgid "E270: Unexpected redo"
+msgstr "E270: Váratlan redo"
+
+# TODO: Capitalise first word of message?
+msgid "E271: Retry outside of rescue clause"
+msgstr "E271: Retry a rescue klauzulán kívül"
+
+# TODO: Capitalise first word of message?
+msgid "E272: Unhandled exception"
+msgstr "E272: Kezeletlen kivétel"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E273: Unknown longjmp status %d"
+msgstr "E273: Ismeretlen longjmp státusz %d"
+
+msgid "Toggle implementation/definition"
+msgstr "Megvalósítás/definíció váltása"
+
+msgid "Show base class of"
+msgstr "Alaposztály megjelenítése"
+
+msgid "Show overridden member function"
+msgstr "Felüldefiniált tagfüggvény megjelenítése"
+
+msgid "Retrieve from file"
+msgstr "Lekérés fájlból"
+
+msgid "Retrieve from project"
+msgstr "Lekérés projektből"
+
+msgid "Retrieve from all projects"
+msgstr "Lekérés minden projektből"
+
+msgid "Retrieve"
+msgstr "Lekérés"
+
+msgid "Show source of"
+msgstr "Forrás megjelenítése"
+
+msgid "Find symbol"
+msgstr "Szimbólum keresése"
+
+msgid "Browse class"
+msgstr "Osztály böngészése"
+
+msgid "Show class in hierarchy"
+msgstr "Osztály megjelenítése hierarchiában"
+
+msgid "Show class in restricted hierarchy"
+msgstr "Osztály megjelenítése korlátozott hierarchiában"
+
+msgid "Xref refers to"
+msgstr "Xref hivatkozik"
+
+msgid "Xref referred by"
+msgstr "Xref hivatkozva"
+
+msgid "Xref has a"
+msgstr "Xref-nek van"
+
+msgid "Xref used by"
+msgstr "Xref használva"
+
+msgid "Show docu of"
+msgstr "Dokumentáció megjelenítése"
+
+msgid "Generate docu for"
+msgstr "Dokumentáció generálása"
+
+msgid "not "
+msgstr "nem "
+
+msgid "connected"
+msgstr "kapcsolódva"
+
+msgid "invalid buffer number"
+msgstr "érvénytelen puffer szám"
+
+msgid "not implemented yet"
+msgstr "még nincs megvalósítva"
+
+#. ???
+msgid "cannot set line(s)"
+msgstr "nem lehet beállítani a sorokat"
+
+msgid "mark not set"
+msgstr "jelölés nincs beállítva"
+
+#, c-format
+msgid "row %d column %d"
+msgstr "%d. sor %d. oszlop"
+
+msgid "cannot insert/append line"
+msgstr "nem lehet beszúrni/fűzni sort"
+
+msgid "unknown flag: "
+msgstr "ismeretlen jelző: "
+
+msgid "unknown vimOption"
+msgstr "ismeretlen vimOption"
+
+msgid "keyboard interrupt"
+msgstr "billentyűzet megszakítás"
+
+msgid "cannot create buffer/window command: object is being deleted"
+msgstr "nem lehet létrehozni a puffer/ablak parancsot: az objektum törlés alatt áll"
+
+msgid ""
+"cannot register callback command: buffer/window is already being deleted"
+msgstr ""
+"Nem lehet regisztrálni a visszahívási parancsot: a puffer/ablak már törlölve van"
+
+#. This should never happen.  Famous last word?
+msgid ""
+"E280: TCL FATAL ERROR: reflist corrupt!? Please report this to vim-dev@vim."
+"org"
+msgstr ""
+"E280: TCL VÉGZETES HIBA: reflist sérült!? Kérjük, jelentse ezt a vim-dev@vim.org címen"
+
+msgid "cannot register callback command: buffer/window reference not found"
+msgstr "nem lehet regisztrálni a visszahívó parancsot: a puffer/ablak hivatkozás nem található"
+
+msgid ""
+"E571: Sorry, this command is disabled: the Tcl library could not be loaded."
+msgstr ""
+"E571: Ez a parancs le van tiltva: a Tcl könyvtár nem tölthető be."
+
+msgid ""
+"E281: TCL ERROR: exit code is not int!? Please report this to vim-dev@vim.org"
+msgstr ""
+"E281: TCL HIBA: a kilépési kód nem int!? Kérjük, jelentse ezt a vim-dev@vim.org címen"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E572: Exit code %d"
+msgstr "E572: Kilépési kód %d"
+
+msgid "cannot get line"
+msgstr "nem lehet lekérni a sort"
+
+msgid "Unable to register a command server name"
+msgstr "Nem lehet regisztrálni a parancsszerver nevet"
+
+msgid "E248: Failed to send command to the destination program"
+msgstr "E248: Nem sikerült elküldeni a parancsot a célprogramnak"
+
+#, c-format
+msgid "E573: Invalid server id used: %s"
+msgstr "E573: Érvénytelen szerver azonosító használva: %s"
+
+msgid "E251: VIM instance registry property is badly formed.  Deleted!"
+msgstr "E251: A VIM példány regiszter tulajdonsága rosszul formázott. Törölve!"
+
+msgid "Unknown option argument"
+msgstr "Ismeretlen opció argumentum"
+
+msgid "Too many edit arguments"
+msgstr "Túl sok szerkesztési argumentum"
+
+msgid "Argument missing after"
+msgstr "Hiányzó argumentum után"
+
+msgid "Garbage after option argument"
+msgstr "Szemét az opció argumentum után"
+
+msgid "Too many \"+command\", \"-c command\" or \"--cmd command\" arguments"
+msgstr "Túl sok \"+parancs\", \"-c parancs\" vagy \"--cmd parancs\" argumentum"
+
+msgid "Invalid argument for"
+msgstr "Érvénytelen argumentum a"
+
+#, c-format
+msgid "%d files to edit\n"
+msgstr "%d fájl szerkesztésre\n"
+
+msgid "This Vim was not compiled with the diff feature."
+msgstr "Ez a Vim nem lett lefordítva a diff funkcióval."
+
+msgid "Attempt to open script file again: \""
+msgstr "Megpróbálja újra megnyitni a szkript fájlt: \""
+
+msgid "Cannot open for reading: \""
+msgstr "Nem lehet megnyitni olvasásra: \""
+
+msgid "Cannot open for script output: \""
+msgstr "Nem lehet megnyitni szkript kimenetre: \""
+
+msgid "Vim: Error: Failure to start gvim from NetBeans\n"
+msgstr "Vim: Hiba: Nem sikerült elindítani a gvim-et a NetBeans-ből\n"
+
+msgid "Vim: Warning: Output is not to a terminal\n"
+msgstr "Vim: Figyelem: A kimenet nem terminálra megy\n"
+
+msgid "Vim: Warning: Input is not from a terminal\n"
+msgstr "Vim: Figyelem: A bemenet nem terminálról jön\n"
+
+#. just in case..
+msgid "pre-vimrc command line"
+msgstr "pre-vimrc parancssor"
+
+#, c-format
+msgid "E282: Cannot read from \"%s\""
+msgstr "E282: Nem lehet olvasni a \"%s\"-ból"
+
+msgid ""
+"\n"
+"More info with: \"vim -h\"\n"
+msgstr ""
+"\n"
+"További információ: \"vim -h\"\n"
+
+msgid "[file ..]       edit specified file(s)"
+msgstr "[fájl ..]       megnyitja a megadott fájl(oka)t"
+
+msgid "-               read text from stdin"
+msgstr "-               szöveget olvas a stdin-ről"
+
+msgid "-t tag          edit file where tag is defined"
+msgstr "-t címke       megnyitja azt a fájlt, ahol a címke definiálva van"
+
+msgid "-q [errorfile]  edit file with first error"
+msgstr "-q [hibafájl]  megnyitja azt a fájlt, ahol az első hiba van"
+
+msgid ""
+"\n"
+"\n"
+"Usage:"
+msgstr ""
+"\n"
+"\n"
+"Használat:"
+
+msgid " vim [arguments] "
+msgstr " vim [argumentumok] "
+
+msgid ""
+"\n"
+"   or:"
+msgstr ""
+"\n"
+"     eller:"
+
+msgid ""
+"\n"
+"Where case is ignored prepend / to make flag upper case"
+msgstr ""
+"\n"
+"Ahol a kis- és nagybetűket figyelmen kívül hagyja a renszer, előtagként / használja nagybetűssé tételéhez"
+
+msgid ""
+"\n"
+"\n"
+"Arguments:\n"
+msgstr ""
+"\n"
+"\n"
+"Argumentumok:\n"
+
+msgid "--\t\t\tOnly file names after this"
+msgstr "--\t\t\tCsak fájlnevek ezután"
+
+msgid "--literal\t\tDon't expand wildcards"
+msgstr "--literal\t\tNem bontja ki a helyettesítő karaktereket"
+
+msgid "-register\t\tRegister this gvim for OLE"
+msgstr "-register\t\tRegisztrálja ezt a gvim-et OLE-hez"
+
+msgid "-unregister\t\tUnregister gvim for OLE"
+msgstr "-unregister\t\tTörli a gvim regisztrációját OLE-hez"
+
+msgid "-g\t\t\tRun using GUI (like \"gvim\")"
+msgstr "-g\t\t\tGUI-val futtatja (mint a \"gvim\")"
+
+msgid "-f  or  --nofork\tForeground: Don't fork when starting GUI"
+msgstr "-f  vagy  --nofork\tElőtérben: Nem ágazik el GUI indításakor"
+
+msgid "-v\t\t\tVi mode (like \"vi\")"
+msgstr "-v\t\t\tVi mód (mint a \"vi\")"
+
+msgid "-e\t\t\tEx mode (like \"ex\")"
+msgstr "-e\t\t\tEx mód (mint az \"ex\")"
+
+msgid "-s\t\t\tSilent (batch) mode (only for \"ex\")"
+msgstr "-s\t\t\tCsendes (batch) mód (csak az \"ex\"-hez)"
+
+msgid "-d\t\t\tDiff mode (like \"vimdiff\")"
+msgstr "-d\t\t\tDiff mód (mint a \"vimdiff\")"
+
+msgid "-y\t\t\tEasy mode (like \"evim\", modeless)"
+msgstr "-y\t\t\tKönnyű mód (mint az \"evim\", mód nélküli)"
+
+msgid "-R\t\t\tReadonly mode (like \"view\")"
+msgstr "-R\t\t\tCsak olvasható mód (mint a \"view\")"
+
+msgid "-Z\t\t\tRestricted mode (like \"rvim\")"
+msgstr "-Z\t\t\tKorlátozott mód (mint az \"rvim\")"
+
+msgid "-m\t\t\tModifications (writing files) not allowed"
+msgstr "-m\t\t\tMódosítások (fájlok írása) nem engedélyezettek"
+
+msgid "-M\t\t\tModifications in text not allowed"
+msgstr "-M\t\t\tMódosítások a szövegben nem engedélyezettek"
+
+msgid "-b\t\t\tBinary mode"
+msgstr "-b\t\t\tBináris mód"
+
+msgid "-l\t\t\tLisp mode"
+msgstr "-l\t\t\tLisp mód"
+
+msgid "-C\t\t\tCompatible with Vi: 'compatible'"
+msgstr "-C\t\t\tKompatibilis a Vi-vel: 'compatible'"
+
+msgid "-N\t\t\tNot fully Vi compatible: 'nocompatible'"
+msgstr "-N\t\t\tNem teljesen Vi kompatibilis: 'nocompatible'"
+
+msgid "-V[N][fname]\t\tBe verbose [level N] [log messages to fname]"
+msgstr "-V[N][fname]\t\tRészletes [szint N] [naplóüzenetek a fname-be]"
+
+msgid "-D\t\t\tDebugging mode"
+msgstr "-D\t\t\tHibakereső mód"
+
+msgid "-n\t\t\tNo swap file, use memory only"
+msgstr "-n\t\t\tNincs csere fájl, csak a memóriát használja"
+
+msgid "-r\t\t\tList swap files and exit"
+msgstr "-r\t\t\tCsere fájlok listázása és kilépés"
+
+msgid "-r (with file name)\tRecover crashed session"
+msgstr "-r (fájlnévvel)\tVisszaállítja az összeomlott munkamenetet"
+
+msgid "-L\t\t\tSame as -r"
+msgstr "-L\t\t\tUgyanaz, mint -r"
+
+msgid "-f\t\t\tDon't use newcli to open window"
+msgstr "-f\t\t\tNem használja az újcli-t ablak megnyitásához"
+
+msgid "-dev <device>\t\tUse <device> for I/O"
+msgstr "-dev <eszköz>\t\t<eszköz>-t használja I/O-hoz"
+
+msgid "-A\t\t\tStart in Arabic mode"
+msgstr "-A\t\t\tArab módban indul"
+
+msgid "-H\t\t\tStart in Hebrew mode"
+msgstr "-H\t\t\tHéber módban indul"
+
+msgid "-F\t\t\tStart in Farsi mode"
+msgstr "-F\t\t\tPerzsa módban indul"
+
+msgid "-T <terminal>\tSet terminal type to <terminal>"
+msgstr "-T <terminál>\tTerminál típusát <terminál>-ra állítja"
+
+msgid "-u <vimrc>\t\tUse <vimrc> instead of any .vimrc"
+msgstr "-u <vimrc>\t\t<Vimrc>-t használja bármely .vimrc helyett"
+
+msgid "-U <gvimrc>\t\tUse <gvimrc> instead of any .gvimrc"
+msgstr "-U <gvimrc>\t\t<gvimrc>-t használja bármely .gvimrc helyett"
+
+msgid "--noplugin\t\tDon't load plugin scripts"
+msgstr "--noplugin\t\tNem tölti be a plugin szkripteket"
+
+msgid "-p[N]\t\tOpen N tab pages (default: one for each file)"
+msgstr "-p[N]\t\tN lapfület nyit meg (alapértelmezés: egy minden fájlhoz)"
+
+msgid "-o[N]\t\tOpen N windows (default: one for each file)"
+msgstr "-o[N]\t\tN ablakot nyit meg (alapértelmezés: egy minden fájlhoz)"
+
+msgid "-O[N]\t\tLike -o but split vertically"
+msgstr "-O[N]\t\tMint -o, de függőlegesen oszt"
+
+msgid "+\t\t\tStart at end of file"
+msgstr "+\t\t\tA fájl végén indul"
+
+msgid "+<lnum>\t\tStart at line <lnum>"
+msgstr "+<lnum>\t\tA <lnum> sornál indul"
+
+msgid "--cmd <command>\tExecute <command> before loading any vimrc file"
+msgstr "--cmd <parancs>\t<parancs>-ot hajtja végre bármely vimrc fájl betöltése előtt"
+
+msgid "-c <command>\t\tExecute <command> after loading the first file"
+msgstr "-c <parancs>\t\t<parancs>-ot hajtja végre az első fájl betöltése után"
+
+msgid "-S <session>\t\tSource file <session> after loading the first file"
+msgstr "-S <munkamenet>\t<munkamenet> fájlt forrásolja az első fájl betöltése után"
+
+msgid "-s <scriptin>\tRead Normal mode commands from file <scriptin>"
+msgstr "-s <scriptin>\tNormál mód parancsokat olvas a <scriptin> fájlból"
+
+msgid "-w <scriptout>\tAppend all typed commands to file <scriptout>"
+msgstr "-w <scriptout>\tMinden begépelt parancsot hozzáfűz a <scriptout> fájlhoz"
+
+msgid "-W <scriptout>\tWrite all typed commands to file <scriptout>"
+msgstr "-W <scriptout>\tMinden begépelt parancsot kiír a <scriptout> fájlba"
+
+msgid "-x\t\t\tEdit encrypted files"
+msgstr "-x\t\t\tTitkosított fájlokat szerkeszt"
+
+msgid "-display <display>\tConnect Vim to this particular X-server"
+msgstr "-display <display>\tCsatlakoztatja a Vim-et ehhez a konkrét X-szerverhez"
+
+msgid "-X\t\t\tDo not connect to X server"
+msgstr "-X\t\t\tNem csatlakozik az X szerverhez"
+
+msgid "--remote <files>\tEdit <files> in a Vim server if possible"
+msgstr "--remote <fájlok>\tMegnyitja a <fájlok>-at egy Vim szerverben, ha lehetséges"
+
+msgid "--remote-silent <files>  Same, don't complain if there is no server"
+msgstr "--remote-silent <fájlok>  Ugyanaz, de nem panaszkodik, ha nincs szerver"
+
+msgid ""
+"--remote-wait <files>  As --remote but wait for files to have been edited"
+msgstr ""
+"--remote-wait <filer>  Mint --remote de várja meg a fájlok szerkesztését"
+
+msgid ""
+"--remote-wait-silent <files>  Same, don't complain if there is no server"
+msgstr ""
+"--remote-wait-silent <filer>  Ugyanaz, de ne panaszkodjon, ha nincs szerver"
+
+msgid "--remote-tab <files>  As --remote but open tab page for each file"
+msgstr "--remote-tab <fájlok>  Mint --remote, de minden fájlhoz lapfület nyit"
+
+msgid "--remote-send <keys>\tSend <keys> to a Vim server and exit"
+msgstr "--remote-send <billentyűk>\tElküldi a <billentyűk>-et egy Vim szervernek és kilép"
+
+msgid "--remote-expr <expr>\tEvaluate <expr> in a Vim server and print result"
+msgstr "--remote-expr <kifejezés>\tKiértékeli a <kifejezés>-et egy Vim szerverben és kiírja az eredményt"
+
+msgid "--serverlist\t\tList available Vim server names and exit"
+msgstr "--serverlist\t\tFelsorolja az elérhető Vim szerver neveket és kilép"
+
+msgid "--servername <name>\tSend to/become the Vim server <name>"
+msgstr "--servername <név>\tKüld a/lesz a Vim szerver <név>"
+
+msgid "-i <viminfo>\t\tUse <viminfo> instead of .viminfo"
+msgstr "-i <viminfo>\t\t<viminfo>-t használja a .viminfo helyett"
+
+msgid "-h  or  --help\tPrint Help (this message) and exit"
+msgstr "-h  vagy  --help\tKiírja a Súgót (ezt az üzenetet) és kilép"
+
+msgid "--version\t\tPrint version information and exit"
+msgstr "--version\t\tKiírja a verzió információt és kilép"
+
+msgid ""
+"\n"
+"Arguments recognised by gvim (Motif version):\n"
+msgstr ""
+"\n"
+"A gvim (Motif-verzió) által felismert argumentumok:\n"
+
+msgid ""
+"\n"
+"Arguments recognised by gvim (neXtaw version):\n"
+msgstr ""
+"\n"
+"A gvim (neXtaw-verzió) által felismert argumentumok:\n"
+
+msgid ""
+"\n"
+"Arguments recognised by gvim (Athena version):\n"
+msgstr ""
+"\n"
+"A gvim (Athena-verzió) által felismert argumentumok:\n"
+
+msgid "-display <display>\tRun Vim on <display>"
+msgstr "-display <display>\tFuttatja a Vim-et a <display>-en"
+
+msgid "-iconic\t\tStart Vim iconified"
+msgstr "-iconic\t\tIkonizáltan indítja a Vim-et"
+
+msgid "-name <name>\t\tUse resource as if vim was <name>"
+msgstr "-name <név>\t\tÚgy használja az erőforrást, mintha a vim <név> lenne"
+
+msgid "\t\t\t  (Unimplemented)\n"
+msgstr "\t\t\t  (Nem implementált)\n"
+
+msgid "-background <color>\tUse <color> for the background (also: -bg)"
+msgstr "-background <szín>\t<szín>-t használja a háttérhez (más néven: -bg)"
+
+msgid "-foreground <color>\tUse <color> for normal text (also: -fg)"
+msgstr "-foreground <szín>\t<szín>-t használja a normál szöveghez (más néven: -fg)"
+
+msgid "-font <font>\t\tUse <font> for normal text (also: -fn)"
+msgstr "-font <betűtípus>\t<betűtípus>-t használja a normál szöveghez (más néven: -fn)"
+
+msgid "-boldfont <font>\tUse <font> for bold text"
+msgstr "-boldfont <betűtípus>\t<betűtípus>-t használja a félkövér szöveghez"
+
+msgid "-italicfont <font>\tUse <font> for italic text"
+msgstr "-italicfont <betűtípus>\t<betűtípus>-t használja a dőlt szöveghez"
+
+msgid "-geometry <geom>\tUse <geom> for initial geometry (also: -geom)"
+msgstr "-geometry <geom>\t<geom>-t használja a kezdeti geometriához (más néven: -geom)"
+
+msgid "-borderwidth <width>\tUse a border width of <width> (also: -bw)"
+msgstr "-borderwidth <szélesség>\t<szélesség>-t használja a keret szélességéhez (más néven: -bw)"
+
+msgid "-scrollbarwidth <width>  Use a scrollbar width of <width> (also: -sw)"
+msgstr "-scrollbarwidth <szélesség>  <szélesség>-t használja a görgetősáv szélességéhez (más néven: -sw)"
+
+msgid "-menuheight <height>\tUse a menu bar height of <height> (also: -mh)"
+msgstr "-menuheight <magasság>\t<magasság>-t használja a menüsor magasságához (más néven: -mh)"
+
+msgid "-reverse\t\tUse reverse video (also: -rv)"
+msgstr "-reverse\t\tFordított videót használ (más néven: -rv)"
+
+msgid "+reverse\t\tDon't use reverse video (also: +rv)"
+msgstr "+reverse\t\tNem használ fordított videót (más néven: +rv)"
+
+msgid "-xrm <resource>\tSet the specified resource"
+msgstr "-xrm <erőforrás>\tBeállítja a megadott erőforrást"
+
+msgid ""
+"\n"
+"Arguments recognised by gvim (RISC OS version):\n"
+msgstr ""
+"\n"
+"A gvim (RISC OS verzió) által felismert argumentumok:\n"
+
+msgid "--columns <number>\tInitial width of window in columns"
+msgstr "--columns <szám>\tAblak kezdeti szélessége oszlopokban"
+
+msgid "--rows <number>\tInitial height of window in rows"
+msgstr "--rows <szám>\tAblak kezdeti magassága sorokban"
+
+msgid ""
+"\n"
+"Arguments recognised by gvim (GTK+ version):\n"
+msgstr ""
+"\n"
+"A gvim (GTK+ verzió) által felismert argumentumok:\n"
+
+msgid "-display <display>\tRun Vim on <display> (also: --display)"
+msgstr "-display <display>\tFuttatja a Vim-et a <display>-en (más néven: --display)"
+
+msgid "--role <role>\tSet a unique role to identify the main window"
+msgstr "--role <szerep>\tEgyedi szerepet állít be a fő ablak azonosításához"
+
+msgid "--socketid <xid>\tOpen Vim inside another GTK widget"
+msgstr "--socketid <xid>\tMegnyitja a Vim-et egy másik GTK widgetben"
+
+msgid "-P <parent title>\tOpen Vim inside parent application"
+msgstr "-P <szülő cím>\tMegnyitja a Vim-et a szülő alkalmazásban"
+
+msgid "No display"
+msgstr "Nincs kijelző"
+
+#. Failed to send, abort.
+msgid ": Send failed.\n"
+msgstr ": Küldés sikertelen.\n"
+
+#. Let vim start normally.
+msgid ": Send failed. Trying to execute locally\n"
+msgstr ": Küldés sikertelen. Megpróbálja helyben végrehajtani\n"
+
+#, c-format
+msgid "%d of %d edited"
+msgstr "%d a %d-ből szerkesztve"
+
+msgid "No display: Send expression failed.\n"
+msgstr "Nincs kijelző: Kifejezés küldése sikertelen.\n"
+
+msgid ": Send expression failed.\n"
+msgstr ": Kifejezés küldése sikertelen.\n"
+
+msgid "No marks set"
+msgstr "Nincs beállítva jelölés"
+
+#, c-format
+msgid "E283: No marks matching \"%s\""
+msgstr "E283: Nincs megfelelő jelölés \"%s\"-hez"
+
+#. Highlight title
+msgid ""
+"\n"
+"mark line  col file/text"
+msgstr ""
+"\n"
+"jel sor  oszlop fájl/text"
+
+#. Highlight title
+msgid ""
+"\n"
+" jump line  col file/text"
+msgstr ""
+"\n"
+" ugrás sor oszlop fájl/text"
+
+#. Highlight title
+msgid ""
+"\n"
+"change line  col text"
+msgstr ""
+"\n"
+"csere sor  oszlop text"
+
+#, c-format
+msgid ""
+"\n"
+"# File marks:\n"
+msgstr ""
+"\n"
+"# Fájl jelek:\n"
+
+#. Write the jumplist with -'
+#, c-format
+msgid ""
+"\n"
+"# Jumplist (newest first):\n"
+msgstr ""
+"\n"
+"# Ugráslista (elöl a legújabb):\n"
+
+#, c-format
+msgid ""
+"\n"
+"# History of marks within files (newest to oldest):\n"
+msgstr ""
+"\n"
+"# A fájlokon belüli jelek előzményei (a legújabbtól a legrégebbig):\n"
+
+msgid "Missing '>'"
+msgstr "Hiányzik az '>'"
+
+msgid "E543: Not a valid codepage"
+msgstr "E543: Nem érvényes kódlap"
+
+msgid "E284: Cannot set IC values"
+msgstr "E284: Nem lehet beállítani az IC értékeket"
+
+msgid "E285: Failed to create input context"
+msgstr "E285: Nem sikerült létrehozni a bemeneti kontextust"
+
+msgid "E286: Failed to open input method"
+msgstr "E286: Nem sikerült megnyitni a bemeneti módot"
+
+msgid "E287: Warning: Could not set destroy callback to IM"
+msgstr "E287: Figyelem: Nem sikerült beállítani a megsemmisítési visszahívást az IM-hez"
+
+# TODO: Capitalise first word of message?
+msgid "E288: Input method doesn't support any style"
+msgstr "E288: A bemeneti mód nem támogat semmilyen stílust"
+
+# TODO: Capitalise first word of message?
+msgid "E289: Input method doesn't support my preedit type"
+msgstr "E289: A bemeneti mód nem támogatja az előkészítési típusomat"
+
+msgid "E291: Your GTK+ is older than 1.2.3. Status area disabled"
+msgstr "E291: A GTK+ régebbi, mint 1.2.3. Állapot terület letiltva"
+
+# TODO: Capitalise first word of message?
+msgid "E293: Block was not locked"
+msgstr "E293: A blokk nem volt lezárva"
+
+msgid "E294: Seek error in swap file read"
+msgstr "E294: Keresési hiba a csere fájl olvasásakor"
+
+msgid "E295: Read error in swap file"
+msgstr "E295: Olvasási hiba a csere fájlban"
+
+msgid "E296: Seek error in swap file write"
+msgstr "E296: Keresési hiba a csere fájl írásakor"
+
+msgid "E297: Write error in swap file"
+msgstr "E297: Írási hiba a csere fájlban"
+
+msgid "E300: Swap file already exists (symlink attack?)"
+msgstr "E300: Csere fájl már létezik (szimbolikus link támadás?)"
+
+msgid "E298: Didn't get block nr 0?"
+msgstr "E298: Nem kaptam meg a 0. blokkot?"
+
+msgid "E298: Didn't get block nr 1?"
+msgstr "E298: Nem kaptam meg az 1. blokkot?"
+
+msgid "E298: Didn't get block nr 2?"
+msgstr "E298: Nem kaptam meg a 2. blokkot?"
+
+#. could not (re)open the swap file, what can we do????
+msgid "E301: Oops, lost the swap file!!!"
+msgstr "E301: Hoppá, elveszett a csere fájl!!!"
+
+msgid "E302: Could not rename swap file"
+msgstr "E302: Nem lehet átnevezni a csere fájlt"
+
+#, c-format
+msgid "E303: Unable to open swap file for \"%s\", recovery impossible"
+msgstr "E303: Nem lehet megnyitni a csere fájlt \"%s\"-hoz, visszaállítás lehetetlen"
+
+msgid "E304: ml_upd_block0(): Didn't get block 0??"
+msgstr "E304: ml_upd_block0(): Nem kaptam meg a 0. blokkot??"
+
+#, c-format
+msgid "E305: No swap file found for %s"
+msgstr "E305: Nem találtam csere fájlt a %s-hoz"
+
+msgid "Enter number of swap file to use (0 to quit): "
+msgstr "Írja be a használni kívánt csere fájl számát (0 a kilépéshez): "
+
+#, c-format
+msgid "E306: Cannot open %s"
+msgstr "E306: Nem lehet megnyitni %s-t"
+
+msgid "Unable to read block 0 from "
+msgstr "Nem lehet olvasni a 0. blokkot "
+
+msgid ""
+"\n"
+"Maybe no changes were made or Vim did not update the swap file."
+msgstr ""
+"\n"
+"Nem történt módosítás, vagy a Vim nem frissítette a swap fájlt."
+
+msgid " cannot be used with this version of Vim.\n"
+msgstr " ezt a verziót nem lehet használni a Vim-mel.\n"
+
+msgid "Use Vim version 3.0.\n"
+msgstr "Használja a Vim 3.0-ás verziót.\n"
+
+#, c-format
+msgid "E307: %s does not look like a Vim swap file"
+msgstr "E307: %s nem tűnik Vim swap fájlnak"
+
+msgid " cannot be used on this computer.\n"
+msgstr " ezt a számítógépet nem lehet használni.\n"
+
+msgid "The file was created on "
+msgstr "A fájl létrehozva "
+
+msgid ""
+",\n"
+"or the file has been damaged."
+msgstr ""
+",\n"
+"vagy a fájl megsérült."
+
+msgid " has been damaged (page size is smaller than minimum value).\n"
+msgstr " sérült (az oldalméret kisebb, mint a minimális érték).\n"
+
+#, c-format
+msgid "Using swap file \"%s\""
+msgstr "Swap fájl használata \"%s\""
+
+#, c-format
+msgid "Original file \"%s\""
+msgstr "Eredeti fájl \"%s\""
+
+msgid "E308: Warning: Original file may have been changed"
+msgstr "E308: Figyelem: Az eredeti fájl megváltozhatott"
+
+#, c-format
+msgid "E309: Unable to read block 1 from %s"
+msgstr "E309: Nem sikerült olvasni az 1. blokkot a %s fájlból"
+
+msgid "???MANY LINES MISSING"
+msgstr "???SOK SOR HIÁNYZIK"
+
+msgid "???LINE COUNT WRONG"
+msgstr "???SOROK SZÁMA HIBÁS"
+
+msgid "???EMPTY BLOCK"
+msgstr "???ÜRES BLOKK"
+
+msgid "???LINES MISSING"
+msgstr "???SOROK HIÁNYZNAK"
+
+#, c-format
+msgid "E310: Block 1 ID wrong (%s not a .swp file?)"
+msgstr "E310: Blokk 1 ID hibás (%s nem .swp fájl?)"
+
+msgid "???BLOCK MISSING"
+msgstr "???BLOKK HIÁNYZIK"
+
+msgid "??? from here until ???END lines may be messed up"
+msgstr "??? innen egészen ???END-ig a sorok összekeveredhetnek"
+
+msgid "??? from here until ???END lines may have been inserted/deleted"
+msgstr "??? innen egészen ???END-ig a sorok beszúródhattak/törölődhettek"
+
+msgid "???END"
+msgstr "???END"
+
+msgid "E311: Recovery Interrupted"
+msgstr "E311: A helyreállítás megszakadt"
+
+msgid ""
+"E312: Errors detected while recovering; look for lines starting with ???"
+msgstr ""
+"E312: A helyreállítás során hiba történt; Keresse a ??? kezdetű sorokat"
+
+msgid "See \":help E312\" for more information."
+msgstr "További információkért lásd: \":help E312\"."
+
+msgid "Recovery completed. You should check if everything is OK."
+msgstr "A helyreállítás befejeződött. Ellenőrizze, hogy minden rendben van-e."
+
+msgid ""
+"\n"
+"(You might want to write out this file under another name\n"
+msgstr ""
+"\n"
+"(Talán, más néven szeretné kiírni ezt a fájlt\n"
+
+msgid "and run diff with the original file to check for changes)\n"
+msgstr "és futtassa a diff parancsot az eredeti fájllal, hogy ellenőrizze a változásokat)\n"
+
+msgid ""
+"Delete the .swp file afterwards.\n"
+"\n"
+msgstr ""
+"Ezután törölje az .swp fájlt.\n"
+"\n"
+
+#. use msg() to start the scrolling properly
+msgid "Swap files found:"
+msgstr "Swap fájlok találhatók:"
+
+msgid "   In current directory:\n"
+msgstr "   Az aktuális könyvtárban:\n"
+
+msgid "   Using specified name:\n"
+msgstr "   A megadott névvel:\n"
+
+msgid "   In directory "
+msgstr "   A könyvtárban "
+
+msgid "      -- none --\n"
+msgstr "      -- nincs --\n"
+
+msgid "          owned by: "
+msgstr "          tulajdonosa: "
+
+msgid "   dated: "
+msgstr "   dátuma: "
+
+msgid "             dated: "
+msgstr "             dátuma: "
+
+msgid "         [from Vim version 3.0]"
+msgstr "         [a Vim 3.0 verziójából]"
+
+msgid "         [does not look like a Vim swap file]"
+msgstr "         [nem tűnik Vim swap fájlnak]"
+
+msgid "         file name: "
+msgstr "         fájl neve: "
+
+msgid ""
+"\n"
+"          modified: "
+msgstr ""
+"\n"
+"          modifierad: "
+
+msgid "YES"
+msgstr "IGEN"
+
+msgid "no"
+msgstr "nem"
+
+msgid ""
+"\n"
+"         user name: "
+msgstr ""
+"\n"
+"         felhasználónév: "
+
+msgid "   host name: "
+msgstr "   hoszt név: "
+
+msgid ""
+"\n"
+"         host name: "
+msgstr ""
+"\n"
+"         hoszt név: "
+
+msgid ""
+"\n"
+"        process ID: "
+msgstr ""
+"\n"
+"        process-ID: "
+
+msgid " (still running)"
+msgstr " (még fut)"
+
+msgid ""
+"\n"
+"         [not usable with this version of Vim]"
+msgstr ""
+"\n"
+"         [nem használható a Vim ezen verziójával]"
+
+msgid ""
+"\n"
+"         [not usable on this computer]"
+msgstr ""
+"\n"
+"         [nem használható ezen a számítógépen]"
+
+msgid "         [cannot be read]"
+msgstr "         [nem olvasható]"
+
+msgid "         [cannot be opened]"
+msgstr "         [nem nyitható meg]"
+
+msgid "E313: Cannot preserve, there is no swap file"
+msgstr "E313: Nem lehet megőrizni, nincs swap fájl"
+
+msgid "File preserved"
+msgstr "Fájl megőrizve"
+
+msgid "E314: Preserve failed"
+msgstr "E314: A megőrzés sikertelen"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E315: ml_get: Invalid lnum: %ld"
+msgstr "E315: ml_get: Érvénytelen lnum: %ld"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E316: ml_get: Cannot find line %ld"
+msgstr "E316: ml_get: Nem található a %ld. sor"
+
+# TODO: Capitalise first word of message?
+msgid "E317: Pointer block id wrong 3"
+msgstr "E317: Pointer blokk ID hibás 3"
+
+msgid "stack_idx should be 0"
+msgstr "stack_idx 0-nak kell lennie"
+
+msgid "E318: Updated too many blocks?"
+msgstr "E318: Túl sok blokkot frissített?"
+
+# TODO: Capitalise first word of message?
+msgid "E317: Pointer block id wrong 4"
+msgstr "E317: Pointer blokk ID hibás 4"
+
+msgid "deleted block 1?"
+msgstr "törölt blokk 1?"
+
+#, c-format
+msgid "E320: Cannot find line %ld"
+msgstr "E320: Nem található a %ld. sor"
+
+# TODO: Capitalise first word of message?
+msgid "E317: Pointer block id wrong"
+msgstr "E317: Pointer blokk ID hibás"
+
+msgid "pe_line_count is zero"
+msgstr "pe_line_count nulla"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E322: Line number out of range: %ld past the end"
+msgstr "E322: A sor száma kívül esik a tartományon: %ld a végén túl"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E323: Line count wrong in block %ld"
+msgstr "E323: A sor szám hibás a %ld. blokkban"
+
+msgid "Stack size increases"
+msgstr "A stack mérete nő"
+
+# TODO: Capitalise first word of message?
+msgid "E317: Pointer block id wrong 2"
+msgstr "E317: Pointer blokk ID hibás 2"
+
+#, c-format
+msgid "E773: Symlink loop for \"%s\""
+msgstr "E773: Szimbolikus link hurok \"%s\"-ra"
+
+msgid "E325: ATTENTION"
+msgstr "E325: FIGYELEM"
+
+msgid ""
+"\n"
+"Found a swap file by the name \""
+msgstr ""
+"\n"
+"Talált egy swapfájlt a név alapján \""
+
+msgid "While opening file \""
+msgstr "Fájl megnyitása közben \""
+
+msgid "      NEWER than swap file!\n"
+msgstr "      ÚJABB, mint a swap fájl!\n"
+
+#. Some of these messages are long to allow translation to
+#. * other languages.
+msgid ""
+"\n"
+"(1) Another program may be editing the same file.\n"
+"    If this is the case, be careful not to end up with two\n"
+"    different instances of the same file when making changes.\n"
+msgstr ""
+"\n"
+"(1) Lehet, hogy egy másik program szerkeszti ugyanezt a fájlt.\n"
+"    Ebben az esetben ügyeljen arra, hogy a módosítások ne \n"
+"    kerüljenek ugyanannak a fájlnak a két különböző példányába.\n"
+
+msgid "    Quit, or continue with caution.\n"
+msgstr "    Kilép, vagy folytatja óvatosan.\n"
+
+msgid ""
+"\n"
+"(2) An edit session for this file crashed.\n"
+msgstr ""
+"\n"
+"(2) A fájl szerkesztési munkamenete összeomlott.\n"
+
+msgid "    If this is the case, use \":recover\" or \"vim -r "
+msgstr "    Ha ez a helyzet, használja a \":recover\" vagy \"vim -r parancsot"
+
+msgid ""
+"\"\n"
+"    to recover the changes (see \":help recovery\").\n"
+msgstr ""
+"\"\n"
+"    a módosítások helyreállításához (lásd: \":help recovery\").\n"
+
+msgid "    If you did this already, delete the swap file \""
+msgstr "    Ha ezt már megtette, törölje a swap fájlt \""
+
+msgid ""
+"\"\n"
+"    to avoid this message.\n"
+msgstr ""
+"\"\n"
+"    ezen üzenet elkerüléséhez.\n"
+
+msgid "Swap file \""
+msgstr "Swap fájl \""
+
+msgid "\" already exists!"
+msgstr "\" már létezik!"
+
+msgid "VIM - ATTENTION"
+msgstr "VIM - FIGYELEM"
+
+msgid "Swap file already exists!"
+msgstr "Swap fájl már létezik!"
+
+msgid ""
+"&Open Read-Only\n"
+"&Edit anyway\n"
+"&Recover\n"
+"&Quit\n"
+"&Abort"
+msgstr ""
+"&Megnyit írásvédetten\n"
+"Megnyit &szerkesztésre\n"
+"&Helyreaállít\n"
+"&Kilép\n"
+"&Vissza"
+
+msgid ""
+"&Open Read-Only\n"
+"&Edit anyway\n"
+"&Recover\n"
+"&Delete it\n"
+"&Quit\n"
+"&Abort"
+msgstr ""
+"&Megnyit írásvédetten\n"
+"Megnyit &szerkesztésre\n"
+"&Helyreaállít\n"
+"&Töröl\n"
+"&Kilép\n"
+"&Vissza"
+
+msgid "E326: Too many swap files found"
+msgstr "E326: Túl sok swap fájl található"
+
+msgid "E327: Part of menu-item path is not sub-menu"
+msgstr "E327: A menüelem útvonala nem almenü"
+
+msgid "E328: Menu only exists in another mode"
+msgstr "E328: A menü csak másik módban létezik"
+
+#, c-format
+msgid "E329: No menu \"%s\""
+msgstr "E329: Nincs ilyen menü \"%s\""
+
+#. Only a mnemonic or accelerator is not valid.
+msgid "E792: Empty menu name"
+msgstr "E792: Üres menü név"
+
+msgid "E330: Menu path must not lead to a sub-menu"
+msgstr "E330: A menü útvonal nem vezethet almenüre"
+
+msgid "E331: Must not add menu items directly to menu bar"
+msgstr "E331: Nem szabad közvetlenül menüelemeket hozzáadni a menüsorhoz"
+
+msgid "E332: Separator cannot be part of a menu path"
+msgstr "E332: Az elválasztó nem lehet része a menü útvonalnak"
+
+#. Now we have found the matching menu, and we list the mappings
+#. Highlight title
+msgid ""
+"\n"
+"--- Menus ---"
+msgstr ""
+"\n"
+"--- Menük ---"
+
+msgid "Tear off this menu"
+msgstr "Leválasztás ebből a menüből"
+
+msgid "E333: Menu path must lead to a menu item"
+msgstr "E333: A menü útvonalnak menüelemre kell vezetnie"
+
+#, c-format
+msgid "E334: Menu not found: %s"
+msgstr "E334: Menü nem található: %s"
+
+#, c-format
+msgid "E335: Menu not defined for %s mode"
+msgstr "E335: A menü nincs meghatározva %s módban"
+
+msgid "E336: Menu path must lead to a sub-menu"
+msgstr "E336: A menü útvonalnak almenüre kell vezetnie"
+
+msgid "E337: Menu not found - check menu names"
+msgstr "E337: Menü nem található - ellenőrizze a menüneveket"
+
+#, c-format
+msgid "Error detected while processing %s:"
+msgstr "Hiba történt a %s feldolgozása közben:"
+
+#, c-format
+msgid "line %4ld:"
+msgstr "%4ld. sor:"
+
+#, c-format
+msgid "E354: Invalid register name: '%s'"
+msgstr "E354: Érvénytelen regiszter név: '%s'"
+
+msgid "Messages maintainer: The Vim Project"
+msgstr "Üzenetek karbantartója: A Vim Projekt"
+
+msgid "Interrupt: "
+msgstr "Megszakítás: "
+
+msgid "Press ENTER or type command to continue"
+msgstr "Nyomjon ENTER-t vagy írjon be egy parancsot a folytatáshoz"
+
+#, c-format
+msgid "%s line %ld"
+msgstr "%s %ld. sor"
+
+msgid "-- More --"
+msgstr "-- Tovább --"
+
+msgid " SPACE/d/j: screen/page/line down, b/u/k: up, q: quit "
+msgstr " SPACE/d/j: képernyő/oldal/sor le, b/u/k: fel, q: kilépés "
+
+msgid "Question"
+msgstr "Kérdés"
+
+msgid ""
+"&Yes\n"
+"&No"
+msgstr ""
+"&Igen\n"
+"&Nem"
+
+msgid ""
+"&Yes\n"
+"&No\n"
+"Save &All\n"
+"&Discard All\n"
+"&Cancel"
+msgstr ""
+"&Igen\n"
+"&Nem\n"
+"&Mind ment\n"
+"Mind &elvet\n"
+"&Vissza"
+
+msgid "Select Directory dialog"
+msgstr "Könyvtár kiválasztása párbeszédablak"
+
+msgid "Save File dialog"
+msgstr "Fájl mentése párbeszédablak"
+
+msgid "Open File dialog"
+msgstr "Fájl megnyitása párbeszédablak"
+
+#. TODO: non-GUI file selector here
+msgid "E338: Sorry, no file browser in console mode"
+msgstr "E338: Sajnos nincs fájl böngésző konzol módban"
+
+msgid "E766: Insufficient arguments for printf()"
+msgstr "E766: Nincs elég argumentum a printf() függvényhez"
+
+msgid "E767: Too many arguments to printf()"
+msgstr "E767: Túl sok argumentum a printf() függvényhez"
+
+msgid "W10: Warning: Changing a readonly file"
+msgstr "W10: Figyelem: Csak olvasható fájlt változtat"
+
+msgid "Type number or click with mouse (<Enter> cancels): "
+msgstr "Írjon be egy számot vagy kattintson az egérrel (<Enter> megszakítja): "
+
+msgid "Choice number (<Enter> cancels): "
+msgstr "Választott szám (<Enter> megszakítja): "
+
+msgid "1 more line"
+msgstr "1 sorral több"
+
+msgid "1 line less"
+msgstr "1 sorral kevesebb"
+
+#, c-format
+msgid "%ld more lines"
+msgstr "%ld sorral több"
+
+#, c-format
+msgid "%ld fewer lines"
+msgstr "%ld sorral kevesebb"
+
+msgid " (Interrupted)"
+msgstr " (Megszakítva)"
+
+msgid "Beep!"
+msgstr "Csipogás!"
+
+msgid "Vim: preserving files...\n"
+msgstr "Vim: fájlok megőrzése...\n"
+
+#. close all memfiles, without deleting
+msgid "Vim: Finished.\n"
+msgstr "Vim: Befejezve.\n"
+
+#, c-format
+msgid "ERROR: "
+msgstr "HIBA: "
+
+#, c-format
+msgid ""
+"\n"
+"[bytes] total alloc-freed %lu-%lu, in use %lu, peak use %lu\n"
+msgstr ""
+"\n"
+"[byte] össesen felszabadítva %lu-%lu, használatban %lu, csúcshasználat %lu\n"
+
+#, c-format
+msgid ""
+"[calls] total re/malloc()'s %lu, total free()'s %lu\n"
+"\n"
+msgstr ""
+"[hívások] öszes malloc() %lu, összs free() %lu\n"
+"\n"
+
+msgid "E340: Line is becoming too long"
+msgstr "E340: A sor túl hosszú lesz"
+
+#, c-format
+msgid "E341: Internal error: lalloc(%ld, )"
+msgstr "E341: Belső hiba: lalloc(%ld, )"
+
+#, c-format
+msgid "E342: Out of memory!  (allocating %lu bytes)"
+msgstr "E342: Elfogyott a memória!  (%lu bájt foglalása)"
+
+#, c-format
+msgid "Calling shell to execute: \"%s\""
+msgstr "Héj meghívása a következő végrehajtásához: \"%s\""
+
+msgid "E545: Missing colon"
+msgstr "E545: Hiányzó kettőspont"
+
+msgid "E546: Illegal mode"
+msgstr "E546: Érvénytelen mód"
+
+msgid "E547: Illegal mouseshape"
+msgstr "E547: Érvénytelen egér alak"
+
+# TODO: Capitalise first word of message?
+msgid "E548: Digit expected"
+msgstr "E548: Számjegy várt"
+
+msgid "E549: Illegal percentage"
+msgstr "E549: Érvénytelen százalék"
+
+msgid "Enter encryption key: "
+msgstr "Írja be a titkosítási kulcsot: "
+
+msgid "Enter same key again: "
+msgstr "Írja be ugyanazt a kulcsot újra: "
+
+msgid "Keys don't match!"
+msgstr "A kulcsok nem egyeznek!"
+
+#, c-format
+msgid ""
+"E343: Invalid path: '**[number]' must be at the end of the path or be "
+"followed by '%s'."
+msgstr ""
+"E343: Érvénytelen elérési út: '**[nummer]' az útvonal végén kell lennie, vagy egy '%s'."
+
+#, c-format
+msgid "E344: Can't find directory \"%s\" in cdpath"
+msgstr "E344: Nem található könyvtár \"%s\" a cdpath-ban"
+
+#, c-format
+msgid "E345: Can't find file \"%s\" in path"
+msgstr "E345: Nem található fájl \"%s\" az útvonalban"
+
+#, c-format
+msgid "E346: No more directory \"%s\" found in cdpath"
+msgstr "E346: Nincs több könyvtár \"%s\" a cdpath-ban"
+
+#, c-format
+msgid "E347: No more file \"%s\" found in path"
+msgstr "E347: Nincs több fájl \"%s\" az útvonalban"
+
+#. Get here when the server can't be found.
+msgid "Cannot connect to Netbeans #2"
+msgstr "Nem lehet csatlakozni a Netbeans #2-hez"
+
+msgid "Cannot connect to Netbeans"
+msgstr "Nem lehet csatlakozni a Netbeans-hez"
+
+#, c-format
+msgid "E668: Wrong access mode for NetBeans connection info file: \"%s\""
+msgstr "E668: Rossz hozzáférési mód a NetBeans kapcsolat információs fájlhoz: \"%s\""
+
+msgid "read from Netbeans socket"
+msgstr "olvasás a Netbeans socketből"
+
+#, c-format
+msgid "E658: NetBeans connection lost for buffer %ld"
+msgstr "E658: NetBeans kapcsolat elveszett a %ld. pufferhez"
+
+msgid "E505: "
+msgstr "E505: "
+
+msgid "E774: 'operatorfunc' is empty"
+msgstr "E774: Az 'operatorfunc' üres"
+
+msgid "E775: Eval feature not available"
+msgstr "E775: Az Eval funkció nem elérhető"
+
+msgid "Warning: terminal cannot highlight"
+msgstr "Figyelem: a terminál nem tud kiemelni"
+
+msgid "E348: No string under cursor"
+msgstr "E348: Nincs szöveg a kurzor alatt"
+
+msgid "E349: No identifier under cursor"
+msgstr "E349: Nincs azonosító a kurzor alatt"
+
+msgid "E352: Cannot erase folds with current 'foldmethod'"
+msgstr "E352: Nem lehet törölni a hajtogatásokat a jelenlegi 'foldmethod'-dal"
+
+# TODO: Capitalise first word of message?
+msgid "E664: Changelist is empty"
+msgstr "E664: A változáslista üres"
+
+msgid "E662: At start of changelist"
+msgstr "E662: A változáslista elején"
+
+msgid "E663: At end of changelist"
+msgstr "E663: A változáslista végén"
+
+msgid "Type  :quit<Enter>  to exit Vim"
+msgstr "Írja be  :quit<Enter>  a Vim elhagyásához"
+
+#, c-format
+msgid "1 line %sed 1 time"
+msgstr "1 sor %sed 1 alkalommal"
+
+#, c-format
+msgid "1 line %sed %d times"
+msgstr "1 sor %sed %d alkalommal"
+
+#, c-format
+msgid "%ld lines %sed 1 time"
+msgstr "%ld sor %sed 1 alkalommal"
+
+#, c-format
+msgid "%ld lines %sed %d times"
+msgstr "%ld sor %sed %d alkalommal"
+
+#, c-format
+msgid "%ld lines to indent... "
+msgstr "%ld sor behúzása... "
+
+msgid "1 line indented "
+msgstr "1 sor behúzva "
+
+#, c-format
+msgid "%ld lines indented "
+msgstr "%ld sor behúzva "
+
+msgid "E748: No previously used register"
+msgstr "E748: Nincs korábban használt regiszter"
+
+#. must display the prompt
+msgid "cannot yank; delete anyway"
+msgstr "nem lehet kimásolni; töröljük így is"
+
+msgid "1 line changed"
+msgstr "1 sor megváltozott"
+
+#, c-format
+msgid "%ld lines changed"
+msgstr "%ld sor megváltozott"
+
+#, c-format
+msgid "freeing %ld lines"
+msgstr "%ld sor felszabadítása"
+
+msgid "block of 1 line yanked"
+msgstr "1 soros blokk kimásolva"
+
+msgid "1 line yanked"
+msgstr "1 sor kimásolva"
+
+#, c-format
+msgid "block of %ld lines yanked"
+msgstr "%ld soros blokk kimásolva"
+
+#, c-format
+msgid "%ld lines yanked"
+msgstr "%ld sor kimásolva"
+
+#, c-format
+msgid "E353: Nothing in register %s"
+msgstr "E353: Nincs semmi a %s regiszterben"
+
+#. Highlight title
+msgid ""
+"\n"
+"--- Registers ---"
+msgstr ""
+"\n"
+"--- Regiszterek ---"
+
+msgid "Illegal register name"
+msgstr "Érvénytelen regiszter név"
+
+#, c-format
+msgid ""
+"\n"
+"# Registers:\n"
+msgstr ""
+"\n"
+"# Register:\n"
+
+#, c-format
+msgid "E574: Unknown register type %d"
+msgstr "E574: Ismeretlen regiszter típus %d"
+
+#, c-format
+msgid "%ld Cols; "
+msgstr "%ld Oszlop; "
+
+#, c-format
+msgid "Selected %s%ld of %ld Lines; %ld of %ld Words; %ld of %ld Bytes"
+msgstr "Kiválasztva %s%ld a %ld Sorból; %ld a %ld Szóból; %ld a %ld Bájtból"
+
+#, c-format
+msgid ""
+"Selected %s%ld of %ld Lines; %ld of %ld Words; %ld of %ld Chars; %ld of %ld "
+"Bytes"
+msgstr ""
+"Jelölve %s%ld a %ld sorbó; %ld a %ld szóból; %ld a %ld jelből; %ld a %ld bájtból"
+
+#, c-format
+msgid "Col %s of %s; Line %ld of %ld; Word %ld of %ld; Byte %ld of %ld"
+msgstr "Oszlop %s a %s-ból; Sor %ld a %ld-ból; Szó %ld a %ld-ból; Bájt %ld a %ld-ból"
+
+#, c-format
+msgid ""
+"Col %s of %s; Line %ld of %ld; Word %ld of %ld; Char %ld of %ld; Byte %ld of "
+"%ld"
+msgstr ""
+"Oszlop %s a %s-ból; Sor %ld a %ld-ból; Szó %ld a %ld-ból; Jel %ld a %ld-ből; Bájt %ld a %ld-ból"
+
+#, c-format
+msgid "(+%ld for BOM)"
+msgstr "(+%ld a BOM-ért)"
+
+msgid "%<%f%h%m%=Page %N"
+msgstr "%<%f%h%m%=Oldal %N"
+
+msgid "Thanks for flying Vim"
+msgstr "Köszönjük, hogy a Vim-mel repült"
+
+msgid "E518: Unknown option"
+msgstr "E518: Ismeretlen opció"
+
+msgid "E519: Option not supported"
+msgstr "E519: Nem támogatott opció"
+
+msgid "E520: Not allowed in a modeline"
+msgstr "E520: Nem engedélyezett egy modeline-ben"
+
+msgid "E521: Number required after ="
+msgstr "E521: Szám szükséges az = után"
+
+msgid "E522: Not found in termcap"
+msgstr "E522: Nem található a termcap-ban"
+
+#, c-format
+msgid "E539: Illegal character <%s>"
+msgstr "E539: Érvénytelen karakter <%s>"
+
+msgid "E529: Cannot set 'term' to empty string"
+msgstr "E529: Nem lehet üres sztringre állítani a 'term'-et"
+
+msgid "E530: Cannot change term in GUI"
+msgstr "E530: Nem lehet megváltoztatni a term-et GUI-ban"
+
+msgid "E531: Use \":gui\" to start the GUI"
+msgstr "E531: Használja a \":gui\" parancsot a GUI indításához"
+
+msgid "E589: 'backupext' and 'patchmode' are equal"
+msgstr "E589: A 'backupext' és a 'patchmode' egyenlő"
+
+msgid "E617: Cannot be changed in the GTK+ 2 GUI"
+msgstr "E617: Nem változtatható meg a GTK+ 2 GUI-ban"
+
+msgid "E524: Missing colon"
+msgstr "E524: Hiányzó kettőspont"
+
+msgid "E525: Zero length string"
+msgstr "E525: Nulla hosszúságú sztring"
+
+#, c-format
+msgid "E526: Missing number after <%s>"
+msgstr "E526: Hiányzó szám a <%s> után"
+
+msgid "E527: Missing comma"
+msgstr "E527: Hiányzó vessző"
+
+msgid "E528: Must specify a ' value"
+msgstr "E528: Meg kell adni egy ' értéket"
+
+msgid "E595: contains unprintable or wide character"
+msgstr "E595: nem nyomtatható vagy széles karaktert tartalmaz"
+
+msgid "E596: Invalid font(s)"
+msgstr "E596: Érvénytelen betűtípusok"
+
+# TODO: Capitalise first word of message?
+msgid "E597: Can't select fontset"
+msgstr "E597: Nem lehet kiválasztani a betűkészletet"
+
+msgid "E598: Invalid fontset"
+msgstr "E598: Érvénytelen betűkészlet"
+
+# TODO: Capitalise first word of message?
+msgid "E533: Can't select wide font"
+msgstr "E533: Nem lehet kiválasztani a széles betűtípust"
+
+msgid "E534: Invalid wide font"
+msgstr "E534: Érvénytelen széles betűtípus"
+
+#, c-format
+msgid "E535: Illegal character after <%c>"
+msgstr "E535: Érvénytelen karakter a <%c> után"
+
+# TODO: Capitalise first word of message?
+msgid "E536: Comma required"
+msgstr "E536: Vessző szükséges"
+
+#, c-format
+msgid "E537: 'commentstring' must be empty or contain %s"
+msgstr "E537: A 'commentstring' üres kell legyen vagy tartalmaznia kell %s-t"
+
+msgid "E538: No mouse support"
+msgstr "E538: Nincs egér támogatás"
+
+msgid "E540: Unclosed expression sequence"
+msgstr "E540: Lezáratlan kifejezés sorozat"
+
+
+# TODO: Capitalise first word of message?
+msgid "E542: Unbalanced groups"
+msgstr "E542: Kiegyensúlyozatlan csoportok"
+
+msgid "E590: A preview window already exists"
+msgstr "E590: Már létezik egy előnézet ablak"
+
+msgid "W17: Arabic requires UTF-8, do ':set encoding=utf-8'"
+msgstr "W17: Az arab UTF-8-at igényel, írja be: ':set encoding=utf-8'"
+
+#, c-format
+msgid "E593: Need at least %d lines"
+msgstr "E593: Legalább %d sorra van szükség"
+
+#, c-format
+msgid "E594: Need at least %d columns"
+msgstr "E594: Legalább %d oszlopra van szükség"
+
+#, c-format
+msgid "E355: Unknown option: %s"
+msgstr "E355: Ismeretlen opció: %s"
+
+msgid ""
+"\n"
+"--- Terminal codes ---"
+msgstr ""
+"\n"
+"--- Terminalkódok ---"
+
+msgid ""
+"\n"
+"--- Global option values ---"
+msgstr ""
+"\n"
+"--- Globális beállítási értékek  ---"
+
+msgid ""
+"\n"
+"--- Local option values ---"
+msgstr ""
+"\n"
+"--- Helyi beállítási értékek ---"
+
+msgid ""
+"\n"
+"--- Options ---"
+msgstr ""
+"\n"
+"--- Beállítások ---"
+
+msgid "E356: get_varp ERROR"
+msgstr "E356: get_varp HIBA"
+
+#, c-format
+msgid "E357: 'langmap': Matching character missing for %s"
+msgstr "E357: A 'langmap'-ban hiányzik a megfelelő karakter %s-hez"
+
+#, c-format
+msgid "E358: 'langmap': Extra characters after semicolon: %s"
+msgstr "E358: A 'langmap'-ban felesleges karakterek pontosvessző után: %s"
+
+msgid "cannot open "
+msgstr "nem lehet megnyitni "
+
+msgid "VIM: Can't open window!\n"
+msgstr "VIM: Nem lehet megnyitni az ablakot!\n"
+
+msgid "Need Amigados version 2.04 or later\n"
+msgstr "Amigados 2.04 vagy újabb verzióra van szükség\n"
+
+#, c-format
+msgid "Need %s version %ld\n"
+msgstr "%s %ld verzióra van szükség\n"
+
+msgid "Cannot open NIL:\n"
+msgstr "Nem lehet megnyitni a NIL:\n"
+
+msgid "Cannot create "
+msgstr "Nem lehet létrehozni "
+
+#, c-format
+msgid "Vim exiting with %d\n"
+msgstr "Vim %d-vel kilép\n"
+
+msgid "cannot change console mode ?!\n"
+msgstr "nem lehet megváltoztatni a konzol módot ?!\n"
+
+msgid "mch_get_shellsize: not a console??\n"
+msgstr "mch_get_shellsize: nem konzol??\n"
+
+#. if Vim opened a window: Executing a shell may cause crashes
+msgid "E360: Cannot execute shell with -f option"
+msgstr "E360: Nem lehet végrehajtani a héjat az -f opcióval"
+
+msgid "Cannot execute "
+msgstr "Nem lehet végrehajtani "
+
+msgid "shell "
+msgstr "rendszerhéj "
+
+msgid " returned\n"
+msgstr " visszatért\n"
+
+msgid "ANCHOR_BUF_SIZE too small."
+msgstr "ANCHOR_BUF_SIZE túl kicsi."
+
+msgid "I/O ERROR"
+msgstr "I/O HIBA"
+
+msgid "Message"
+msgstr "Üzenet"
+
+msgid "'columns' is not 80, cannot execute external commands"
+msgstr "'columns' nem 80, nem lehet külső parancsokat végrehajtani"
+
+msgid "E237: Printer selection failed"
+msgstr "E237: A nyomtató kiválasztása sikertelen"
+
+#, c-format
+msgid "to %s on %s"
+msgstr "%s-re %s-en"
+
+#, c-format
+msgid "E613: Unknown printer font: %s"
+msgstr "E613: Ismeretlen nyomtató betűtípus: %s"
+
+#, c-format
+msgid "E238: Print error: %s"
+msgstr "E238: Nyomtatási hiba: %s"
+
+#, c-format
+msgid "Printing '%s'"
+msgstr "'%s' nyomtatása"
+
+#, c-format
+msgid "E244: Illegal charset name \"%s\" in font name \"%s\""
+msgstr "E244: Érvénytelen karakterkészlet név \"%s\" a betűtípus névben \"%s\""
+
+#, c-format
+msgid "E245: Illegal char '%c' in font name \"%s\""
+msgstr "E245: Érvénytelen karakter '%c' a betűtípus névben \"%s\""
+
+msgid "Vim: Double signal, exiting\n"
+msgstr "Vim: Dupla jel, kilépés\n"
+
+#, c-format
+msgid "Vim: Caught deadly signal %s\n"
+msgstr "Vim: Végzetes jel fogva %s\n"
+
+#, c-format
+msgid "Vim: Caught deadly signal\n"
+msgstr "Vim: Végzetes jel fogva\n"
+
+#, c-format
+msgid "Opening the X display took %ld msec"
+msgstr "Az X kijelző megnyitása %ld ezredmásodpercet vett igénybe"
+
+msgid ""
+"\n"
+"Vim: Got X error\n"
+msgstr ""
+"\n"
+"Vim: X hiba történt\n"
+
+msgid "Testing the X display failed"
+msgstr "Az X kijelző tesztelése sikertelen"
+
+msgid "Opening the X display timed out"
+msgstr "Az X kijelző megnyitása időtúllépés"
+
+msgid ""
+"\n"
+"Cannot execute shell "
+msgstr ""
+"\n"
+"A héj nem indítható "
+
+msgid ""
+"\n"
+"Cannot execute shell sh\n"
+msgstr ""
+"\n"
+"Az sh héj nem indítható\n"
+
+msgid ""
+"\n"
+"shell returned "
+msgstr ""
+"\n"
+"a héj visszatért "
+
+msgid ""
+"\n"
+"Cannot create pipes\n"
+msgstr ""
+"\n"
+"A héj nem tud csöveket létrehozni\n"
+
+msgid ""
+"\n"
+"Cannot fork\n"
+msgstr ""
+"\n"
+"A héj nem tud elágazni\n"
+
+msgid ""
+"\n"
+"Command terminated\n"
+msgstr ""
+"\n"
+"A parancs futása megszakadt\n"
+
+msgid "XSMP lost ICE connection"
+msgstr "XSMP elvesztette az ICE kapcsolatot"
+
+#, c-format
+msgid "dlerror = \"%s\""
+msgstr "dlerror = \"%s\""
+
+msgid "Opening the X display failed"
+msgstr "Az X kijelző megnyitása sikertelen"
+
+msgid "XSMP handling save-yourself request"
+msgstr "XSMP kezeli a mentés-magad kérést"
+
+msgid "XSMP opening connection"
+msgstr "XSMP kapcsolat megnyitása"
+
+msgid "XSMP ICE connection watch failed"
+msgstr "XSMP ICE kapcsolat figyelése sikertelen"
+
+#, c-format
+msgid "XSMP SmcOpenConnection failed: %s"
+msgstr "XSMP SmcOpenConnection sikertelen: %s"
+
+msgid "Could not load vim32.dll!"
+msgstr "Nem lehet betölteni a vim32.dll-t!"
+
+msgid "VIM Error"
+msgstr "VIM Hiba"
+
+msgid "Could not fix up function pointers to the DLL!"
+msgstr "Nem lehet javítani a függvény mutatókat a DLL-hez!"
+
+#, c-format
+msgid "shell returned %d"
+msgstr "a héj visszatért %d hibakóddal"
+
+#, c-format
+msgid "Vim: Caught %s event\n"
+msgstr "Vim: Elkapta a %s eseményt\n"
+
+msgid "close"
+msgstr "bezár"
+
+msgid "logoff"
+msgstr "kijelentkezés"
+
+msgid "shutdown"
+msgstr "leállítás"
+
+msgid "E371: Command not found"
+msgstr "E371: Parancs nem található"
+
+msgid ""
+"VIMRUN.EXE not found in your $PATH.\n"
+"External commands will not pause after completion.\n"
+"See  :help win32-vimrun  for more information."
+msgstr ""
+"VIMRUN.EXE hittades inte i din $PATH.\n"
+"A külső parancsok nem állnak le a szerkesztö kilépése után sem.\n"
+"Lásd :help win32-vimrun a további információhoz."
+
+msgid "Vim Warning"
+msgstr "Vim Figyelem"
+
+msgid "At line"
+msgstr "A sorban"
+
+#, c-format
+msgid "E372: Too many %%%c in format string"
+msgstr "E372: Túl sok %%%c a formátum sztringben"
+
+#, c-format
+msgid "E373: Unexpected %%%c in format string"
+msgstr "E373: Váratlan %%%c a formátum sztringben"
+
+msgid "E374: Missing ] in format string"
+msgstr "E374: Hiányzó ] a formátum sztringben"
+
+#, c-format
+msgid "E375: Unsupported %%%c in format string"
+msgstr "E375: Nem támogatott %%%c a formátum sztringben"
+
+#, c-format
+msgid "E376: Invalid %%%c in format string prefix"
+msgstr "E376: Érvénytelen %%%c a formátum sztring előtagban"
+
+#, c-format
+msgid "E377: Invalid %%%c in format string"
+msgstr "E377: Érvénytelen %%%c a formátum sztringben"
+
+msgid "E378: 'errorformat' contains no pattern"
+msgstr "E378: Az 'errorformat' nem tartalmaz mintát"
+
+msgid "E379: Missing or empty directory name"
+msgstr "E379: Hiányzó vagy üres könyvtár név"
+
+msgid "E553: No more items"
+msgstr "E553: Nincs több elem"
+
+#, c-format
+msgid "(%d of %d)%s%s: "
+msgstr "(%d a %d-ből)%s%s: "
+
+msgid " (line deleted)"
+msgstr " (sor törölve)"
+
+msgid "E380: At bottom of quickfix stack"
+msgstr "E380: A quickfix verem alján"
+
+msgid "E381: At top of quickfix stack"
+msgstr "E381: A quickfix verem tetején"
+
+#, c-format
+msgid "error list %d of %d; %d errors"
+msgstr "hiba lista %d a %d-ből; %d hiba"
+
+msgid "E382: Cannot write, 'buftype' option is set"
+msgstr "E382: Nem lehet írni, a 'buftype' opció be van állítva"
+
+msgid "E683: File name missing or invalid pattern"
+msgstr "E683: Hiányzó vagy érvénytelen minta a fájlnévben"
+
+#, c-format
+msgid "Cannot open file \"%s\""
+msgstr "Nem lehet megnyitni a fájlt \"%s\""
+
+msgid "E681: Buffer is not loaded"
+msgstr "E681: A puffer nincs betöltve"
+
+msgid "E777: String or List expected"
+msgstr "E777: Sztring vagy Lista várt"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E369: Invalid item in %s%%[]"
+msgstr "E369: Érvénytelen elem a %s%%[]-ben"
+
+msgid "E339: Pattern too long"
+msgstr "E339: A minta túl hosszú"
+
+msgid "E50: Too many \\z("
+msgstr "E50: Túl sok \\z("
+
+#, c-format
+msgid "E51: Too many %s("
+msgstr "E51: Túl sok %s("
+
+msgid "E52: Unmatched \\z("
+msgstr "E52: Illesztetlen \\z("
+
+#, c-format
+msgid "E53: Unmatched %s%%("
+msgstr "E53: Illesztetlen %s%%("
+
+#, c-format
+msgid "E54: Unmatched %s("
+msgstr "E54: Illesztetlen %s("
+
+#, c-format
+msgid "E55: Unmatched %s)"
+msgstr "E55: Illesztetlen %s)"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E59: Invalid character after %s@"
+msgstr "E59: Érvénytelen karakter %s@ után"
+
+#, c-format
+msgid "E60: Too many complex %s{...}s"
+msgstr "E60: Túl sok összetett %s{...}s"
+
+#, c-format
+msgid "E61: Nested %s*"
+msgstr "E61: Beágyazott %s*"
+
+#, c-format
+msgid "E62: Nested %s%c"
+msgstr "E62: Beágyazott %s%c"
+
+# TODO: Capitalise first word of message?
+msgid "E63: Invalid use of \\_"
+msgstr "E63: Érvénytelen használata a \\_"
+
+#, c-format
+msgid "E64: %s%c follows nothing"
+msgstr "E64: %s%c semmit sem követ"
+
+msgid "E65: Illegal back reference"
+msgstr "E65: Érvénytelen hátra hivatkozás"
+
+msgid "E66: \\z( not allowed here"
+msgstr "E66: \\z( nem engedélyezett itt"
+
+msgid "E67: \\z1 - \\z9 not allowed here"
+msgstr "E67: \\z1 - \\z9 nem engedélyezett itt"
+
+msgid "E68: Invalid character after \\z"
+msgstr "E68: Érvénytelen karakter \\z után"
+
+#, c-format
+msgid "E69: Missing ] after %s%%["
+msgstr "E69: Hiányzó ] %s%%[ után"
+
+#, c-format
+msgid "E70: Empty %s%%[]"
+msgstr "E70: Üres %s%%[]"
+
+#, c-format
+msgid "E678: Invalid character after %s%%[dxouU]"
+msgstr "E678: Érvénytelen karakter %s%%[dxouU] után"
+
+#, c-format
+msgid "E71: Invalid character after %s%%"
+msgstr "E71: Érvénytelen karakter %s%% után"
+
+#, c-format
+msgid "E769: Missing ] after %s["
+msgstr "E769: Hiányzó ] %s[ után"
+
+#, c-format
+msgid "E554: Syntax error in %s{...}"
+msgstr "E554: Szintaxis hiba a %s{...}-ban"
+
+msgid "External submatches:\n"
+msgstr "Külső alrészletek:\n"
+
+msgid " VREPLACE"
+msgstr " VCSERE"
+
+msgid " REPLACE"
+msgstr " CSERE"
+
+msgid " REVERSE"
+msgstr " FORDÍT"
+
+msgid " INSERT"
+msgstr " BESZÚR"
+
+msgid " (insert)"
+msgstr " (beszúr)"
+
+msgid " (replace)"
+msgstr " (cserél)"
+
+msgid " (vreplace)"
+msgstr " (vcserél)"
+
+msgid " Hebrew"
+msgstr " Héber"
+
+msgid " Arabic"
+msgstr " Arab"
+
+msgid " (lang)"
+msgstr " (nyelv)"
+
+msgid " (paste)"
+msgstr " (beilleszt)"
+
+msgid " VISUAL"
+msgstr " VIZUÁLIS"
+
+msgid " VISUAL LINE"
+msgstr " VIZUÁLIS SOR"
+
+msgid " VISUAL BLOCK"
+msgstr " VIZUÁLIS BLOKK"
+
+msgid " SELECT"
+msgstr " KIVÁLASZT"
+
+msgid " SELECT LINE"
+msgstr " KIVÁLASZT SOR"
+
+msgid " SELECT BLOCK"
+msgstr " KIVÁLASZT BLOKK"
+
+msgid "recording"
+msgstr "rögzít"
+
+#, c-format
+msgid "E383: Invalid search string: %s"
+msgstr "E383: Érvénytelen keresési sztring: %s"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E384: Search hit TOP without match for: %s"
+msgstr "E384: Találat a TETEJEN anélkül, hogy egyezne: %s"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E385: Search hit BOTTOM without match for: %s"
+msgstr "E385: Találat az ALJAN anélkül, hogy egyezne: %s"
+
+msgid "E386: Expected '?' or '/'  after ';'"
+msgstr "E386: '?' vagy '/'  várt ';' után"
+
+msgid " (includes previously listed match)"
+msgstr " (tartalmazza a korábban felsorolt találatot)"
+
+#. cursor at status line
+msgid "--- Included files "
+msgstr "--- Beágyazott fájlok "
+
+msgid "not found "
+msgstr "nem található "
+
+msgid "in path ---\n"
+msgstr "az útvonalban ---\n"
+
+msgid "  (Already listed)"
+msgstr "  (Már felsorolva)"
+
+msgid "  NOT FOUND"
+msgstr "  NEM TALÁLHATÓ"
+
+#, c-format
+msgid "Scanning included file: %s"
+msgstr "Beágyazott fájl átvizsgálása: %s"
+
+#, c-format
+msgid "Searching included file %s"
+msgstr "Beágyazott fájl keresése %s"
+
+msgid "E387: Match is on current line"
+msgstr "E387: A találat az aktuális soron van"
+
+msgid "All included files were found"
+msgstr "Minden beágyazott fájl megtalálva"
+
+msgid "No included files"
+msgstr "Nincs beágyazott fájl"
+
+msgid "E388: Couldn't find definition"
+msgstr "E388: Nem található definíció"
+
+msgid "E389: Couldn't find pattern"
+msgstr "E389: Nem található minta"
+
+#, c-format
+msgid ""
+"\n"
+"# Last %sSearch Pattern:\n"
+"~"
+msgstr ""
+"\n"
+"# Utolsó %skeresési minta:\n"
+"~"
+
+msgid "E759: Format error in spell file"
+msgstr "E759: Formátum hiba a helyesírás fájlban"
+
+msgid "E758: Truncated spell file"
+msgstr "E758: Levágott helyesírás fájl"
+
+#, c-format
+msgid "Trailing text in %s line %d: %s"
+msgstr "Lebegő szöveg a %s %d. sorban: %s"
+
+#, c-format
+msgid "Affix name too long in %s line %d: %s"
+msgstr "Rag név túl hosszú a %s %d. sorban: %s"
+
+msgid "E761: Format error in affix file FOL, LOW or UPP"
+msgstr "E761: Formátum hiba a rag fájlban FOL, LOW vagy UPP"
+
+msgid "E762: Character in FOL, LOW or UPP is out of range"
+msgstr "E762: Karakter a FOL, LOW vagy UPP-ban kívül esik a tartományon"
+
+msgid "Compressing word tree..."
+msgstr "a szó-fa összetömörítése..."
+
+msgid "E756: Spell checking is not enabled"
+msgstr "E756: A helyesírás ellenőrzés nincs engedélyezve"
+
+#, c-format
+msgid "Warning: Cannot find word list \"%s.%s.spl\" or \"%s.ascii.spl\""
+msgstr "Figyelem: Nem található szólista \"%s.%s.spl\" vagy \"%s.ascii.spl\""
+
+#, c-format
+msgid "Reading spell file \"%s\""
+msgstr "Helyesírás fájl olvasása \"%s\""
+
+msgid "E757: This does not look like a spell file"
+msgstr "E757: Ez nem tűnik helyesírás fájlnak"
+
+msgid "E771: Old spell file, needs to be updated"
+msgstr "E771: Régi helyesírás fájl, frissíteni kell"
+
+msgid "E772: Spell file is for newer version of Vim"
+msgstr "E772: A helyesírás fájl újabb Vim verzióhoz való"
+
+msgid "E770: Unsupported section in spell file"
+msgstr "E770: Nem támogatott szakasz a helyesírás fájlban"
+
+#, c-format
+msgid "Warning: region %s not supported"
+msgstr "Figyelem: a %s régió nem támogatott"
+
+#, c-format
+msgid "Reading affix file %s..."
+msgstr "Rag fájl olvasása %s..."
+
+#, c-format
+msgid "Conversion failure for word in %s line %d: %s"
+msgstr "Átalakítási hiba a szóban a %s %d. sorban: %s"
+
+#, c-format
+msgid "Conversion in %s not supported: from %s to %s"
+msgstr "Átalakítás a %s-ben nem támogatott: %s-ből %s-be"
+
+#, c-format
+msgid "Conversion in %s not supported"
+msgstr "Átalakítás a %s-ben nem támogatott"
+
+#, c-format
+msgid "Invalid value for FLAG in %s line %d: %s"
+msgstr "Érvénytelen érték a FLAG-ban a %s %d. sorban: %s"
+
+#, c-format
+msgid "FLAG after using flags in %s line %d: %s"
+msgstr "FLAG a zászlók használata után a %s %d. sorban: %s"
+
+#, c-format
+msgid ""
+"Defining COMPOUNDFORBIDFLAG after PFX item may give wrong results in %s line "
+"%d"
+msgstr ""
+"A COMPOUNDFORBIDFLAG PFX-elem utáni definiálása hibás eredményeket adhat a %s %d. sorban"
+
+#, c-format
+msgid ""
+"Defining COMPOUNDPERMITFLAG after PFX item may give wrong results in %s line "
+"%d"
+msgstr ""
+"A COMPOUNDPERMITFLAG PFX-elem utáni definiálása hibás eredményeket adhat a %s %d. sorban"
+
+#, c-format
+msgid "Wrong COMPOUNDWORDMAX value in %s line %d: %s"
+msgstr "Hibás COMPOUNDWORDMAX érték a %s %d. sorban: %s"
+
+#, c-format
+msgid "Wrong COMPOUNDMIN value in %s line %d: %s"
+msgstr "Hibás COMPOUNDMIN érték a %s %d. sorban: %s"
+
+#, c-format
+msgid "Wrong COMPOUNDSYLMAX value in %s line %d: %s"
+msgstr "Hibás COMPOUNDSYLMAX érték a %s %d. sorban: %s"
+
+#, c-format
+msgid "Wrong CHECKCOMPOUNDPATTERN value in %s line %d: %s"
+msgstr "Hibás CHECKCOMPOUNDPATTERN érték a %s %d. sorban: %s"
+
+#, c-format
+msgid "Different combining flag in continued affix block in %s line %d: %s"
+msgstr "Különböző kombináló zászló a folytatott rag blokkban a %s %d. sorban: %s"
+
+#, c-format
+msgid "Duplicate affix in %s line %d: %s"
+msgstr "Duplikált rag a %s %d. sorban: %s"
+
+#, c-format
+msgid ""
+"Affix also used for BAD/RARE/KEEPCASE/NEEDAFFIX/NEEDCOMPOUND/NOSUGGEST in %s "
+"line %d: %s"
+msgstr ""
+"Az előtagot a következőkre is használják: BAD/RARE/KEEPCASE/NEEDAFFIX/NEEDCOMPOUND/NOSUGGEST a %s sorban %d: %s"
+
+#, c-format
+msgid "Expected Y or N in %s line %d: %s"
+msgstr "Y vagy N várt a %s %d. sorban: %s"
+
+#, c-format
+msgid "Broken condition in %s line %d: %s"
+msgstr "Törött feltétel a %s %d. sorban: %s"
+
+#, c-format
+msgid "Expected REP(SAL) count in %s line %d"
+msgstr "REP(SAL) szám várt a %s %d. sorban"
+
+#, c-format
+msgid "Expected MAP count in %s line %d"
+msgstr "MAP szám várt a %s %d. sorban"
+
+#, c-format
+msgid "Duplicate character in MAP in %s line %d"
+msgstr "Duplikált karakter a MAP-ben a %s %d. sorban"
+
+#, c-format
+msgid "Unrecognized or duplicate item in %s line %d: %s"
+msgstr "Felismerhetetlen vagy duplikált elem a %s %d. sorban: %s"
+
+#, c-format
+msgid "Missing FOL/LOW/UPP line in %s"
+msgstr "Hiányzó FOL/LOW/UPP sor a %s-ben"
+
+msgid "COMPOUNDSYLMAX used without SYLLABLE"
+msgstr "COMPOUNDSYLMAX használata SYLLABLE nélkül"
+
+msgid "Too many postponed prefixes"
+msgstr "Túl sok elhalasztott előtag"
+
+msgid "Too many compound flags"
+msgstr "Túl sok összetett zászló"
+
+msgid "Too many postponed prefixes and/or compound flags"
+msgstr "Túl sok elhalasztott előtag és/vagy összetett zászló"
+
+#, c-format
+msgid "Missing SOFO%s line in %s"
+msgstr "Hiányzó SOFO%s sor a %s-ben"
+
+#, c-format
+msgid "Both SAL and SOFO lines in %s"
+msgstr "Mind SAL és SOFO sorok a %s-ben"
+
+#, c-format
+msgid "Flag is not a number in %s line %d: %s"
+msgstr "A zászló nem szám a %s %d. sorban: %s"
+
+#, c-format
+msgid "Illegal flag in %s line %d: %s"
+msgstr "Érvénytelen zászló a %s %d. sorban: %s"
+
+#, c-format
+msgid "%s value differs from what is used in another .aff file"
+msgstr "%s érték különbözik attól, ami egy másik .aff fájlban van"
+
+#, c-format
+msgid "Reading dictionary file %s..."
+msgstr "Szótár fájl olvasása %s..."
+
+#, c-format
+msgid "E760: No word count in %s"
+msgstr "E760: Nincs szószám a %s-ben"
+
+#, c-format
+msgid "line %6d, word %6d - %s"
+msgstr "%6d. sor, %6d. szó - %s"
+
+#, c-format
+msgid "Duplicate word in %s line %d: %s"
+msgstr "Duplikált szó a %s %d. sorban: %s"
+
+#, c-format
+msgid "First duplicate word in %s line %d: %s"
+msgstr "Első duplikált szó a %s %d. sorban: %s"
+
+#, c-format
+msgid "%d duplicate word(s) in %s"
+msgstr "%d duplikált szó a %s-ben"
+
+#, c-format
+msgid "Ignored %d word(s) with non-ASCII characters in %s"
+msgstr "Figyelmen kívül hagyott %d szó nem ASCII karakterekkel a %s-ben"
+
+#, c-format
+msgid "Reading word file %s..."
+msgstr "Szó fájl olvasása %s..."
+
+#, c-format
+msgid "Duplicate /encoding= line ignored in %s line %d: %s"
+msgstr "Duplikált /encoding= sor figyelmen kívül hagyva a %s %d. sorban: %s"
+
+#, c-format
+msgid "/encoding= line after word ignored in %s line %d: %s"
+msgstr "/encoding= sor a szó után figyelmen kívül hagyva a %s %d. sorban: %s"
+
+#, c-format
+msgid "Duplicate /regions= line ignored in %s line %d: %s"
+msgstr "Duplikált /regions= sor figyelmen kívül hagyva a %s %d. sorban: %s"
+
+#, c-format
+msgid "Too many regions in %s line %d: %s"
+msgstr "Túl sok régió a %s %d. sorban: %s"
+
+#, c-format
+msgid "/ line ignored in %s line %d: %s"
+msgstr "/ sor figyelmen kívül hagyva a %s %d. sorban: %s"
+
+#, c-format
+msgid "Invalid region nr in %s line %d: %s"
+msgstr "Érvénytelen régió szám a %s %d. sorban: %s"
+
+#, c-format
+msgid "Unrecognized flags in %s line %d: %s"
+msgstr "Felismerhetetlen zászlók a %s %d. sorban: %s"
+
+#, c-format
+msgid "Ignored %d words with non-ASCII characters"
+msgstr "Figyelmen kívül hagyott %d szó nem ASCII karakterekkel"
+
+#, c-format
+msgid "Compressed %d of %d nodes; %d (%d%%) remaining"
+msgstr "Összetömörített %d a %d csomópontból; %d (%d%%) maradt"
+
+msgid "Reading back spell file..."
+msgstr "Visszaolvasás a helyesírás fájlból..."
+
+#.
+#. * Go through the trie of good words, soundfold each word and add it to
+#. * the soundfold trie.
+#.
+msgid "Performing soundfolding..."
+msgstr "Hangalakítás végrehajtása..."
+
+#, c-format
+msgid "Number of words after soundfolding: %ld"
+msgstr "A szavak száma a hangalakítás után: %ld"
+
+#, c-format
+msgid "Total number of words: %d"
+msgstr "A szavak teljes száma: %d"
+
+#, c-format
+msgid "Writing suggestion file %s..."
+msgstr "Javaslat fájl írása %s..."
+
+#, c-format
+msgid "Estimated runtime memory use: %d bytes"
+msgstr "Becsült futásidejű memória használat: %d bájt"
+
+msgid "E751: Output file name must not have region name"
+msgstr "E751: A kimeneti fájlnév nem tartalmazhat régió nevet"
+
+msgid "E754: Only up to 8 regions supported"
+msgstr "E754: Csak legfeljebb 8 régió támogatott"
+
+#, c-format
+msgid "E755: Invalid region in %s"
+msgstr "E755: Érvénytelen régió a %s-ben"
+
+msgid "Warning: both compounding and NOBREAK specified"
+msgstr "Figyelem: mind az összetétel, mind a NOBREAK megadva"
+
+#, c-format
+msgid "Writing spell file %s..."
+msgstr "Helyesírás fájl írása %s..."
+
+msgid "Done!"
+msgstr "Kész!"
+
+#, c-format
+msgid "E765: 'spellfile' does not have %ld entries"
+msgstr "E765: A 'spellfile' nem rendelkezik %ld bejegyzéssel"
+
+#, c-format
+msgid "Word removed from %s"
+msgstr "Szó eltávolítva a %s-ből"
+
+#, c-format
+msgid "Word added to %s"
+msgstr "Szó hozzáadva a %s-hez"
+
+msgid "E763: Word characters differ between spell files"
+msgstr "E763: A szó karakterek különböznek a helyesírás fájlok között"
+
+msgid "Sorry, no suggestions"
+msgstr "Sajnálom, nincs javaslat"
+
+#, c-format
+msgid "Sorry, only %ld suggestions"
+msgstr "Sajnálom, csak %ld javaslat van"
+
+#. for when 'cmdheight' > 1
+#. avoid more prompt
+#, c-format
+msgid "Change \"%.*s\" to:"
+msgstr "Változtassa meg a \"%.*s\"-t erre:"
+
+#, c-format
+msgid " < \"%.*s\""
+msgstr " < \"%.*s\""
+
+msgid "E752: No previous spell replacement"
+msgstr "E752: Nincs előző helyesírás csere"
+
+#, c-format
+msgid "E753: Not found: %s"
+msgstr "E753: Nem található: %s"
+
+#, c-format
+msgid "E778: This does not look like a .sug file: %s"
+msgstr "E778: Ez nem tűnik .sug fájlnak: %s"
+
+#, c-format
+msgid "E779: Old .sug file, needs to be updated: %s"
+msgstr "E779: Régi .sug fájl, frissíteni kell: %s"
+
+#, c-format
+msgid "E780: .sug file is for newer version of Vim: %s"
+msgstr "E780: A .sug fájl újabb Vim verzióhoz való: %s"
+
+#, c-format
+msgid "E781: .sug file doesn't match .spl file: %s"
+msgstr "E781: A .sug fájl nem egyezik a .spl fájllal: %s"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E782: Error while reading .sug file: %s"
+msgstr "E782: Hiba a .sug fájl olvasása közben: %s"
+
+#. This should have been checked when generating the .spl
+#. * file.
+# TODO: Capitalise first word of message?
+msgid "E783: Duplicate char in MAP entry"
+msgstr "E783: Duplikált karakter a MAP bejegyzésben"
+
+#, c-format
+msgid "E390: Illegal argument: %s"
+msgstr "E390: Érvénytelen argumentum: %s"
+
+#, c-format
+msgid "E391: No such syntax cluster: %s"
+msgstr "E391: Nincs ilyen szintaxis csoport: %s"
+
+msgid "No Syntax items defined for this buffer"
+msgstr "Nincs Szintaxis elem definiálva ehhez a pufferhez"
+
+msgid "syncing on C-style comments"
+msgstr "szinkronizálás C-stílusú megjegyzéseken"
+
+msgid "no syncing"
+msgstr "nincs szinkronizálás"
+
+msgid "syncing starts "
+msgstr "szinkronizálás kezdődik "
+
+msgid " lines before top line"
+msgstr " sorral a felső sor előtt"
+
+msgid ""
+"\n"
+"--- Syntax sync items ---"
+msgstr ""
+"\n"
+"--- Szintaxis elemeinek szinkronizálásal ---"
+
+msgid ""
+"\n"
+"syncing on items"
+msgstr ""
+"\n"
+"elemek szinkronizálása"
+
+msgid ""
+"\n"
+"--- Syntax items ---"
+msgstr ""
+"\n"
+"--- Szintaxis elemek ---"
+
+#, c-format
+msgid "E392: No such syntax cluster: %s"
+msgstr "E392: Nincs ilyen szintaxis csoport: %s"
+
+msgid "minimal "
+msgstr "minimális "
+
+msgid "maximal "
+msgstr "maximális "
+
+msgid "; match "
+msgstr "; illeszkedik "
+
+msgid " line breaks"
+msgstr " sor törések"
+
+# TODO: Capitalise first word of message?
+msgid "E395: Contains argument not accepted here"
+msgstr "E395: A contains argumentum itt nem elfogadható"
+
+msgid "E396: containedin argument not accepted here"
+msgstr "E396: A containedin argumentum itt nem elfogadható"
+
+msgid "E393: group[t]here not accepted here"
+msgstr "E393: A group[t]here argumentum itt nem elfogadható"
+
+#, c-format
+msgid "E394: Didn't find region item for %s"
+msgstr "E394: Nem találtam régió elemet a %s-hez"
+
+msgid "E397: Filename required"
+msgstr "E397: Fájlnév szükséges"
+
+#, c-format
+msgid "E789: Missing ']': %s"
+msgstr "E789: Hiányzó ']': %s"
+
+#, c-format
+msgid "E398: Missing '=': %s"
+msgstr "E398: Hiányzó '=': %s"
+
+#, c-format
+msgid "E399: Not enough arguments: syntax region %s"
+msgstr "E399: Nem elég argumentum: syntaxis régió %s"
+
+msgid "E400: No cluster specified"
+msgstr "E400: Nincs csoport megadva"
+
+#, c-format
+msgid "E401: Pattern delimiter not found: %s"
+msgstr "E401: A minta elválasztó nem található: %s"
+
+#, c-format
+msgid "E402: Garbage after pattern: %s"
+msgstr "E402: Szemét a minta után: %s"
+
+# TODO: Capitalise first word of message?
+msgid "E403: syntax sync: Line continuations pattern specified twice"
+msgstr "E403: syntax sync: A sorfolytatás minta kétszer lett megadva"
+
+#, c-format
+msgid "E404: Illegal arguments: %s"
+msgstr "E404: Érvénytelen argumentumok: %s"
+
+#, c-format
+msgid "E405: Missing equal sign: %s"
+msgstr "E405: Hiányzó egyenlőségjel: %s"
+
+#, c-format
+msgid "E406: Empty argument: %s"
+msgstr "E406: Üres argumentum: %s"
+
+#, c-format
+msgid "E407: %s not allowed here"
+msgstr "E407: %s itt nem engedélyezett"
+
+#, c-format
+msgid "E408: %s must be first in contains list"
+msgstr "E408: %s az elsőnek kell lennie a contains listában"
+
+#, c-format
+msgid "E409: Unknown group name: %s"
+msgstr "E409: Ismeretlen csoport név: %s"
+
+#, c-format
+msgid "E410: Invalid :syntax subcommand: %s"
+msgstr "E410: Érvénytelen :syntax alparancs: %s"
+
+# TODO: Capitalise first word of message?
+msgid "E679: Recursive loop loading syncolor.vim"
+msgstr "E679: Rekurzív hurok a syncolor.vim betöltésekor"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E411: Highlight group not found: %s"
+msgstr "E411: A kiemelés csoport nem található: %s"
+
+#, c-format
+msgid "E412: Not enough arguments: \":highlight link %s\""
+msgstr "E412: Nem elég argumentum: \":highlight link %s\""
+
+#, c-format
+msgid "E413: Too many arguments: \":highlight link %s\""
+msgstr "E413: Túl sok argumentum: \":highlight link %s\""
+
+# TODO: Capitalise first word of message?
+msgid "E414: Group has settings, highlight link ignored"
+msgstr "E414: A csoportnak van beállítása, a highlight link figyelmen kívül hagyva"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E415: Unexpected equal sign: %s"
+msgstr "E415: Váratlan egyenlőségjel: %s"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E416: Missing equal sign: %s"
+msgstr "E416: Hiányzó egyenlőségjel: %s"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E417: Missing argument: %s"
+msgstr "E417: Hiányzó argumentum: %s"
+
+#, c-format
+msgid "E418: Illegal value: %s"
+msgstr "E418: Érvénytelen érték: %s"
+
+msgid "E419: FG color unknown"
+msgstr "E419: FG szín ismeretlen"
+
+msgid "E420: BG color unknown"
+msgstr "E420: BG szín ismeretlen"
+
+#, c-format
+msgid "E421: Color name or number not recognized: %s"
+msgstr "E421: A szín neve vagy száma nem felismerhető: %s"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E422: Terminal code too long: %s"
+msgstr "E422: A terminál kód túl hosszú: %s"
+
+#, c-format
+msgid "E423: Illegal argument: %s"
+msgstr "E423: Érvénytelen argumentum: %s"
+
+msgid "E424: Too many different highlighting attributes in use"
+msgstr "E424: Túl sok különböző kiemelés attribútum használatban"
+
+msgid "E669: Unprintable character in group name"
+msgstr "E669: Nyomtathatatlan karakter a csoport névben"
+
+msgid "W18: Invalid character in group name"
+msgstr "W18: Érvénytelen karakter a csoport névben"
+
+# TODO: Capitalise first word of message?
+msgid "E555: At bottom of tag stack"
+msgstr "E555: A címke verem alján"
+
+# TODO: Capitalise first word of message?
+msgid "E556: At top of tag stack"
+msgstr "E556: A címke verem tetején"
+
+msgid "E425: Cannot go before first matching tag"
+msgstr "E425: Nem mehetek az első illeszkedő címke elé"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E426: Tag not found: %s"
+msgstr "E426: Címke nem található: %s"
+
+msgid "  # pri kind tag"
+msgstr "  # pri fajta címke"
+
+msgid "file\n"
+msgstr "fájl\n"
+
+msgid "E427: There is only one matching tag"
+msgstr "E427: Csak egy illeszkedő címke van"
+
+msgid "E428: Cannot go beyond last matching tag"
+msgstr "E428: Nem mehetek túl az utolsó illeszkedő címkén"
+
+#, c-format
+msgid "File \"%s\" does not exist"
+msgstr "A \"%s\" fájl nem létezik"
+
+#. Give an indication of the number of matching tags
+#, c-format
+msgid "tag %d of %d%s"
+msgstr "címke %d a %d-ből%s"
+
+msgid " or more"
+msgstr " vagy több"
+
+msgid "  Using tag with different case!"
+msgstr "  Más betűméretű címkét használva!"
+
+#, c-format
+msgid "E429: File \"%s\" does not exist"
+msgstr "E429: A \"%s\" fájl nem létezik"
+
+#. Highlight title
+msgid ""
+"\n"
+"  # TO tag         FROM line  in file/text"
+msgstr ""
+"\n"
+"  # TO cimke         FROM sortól a fájlban/szövegben"
+
+#, c-format
+msgid "Searching tags file %s"
+msgstr "Címke fájl keresése %s"
+
+#, c-format
+msgid "E430: Tag file path truncated for %s\n"
+msgstr "E430: A címke fájl útvonal levágva a %s-hoz\n"
+
+#, c-format
+msgid "E431: Format error in tags file \"%s\""
+msgstr "E431: Formátum hiba a címke fájlban \"%s\""
+
+#, c-format
+msgid "Before byte %ld"
+msgstr "A %ld. bájt előtt"
+
+#, c-format
+msgid "E432: Tags file not sorted: %s"
+msgstr "E432: A címke fájl nincs rendezve: %s"
+
+#. never opened any tags file
+msgid "E433: No tags file"
+msgstr "E433: Nincs címke fájl"
+
+msgid "E434: Can't find tag pattern"
+msgstr "E434: Nem található a címke minta"
+
+msgid "E435: Couldn't find tag, just guessing!"
+msgstr "E435: Nem találtam a címkét, csak tippeltem!"
+
+msgid "' not known. Available builtin terminals are:"
+msgstr "' nem ismert. Elérhető beépített terminálok:"
+
+msgid "defaulting to '"
+msgstr "alapértelmezésre állítva '"
+
+msgid "E557: Cannot open termcap file"
+msgstr "E557: Nem lehet megnyitni a termcap fájlt"
+
+msgid "E558: Terminal entry not found in terminfo"
+msgstr "E558: A terminál bejegyzés nem található a terminfo-ban"
+
+msgid "E559: Terminal entry not found in termcap"
+msgstr "E559: A terminál bejegyzés nem található a termcap-ban"
+
+#, c-format
+msgid "E436: No \"%s\" entry in termcap"
+msgstr "E436: Nincs \"%s\" bejegyzés a termcap-ban"
+
+# TODO: Capitalise first word of message?
+msgid "E437: Terminal capability \"cm\" required"
+msgstr "E437: A terminál képesség \"cm\" szükséges"
+
+#. Highlight title
+msgid ""
+"\n"
+"--- Terminal keys ---"
+msgstr ""
+"\n"
+"--- Terminál kulcsok ---"
+
+msgid "new shell started\n"
+msgstr "új héj indult\n"
+
+msgid "Vim: Error reading input, exiting...\n"
+msgstr "Vim: Hiba az olvasás közben, kilépés...\n"
+
+#. must display the prompt
+msgid "No undo possible; continue anyway"
+msgstr "Nincs visszavonás lehetséges; folytatja mindenképp"
+
+msgid "Already at oldest change"
+msgstr "Már a legrégebbi változatnál"
+
+msgid "Already at newest change"
+msgstr "Már a legújabb változatnál"
+
+#, c-format
+msgid "Undo number %ld not found"
+msgstr "Visszavonás szám %ld nem található"
+
+# TODO: Capitalise first word of message?
+msgid "E438: u_undo: Line numbers wrong"
+msgstr "E438: u_undo: A sorszámok hibásak"
+
+msgid "more line"
+msgstr "több sor"
+
+msgid "more lines"
+msgstr "több sor"
+
+msgid "line less"
+msgstr "kevesebb sor"
+
+msgid "fewer lines"
+msgstr "kevesebb sor"
+
+msgid "change"
+msgstr "változás"
+
+msgid "changes"
+msgstr "változások"
+
+#, c-format
+msgid "%ld %s; %s #%ld  %s"
+msgstr "%ld %s; %s #%ld  %s"
+
+msgid "before"
+msgstr "előtte"
+
+msgid "after"
+msgstr "utána"
+
+msgid "Nothing to undo"
+msgstr "Nincs mit visszavonni"
+
+msgid "number changes  time"
+msgstr "változások száma  idő"
+
+#, c-format
+msgid "%ld seconds ago"
+msgstr "%ld másodperce"
+
+msgid "E790: undojoin is not allowed after undo"
+msgstr "E790: undojoin nem engedélyezett visszavonás után"
+
+# TODO: Capitalise first word of message?
+msgid "E439: Undo list corrupt"
+msgstr "E439: A visszavonás lista sérült"
+
+# TODO: Capitalise first word of message?
+msgid "E440: Undo line missing"
+msgstr "E440: Hiányzó visszavonás sor"
+
+#. Only MS VC 4.1 and earlier can do Win32s
+msgid ""
+"\n"
+"MS-Windows 16/32-bit GUI version"
+msgstr ""
+"\n"
+"MS-Windows 16/32-bites GUI verzió"
+
+msgid ""
+"\n"
+"MS-Windows 64-bit GUI version"
+msgstr ""
+"\n"
+"MS-Windows 64-bites GUI verzió"
+
+msgid ""
+"\n"
+"MS-Windows 32-bit GUI version"
+msgstr ""
+"\n"
+"MS-Windows 32-bites GUI verzió"
+
+msgid " in Win32s mode"
+msgstr " Win32s módban"
+
+msgid " with OLE support"
+msgstr " OLE támogatással"
+
+msgid ""
+"\n"
+"MS-Windows 32-bit console version"
+msgstr ""
+"\n"
+"MS-Windows 32-bites konzoll verzió"
+
+msgid ""
+"\n"
+"MS-Windows 16-bit version"
+msgstr ""
+"\n"
+"MS-Windows 16-bites verzió"
+
+msgid ""
+"\n"
+"32-bit MS-DOS version"
+msgstr ""
+"\n"
+"32-bites MS-DOS verzió"
+
+msgid ""
+"\n"
+"16-bit MS-DOS version"
+msgstr ""
+"\n"
+"16-bites MS-DOS verzió"
+
+msgid ""
+"\n"
+"MacOS X (unix) version"
+msgstr ""
+"\n"
+"MacOS X verzió (unix)"
+
+msgid ""
+"\n"
+"MacOS X version"
+msgstr ""
+"\n"
+"MacOS X verzió"
+
+msgid ""
+"\n"
+"MacOS version"
+msgstr ""
+"\n"
+"MacOS verzió"
+
+msgid ""
+"\n"
+"RISC OS version"
+msgstr ""
+"\n"
+"RISC OS verzió"
+
+msgid ""
+"\n"
+"Included patches: "
+msgstr ""
+"\n"
+"Hozzáadott javítások: "
+
+msgid "Modified by "
+msgstr "Módosította "
+
+msgid ""
+"\n"
+"Compiled "
+msgstr ""
+"\n"
+"Összállítva "
+
+msgid "by "
+msgstr "által "
+
+msgid ""
+"\n"
+"Huge version "
+msgstr ""
+"\n"
+"Óriasi verzió "
+
+msgid ""
+"\n"
+"Big version "
+msgstr ""
+"\n"
+"Nagy verzió "
+
+msgid ""
+"\n"
+"Normal version "
+msgstr ""
+"\n"
+"Normal verzió "
+
+msgid ""
+"\n"
+"Small version "
+msgstr ""
+"\n"
+"Kis verzió "
+
+msgid ""
+"\n"
+"Tiny version "
+msgstr ""
+"\n"
+"Parányi verzió "
+
+msgid "without GUI."
+msgstr "GUI nélkül."
+
+msgid "with GTK2-GNOME GUI."
+msgstr "GTK2-GNOME GUI-val."
+
+msgid "with GTK-GNOME GUI."
+msgstr "GTK-GNOME GUI-val."
+
+msgid "with GTK2 GUI."
+msgstr "GTK2 GUI-val."
+
+msgid "with GTK GUI."
+msgstr "GTK GUI-val."
+
+msgid "with X11-Motif GUI."
+msgstr "X11-Motif GUI-val."
+
+msgid "with X11-neXtaw GUI."
+msgstr "X11-neXtaw GUI-val."
+
+msgid "with X11-Athena GUI."
+msgstr "X11-Athena GUI-val."
+
+msgid "with Photon GUI."
+msgstr "Photon GUI-val."
+
+msgid "with GUI."
+msgstr "GUI-val."
+
+msgid "with Carbon GUI."
+msgstr "Carbon GUI-val."
+
+msgid "with Cocoa GUI."
+msgstr "Cocoa GUI-val."
+
+msgid "with (classic) GUI."
+msgstr "(klasszikus) GUI-val."
+
+msgid "  Features included (+) or not (-):\n"
+msgstr "  Beépített (+) vagy nem (-) funkciók:\n"
+
+msgid "   system vimrc file: \""
+msgstr "   rendszer vimrc fájl: \""
+
+msgid "     user vimrc file: \""
+msgstr "     felhasználói vimrc fájl: \""
+
+msgid " 2nd user vimrc file: \""
+msgstr " 2. felhasználói vimrc fájl: \""
+
+msgid " 3rd user vimrc file: \""
+msgstr " 3. felhasználói vimrc fájl: \""
+
+msgid "      user exrc file: \""
+msgstr "      felhasználói exrc fájl: \""
+
+msgid "  2nd user exrc file: \""
+msgstr "  2. felhasználói exrc fájl: \""
+
+msgid "  system gvimrc file: \""
+msgstr "  rendszer gvimrc fájl: \""
+
+msgid "    user gvimrc file: \""
+msgstr "    felhasználói gvimrc fájl: \""
+
+msgid "2nd user gvimrc file: \""
+msgstr "2. felhasználói gvimrc fájl: \""
+
+msgid "3rd user gvimrc file: \""
+msgstr "3. felhasználói gvimrc fájl: \""
+
+msgid "    system menu file: \""
+msgstr "    rendszer menü fájl: \""
+
+msgid "  fall-back for $VIM: \""
+msgstr "  alapértelmezés a $VIM-hez: \""
+
+msgid " f-b for $VIMRUNTIME: \""
+msgstr " alapértelmezés a $VIMRUNTIME-hoz: \""
+
+msgid "Compilation: "
+msgstr "Fordítás: "
+
+msgid "Compiler: "
+msgstr "Fordító: "
+
+msgid "Linking: "
+msgstr "Linkelés: "
+
+msgid "  DEBUG BUILD"
+msgstr "  DEBUG BUILD"
+
+msgid "VIM - Vi IMproved"
+msgstr "VIM - Vi IMproved"
+
+msgid "version "
+msgstr "verzió "
+
+msgid "by Bram Moolenaar et al."
+msgstr "Bram Moolenaar és mások által."
+
+msgid "Vim is open source and freely distributable"
+msgstr "A Vim nyílt forráskódú és szabadon terjeszthető"
+
+msgid "Help poor children in Uganda!"
+msgstr "Segíts a szegény ugandai gyerekeknek!"
+
+msgid "type  :help iccf<Enter>       for information "
+msgstr "írd be  :help iccf<Enter>       az információkért "
+
+msgid "type  :q<Enter>               to exit         "
+msgstr "írd be  :q<Enter>               a kilépéshez         "
+
+msgid "type  :help<Enter>  or  <F1>  for on-line help"
+msgstr "írd be  :help<Enter>  vagy  <F1>  az online súgóhoz"
+
+msgid "type  :help version9<Enter>   for version info"
+msgstr "írd be  :help version9<Enter>   a verzió infóhoz"
+
+msgid "Running in Vi compatible mode"
+msgstr "Vi kompatibilis módban fut"
+
+msgid "type  :set nocp<Enter>        for Vim defaults"
+msgstr "írd be  :set nocp<Enter>        a Vim alapértelmezésekhez"
+
+msgid "type  :help cp-default<Enter> for info on this"
+msgstr "írd be  :help cp-default<Enter> az információkért"
+
+msgid "menu  Help->Orphans           for information    "
+msgstr "menü  Help->Orphans           az információkért    "
+
+msgid "Running modeless, typed text is inserted"
+msgstr "Mód nélkül fut, a begépelt szöveg beszúrásra kerül"
+
+msgid "menu  Edit->Global Settings->Toggle Insert Mode  "
+msgstr "menü  Edit->Global Settings->Toggle Insert Mode  "
+
+msgid "                              for two modes      "
+msgstr "                              a két mód között      "
+
+msgid "menu  Edit->Global Settings->Toggle Vi Compatible"
+msgstr "menü  Edit->Global Settings->Toggle Vi Compatible"
+
+msgid "                              for Vim defaults   "
+msgstr "                              a Vim alapértelmezésekhez   "
+
+msgid "Sponsor Vim development!"
+msgstr "Támogasd a Vim fejlesztését!"
+
+msgid "Become a registered Vim user!"
+msgstr "Légy regisztrált Vim felhasználó!"
+
+msgid "type  :help sponsor<Enter>    for information "
+msgstr "írd be  :help sponsor<Enter>    az információkért "
+
+msgid "type  :help register<Enter>   for information "
+msgstr "írd be  :help register<Enter>   az információkért "
+
+msgid "menu  Help->Sponsor/Register  for information    "
+msgstr "menü  Help->Sponsor/Register  az információkért    "
+
+msgid "WARNING: Windows 95/98/ME detected"
+msgstr "FIGYELEM: Windows 95/98/ME észlelve"
+
+msgid "type  :help windows95<Enter>  for info on this"
+msgstr "írd be  :help windows95<Enter>  az információkért"
+
+msgid "Already only one window"
+msgstr "Már csak egy ablak van"
+
+msgid "E441: There is no preview window"
+msgstr "E441: Nincs előnézet ablak"
+
+msgid "E442: Can't split topleft and botright at the same time"
+msgstr "E442: Nem lehet felül-balra és alul-jobbra osztani egyszerre"
+
+msgid "E443: Cannot rotate when another window is split"
+msgstr "E443: Nem lehet forgatni, ha másik ablak is osztott"
+
+msgid "E444: Cannot close last window"
+msgstr "E444: Nem lehet bezárni az utolsó ablakot"
+
+msgid "E445: Other window contains changes"
+msgstr "E445: Másik ablak tartalmaz változásokat"
+
+msgid "E446: No file name under cursor"
+msgstr "E446: Nincs fájlnév a kurzor alatt"
+
+#, c-format
+msgid "E447: Can't find file \"%s\" in path"
+msgstr "E447: Nem található fájl \"%s\" az útvonalban"
+
+#, c-format
+msgid "E370: Could not load library %s"
+msgstr "E370: Nem sikerült betölteni a könyvtárat %s"
+
+msgid "Sorry, this command is disabled: the Perl library could not be loaded."
+msgstr "Ez a parancs le van tiltva: a Perl könyvtár nem sikerült betölteni."
+
+msgid "E299: Perl evaluation forbidden in sandbox without the Safe module"
+msgstr "E299: Perl értékelés tiltva a homokozóban a Safe modul nélkül"
+
+msgid "Edit with &multiple Vims"
+msgstr "Szerkesztés &több Vim-mel"
+
+msgid "Edit with single &Vim"
+msgstr "Szerkesztés egy &Vim-mel"
+
+msgid "Diff with Vim"
+msgstr "Diff a Vim-mel"
+
+msgid "Edit with &Vim"
+msgstr "Szerkesztés &Vim-mel"
+
+#. Now concatenate
+msgid "Edit with existing Vim - "
+msgstr "Szerkesztés meglévő Vim-mel - "
+
+msgid "Edits the selected file(s) with Vim"
+msgstr "A kiválasztott fájlok szerkesztése a Vim-mel"
+
+msgid "Error creating process: Check if gvim is in your path!"
+msgstr "Hiba a folyamat létrehozásakor: Ellenőrizd, hogy a gvim benne van-e az útvonaladban!"
+
+msgid "gvimext.dll error"
+msgstr "gvimext.dll hiba"
+
+msgid "Path length too long!"
+msgstr "Az útvonal hossza túl hosszú!"
+
+msgid "--No lines in buffer--"
+msgstr "--Nincs sor a pufferben--"
+
+#.
+#. * The error messages that can be shared are included here.
+#. * Excluded are errors that are only used once and debugging messages.
+#.
+msgid "E470: Command aborted"
+msgstr "E470: Parancs megszakítva"
+
+msgid "E471: Argument required"
+msgstr "E471: Argumentum szükséges"
+
+msgid "E10: \\ should be followed by /, ? or &"
+msgstr "E10: \\ után /, ? vagy & kell következnie"
+
+msgid "E11: Invalid in command-line window; <CR> executes, CTRL-C quits"
+msgstr "E11: Érvénytelen a parancssor ablakban; <CR> végrehajt, CTRL-C kilép"
+
+msgid "E12: Command not allowed from exrc/vimrc in current dir or tag search"
+msgstr "E12: Parancs nem engedélyezett az exrc/vimrc-ben az aktuális könyvtárban vagy a címke keresésben"
+
+msgid "E171: Missing :endif"
+msgstr "E171: Hiányzó :endif"
+
+msgid "E600: Missing :endtry"
+msgstr "E600: Hiányzó :endtry"
+
+msgid "E170: Missing :endwhile"
+msgstr "E170: Hiányzó :endwhile"
+
+msgid "E170: Missing :endfor"
+msgstr "E170: Hiányzó :endfor"
+
+msgid "E588: :endwhile without :while"
+msgstr "E588: :endwhile :while nélkül"
+
+msgid "E588: :endfor without :for"
+msgstr "E588: :endfor :for nélkül"
+
+msgid "E13: File exists (add ! to override)"
+msgstr "E13: A fájl létezik (adj hozzá !-t a felülíráshoz)"
+
+msgid "E472: Command failed"
+msgstr "E472: A parancs sikertelen"
+
+#, c-format
+msgid "E234: Unknown fontset: %s"
+msgstr "E234: Ismeretlen betűkészlet: %s"
+
+#, c-format
+msgid "E235: Unknown font: %s"
+msgstr "E235: Ismeretlen betű: %s"
+
+#, c-format
+msgid "E236: Font \"%s\" is not fixed-width"
+msgstr "E236: A betű \"%s\" nem fix szélességű"
+
+msgid "E473: Internal error"
+msgstr "E473: Belső hiba"
+
+msgid "Interrupted"
+msgstr "Megszakítva"
+
+msgid "E14: Invalid address"
+msgstr "E14: Érvénytelen cím"
+
+msgid "E474: Invalid argument"
+msgstr "E474: Érvénytelen argumentum"
+
+#, c-format
+msgid "E475: Invalid argument: %s"
+msgstr "E475: Érvénytelen argumentum: %s"
+
+#, c-format
+msgid "E15: Invalid expression: %s"
+msgstr "E15: Érvénytelen kifejezés: %s"
+
+msgid "E16: Invalid range"
+msgstr "E16: Érvénytelen tartomány"
+
+msgid "E476: Invalid command"
+msgstr "E476: Érvénytelen parancs"
+
+#, c-format
+msgid "E17: \"%s\" is a directory"
+msgstr "E17: \"%s\" egy könyvtár"
+
+#, c-format
+msgid "E364: Library call failed for \"%s()\""
+msgstr "E364: A könyvtár hívás sikertelen \"%s()\"-ra"
+
+#, c-format
+msgid "E448: Could not load library function %s"
+msgstr "E448: Nem sikerült betölteni a könyvtár függvényt %s"
+
+msgid "E19: Mark has invalid line number"
+msgstr "E19: A jelnek érvénytelen sorszáma van"
+
+msgid "E20: Mark not set"
+msgstr "E20: A jel nincs beállítva"
+
+msgid "E21: Cannot make changes, 'modifiable' is off"
+msgstr "E21: Nem lehet változtatni, a 'modifiable' ki van kapcsolva"
+
+msgid "E22: Scripts nested too deep"
+msgstr "E22: A szkriptek túl mélyen vannak egymásba ágyazva"
+
+msgid "E23: No alternate file"
+msgstr "E23: Nincs alternatív fájl"
+
+msgid "E24: No such abbreviation"
+msgstr "E24: Nincs ilyen rövidítés"
+
+msgid "E477: No ! allowed"
+msgstr "E477: Nincs ! engedélyezve"
+
+msgid "E25: GUI cannot be used: Not enabled at compile time"
+msgstr "E25: A GUI nem használható: Nincs engedélyezve a fordításkor"
+
+msgid "E26: Hebrew cannot be used: Not enabled at compile time\n"
+msgstr "E26: A héber nem használható: Nincs engedélyezve a fordításkor\n"
+
+msgid "E27: Farsi cannot be used: Not enabled at compile time\n"
+msgstr "E27: A perzsa nem használható: Nincs engedélyezve a fordításkor\n"
+
+msgid "E800: Arabic cannot be used: Not enabled at compile time\n"
+msgstr "E800: Az arab nem használható: Nincs engedélyezve a fordításkor\n"
+
+#, c-format
+msgid "E28: No such highlight group name: %s"
+msgstr "E28: Nincs ilyen kiemelés csoport név: %s"
+
+msgid "E29: No inserted text yet"
+msgstr "E29: Még nincs beszúrt szöveg"
+
+msgid "E30: No previous command line"
+msgstr "E30: Nincs előző parancssor"
+
+msgid "E31: No such mapping"
+msgstr "E31: Nincs ilyen leképezés"
+
+msgid "E479: No match"
+msgstr "E479: Nincs találat"
+
+#, c-format
+msgid "E480: No match: %s"
+msgstr "E480: Nincs találat: %s"
+
+msgid "E32: No file name"
+msgstr "E32: Nincs fájlnév"
+
+msgid "E33: No previous substitute regular expression"
+msgstr "E33: Nincs előző helyettesítő reguláris kifejezés"
+
+msgid "E34: No previous command"
+msgstr "E34: Nincs előző parancs"
+
+msgid "E35: No previous regular expression"
+msgstr "E35: Nincs előző reguláris kifejezés"
+
+msgid "E481: No range allowed"
+msgstr "E481: Nincs tartomány engedélyezve"
+
+msgid "E36: Not enough room"
+msgstr "E36: Nincs elég hely"
+
+#, c-format
+# TODO: Capitalise first word of message?
+msgid "E247: No registered server named \"%s\""
+msgstr "E247: Nincs regisztrált szerver \"%s\" néven"
+
+#, c-format
+msgid "E482: Can't create file %s"
+msgstr "E482: Nem lehet létrehozni a fájlt %s"
+
+msgid "E483: Can't get temp file name"
+msgstr "E483: Nem lehet lekérni az ideiglenes fájl nevét"
+
+#, c-format
+msgid "E484: Can't open file %s"
+msgstr "E484: Nem lehet megnyitni a fájlt %s"
+
+#, c-format
+msgid "E485: Can't read file %s"
+msgstr "E485: Nem lehet olvasni a fájlt %s"
+
+msgid "E37: No write since last change (add ! to override)"
+msgstr "E37: Nincs írás az utolsó változás óta (adj hozzá !-t a felülíráshoz)"
+
+msgid "E38: Null argument"
+msgstr "E38: Nulla argumentum"
+
+msgid "E39: Number expected"
+msgstr "E39: Számot vártam"
+
+#, c-format
+msgid "E40: Can't open errorfile %s"
+msgstr "E40: Nem lehet megnyitni a hibafájlt %s"
+
+# TODO: Capitalise first word of message?
+msgid "E233: Cannot open display"
+msgstr "E233: Nem lehet megnyitni a képernyőt"
+
+msgid "E41: Out of memory!"
+msgstr "E41: Elfogyott a memória!"
+
+msgid "Pattern not found"
+msgstr "Nincs találat"
+
+#, c-format
+msgid "E486: Pattern not found: %s"
+msgstr "E486: Nincs találat: %s"
+
+msgid "E487: Argument must be positive"
+msgstr "E487: Az argumentumnak pozitívnak kell lennie"
+
+msgid "E459: Cannot go back to previous directory"
+msgstr "E459: Nem lehet visszamenni az előző könyvtárba"
+
+msgid "E42: No Errors"
+msgstr "E42: Nincs hiba"
+
+msgid "E776: No location list"
+msgstr "E776: Nincs hely lista"
+
+msgid "E43: Damaged match string"
+msgstr "E43: Sérült illeszkedő sztring"
+
+msgid "E44: Corrupted regexp program"
+msgstr "E44: Sérült reguláris kifejezés program"
+
+msgid "E45: 'readonly' option is set (add ! to override)"
+msgstr "E45: A 'readonly' opció be van állítva (adj hozzá !-t a felülíráshoz)"
+
+#, c-format
+msgid "E46: Cannot change read-only variable \"%s\""
+msgstr "E46: Nem lehet megváltoztatni a csak olvasható változót \"%s\""
+
+#, c-format
+msgid "E794: Cannot set variable in the sandbox: \"%s\""
+msgstr "E794: Nem lehet beállítani a változót a homokozóban: \"%s\""
+
+msgid "E47: Error while reading errorfile"
+msgstr "E47: Hiba a hibafájl olvasása közben"
+
+msgid "E48: Not allowed in sandbox"
+msgstr "E48: Nem engedélyezett a homokozóban"
+
+msgid "E523: Not allowed here"
+msgstr "E523: Nem engedélyezett itt"
+
+msgid "E359: Screen mode setting not supported"
+msgstr "E359: A képernyő mód beállítás nem támogatott"
+
+msgid "E49: Invalid scroll size"
+msgstr "E49: Érvénytelen görgetési méret"
+
+msgid "E91: 'shell' option is empty"
+msgstr "E91: Az 'shell' opció üres"
+
+msgid "E255: Couldn't read in sign data!"
+msgstr "E255: Nem sikerült beolvasni a jel adatokat!"
+
+msgid "E72: Close error on swap file"
+msgstr "E72: Zárás hiba a swap fájlon"
+
+# TODO: Capitalise first word of message?
+msgid "E73: Tag stack empty"
+msgstr "E73: A címke verem üres"
+
+msgid "E74: Command too complex"
+msgstr "E74: A parancs túl bonyolult"
+
+msgid "E75: Name too long"
+msgstr "E75: A név túl hosszú"
+
+msgid "E76: Too many ["
+msgstr "E76: Túl sok ["
+
+msgid "E77: Too many file names"
+msgstr "E77: Túl sok fájlnév"
+
+msgid "E488: Trailing characters"
+msgstr "E488: Végződő karakterek"
+
+msgid "E78: Unknown mark"
+msgstr "E78: Ismeretlen jel"
+
+msgid "E79: Cannot expand wildcards"
+msgstr "E79: Nem lehet kibontani a helyettesítő karaktereket"
+
+msgid "E591: 'winheight' cannot be smaller than 'winminheight'"
+msgstr "E591: A 'winheight' nem lehet kisebb, mint a 'winminheight'"
+
+msgid "E592: 'winwidth' cannot be smaller than 'winminwidth'"
+msgstr "E592: A 'winwidth' nem lehet kisebb, mint a 'winminwidth'"
+
+msgid "E80: Error while writing"
+msgstr "E80: Hiba az írás közben"
+
+msgid "Zero count"
+msgstr "Nulla szám"
+
+msgid "E81: Using <SID> not in a script context"
+msgstr "E81: A <SID> használata nem szkript környezetben"
+
+msgid "E449: Invalid expression received"
+msgstr "E449: Érvénytelen kifejezés érkezett"
+
+msgid "E463: Region is guarded, cannot modify"
+msgstr "E463: A régió védett, nem lehet módosítani"
+
+msgid "E744: NetBeans does not allow changes in read-only files"
+msgstr "E744: A NetBeans nem engedi a változtatásokat a csak olvasható fájlokban"
+
+#, c-format
+msgid "E685: Internal error: %s"
+msgstr "E685: Belső hiba: %s"
+
+# TODO: Capitalise first word of message?
+msgid "E363: Pattern uses more memory than 'maxmempattern'"
+msgstr "E363: A minta több memóriát használ, mint a 'maxmempattern'"
+
+# TODO: Capitalise first word of message?
+msgid "E749: Empty buffer"
+msgstr "E749: Üres puffer"
+
+msgid "E682: Invalid search pattern or delimiter"
+msgstr "E682: Érvénytelen keresési minta vagy elválasztó"
+
+msgid "E139: File is loaded in another buffer"
+msgstr "E139: A fájl betöltve egy másik pufferbe"
+
+#, c-format
+msgid "E764: Option '%s' is not set"
+msgstr "E764: Az opció '%s' nincs beállítva"
+
+msgid "search hit TOP, continuing at BOTTOM"
+msgstr "találat a TETEJÉN, folytatás az ALJÁN"
+
+msgid "search hit BOTTOM, continuing at TOP"
+msgstr "találat az ALJÁN, folytatás a TETEJÉN"

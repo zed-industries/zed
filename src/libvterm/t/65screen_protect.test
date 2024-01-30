@@ -1,0 +1,16 @@
+INIT
+WANTSCREEN 
+
+!Selective erase
+RESET
+PUSH "A\e[1\"qB\e[\"qC"
+  ?screen_row 0 = "ABC"
+PUSH "\e[G\e[?J"
+  ?screen_row 0 = " B"
+
+!Non-selective erase
+RESET
+PUSH "A\e[1\"qB\e[\"qC"
+  ?screen_row 0 = "ABC"
+PUSH "\e[G\e[J"
+  ?screen_row 0 = ""

@@ -1,0 +1,14 @@
+TYPEMAP
+VIWIN	T_VIOBJNOMUNGE
+VIBUF	T_VIOBJNOMUNGE
+
+INPUT
+T_VIOBJNOMUNGE
+	if (sv_isa($arg, \"${ntype}\")) {
+	    IV tmp = SvIV((SV*)SvRV($arg));
+	    $var = INT2PTR($type, tmp);
+	    if (!tmp)
+		croak(\"$ntype no longer exists\");
+	}
+	else
+	    croak(\"$var is not of type ${ntype}\")

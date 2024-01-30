@@ -1,56 +1,98 @@
-# Contributing to Zed
+# Contributing to Vim
 
-Thanks for your interest in contributing to Zed, the collaborative platform that is also a code editor!
+Patches are welcome in whatever form.
+Discussions about patches happen on the [vim-dev][0] mailing list.
+If you create a pull request on GitHub it will be
+forwarded to the vim-dev mailing list.  You can also send your patch there
+directly (but please note, the initial posting is subject to moderation).
+In that case an attachment with a unified diff format is preferred.
+Information about the mailing list can be found [on the Vim website][0]
 
-We want to avoid anyone spending time on a pull request that may not be accepted, so we suggest you discuss your ideas with the team and community before starting on major changes. Bug fixes, however, are almost always welcome.
+A pull request has the advantage that it will trigger the Continuous
+Integration tests, you will be warned of problems (you can ignore the coverage
+warning, it's noisy).
 
-All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/docs/code-of-conduct). Additionally, contributors must sign our [Contributor License Agreement](https://zed.dev/cla) before their contributions can be merged.
+Please consider adding a test.  All new functionality should be tested and bug
+fixes should be tested for regressions: the test should fail before the fix and
+pass after the fix.  Look through recent patches for examples and find help
+with ":help testing".  The tests are located under "src/testdir".
 
-## Contribution ideas
+Contributions will be distributed with Vim under the Vim license.  Providing a
+change to be included implies that you agree with this and your contribution
+does not cause us trouble with trademarks or patents.  There is no CLA to sign.
 
-If you're looking for ideas about what to work on, check out:
+# Reporting issues
 
-- Our public roadmap (link coming soon!) contains a rough outline of our near-term priorities for Zed.
-- Our [top-ranking issues](https://github.com/zed-industries/zed/issues/5393) based on votes by the community.
+We use GitHub issues, but that is not a requirement.  Writing to the Vim
+mailing list is also fine.
 
-Outside of a handful of extremely popular languages and themes, we are generally not looking to extend Zed's language or theme support by directly building them into Zed. We really want to build a plugin system to handle making the editor extensible going forward. If you are passionate about shipping new languages or themes we suggest contributing to the extension system to help us get there faster.
+Please use the GitHub issues only for actual issues. If you are not 100% sure
+that your problem is a Vim issue, please first discuss this on the Vim user
+mailing list.  Try reproducing the problem without any of your plugins or settings:
 
-## Proposing changes
+    vim --clean
 
-The best way to propose a change is to [start a discussion on our GitHub repository](https://github.com/zed-industries/zed/discussions).
+If you report an issue, please describe exactly how to reproduce it.
+For example, don't say "insert some text" but say what you did exactly:
+`ahere is some text<Esc>`.
+Ideally, the steps you list can be used to write a test to verify the problem
+is fixed.
 
-First, write a short **problem statement**, which *clearly* and *briefly* describes the problem you want to solve independently from any specific solution. It doesn't need to be long or formal, but it's difficult to consider a solution in absence of a clear understanding of the problem.
+Feel free to report even the smallest problem, also typos in the documentation.
 
-Next, write a short **solution proposal**. How can the problem (or set of problems) you have stated above be addressed? What are the pros and cons of your approach? Again, keep it brief and informal. This isn't a specification, but rather a starting point for a conversation.
+You can find known issues in the todo file: `:help todo`.
+Or open [the todo file][todo list] on GitHub to see the latest version.
 
-By effectively engaging with the Zed team and community early in your process, we're better positioned to give you feedback and understand your pull request once you open it. If the first thing we see from you is a big changeset, we're much less likely to respond to it in a timely manner.
+# Syntax, indent and other runtime files
 
-## Pair programming
+The latest version of these files can be obtained from the repository.
+They are usually not updated with numbered patches.
 
-We plan to set aside time each week to pair program with contributors on promising pull requests in Zed. This will be an experiment. We tend to prefer pairing over async code review on our team, and we'd like to see how well it works in an open source setting. If we're finding it difficult to get on the same page with async review, we may ask you to pair with us if you're open to it. The closer a contribution is to the goals outlined in our roadmap, the more likely we'll be to spend time pairing on it.
+If you find a problem with one of these files or have a suggestion for
+improvement, please first try to contact the maintainer directly.
+Look in the header of the file for the name and email address.
 
-## Tips to improve the chances of your PR getting reviewed and merged
+The maintainer will take care of issues and send updates to the Vim project for
+distribution with Vim.
 
-- Discuss your plans ahead of time with the team
-- Small, focused, incremental pull requests are much easier to review
-- Spend time explaining your changes in the pull request body
-- Add test coverage and documentation
-- Choose tasks that align with our roadmap
-- Pair with us and watch us code to learn the codebase
-- Low effort PRs, such as those that just re-arrange syntax, won't be merged without a compelling justification
+If the maintainer does not respond, contact the [vim-dev][0] mailing list.
 
-## Bird's-eye view of Zed
+# Translations
 
-Zed is made up of several smaller crates - let's go over those you're most likely to interact with:
+Translating messages and runtime files is very much appreciated!  These things
+can be translated:
+*   Messages in Vim, see [src/po/README.txt][1]
+    Also used for the desktop icons.
+*   Menus, see [runtime/lang/README.txt][2]
+*   Vim tutor, see [runtime/tutor/README.txt][3]
+*   Manual pages, see [runtime/doc/\*.1][4] for examples
+*   Installer, see [nsis/lang/\*.nsi][5] for examples
 
-- [gpui](/crates/gpui) is a GPU-accelerated UI framework which provides all of the building blocks for Zed. **We recommend familiarizing yourself with the root level GPUI documentation**
-- [editor](/crates/editor) contains the core `Editor` type that drives both the code editor and all various input fields within Zed. It also handles a display layer for LSP features such as Inlay Hints or code completions.
-- [project](/crates/project) manages files and navigation within the filetree. It is also Zed's side of communication with LSP.
-- [workspace](/crates/workspace) handles local state serialization and groups projects together.
-- [vim](/crates/vim) is a thin implementation of Vim workflow over `editor`.
-- [lsp](/crates/lsp) handles communication with external LSP server.
-- [language](/crates/language) drives `editor`'s understanding of language - from providing a list of symbols to the syntax map.
-- [collab](/crates/collab) is the collaboration server itself, driving the collaboration features such as project sharing.
-- [rpc](/crates/rpc) defines messages to be exchanged with collaboration server.
-- [theme](/crates/theme) defines the theme system and provides a default theme.
-- [ui](/crates/ui) is a collection of UI components and common patterns used throughout Zed.
+The help files can be translated and made available separately.
+See https://www.vim.org/translations.php for examples.
+
+# How do I contribute to the project?
+
+Please have a look at the following [discussion][6], which should give you some
+ideas. Please also check the [develop.txt][7] helpfile for the recommended
+style. Often it's also beneficial to check the surrounding code for the style
+being used.
+
+# I have a question
+
+If you have some question on the style guide, please contact the [vim-dev][0]
+mailing list. For other questions please use the [Vi Stack Exchange][8] website, the
+[vim-use][9] mailing list or make use of the [discussion][10] feature here at github.
+
+[todo list]: https://github.com/vim/vim/blob/master/runtime/doc/todo.txt
+[0]: http://www.vim.org/maillist.php#vim-dev
+[1]: https://github.com/vim/vim/blob/master/src/po/README.txt
+[2]: https://github.com/vim/vim/blob/master/runtime/lang/README.txt
+[3]: https://github.com/vim/vim/blob/master/runtime/tutor/README.txt
+[4]: https://github.com/vim/vim/blob/master/runtime/doc/vim.1
+[5]: https://github.com/vim/vim/blob/master/nsis/lang/english.nsi
+[6]: https://github.com/vim/vim/discussions/13087
+[7]: https://github.com/vim/vim/blob/master/runtime/doc/develop.txt
+[8]: https://vi.stackexchange.com
+[9]: http://www.vim.org/maillist.php#vim-use
+[10]: https://github.com/vim/vim/discussions

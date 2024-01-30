@@ -1,0 +1,69 @@
+INIT
+WANTSCREEN ac
+
+!Get
+RESET
+PUSH "ABC"
+  movecursor 0,3
+  ?screen_chars 0,0,1,3 = "ABC"
+  ?screen_chars 0,0,1,80 = "ABC"
+  ?screen_text 0,0,1,3 = 0x41,0x42,0x43
+  ?screen_text 0,0,1,80 = 0x41,0x42,0x43
+  ?screen_cell 0,0 = {0x41} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,1 = {0x42} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,2 = {0x43} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_row 0 = "ABC"
+  ?screen_eol 0,0 = 0
+  ?screen_eol 0,2 = 0
+  ?screen_eol 0,3 = 1
+PUSH "\e[H"
+  movecursor 0,0
+  ?screen_row 0 = "ABC"
+  ?screen_text 0,0,1,80 = 0x41,0x42,0x43
+PUSH "E"
+  movecursor 0,1
+  ?screen_row 0 = "EBC"
+  ?screen_text 0,0,1,80 = 0x45,0x42,0x43
+
+WANTSCREEN -c
+
+!Erase
+RESET
+PUSH "ABCDE\e[H\e[K"
+  ?screen_row 0 = ""
+  ?screen_text 0,0,1,80 = 
+
+!Copycell
+RESET
+PUSH "ABC\e[H\e[@"
+PUSH "1"
+  ?screen_row 0 = "1ABC"
+
+RESET
+PUSH "ABC\e[H\e[P"
+  ?screen_chars 0,0,1,1 = "B"
+  ?screen_chars 0,1,1,2 = "C"
+  ?screen_chars 0,0,1,80 = "BC"
+
+!Space padding
+RESET
+PUSH "Hello\e[CWorld"
+  ?screen_row 0 = "Hello World"
+  ?screen_text 0,0,1,80 = 0x48,0x65,0x6c,0x6c,0x6f,0x20,0x57,0x6f,0x72,0x6c,0x64
+
+!Linefeed padding
+RESET
+PUSH "Hello\r\nWorld"
+  ?screen_chars 0,0,2,80 = "Hello\nWorld"
+  ?screen_text 0,0,2,80 = 0x48,0x65,0x6c,0x6c,0x6f,0x0a,0x57,0x6f,0x72,0x6c,0x64
+
+!Altscreen
+RESET
+PUSH "P"
+  ?screen_row 0 = "P"
+PUSH "\e[?1049h"
+  ?screen_row 0 = ""
+PUSH "\e[2K\e[HA"
+  ?screen_row 0 = "A"
+PUSH "\e[?1049l"
+  ?screen_row 0 = "P"

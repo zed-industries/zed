@@ -1,0 +1,158 @@
+*ft_context.txt*	For Vim version 9.1.  Last change: 2024 Jan 01
+
+This is the documentation for the ConTeXt filetype plugin.
+
+NOTE: the plugin requires +vim9script.
+
+==============================================================================
+CONTENTS						*context.vim* *ft-context*
+
+1. Introduction				|ft-context-intro|
+2. Commands				|ft-context-commands|
+3. Settings				|ft-context-settings|
+4. Mappings				|ft-context-mappings|
+
+==============================================================================
+							*ft-context-intro*
+Introduction ~
+
+ConTeXt, similarly to LaTeX, is a macro-based typesetting system built on TeX:
+>
+	https://wiki.contextgarden.net
+	https://wiki.contextgarden.net/Vim
+<
+The ConTeXt plugin provides syntax highlighting, completion and support for
+typesetting ConTeXt documents. The recommended way to typeset a document is to
+use |:ConTeXt|. This will invoke the `mtxrun` script that is found in `$PATH`.
+
+For more fine grained control over the command and its environment,
+`context.Typeset()` can be used directly (or `context#Typeset()` from legacy
+Vim script). For instance, if a version of ConTeXt is installed in
+`~/context`, you may define a function to use it similar to the following:
+>
+	import autoload 'context.vim'
+
+	def MyConTeXt()
+	    const env = {'PATH':
+	      printf("%s/context/tex/texmf-<os>-<arch>/bin:%s", $HOME, $PATH)}
+	    context.Typeset("%", env)
+	enddef
+
+This code may go in `~/.vim/after/ftplugin/context.vim`. A mapping can then be
+defined to invoke the custom command:
+>
+	nnoremap <silent><buffer><leader>t <scriptcmd>MyConTeXt()<cr>
+<
+`context.Typeset()` accepts a third optional argument to specify a custom
+typesetting command. That must be a function that takes a path and returns the
+command as a List. For example:
+>
+	def ConTeXtCustomCommand(path: string): list<string>
+	  return ['mtxrun', '--script', 'context', '--nonstopmode', path]
+	enddef
+
+	context.ConTeXtTypeset("%", v:none, ConTeXtCustomCommand)
+<
+Large projects are often organized as a root document and various chapter
+files. When editing a chapter file, it is convenient to invoke |:ConTeXt|
+directly on it, rather than having to switch to the root file. A "magic line"
+can be added at the beginning of each chapter file, which specifies the
+relative path to the root file. For instance:
+>
+	% !TEX root = ../MyRoot.tex
+<
+Vim searches for the magic line in the first ten lines of the current buffer:
+if it is found, the document specified by that line is typeset rather than the
+one in the current buffer. The root document does not have to be opened in
+Vim.
+
+To extend completion and syntax highlighting, you may generate supporting
+files using ConTeXt and add them to your configuration. If you configuration
+resides in `~/.vim`, you may use these commands:
+>
+	mkdir -p ~/.vim/syntax/shared
+	cd ~/.vim/syntax/shared
+	mtxrun --script interface --vim
+<
+The last command will create the following syntax files:
+
+- `context-data-context.vim`;
+- `context-data-interfaces.vim`;
+- `context-data-metafun.vim`;
+- `context-data-tex.vim`.
+
+The same command can be used to update those syntax files.
+
+							*ft-context-commands*
+Commands ~
+					*:ConTeXt*
+Start a background |job| to typeset the document in the current buffer. The
+command accepts an optional buffer's name, if you want to typeset a document
+that is in a different buffer.
+
+					*:ConTeXtLog*
+Edit the log file corresponding to the source in the current buffer.
+
+					*:ConTeXtJobsStatus*
+Echo the number of jobs currently running in the background.
+
+					*:ConTeXtStopJobs*
+Stop all the ConTeXt jobs currently running in the background.
+
+							*ft-context-settings*
+Settings ~
+					*'b:context_ignore_makefile'*
+					*'g:context_ignore_makefile'*
+|:make| can be used to (synchronously) typeset a document. If a Makefile exists
+and this option is not set, standard `make` is used. If this option is set,
+`mtxrun` is invoked instead, even if a Makefile exists.
+>
+	g:context_ignore_makefile = 0
+<
+NOTE: before using |:make|, set the working directory of the buffer to the
+directory of the file to be typeset.
+
+					*'g:context_extra_options'*
+A list of additional options to pass to `mtxrun`.
+>
+	g:context_extra_options = []
+<
+					*'b:context_include'*
+					*'g:context_include'*
+Dictionary of filetype/GROUP pairs for which syntax highlighting should be
+activated between \startGROUP and \stopGROUP. The default is to highlight XML
+between `\startXML` and `\stopXML`.
+>
+	g:context_include = {'xml': 'XML'}
+
+NOTE: Lua and MetaPost are always highlighted within the respective blocks.
+
+					*'g:no_context_maps'*
+When set, do not define any mappings.
+>
+	g:no_context_maps = 0
+<
+							*ft-context-mappings*
+Mappings ~
+
+tp			"reflow TeX paragraph".
+
+i$			"inside inline math block".
+
+a$			"around inline math block".
+
+]]			[count] start of sections forward.
+
+[[			[count] start of sections backward.
+
+][			[count] end sections forward.
+
+[]			[count] end of sections backward.
+
+]}			[count] end of blocks (\stop..., \setup...,
+			\define...) forward.
+
+[{			[count] begin of blocks (\start..., \setup...,
+			\define...) backward.
+
+ vim:tw=78:sw=4:ts=8:noet:ft=help:norl:

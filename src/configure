@@ -1,0 +1,10 @@
+#! /bin/sh
+# run the automatically generated configure script
+CONFIG_STATUS=auto/config.status \
+	auto/configure "$@" --srcdir="${srcdir:-.}" --cache-file=auto/config.cache
+result=$?
+
+# Stupid autoconf 2.5x causes this file to be left behind.
+if test -f configure.lineno; then rm -f configure.lineno; fi
+
+exit $result

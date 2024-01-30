@@ -1,0 +1,100 @@
+/*
+ * osdef2.h.in - See osdef1.h.in for a description.
+ */
+
+extern int	remove(const char *);
+extern int	rename(const char *, const char *);
+extern int	free(char *);
+extern char	*malloc(unsigned int);
+extern char	*realloc(char *, int);
+extern char	*getenv(char *);
+#ifndef __TANDEM
+extern int	setenv(char *, char *, int);
+#else
+extern int	setenv(const char *, const char *, int);
+#endif
+extern int	putenv(const char *);
+
+#ifndef __TANDEM
+extern int	gethostname(char *, int);
+#endif
+extern void	perror(char *);
+
+#ifndef __TANDEM
+extern int	sleep(int);
+#endif
+extern int	usleep(unsigned int);
+extern unsigned int	alarm(unsigned int);
+#ifndef __TANDEM
+extern int	chdir(char *);
+#endif
+extern int	fchdir(int);
+#ifndef stat	/* could be redefined to stat64() */
+extern int	stat(const char *, struct stat *);
+#endif
+#ifndef lstat	/* could be redefined to lstat64() */
+extern int	lstat(const char *, struct stat *);
+#endif
+extern int	fstat(int, struct stat *);
+extern int	open(const char *, int, ...);
+extern int	close(int);
+#ifndef __TANDEM
+extern int	read(int, char *, size_t);
+extern int	write(int, char *, size_t);
+#endif
+extern int	pipe(int *);
+extern off_t	lseek(int, off_t, int);
+extern void	sync(void);
+extern uid_t	getuid(void);
+extern gid_t	getgid(void);
+extern void	qsort(void *, size_t, size_t, int (*)(const void *, const void *));
+
+extern int	isatty(int);
+extern int	getpid(void);
+extern int	dup(int);
+extern int	unlink(const char *);
+extern int	link(const char *, const char *);
+extern int	mkdir(const char *, mode_t);
+extern int	rmdir(const char *);
+
+extern int	tgetent(char *, char *);
+extern int	tgetnum(char *);
+extern int	tgetflag(char *);
+extern char	*tgoto(char *, int, int);
+extern int	tputs(char *, int, int (*)(int));
+
+#ifdef HAVE_TERMIOS_H
+struct termios;		/* for tcgetattr() */
+extern int	tcgetattr(int, struct termios *);
+extern int	tcsetattr(int, int, const struct termios *);
+#endif
+
+#ifdef HAVE_SYS_STATFS_H
+struct statfs;		/* for fstatfs() */
+extern int	fstatfs(int, struct statfs *, int, int);
+#endif
+
+#ifdef HAVE_GETTIMEOFDAY
+struct timeval;		/* for gettimeofday() */
+struct timezone;	/* for gettimeofday() */
+extern int	gettimeofday(struct timeval *tp, struct timezone *tzp);
+extern time_t	time(time_t *);
+#endif
+
+#ifdef HAVE_GETPWNAM
+struct passwd;		/* for getpwnam() */
+extern struct passwd *getpwnam(const char *);
+#endif
+
+#ifdef USE_TMPNAM
+extern char	*tmpnam(char *);
+#else
+extern char	*mktemp(char *);
+#endif
+
+#ifdef ISC
+extern int	_Xmblen(char const *, size_t);
+#else
+		/* This is different from the header but matches mblen() */
+extern int	_Xmblen(char *, size_t);
+#endif

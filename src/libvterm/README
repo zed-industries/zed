@@ -1,0 +1,39 @@
+This is a MODIFIED version of libvterm.
+
+The original can be found:
+- on the original site (tar archive and Bazaar repository):
+	http://www.leonerd.org.uk/code/libvterm/
+- cloned on Github:
+	https://github.com/neovim/libvterm
+
+Modifications:
+- revisions up to 839 have been included
+- Added a .gitignore file.
+- use TRUE and FALSE instead of true and false
+- use int or unsigned int instead of bool
+- Converted some code from C99 to C90.
+- Other changes to support embedding in Vim.
+
+To get the latest version of libvterm you need the "bzr" command and do:
+   bzr co http://bazaar.leonerd.org.uk/c/libvterm/
+
+To find the diff of a libvterm revision edit this URL, changing "999" to the
+patch number:
+    https://bazaar.launchpad.net/~libvterm/libvterm/trunk/diff/999?context=3
+
+To merge in changes from Github, do this:
+- Commit any pending changes.
+- Setup the merge tool:
+    git config merge.tool vimdiff
+    git config merge.conflictstyle diff3
+    git config mergetool.prompt false
+- Run the merge tool:
+    git mergetool
+  This will open a four-way diff between:
+     LOCAL  - your current version
+     BASE   - version as it was at your last sync
+     REMOTE - version at head on Github
+     MERGED - best-effort merge of LOCAL and REMOTE
+  Now find places where automatic merge didn't work, they are marked with
+  <<<<<<<<, ======= and >>>>>>>
+  Fix those places in MERGED, remove the markers, and save the file :wqall.
