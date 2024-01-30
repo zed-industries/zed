@@ -264,6 +264,7 @@ pub fn init(
         tree_sitter_yaml::language(),
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
     );
+    language("sql", tree_sitter_sql::language(), vec![]);
     language(
         "svelte",
         tree_sitter_svelte::language(),

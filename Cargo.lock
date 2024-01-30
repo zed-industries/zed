@@ -9017,6 +9017,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-sql"
+version = "0.0.2"
+source = "git+https://github.com/future-architect/tree-sitter-sql?rev=155225ebc4ec40dbfaf9f4d3743a89bd6945234e#155225ebc4ec40dbfaf9f4d3743a89bd6945234e"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-svelte"
 version = "0.10.2"
 source = "git+https://github.com/Himujjal/tree-sitter-svelte?rev=697bb515471871e85ff799ea57a76298a71a9cca#697bb515471871e85ff799ea57a76298a71a9cca"
@@ -10389,6 +10398,7 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",
+ "tree-sitter-sql",
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
