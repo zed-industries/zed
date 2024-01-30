@@ -1,7 +1,7 @@
 use futures::FutureExt;
 use gpui::{
-    AnyElement, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText,
-    IntoElement, SharedString, StyledText, TextStyle, UnderlineStyle, WindowContext,
+    AnyElement, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText, IntoElement,
+    SharedString, StyledText, UnderlineStyle, WindowContext,
 };
 use language::{HighlightId, Language, LanguageRegistry};
 use std::{ops::Range, sync::Arc};

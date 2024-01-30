@@ -133,24 +133,6 @@ where
         self
     }
 
-    fn render_md_from_range(
-        &self,
-        source_range: Range<usize>,
-        cx: &WindowContext,
-    ) -> gpui::AnyElement {
-        let mentions = &[];
-        let language = None;
-        let paragraph = &self.source_contents[source_range.clone()];
-        let rich_text = render_rich_text(
-            paragraph.into(),
-            mentions,
-            &self.language_registry,
-            language,
-        );
-        let id: ElementId = source_range.start.into();
-        rich_text.element(id, cx)
-    }
-
     fn start_tag(&mut self, tag: Tag<'a>) {
         match tag {
             Tag::List(_) => {
@@ -278,6 +260,24 @@ where
             }
             _ => {}
         }
+    }
+
+    fn render_md_from_range(
+        &self,
+        source_range: Range<usize>,
+        cx: &WindowContext,
+    ) -> gpui::AnyElement {
+        let mentions = &[];
+        let language = None;
+        let paragraph = &self.source_contents[source_range.clone()];
+        let rich_text = render_rich_text(
+            paragraph.into(),
+            mentions,
+            &self.language_registry,
+            language,
+        );
+        let id: ElementId = source_range.start.into();
+        rich_text.element(id, cx)
     }
 
     fn headline(&self, level: HeadingLevel) -> Div {
