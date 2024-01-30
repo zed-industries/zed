@@ -220,7 +220,7 @@ pub struct AppContext {
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) next_frame_callbacks: FxHashMap<DisplayId, Vec<FrameCallback>>,
     display_links: FxHashMap<DisplayId, Box<dyn PlatformDisplayLink>>,
-    display_updates: mpsc::UnboundedSender<(DisplayId, std::sync::mpsc::Sender<()>)>,
+    display_updates: mpsc::UnboundedSender<DisplayId>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -324,7 +324,7 @@ impl AppContext {
             .spawn({
                 let cx = app.borrow().to_async();
                 async move {
-                    while let Some((display_id, done_tx)) = display_updates_rx.next().await {
+                    while let Some(display_id) = display_updates_rx.next().await {
                         if cx
                             .update(|cx| cx.refresh_display(display_id))
                             .log_err()
@@ -332,7 +332,6 @@ impl AppContext {
                         {
                             break;
                         }
-                        let _ = done_tx.send(());
                     }
                 }
             })
@@ -696,11 +695,7 @@ impl AppContext {
                             .start_display_link(
                                 display_id,
                                 Box::new(move || {
-                                    let (done_tx, done_rx) = std::sync::mpsc::channel();
-                                    if tx.unbounded_send((display_id, done_tx)).log_err().is_some()
-                                    {
-                                        let _ = done_rx.recv();
-                                    }
+                                    tx.unbounded_send(display_id).log_err();
                                 }),
                             )
                             .log_err()
