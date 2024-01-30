@@ -157,6 +157,7 @@ impl EditorElement {
         register_action(view, cx, Editor::indent);
         register_action(view, cx, Editor::outdent);
         register_action(view, cx, Editor::delete_line);
+        register_action(view, cx, Editor::permalink_to_line);
         register_action(view, cx, Editor::join_lines);
         register_action(view, cx, Editor::sort_lines_case_sensitive);
         register_action(view, cx, Editor::sort_lines_case_insensitive);

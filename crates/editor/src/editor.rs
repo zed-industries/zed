@@ -4531,6 +4531,76 @@ impl Editor {
         });
     }
 
+    pub fn permalink_to_line(&mut self, _: &PermalinkToLine, cx: &mut ViewContext<Self>) {
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+
+        let project = project.read(cx);
+
+        let Some(worktree) = project.visible_worktrees(cx).next() else {
+            return;
+        };
+
+        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+        cwd.push(".git");
+
+        let Some(repo) = project.fs().open_repo(&cwd) else {
+            return;
+        };
+
+        let Some(origin_url) = repo.lock().origin_url() else {
+            return;
+        };
+
+        if !origin_url.starts_with("git@github.com:") {
+            return;
+        }
+
+        let Some(sha) = repo.lock().head_sha() else {
+            return;
+        };
+
+        let repo_with_owner = origin_url
+            .trim_start_matches("git@github.com:")
+            .trim_end_matches(".git");
+
+        let Some((owner, repo)) = repo_with_owner.split_once("/") else {
+            return;
+        };
+
+        let Some(buffer) = self.buffer().read(cx).as_singleton() else {
+            return;
+        };
+
+        let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) else {
+            return;
+        };
+
+        let Some(path) = file.path().to_str().map(|path| path.to_string()) else {
+            return;
+        };
+
+        let selections = self.selections.all::<Point>(cx);
+        let selection = selections.iter().peekable().next();
+
+        let line_selector = selection.map(|selection| {
+            if selection.start.row == selection.end.row {
+                return format!("L{}", selection.start.row + 1);
+            } else {
+                format!("L{}-L{}", selection.start.row + 1, selection.end.row + 1)
+            }
+        });
+
+        let permalink = url::Url::parse("https://github.com").unwrap();
+        let mut permalink = permalink
+            .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
+            .unwrap();
+        permalink.set_fragment(line_selector.as_deref());
+
+        cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+    }
+
     pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
         let mut row_ranges = Vec::<Range<u32>>::new();
         for selection in self.selections.all::<Point>(cx) {

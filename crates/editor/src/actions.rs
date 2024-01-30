@@ -169,6 +169,7 @@ gpui::actions!(
         PageDown,
         PageUp,
         Paste,
+        PermalinkToLine,
         Redo,
         RedoSelection,
         Rename,

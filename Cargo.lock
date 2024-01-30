@@ -2336,6 +2336,7 @@ dependencies = [
  "tree-sitter-typescript",
  "ui",
  "unindent",
+ "url",
  "util",
  "workspace",
 ]
