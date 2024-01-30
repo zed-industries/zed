@@ -6,6 +6,7 @@ use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use release_channel::ReleaseChannel;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
@@ -16,7 +17,7 @@ use tempfile::NamedTempFile;
 use util::http::HttpClient;
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
-use util::{channel::ReleaseChannel, TryFutureExt};
+use util::TryFutureExt;
 
 use self::event_coalescer::EventCoalescer;
 
@@ -150,9 +151,8 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
-        let release_channel = cx
-            .try_global::<ReleaseChannel>()
-            .map(|release_channel| release_channel.display_name());
+        let release_channel =
+            ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
 
         TelemetrySettings::register(cx);
 

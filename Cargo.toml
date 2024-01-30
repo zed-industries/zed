@@ -84,7 +84,7 @@ members = [
     "crates/workspace",
     "crates/welcome",
     "crates/zed",
-    "crates/zed_actions",
+    "crates/zed_actions", "crates/release_channel",
 ]
 default-members = ["crates/zed"]
 resolver = "2"

@@ -1,23 +1,43 @@
-use lazy_static::lazy_static;
+use gpui::{AppContext, Global};
+use once_cell::sync::Lazy;
 use std::env;
 
-lazy_static! {
-    pub static ref RELEASE_CHANNEL_NAME: String = if cfg!(debug_assertions) {
+#[doc(hidden)]
+pub static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
+    Lazy::new(|| {
         env::var("ZED_RELEASE_CHANNEL")
             .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").to_string())
-    } else {
-        include_str!("../../zed/RELEASE_CHANNEL").to_string()
-    };
-    pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str().trim() {
+    })
+} else {
+    Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").to_string())
+};
+#[doc(hidden)]
+pub static RELEASE_CHANNEL: Lazy<ReleaseChannel> =
+    Lazy::new(|| match RELEASE_CHANNEL_NAME.as_str().trim() {
         "dev" => ReleaseChannel::Dev,
         "nightly" => ReleaseChannel::Nightly,
         "preview" => ReleaseChannel::Preview,
         "stable" => ReleaseChannel::Stable,
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
-    };
-}
+    });
 
+#[derive(Clone)]
 pub struct AppCommitSha(pub String);
+
+struct GlobalAppCommitSha(AppCommitSha);
+
+impl Global for GlobalAppCommitSha {}
+
+impl AppCommitSha {
+    pub fn try_global(cx: &AppContext) -> Option<AppCommitSha> {
+        cx.try_global::<GlobalAppCommitSha>()
+            .map(|sha| sha.0.clone())
+    }
+
+    pub fn set_global(sha: AppCommitSha, cx: &mut AppContext) {
+        cx.set_global(GlobalAppCommitSha(sha))
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum ReleaseChannel {
@@ -28,7 +48,24 @@ pub enum ReleaseChannel {
     Stable,
 }
 
+struct GlobalReleaseChannel(ReleaseChannel);
+
+impl Global for GlobalReleaseChannel {}
+
 impl ReleaseChannel {
+    pub fn init(cx: &mut AppContext) {
+        cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
+    }
+
+    pub fn global(cx: &AppContext) -> Self {
+        cx.global::<GlobalReleaseChannel>().0
+    }
+
+    pub fn try_global(cx: &AppContext) -> Option<Self> {
+        cx.try_global::<GlobalReleaseChannel>()
+            .map(|channel| channel.0)
+    }
+
     pub fn display_name(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "Zed Dev",

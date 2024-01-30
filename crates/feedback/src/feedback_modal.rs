@@ -225,7 +225,7 @@ impl FeedbackModal {
             None,
             &["Yes, Submit!", "No"],
         );
-        let client = cx.global::<Arc<Client>>().clone();
+        let client = Client::global(cx).clone();
         let specs = self.system_specs.clone();
         cx.spawn(|this, mut cx| async move {
             let answer = answer.await.ok();

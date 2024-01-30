@@ -28,6 +28,8 @@ regex.workspace = true
 
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
+# HACK: We're only depending on `copilot` here for `CommandPaletteFilter`.  See the attached comment on that type.
+copilot = { path = "../copilot" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }

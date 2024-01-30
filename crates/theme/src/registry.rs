@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, HighlightStyle, SharedString};
+use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString};
 use parking_lot::RwLock;
 use refineable::Refineable;
 use util::ResultExt;
@@ -31,6 +31,8 @@ pub struct ThemeMeta {
 /// This should not be exposed outside of this module.
 #[derive(Default, Deref, DerefMut)]
 struct GlobalThemeRegistry(Arc<ThemeRegistry>);
+
+impl Global for GlobalThemeRegistry {}
 
 /// Initializes the theme registry.
 pub fn init(assets: Box<dyn AssetSource>, cx: &mut AppContext) {

@@ -10,16 +10,16 @@ pub use lazy_static;
 pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
-pub use util::channel::{RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 pub use util::paths::DB_DIR;
 
+use release_channel::ReleaseChannel;
+pub use release_channel::RELEASE_CHANNEL;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use util::channel::ReleaseChannel;
 use util::{async_maybe, ResultExt};
 
 const CONNECTION_INITIALIZE_QUERY: &'static str = sql!(

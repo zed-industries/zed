@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::AppContext;
+use gpui::{AppContext, Global};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -128,6 +128,8 @@ pub struct SettingsStore {
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
     )>,
 }
+
+impl Global for SettingsStore {}
 
 impl Default for SettingsStore {
     fn default() -> Self {

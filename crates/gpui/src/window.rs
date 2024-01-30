@@ -2,7 +2,7 @@ use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
     AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
+    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
     KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
@@ -708,7 +708,7 @@ impl<'a> WindowContext<'a> {
     /// access both to the global and the context.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static,
+        G: Global,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -1441,7 +1441,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register the given handler to be invoked whenever the global of the given type
     /// is updated.
-    pub fn observe_global<G: 'static>(
+    pub fn observe_global<G: Global>(
         &mut self,
         f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
@@ -2198,7 +2198,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Updates the global state of the given type.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static,
+        G: Global,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -2207,7 +2207,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a callback to be invoked when the given global state changes.
-    pub fn observe_global<G: 'static>(
+    pub fn observe_global<G: Global>(
         &mut self,
         mut f: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {

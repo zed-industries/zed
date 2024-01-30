@@ -10,7 +10,7 @@ use crate::{
     MultiBufferSnapshot, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
-use gpui::{point, px, AppContext, Entity, Pixels, Task, ViewContext};
+use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
 use std::{
@@ -26,6 +26,8 @@ const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 pub struct ScrollbarAutoHide(pub bool);
+
+impl Global for ScrollbarAutoHide {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollAnchor {

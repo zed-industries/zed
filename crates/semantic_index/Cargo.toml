@@ -17,6 +17,7 @@ language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
+release_channel = { path = "../release_channel" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 anyhow.workspace = true

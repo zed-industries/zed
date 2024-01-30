@@ -36,24 +36,6 @@ pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Worksp
     });
 }
 
-#[cfg(debug_assertions)]
-pub fn reload(cx: &mut AppContext) {
-    let current_theme_name = cx.theme().name.clone();
-    let current_theme = cx.update_global(|registry: &mut ThemeRegistry, _cx| {
-        registry.clear();
-        registry.get(&current_theme_name)
-    });
-    match current_theme {
-        Ok(theme) => {
-            ThemeSelectorDelegate::set_theme(theme, cx);
-            log::info!("reloaded theme {}", current_theme_name);
-        }
-        Err(error) => {
-            log::error!("failed to load theme {}: {:?}", current_theme_name, error)
-        }
-    }
-}
-
 impl ModalView for ThemeSelector {}
 
 pub struct ThemeSelector {

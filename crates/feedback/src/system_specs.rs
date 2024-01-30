@@ -1,10 +1,10 @@
 use client::ZED_APP_VERSION;
 use gpui::AppContext;
 use human_bytes::human_bytes;
+use release_channel::ReleaseChannel;
 use serde::Serialize;
 use std::{env, fmt::Display};
 use sysinfo::{RefreshKind, System, SystemExt};
-use util::channel::ReleaseChannel;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemSpecs {
@@ -21,7 +21,7 @@ impl SystemSpecs {
         let app_version = ZED_APP_VERSION
             .or_else(|| cx.app_metadata().app_version)
             .map(|v| v.to_string());
-        let release_channel = cx.global::<ReleaseChannel>().display_name();
+        let release_channel = ReleaseChannel::global(cx).display_name();
         let os_name = cx.app_metadata().os_name;
         let system = System::new_with_specifics(RefreshKind::new().with_memory());
         let memory = system.total_memory();

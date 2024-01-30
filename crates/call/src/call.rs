@@ -9,8 +9,8 @@ use client::{proto, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Subscription,
+    Task, WeakModel,
 };
 use postage::watch;
 use project::Project;
@@ -21,11 +21,15 @@ use std::sync::Arc;
 pub use participant::ParticipantLocation;
 pub use room::Room;
 
+struct GlobalActiveCall(Model<ActiveCall>);
+
+impl Global for GlobalActiveCall {}
+
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     CallSettings::register(cx);
 
     let active_call = cx.new_model(|cx| ActiveCall::new(client, user_store, cx));
-    cx.set_global(active_call);
+    cx.set_global(GlobalActiveCall(active_call));
 }
 
 pub struct OneAtATime {
@@ -154,7 +158,12 @@ impl ActiveCall {
     }
 
     pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<Model<Self>>().clone()
+        cx.global::<GlobalActiveCall>().0.clone()
+    }
+
+    pub fn try_global(cx: &AppContext) -> Option<Model<Self>> {
+        cx.try_global::<GlobalActiveCall>()
+            .map(|call| call.0.clone())
     }
 
     pub fn invite(
