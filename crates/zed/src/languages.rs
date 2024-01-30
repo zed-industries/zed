@@ -295,6 +295,7 @@ pub fn init(
         tree_sitter_uiua::language(),
         vec![Arc::new(uiua::UiuaLanguageServer {})],
     );
+    language("proto", tree_sitter_proto::language(), vec![]);
 
     if let Ok(children) = std::fs::read_dir(&*PLUGINS_DIR) {
         for child in children {
