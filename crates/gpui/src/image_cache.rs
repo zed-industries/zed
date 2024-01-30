@@ -89,7 +89,7 @@ impl ImageCache {
                             async move {
                                 match uri_or_path {
                                     UriOrPath::Path(uri) => {
-                                        let image = image::open(&uri)?.into_bgra8();
+                                        let image = image::open(uri)?.into_bgra8();
                                         Ok(Arc::new(ImageData::new(image)))
                                     }
                                     UriOrPath::Uri(uri) => {
