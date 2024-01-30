@@ -57,6 +57,7 @@
     "!"
     "|"
     "->"
+    ":"
     "::"
 ] @operator
 
@@ -86,8 +87,14 @@
             "-" @keyword
             name: (atom) @keyword))
 
-[ "(" "{" "[" ] @open
-[ ")" "}" "]" ] @close
+[
+    "("
+    ")"
+    "{"
+    "}"
+    "["
+    "]"
+] @punctuation.bracket
 
 (function_clause name: _ @function)
 (spec fun: (atom) @function)
@@ -99,5 +106,7 @@
 (remote
     module: (remote_module module: (atom) @type)
     fun: (atom) @function)
+
+(record_name name: (atom) @type)
 
 (comment) @comment
