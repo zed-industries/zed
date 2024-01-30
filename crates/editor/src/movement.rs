@@ -8,6 +8,8 @@ use language::Point;
 
 use std::{ops::Range, sync::Arc};
 
+use multi_buffer::Anchor;
+
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
 /// `FindRange::MultiLine` keeps going until the end of a string.
@@ -23,6 +25,8 @@ pub struct TextLayoutDetails {
     pub(crate) text_system: Arc<TextSystem>,
     pub(crate) editor_style: EditorStyle,
     pub(crate) rem_size: Pixels,
+    pub anchor: Anchor,
+    pub visible_rows: Option<f32>,
 }
 
 /// Returns a column to the left of the current point, wrapping

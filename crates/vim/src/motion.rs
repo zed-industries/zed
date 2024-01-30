@@ -41,6 +41,9 @@ pub enum Motion {
     StartOfLineDownward,
     EndOfLineDownward,
     GoToColumn,
+    WindowTop,
+    WindowMiddle,
+    WindowBottom,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -136,6 +139,9 @@ actions!(
         StartOfLineDownward,
         EndOfLineDownward,
         GoToColumn,
+        WindowTop,
+        WindowMiddle,
+        WindowBottom,
     ]
 );
 
@@ -231,6 +237,13 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
         repeat_motion(action.backwards, cx)
     });
+    workspace.register_action(|_: &mut Workspace, &WindowTop, cx: _| motion(Motion::WindowTop, cx));
+    workspace.register_action(|_: &mut Workspace, &WindowMiddle, cx: _| {
+        motion(Motion::WindowMiddle, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, &WindowBottom, cx: _| {
+        motion(Motion::WindowBottom, cx)
+    });
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
@@ -295,6 +308,9 @@ impl Motion {
             | NextLineStart
             | StartOfLineDownward
             | StartOfParagraph
+            | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | EndOfParagraph => true,
             EndOfLine { .. }
             | NextWordEnd { .. }
@@ -336,6 +352,9 @@ impl Motion {
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | NextLineStart => false,
         }
     }
@@ -353,6 +372,9 @@ impl Motion {
             | NextWordEnd { .. }
             | Matching
             | FindForward { .. }
+            | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | NextLineStart => true,
             Left
             | Backspace
@@ -449,6 +471,9 @@ impl Motion {
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
+            WindowTop => window_top(map, point, &text_layout_details),
+            WindowMiddle => window_middle(map, point, &text_layout_details),
+            WindowBottom => window_bottom(map, point, &text_layout_details),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -955,6 +980,51 @@ pub(crate) fn next_line_end(
     end_of_line(map, false, point)
 }
 
+fn window_top(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    let first_visible_line = text_layout_details.anchor.to_display_point(map);
+    let new_col = point.column().min(map.line_len(first_visible_line.row()));
+    let new_point = DisplayPoint::new(first_visible_line.row(), new_col);
+    (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+}
+
+fn window_middle(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    if let Some(visible_rows) = text_layout_details.visible_rows {
+        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let max_rows = (visible_rows as u32).min(map.max_buffer_row());
+        let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
+        let new_col = point.column().min(map.line_len(new_row));
+        let new_point = DisplayPoint::new(new_row, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    } else {
+        (point, SelectionGoal::None)
+    }
+}
+
+fn window_bottom(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    if let Some(visible_rows) = text_layout_details.visible_rows {
+        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let bottom_row = first_visible_line.row() + (visible_rows) as u32;
+        let bottom_row_capped = bottom_row.min(map.max_buffer_row());
+        let new_col = point.column().min(map.line_len(bottom_row_capped));
+        let new_point = DisplayPoint::new(bottom_row_capped, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    } else {
+        (point, SelectionGoal::None)
+    }
+}
+
 #[cfg(test)]
 mod test {
 
@@ -1106,5 +1176,219 @@ mod test {
         cx.set_shared_state("ˇone\n  two\nthree").await;
         cx.simulate_shared_keystrokes(["enter"]).await;
         cx.assert_shared_state("one\n  ˇtwo\nthree").await;
+    }
+
+    #[gpui::test]
+    async fn test_window_top(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abc
+          def
+          paragraph
+          the second
+          third ˇand
+          final"};
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"abˇc
+          def
+          paragraph
+          the second
+          third and
+          final"})
+            .await;
+
+        // clip point
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 ˇ9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 ˇ3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          ˇ7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_window_middle(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abˇc
+          def
+          paragraph
+          the second
+          third and
+          final"};
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+          def
+          paˇragraph
+          the second
+          third and
+          final"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 ˇ9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          ˇ7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_window_bottom(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abc
+          deˇf
+          paragraph
+          the second
+          third and
+          final"};
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+          def
+          paragraph
+          the second
+          third and
+          fiˇnal"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 ˇ3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
     }
 }
