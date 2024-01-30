@@ -1,10 +1,9 @@
 use anyhow::anyhow;
 use tiktoken_rs::CoreBPE;
-use util::ResultExt;
 
 use crate::models::{LanguageModel, TruncationDirection};
 
-use super::OPENAI_BPE_TOKENIZER;
+use super::OPEN_AI_BPE_TOKENIZER;
 
 #[derive(Clone)]
 pub struct OpenAiLanguageModel {
