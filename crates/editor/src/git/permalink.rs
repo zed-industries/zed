@@ -1,6 +1,7 @@
+use std::ops::Range;
+
 use anyhow::{anyhow, Result};
 use language::Point;
-use text::Selection;
 use url::Url;
 
 enum GitHostingProvider {
@@ -21,7 +22,7 @@ pub struct BuildPermalinkParams<'a> {
     pub remote_url: &'a str,
     pub sha: &'a str,
     pub path: &'a str,
-    pub selection: Option<&'a Selection<Point>>,
+    pub selection: Option<Range<Point>>,
 }
 
 pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
@@ -39,15 +40,13 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
     } = parse_git_remote_url(remote_url)
         .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
-    let line_selector = {
-        selection.map(|selection| {
-            if selection.start.row == selection.end.row {
-                return format!("L{}", selection.start.row + 1);
-            } else {
-                format!("L{}-L{}", selection.start.row + 1, selection.end.row + 1)
-            }
-        })
-    };
+    let line_selector = selection.map(|selection| {
+        if selection.start.row == selection.end.row {
+            return format!("L{}", selection.start.row + 1);
+        } else {
+            format!("L{}-L{}", selection.start.row + 1, selection.end.row + 1)
+        }
+    });
 
     let mut permalink = provider
         .base_url()
@@ -65,9 +64,10 @@ struct ParsedGitRemote<'a> {
 }
 
 fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
-    if url.starts_with("git@github.com:") {
+    if url.starts_with("git@github.com:") || url.starts_with("https://github.com/") {
         let repo_with_owner = url
             .trim_start_matches("git@github.com:")
+            .trim_start_matches("https://github.com/")
             .trim_end_matches(".git");
 
         let (owner, repo) = repo_with_owner.split_once("/")?;
@@ -97,6 +97,76 @@ mod tests {
         .unwrap();
 
         let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_ssh_url_single_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@github.com:zed-industries/zed.git",
+            sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: Some(Point::new(6, 1)..Point::new(6, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_ssh_url_multi_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@github.com:zed-industries/zed.git",
+            sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: Some(Point::new(23, 1)..Point::new(47, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-L48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_https_url() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://github.com/zed-industries/zed.git",
+            sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+            path: "crates/zed/src/main.rs",
+            selection: None,
+        })
+        .unwrap();
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_https_url_single_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://github.com/zed-industries/zed.git",
+            sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+            path: "crates/zed/src/main.rs",
+            selection: Some(Point::new(6, 1)..Point::new(6, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_https_url_multi_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://github.com/zed-industries/zed.git",
+            sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+            path: "crates/zed/src/main.rs",
+            selection: Some(Point::new(23, 1)..Point::new(47, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

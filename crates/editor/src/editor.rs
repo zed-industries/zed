@@ -8242,7 +8242,7 @@ impl Editor {
                 remote_url: &origin_url,
                 sha: &sha,
                 path: &path,
-                selection,
+                selection: selection.map(|selection| selection.range()),
             })
             .log_err()
         });
