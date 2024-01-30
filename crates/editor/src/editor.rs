@@ -117,7 +117,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
     Tooltip,
 };
-use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -8216,73 +8216,59 @@ impl Editor {
     }
 
     pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
-        let Some(project) = self.project.clone() else {
-            return;
-        };
+        let permalink = maybe!({
+            let project = self.project.clone()?;
+            let project = project.read(cx);
 
-        let project = project.read(cx);
+            let worktree = project.visible_worktrees(cx).next()?;
 
-        let Some(worktree) = project.visible_worktrees(cx).next() else {
-            return;
-        };
+            let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+            cwd.push(".git");
 
-        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-        cwd.push(".git");
+            let repo = project.fs().open_repo(&cwd)?;
 
-        let Some(repo) = project.fs().open_repo(&cwd) else {
-            return;
-        };
-
-        let Some(origin_url) = repo.lock().origin_url() else {
-            return;
-        };
-
-        if !origin_url.starts_with("git@github.com:") {
-            return;
-        }
-
-        let Some(sha) = repo.lock().head_sha() else {
-            return;
-        };
-
-        let repo_with_owner = origin_url
-            .trim_start_matches("git@github.com:")
-            .trim_end_matches(".git");
-
-        let Some((owner, repo)) = repo_with_owner.split_once("/") else {
-            return;
-        };
-
-        let Some(buffer) = self.buffer().read(cx).as_singleton() else {
-            return;
-        };
-
-        let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) else {
-            return;
-        };
-
-        let Some(path) = file.path().to_str().map(|path| path.to_string()) else {
-            return;
-        };
-
-        let selections = self.selections.all::<Point>(cx);
-        let selection = selections.iter().peekable().next();
-
-        let line_selector = selection.map(|selection| {
-            if selection.start.row == selection.end.row {
-                return format!("L{}", selection.start.row + 1);
-            } else {
-                format!("L{}-L{}", selection.start.row + 1, selection.end.row + 1)
+            let origin_url = repo.lock().origin_url()?;
+            if !origin_url.starts_with("git@github.com:") {
+                return None;
             }
+
+            let sha = repo.lock().head_sha()?;
+
+            let repo_with_owner = origin_url
+                .trim_start_matches("git@github.com:")
+                .trim_end_matches(".git");
+
+            let (owner, repo) = repo_with_owner.split_once("/")?;
+
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+            let path = file.path().to_str().map(|path| path.to_string())?;
+
+            let line_selector = {
+                let selections = self.selections.all::<Point>(cx);
+                let selection = selections.iter().peekable().next();
+
+                selection.map(|selection| {
+                    if selection.start.row == selection.end.row {
+                        return format!("L{}", selection.start.row + 1);
+                    } else {
+                        format!("L{}-L{}", selection.start.row + 1, selection.end.row + 1)
+                    }
+                })
+            };
+
+            let permalink = url::Url::parse("https://github.com").unwrap();
+            let mut permalink = permalink
+                .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
+                .unwrap();
+            permalink.set_fragment(line_selector.as_deref());
+
+            Some(permalink)
         });
 
-        let permalink = url::Url::parse("https://github.com").unwrap();
-        let mut permalink = permalink
-            .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
-            .unwrap();
-        permalink.set_fragment(line_selector.as_deref());
-
-        cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+        if let Some(permalink) = permalink {
+            cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+        }
     }
 
     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
