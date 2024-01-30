@@ -7922,6 +7922,7 @@ dependencies = [
  "color",
  "derive_more",
  "fs",
+ "futures 0.3.28",
  "gpui",
  "indexmap 1.9.3",
  "itertools 0.11.0",

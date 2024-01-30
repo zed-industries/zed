@@ -26,6 +26,7 @@ pub struct ThemeSettings {
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
+    pub requested_theme: Option<String>,
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
 }
@@ -87,6 +88,25 @@ impl ThemeSettings {
 
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
+    }
+
+    /// Switches to the theme with the given name, if it exists.
+    ///
+    /// Returns a `Some` containing the new theme if it was successful.
+    /// Returns `None` otherwise.
+    pub fn switch_theme(&mut self, theme: &str, cx: &mut AppContext) -> Option<Arc<Theme>> {
+        let themes = ThemeRegistry::default_global(cx);
+
+        let mut new_theme = None;
+
+        if let Some(theme) = themes.get(&theme).log_err() {
+            self.active_theme = theme.clone();
+            new_theme = Some(theme);
+        }
+
+        self.apply_theme_overrides();
+
+        new_theme
     }
 
     /// Applies the theme overrides, if there are any, to the current theme.
@@ -182,6 +202,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
+            requested_theme: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap())
                 .or(themes.get(&one_dark().name))
@@ -205,6 +226,8 @@ impl settings::Settings for ThemeSettings {
             }
 
             if let Some(value) = &value.theme {
+                this.requested_theme = Some(value.clone());
+
                 if let Some(theme) = themes.get(value).log_err() {
                     this.active_theme = theme;
                 }
@@ -232,6 +255,7 @@ impl settings::Settings for ThemeSettings {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
         let theme_names = ThemeRegistry::global(cx)
             .list_names(params.staff_mode)
+            .into_iter()
             .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();
 

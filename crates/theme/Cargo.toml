@@ -23,6 +23,7 @@ doctest = false
 anyhow.workspace = true
 derive_more.workspace = true
 fs = { path = "../fs" }
+futures.workspace = true
 gpui = { path = "../gpui" }
 indexmap = { version = "1.6.2", features = ["serde"] }
 palette = { version = "0.7.3", default-features = false, features = ["std"] }

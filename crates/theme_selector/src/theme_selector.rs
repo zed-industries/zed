@@ -103,7 +103,7 @@ impl ThemeSelectorDelegate {
 
         let staff_mode = cx.is_staff();
         let registry = ThemeRegistry::global(cx);
-        let mut themes = registry.list(staff_mode).collect::<Vec<_>>();
+        let mut themes = registry.list(staff_mode);
         themes.sort_unstable_by(|a, b| {
             a.appearance
                 .is_light()
