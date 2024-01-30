@@ -65,7 +65,7 @@ pub fn init(
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
-    cx.set_global(GlobalCopilot(copilot.clone()));
+    Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |handle, cx| {
         let copilot_action_types = [
             TypeId::of::<Suggest>(),
@@ -319,12 +319,17 @@ pub enum Event {
 impl EventEmitter<Event> for Copilot {}
 
 struct GlobalCopilot(Model<Copilot>);
+
 impl Global for GlobalCopilot {}
 
 impl Copilot {
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
         cx.try_global::<GlobalCopilot>()
             .map(|model| model.0.clone())
+    }
+
+    pub fn set_global(copilot: Model<Self>, cx: &mut AppContext) {
+        cx.set_global(GlobalCopilot(copilot));
     }
 
     fn start(
