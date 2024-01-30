@@ -563,7 +563,18 @@ fn backspace(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Di
 
 fn space(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
-        point = movement::right(map, point);
+        point = wrapping_right(map, point);
+    }
+    point
+}
+
+fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+    let max_column = map.line_len(point.row()).saturating_sub(1);
+    if point.column() < max_column {
+        *point.column_mut() += 1;
+    } else if point.row() < map.max_point().row() {
+        *point.row_mut() += 1;
+        *point.column_mut() = 0;
     }
     point
 }
