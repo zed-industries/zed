@@ -29,6 +29,7 @@ mod ruby;
 mod rust;
 mod svelte;
 mod tailwind;
+mod toml;
 mod typescript;
 mod uiua;
 mod vue;
@@ -149,7 +150,11 @@ pub fn init(
         tree_sitter_rust::language(),
         vec![Arc::new(rust::RustLspAdapter)],
     );
-    language("toml", tree_sitter_toml::language(), vec![]);
+    language(
+        "toml",
+        tree_sitter_toml::language(),
+        vec![Arc::new(toml::TaploLspAdapter)],
+    );
     match &DenoSettings::get(None, cx).enable {
         true => {
             language(
@@ -291,7 +296,7 @@ pub fn init(
                 let path = child.path();
                 let config_path = path.join("config.toml");
                 if let Ok(config) = std::fs::read(&config_path) {
-                    let config: LanguageConfig = toml::from_slice(&config).unwrap();
+                    let config: LanguageConfig = ::toml::from_slice(&config).unwrap();
                     if let Some(grammar_name) = config.grammar_name.clone() {
                         languages.register_wasm(path.into(), grammar_name, config);
                     }
@@ -317,7 +322,7 @@ pub async fn language(
 }
 
 fn load_config(name: &str) -> LanguageConfig {
-    toml::from_slice(
+    ::toml::from_slice(
         &LanguageDir::get(&format!("{}/config.toml", name))
             .unwrap()
             .data,
