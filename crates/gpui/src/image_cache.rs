@@ -3,6 +3,7 @@ use collections::HashMap;
 use futures::{future::Shared, AsyncReadExt, FutureExt, TryFutureExt};
 use image::ImageError;
 use parking_lot::Mutex;
+use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use util::http::{self, HttpClient};
@@ -41,7 +42,25 @@ impl From<ImageError> for Error {
 
 pub(crate) struct ImageCache {
     client: Arc<dyn HttpClient>,
-    images: Arc<Mutex<HashMap<SharedUri, FetchImageTask>>>,
+    images: Arc<Mutex<HashMap<UriOrPath, FetchImageTask>>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub enum UriOrPath {
+    Uri(SharedUri),
+    Path(Arc<PathBuf>),
+}
+
+impl From<SharedUri> for UriOrPath {
+    fn from(value: SharedUri) -> Self {
+        Self::Uri(value)
+    }
+}
+
+impl From<Arc<PathBuf>> for UriOrPath {
+    fn from(value: Arc<PathBuf>) -> Self {
+        Self::Path(value)
+    }
 }
 
 type FetchImageTask = Shared<Task<Result<Arc<ImageData>, Error>>>;
@@ -54,11 +73,11 @@ impl ImageCache {
         }
     }
 
-    pub fn get(&self, uri: impl Into<SharedUri>, cx: &AppContext) -> FetchImageTask {
-        let uri = uri.into();
+    pub fn get(&self, uri_or_path: impl Into<UriOrPath>, cx: &AppContext) -> FetchImageTask {
+        let uri_or_path = uri_or_path.into();
         let mut images = self.images.lock();
 
-        match images.get(&uri) {
+        match images.get(&uri_or_path) {
             Some(future) => future.clone(),
             None => {
                 let client = self.client.clone();
@@ -66,14 +85,14 @@ impl ImageCache {
                     .background_executor()
                     .spawn(
                         {
-                            let uri = uri.clone();
+                            let uri_or_path = uri_or_path.clone();
                             async move {
-                                match uri {
-                                    SharedUri::File(uri) => {
+                                match uri_or_path {
+                                    UriOrPath::Path(uri) => {
                                         let image = image::open(uri.as_ref())?.into_bgra8();
                                         Ok(Arc::new(ImageData::new(image)))
                                     }
-                                    SharedUri::Network(uri) => {
+                                    UriOrPath::Uri(uri) => {
                                         let mut response =
                                             client.get(uri.as_ref(), ().into(), true).await?;
                                         let mut body = Vec::new();
@@ -96,16 +115,16 @@ impl ImageCache {
                             }
                         }
                         .map_err({
-                            let uri = uri.clone();
+                            let uri_or_path = uri_or_path.clone();
                             move |error| {
-                                log::log!(log::Level::Error, "{:?} {:?}", &uri, &error);
+                                log::log!(log::Level::Error, "{:?} {:?}", &uri_or_path, &error);
                                 error
                             }
                         }),
                     )
                     .shared();
 
-                images.insert(uri, future.clone());
+                images.insert(uri_or_path, future.clone());
                 future
             }
         }

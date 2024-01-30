@@ -1,12 +1,25 @@
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::Arc;
+
 use gpui::*;
 
 #[derive(IntoElement)]
-struct ImageFromResource {
+struct ImageContainer {
     text: SharedString,
-    resource: SharedUri,
+    src: ImageSource,
 }
 
-impl RenderOnce for ImageFromResource {
+impl ImageContainer {
+    pub fn new(text: impl Into<SharedString>, src: impl Into<ImageSource>) -> Self {
+        Self {
+            text: text.into(),
+            src: src.into(),
+        }
+    }
+}
+
+impl RenderOnce for ImageContainer {
     fn render(self, _: &mut WindowContext) -> impl IntoElement {
         div().child(
             div()
@@ -14,13 +27,13 @@ impl RenderOnce for ImageFromResource {
                 .size_full()
                 .gap_4()
                 .child(self.text)
-                .child(img(self.resource).w(px(512.0)).h(px(512.0))),
+                .child(img(self.src).w(px(512.0)).h(px(512.0))),
         )
     }
 }
 
 struct ImageShowcase {
-    local_resource: SharedUri,
+    local_resource: Arc<PathBuf>,
     remote_resource: SharedUri,
 }
 
@@ -34,14 +47,14 @@ impl Render for ImageShowcase {
             .items_center()
             .gap_8()
             .bg(rgb(0xFFFFFF))
-            .child(ImageFromResource {
-                text: "Image loaded from a local file".into(),
-                resource: self.local_resource.clone(),
-            })
-            .child(ImageFromResource {
-                text: "Image loaded from a remote resource".into(),
-                resource: self.remote_resource.clone(),
-            })
+            .child(ImageContainer::new(
+                "Image loaded from a local file",
+                self.local_resource.clone(),
+            ))
+            .child(ImageContainer::new(
+                "Image loaded from a remote resource",
+                self.remote_resource.clone(),
+            ))
     }
 }
 
@@ -51,8 +64,10 @@ fn main() {
     App::new().run(|cx: &mut AppContext| {
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|_cx| ImageShowcase {
-                local_resource: SharedUri::file("../zed/resources/app-icon.png"),
-                remote_resource: SharedUri::network("https://picsum.photos/512/512"),
+                local_resource: Arc::new(
+                    PathBuf::from_str("crates/zed/resources/app-icon.png").unwrap(),
+                ),
+                remote_resource: "https://picsum.photos/512/512".into(),
             })
         });
     });

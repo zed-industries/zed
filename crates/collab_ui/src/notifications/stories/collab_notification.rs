@@ -1,4 +1,4 @@
-use gpui::{prelude::*, SharedUri};
+use gpui::prelude::*;
 use story::{StoryContainer, StoryItem, StorySection};
 use ui::prelude::*;
 
@@ -19,7 +19,7 @@ impl Render for CollabNotificationStory {
                 "Incoming Call Notification",
                 window_container(400., 72.).child(
                     CollabNotification::new(
-                        SharedUri::network("https://avatars.githubusercontent.com/u/1486634?v=4"),
+                        "https://avatars.githubusercontent.com/u/1486634?v=4",
                         Button::new("accept", "Accept"),
                         Button::new("decline", "Decline"),
                     )
@@ -36,7 +36,7 @@ impl Render for CollabNotificationStory {
                 "Project Shared Notification",
                 window_container(400., 72.).child(
                     CollabNotification::new(
-                        SharedUri::network("https://avatars.githubusercontent.com/u/1714999?v=4"),
+                        "https://avatars.githubusercontent.com/u/1714999?v=4",
                         Button::new("open", "Open"),
                         Button::new("dismiss", "Dismiss"),
                     )

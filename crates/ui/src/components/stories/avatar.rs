@@ -1,4 +1,4 @@
-use gpui::{Render, SharedUri};
+use gpui::Render;
 use story::{StoryContainer, StoryItem, StorySection};
 
 use crate::{prelude::*, AudioStatus, Availability, AvatarAvailabilityIndicator};
@@ -13,66 +13,50 @@ impl Render for AvatarStory {
                 StorySection::new()
                     .child(StoryItem::new(
                         "Default",
-                        Avatar::new(SharedUri::network(
-                            "https://avatars.githubusercontent.com/u/1714999?v=4",
-                        )),
+                        Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4"),
                     ))
                     .child(StoryItem::new(
                         "Default",
-                        Avatar::new(SharedUri::network(
-                            "https://avatars.githubusercontent.com/u/326587?v=4",
-                        )),
+                        Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4"),
                     )),
             )
             .child(
                 StorySection::new()
                     .child(StoryItem::new(
                         "With free availability indicator",
-                        Avatar::new(SharedUri::network(
-                            "https://avatars.githubusercontent.com/u/326587?v=4",
-                        ))
-                        .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
+                        Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
+                            .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
                     ))
                     .child(StoryItem::new(
                         "With busy availability indicator",
-                        Avatar::new(SharedUri::network(
-                            "https://avatars.githubusercontent.com/u/326587?v=4",
-                        ))
-                        .indicator(AvatarAvailabilityIndicator::new(Availability::Busy)),
+                        Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
+                            .indicator(AvatarAvailabilityIndicator::new(Availability::Busy)),
                     )),
             )
             .child(
                 StorySection::new()
                     .child(StoryItem::new(
                         "With info border",
-                        Avatar::new(SharedUri::network(
-                            "https://avatars.githubusercontent.com/u/326587?v=4",
-                        ))
-                        .border_color(cx.theme().status().info_border),
+                        Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
+                            .border_color(cx.theme().status().info_border),
                     ))
                     .child(StoryItem::new(
                         "With error border",
-                        Avatar::new(SharedUri::network(
-                            "https://avatars.githubusercontent.com/u/326587?v=4",
-                        ))
-                        .border_color(cx.theme().status().error_border),
+                        Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
+                            .border_color(cx.theme().status().error_border),
                     )),
             )
             .child(
                 StorySection::new()
                     .child(StoryItem::new(
                         "With muted audio indicator",
-                        Avatar::new(SharedUri::network(
-                            "https://avatars.githubusercontent.com/u/326587?v=4",
-                        ))
-                        .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Muted)),
+                        Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
+                            .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Muted)),
                     ))
                     .child(StoryItem::new(
                         "With deafened audio indicator",
-                        Avatar::new(SharedUri::network(
-                            "https://avatars.githubusercontent.com/u/326587?v=4",
-                        ))
-                        .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Deafened)),
+                        Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
+                            .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Deafened)),
                     )),
             )
     }
