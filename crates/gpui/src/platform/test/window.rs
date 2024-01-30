@@ -5,6 +5,7 @@ use crate::{
 };
 use collections::HashMap;
 use parking_lot::Mutex;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
     rc::{Rc, Weak},
     sync::{self, Arc},
@@ -28,6 +29,22 @@ pub(crate) struct TestWindowState {
 
 #[derive(Clone)]
 pub(crate) struct TestWindow(pub(crate) Arc<Mutex<TestWindowState>>);
+
+impl HasWindowHandle for TestWindow {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        unimplemented!("Test Windows are not backed by a real platform window")
+    }
+}
+
+impl HasDisplayHandle for TestWindow {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        unimplemented!("Test Windows are not backed by a real platform window")
+    }
+}
 
 impl TestWindow {
     pub fn new(
