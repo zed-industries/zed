@@ -52,7 +52,7 @@ use std::{
 };
 use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
-use tree_sitter::{self, Query};
+use tree_sitter::{self, wasmtime, Query, WasmStore};
 use unicase::UniCase;
 use util::{http::HttpClient, paths::PathExt};
 use util::{post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
@@ -96,7 +96,9 @@ impl LspBinaryStatusSender {
 
 thread_local! {
     static PARSER: RefCell<Parser> = {
-        RefCell::new(Parser::new())
+        let mut parser = Parser::new();
+        parser.set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap()).unwrap();
+        RefCell::new(parser)
     };
 }
 
@@ -104,6 +106,7 @@ lazy_static! {
     pub(crate) static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
     /// A shared grammar for plain text, exposed for reuse by downstream crates.
     #[doc(hidden)]
+    pub static ref WASM_ENGINE: wasmtime::Engine = wasmtime::Engine::default();
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
@@ -706,8 +709,8 @@ enum AvailableGrammar {
         get_queries: fn(&str) -> LanguageQueries,
     },
     Wasm {
-        _grammar_name: Arc<str>,
-        _path: Arc<Path>,
+        grammar_name: Arc<str>,
+        path: Arc<Path>,
     },
 }
 
@@ -807,10 +810,7 @@ impl LanguageRegistry {
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
             config,
-            grammar: AvailableGrammar::Wasm {
-                _grammar_name: grammar_name,
-                _path: path,
-            },
+            grammar: AvailableGrammar::Wasm { grammar_name, path },
             lsp_adapters: Vec::new(),
             loaded: false,
         });
@@ -944,8 +944,25 @@ impl LanguageRegistry {
                                             asset_dir,
                                             get_queries,
                                         } => (grammar, (get_queries)(asset_dir)),
-                                        AvailableGrammar::Wasm { .. } => {
-                                            Err(anyhow!("not supported"))?
+                                        AvailableGrammar::Wasm { grammar_name, path } => {
+                                            let mut wasm_path = path.join(grammar_name.as_ref());
+                                            wasm_path.set_extension("wasm");
+                                            let wasm_bytes = std::fs::read(&wasm_path)?;
+                                            let grammar = PARSER.with(|parser| {
+                                                let mut parser = parser.borrow_mut();
+                                                let mut store = parser.take_wasm_store().unwrap();
+                                                let grammar =
+                                                    store.load_language(&grammar_name, &wasm_bytes);
+                                                parser.set_wasm_store(store).unwrap();
+                                                grammar
+                                            })?;
+                                            let mut queries = LanguageQueries::default();
+                                            if let Ok(contents) = std::fs::read_to_string(
+                                                &path.join("highlights.scm"),
+                                            ) {
+                                                queries.highlights = Some(contents.into());
+                                            }
+                                            (grammar, queries)
                                         }
                                     };
                                     Language::new(language.config, Some(grammar))
