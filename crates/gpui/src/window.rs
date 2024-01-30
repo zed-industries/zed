@@ -338,7 +338,10 @@ impl Window {
             let mut cx = cx.to_async();
             move |_, _| {
                 handle
-                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .update(&mut cx, |_, cx| {
+                        cx.window_bounds_changed();
+                        cx.draw()
+                    })
                     .log_err();
             }
         }));
