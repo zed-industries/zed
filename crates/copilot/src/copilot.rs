@@ -5,7 +5,7 @@ use async_tar::Archive;
 use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Model,
+    actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
     ModelContext, Task, WeakModel,
 };
 use language::{
@@ -32,6 +32,17 @@ use util::{
     ResultExt,
 };
 
+// HACK: This type is only defined in `copilot` since it is the earliest ancestor
+// of the crates that use it.
+//
+// This is not great. Let's find a better place for it to live.
+#[derive(Default)]
+pub struct CommandPaletteFilter {
+    pub hidden_namespaces: HashSet<&'static str>,
+    pub hidden_action_types: HashSet<TypeId>,
+}
+
+impl Global for CommandPaletteFilter {}
 actions!(
     copilot,
     [
@@ -54,7 +65,7 @@ pub fn init(
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
-    cx.set_global(copilot.clone());
+    Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |handle, cx| {
         let copilot_action_types = [
             TypeId::of::<Suggest>(),
@@ -65,7 +76,7 @@ pub fn init(
         let copilot_auth_action_types = [TypeId::of::<SignOut>()];
         let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
-        let filter = cx.default_global::<collections::CommandPaletteFilter>();
+        let filter = cx.default_global::<CommandPaletteFilter>();
 
         match status {
             Status::Disabled => {
@@ -307,9 +318,18 @@ pub enum Event {
 
 impl EventEmitter<Event> for Copilot {}
 
+struct GlobalCopilot(Model<Copilot>);
+
+impl Global for GlobalCopilot {}
+
 impl Copilot {
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
-        cx.try_global::<Model<Self>>().map(|model| model.clone())
+        cx.try_global::<GlobalCopilot>()
+            .map(|model| model.0.clone())
+    }
+
+    pub fn set_global(copilot: Model<Self>, cx: &mut AppContext) {
+        cx.set_global(GlobalCopilot(copilot));
     }
 
     fn start(

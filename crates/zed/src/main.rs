@@ -19,6 +19,7 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
+use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -34,14 +35,13 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, Weak,
+        Arc,
     },
     thread,
 };
 use theme::{ActiveTheme, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
-    channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient, ZedHttpClient},
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt,
@@ -102,8 +102,7 @@ fn main() {
     let open_listener = listener.clone();
     app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
     app.on_reopen(move |cx| {
-        if let Some(app_state) = cx
-            .try_global::<Weak<AppState>>()
+        if let Some(app_state) = AppState::try_global(cx)
             .map(|app_state| app_state.upgrade())
             .flatten()
         {
@@ -115,12 +114,12 @@ fn main() {
     });
 
     app.run(move |cx| {
-        cx.set_global(*RELEASE_CHANNEL);
+        ReleaseChannel::init(cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
-            cx.set_global(AppCommitSha(build_sha.into()))
+            AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
 
-        cx.set_global(listener.clone());
+        OpenListener::set_global(listener.clone(), cx);
 
         load_embedded_fonts(cx);
 
@@ -148,7 +147,7 @@ fn main() {
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
-        cx.set_global(client.clone());
+        Client::set_global(client.clone(), cx);
 
         zed::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
@@ -242,7 +241,7 @@ fn main() {
             workspace_store,
             node_runtime,
         });
-        cx.set_global(Arc::downgrade(&app_state));
+        AppState::set_global(Arc::downgrade(&app_state), cx);
 
         audio::init(Assets, cx);
         auto_update::init(http.clone(), cx);
@@ -565,7 +564,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
             .unwrap_or_else(|| "Box<Any>".to_string());
 
-        if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
+        if *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
             let location = info.location().unwrap();
             let backtrace = Backtrace::new();
             eprintln!(

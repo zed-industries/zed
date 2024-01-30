@@ -4,19 +4,18 @@ use std::{
 };
 
 use client::telemetry::Telemetry;
-use collections::{CommandPaletteFilter, HashMap};
+use collections::HashMap;
+use copilot::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
     ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 
+use release_channel::{parse_zed_link, ReleaseChannel};
 use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
-use util::{
-    channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
-    ResultExt,
-};
+use util::ResultExt;
 use workspace::{ModalView, Workspace};
 use zed_actions::OpenZedUrl;
 
@@ -100,8 +99,11 @@ impl Render for CommandPalette {
     }
 }
 
-pub type CommandPaletteInterceptor =
-    Box<dyn Fn(&str, &AppContext) -> Option<CommandInterceptResult>>;
+pub struct CommandPaletteInterceptor(
+    pub Box<dyn Fn(&str, &AppContext) -> Option<CommandInterceptResult>>,
+);
+
+impl Global for CommandPaletteInterceptor {}
 
 pub struct CommandInterceptResult {
     pub action: Box<dyn Action>,
@@ -138,6 +140,8 @@ impl Clone for Command {
 /// if an user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
 #[derive(Default)]
 struct HitCounts(HashMap<String, usize>);
+
+impl Global for HitCounts {}
 
 impl CommandPaletteDelegate {
     fn new(
@@ -229,11 +233,14 @@ impl PickerDelegate for CommandPaletteDelegate {
 
             let mut intercept_result = cx
                 .try_read_global(|interceptor: &CommandPaletteInterceptor, cx| {
-                    (interceptor)(&query, cx)
+                    (interceptor.0)(&query, cx)
                 })
                 .flatten();
-
-            if *RELEASE_CHANNEL == ReleaseChannel::Dev {
+            let release_channel = cx
+                .update(|cx| ReleaseChannel::try_global(cx))
+                .ok()
+                .flatten();
+            if release_channel == Some(ReleaseChannel::Dev) {
                 if parse_zed_link(&query).is_some() {
                     intercept_result = Some(CommandInterceptResult {
                         action: OpenZedUrl { url: query.clone() }.boxed_clone(),

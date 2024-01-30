@@ -104,7 +104,6 @@ use std::{
     ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
     path::Path,
     sync::Arc,
-    sync::Weak,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
@@ -241,7 +240,7 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 
     cx.on_action(move |_: &workspace::NewFile, cx| {
-        let app_state = cx.global::<Weak<workspace::AppState>>();
+        let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
@@ -250,7 +249,7 @@ pub fn init(cx: &mut AppContext) {
         }
     });
     cx.on_action(move |_: &workspace::NewWindow, cx| {
-        let app_state = cx.global::<Weak<workspace::AppState>>();
+        let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)

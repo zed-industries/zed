@@ -21,6 +21,7 @@ util = { path = "../util" }
 rpc = { path = "../rpc" }
 text = { path = "../text" }
 language = { path = "../language" }
+release_channel = { path = "../release_channel" }
 settings = { path = "../settings" }
 feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }

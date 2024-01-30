@@ -12,11 +12,14 @@ doctest = false
 [dependencies]
 client = { path = "../client" }
 collections = { path = "../collections" }
+# HACK: We're only depending on `copilot` here for `CommandPaletteFilter`.  See the attached comment on that type.
+copilot = { path = "../copilot" }
 editor = { path = "../editor" }
 fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 project = { path = "../project" }
+release_channel = { path = "../release_channel" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }

@@ -2,7 +2,8 @@ use crate::one_themes::one_dark;
 use crate::{SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use gpui::{
-    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
+    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
+    ViewContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -33,6 +34,8 @@ pub struct ThemeSettings {
 
 #[derive(Default)]
 pub(crate) struct AdjustedBufferFontSize(Pixels);
+
+impl Global for AdjustedBufferFontSize {}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {

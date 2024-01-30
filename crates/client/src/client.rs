@@ -15,13 +15,14 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
-    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model, SemanticVersion, Task,
-    WeakModel,
+    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, SemanticVersion,
+    Task, WeakModel,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
+use release_channel::ReleaseChannel;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -41,8 +42,7 @@ use std::{
 use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
-use util::http::HttpClient;
-use util::{channel::ReleaseChannel, http::ZedHttpClient};
+use util::http::{HttpClient, ZedHttpClient};
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
@@ -148,6 +148,10 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
         }
     });
 }
+
+struct GlobalClient(Arc<Client>);
+
+impl Global for GlobalClient {}
 
 pub struct Client {
     id: AtomicU64,
@@ -481,6 +485,13 @@ impl Client {
     {
         *self.establish_connection.write() = Some(Box::new(connect));
         self
+    }
+
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        cx.global::<GlobalClient>().0.clone()
+    }
+    pub fn set_global(client: Arc<Client>, cx: &mut AppContext) {
+        cx.set_global(GlobalClient(client))
     }
 
     pub fn user_id(&self) -> Option<u64> {
@@ -996,7 +1007,10 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncAppContext,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        let release_channel = cx.try_read_global(|channel: &ReleaseChannel, _| *channel);
+        let release_channel = cx
+            .update(|cx| ReleaseChannel::try_global(cx))
+            .ok()
+            .flatten();
 
         let request = Request::builder()
             .header(

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::{AppContext, AsyncAppContext};
+use gpui::{AppContext, AsyncAppContext, Global};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -13,9 +13,7 @@ use std::{
     str,
     sync::Arc,
 };
-use util::{
-    channel::RELEASE_CHANNEL_NAME, merge_non_null_json_value_into, RangeExt, ResultExt as _,
-};
+use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 
 /// A value that can be defined as a user setting.
 ///
@@ -139,6 +137,8 @@ pub struct SettingsStore {
     )>,
 }
 
+impl Global for SettingsStore {}
+
 impl Default for SettingsStore {
     fn default() -> Self {
         SettingsStore {
@@ -207,7 +207,10 @@ impl SettingsStore {
                 user_values_stack = vec![user_settings];
             }
 
-            if let Some(release_settings) = &self.raw_user_settings.get(&*RELEASE_CHANNEL_NAME) {
+            if let Some(release_settings) = &self
+                .raw_user_settings
+                .get(&*release_channel::RELEASE_CHANNEL_NAME)
+            {
                 if let Some(release_settings) = setting_value
                     .deserialize_setting(&release_settings)
                     .log_err()
@@ -537,7 +540,10 @@ impl SettingsStore {
                 paths_stack.push(None);
             }
 
-            if let Some(release_settings) = &self.raw_user_settings.get(&*RELEASE_CHANNEL_NAME) {
+            if let Some(release_settings) = &self
+                .raw_user_settings
+                .get(&*release_channel::RELEASE_CHANNEL_NAME)
+            {
                 if let Some(release_settings) = setting_value
                     .deserialize_setting(&release_settings)
                     .log_err()

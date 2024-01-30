@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, HighlightStyle, SharedString};
+use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString};
 use parking_lot::RwLock;
 use refineable::Refineable;
 use util::ResultExt;
@@ -32,10 +32,7 @@ pub struct ThemeMeta {
 #[derive(Default, Deref, DerefMut)]
 struct GlobalThemeRegistry(Arc<ThemeRegistry>);
 
-/// Initializes the theme registry.
-pub fn init(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
-    cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
-}
+impl Global for GlobalThemeRegistry {}
 
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
@@ -57,6 +54,11 @@ impl ThemeRegistry {
     /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
     pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
         cx.default_global::<GlobalThemeRegistry>().0.clone()
+    }
+
+    /// Sets the global [`ThemeRegistry`].
+    pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
+        cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
     }
 
     pub fn new(assets: Box<dyn AssetSource>) -> Self {

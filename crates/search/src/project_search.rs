@@ -13,10 +13,10 @@ use editor::{
 use editor::{EditorElement, EditorStyle};
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Hsla, InteractiveElement,
-    IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString,
-    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
-    WhiteSpace, WindowContext,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global, Hsla,
+    InteractiveElement, IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel,
+    Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
+    WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -57,6 +57,8 @@ actions!(
 
 #[derive(Default)]
 struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
+
+impl Global for ActiveSettings {}
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());

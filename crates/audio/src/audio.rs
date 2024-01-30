@@ -1,12 +1,12 @@
 use assets::SoundRegistry;
-use gpui::{AppContext, AssetSource};
+use gpui::{AppContext, AssetSource, Global};
 use rodio::{OutputStream, OutputStreamHandle};
 use util::ResultExt;
 
 mod assets;
 
 pub fn init(source: impl AssetSource, cx: &mut AppContext) {
-    cx.set_global(SoundRegistry::new(source));
+    SoundRegistry::set_global(source, cx);
     cx.set_global(Audio::new());
 }
 
@@ -36,6 +36,8 @@ pub struct Audio {
     _output_stream: Option<OutputStream>,
     output_handle: Option<OutputStreamHandle>,
 }
+
+impl Global for Audio {}
 
 impl Audio {
     pub fn new() -> Self {

@@ -59,6 +59,7 @@ members = [
     "crates/project_symbols",
     "crates/quick_action_bar",
     "crates/recent_projects",
+    "crates/release_channel",
     "crates/rope",
     "crates/rpc",
     "crates/search",

@@ -17,6 +17,7 @@ collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 fs = { path = "../fs" }
 feature_flags = { path = "../feature_flags" }
+release_channel = { path = "../release_channel" }
 util = { path = "../util" }
 
 anyhow.workspace = true

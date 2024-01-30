@@ -7226,7 +7226,7 @@ async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContex
     init_test(cx, |_| {});
 
     let (copilot, copilot_lsp) = Copilot::fake(cx);
-    _ = cx.update(|cx| cx.set_global(copilot));
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
@@ -7479,7 +7479,7 @@ async fn test_copilot_completion_invalidation(
     init_test(cx, |_| {});
 
     let (copilot, copilot_lsp) = Copilot::fake(cx);
-    _ = cx.update(|cx| cx.set_global(copilot));
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
@@ -7543,7 +7543,7 @@ async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::T
     init_test(cx, |_| {});
 
     let (copilot, copilot_lsp) = Copilot::fake(cx);
-    _ = cx.update(|cx| cx.set_global(copilot));
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
 
     let buffer_1 = cx.new_model(|cx| {
         Buffer::new(
@@ -7660,7 +7660,7 @@ async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut gpui
     });
 
     let (copilot, copilot_lsp) = Copilot::fake(cx);
-    _ = cx.update(|cx| cx.set_global(copilot));
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(

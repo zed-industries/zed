@@ -661,6 +661,7 @@ dependencies = [
  "log",
  "menu",
  "project",
+ "release_channel",
  "schemars",
  "serde",
  "serde_derive",
@@ -1188,6 +1189,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "rand 0.8.5",
+ "release_channel",
  "rpc",
  "schemars",
  "serde",
@@ -1361,6 +1363,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "rand 0.8.5",
+ "release_channel",
  "rpc",
  "schemars",
  "serde",
@@ -1596,6 +1599,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "copilot",
  "ctor",
  "editor",
  "env_logger",
@@ -1606,6 +1610,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "release_channel",
  "serde",
  "serde_json",
  "settings",
@@ -2040,6 +2045,7 @@ dependencies = [
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
+ "release_channel",
  "serde",
  "serde_derive",
  "smol",
@@ -2512,6 +2518,7 @@ dependencies = [
  "postage",
  "project",
  "regex",
+ "release_channel",
  "serde",
  "serde_derive",
  "serde_json",
@@ -4907,9 +4914,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd8b5dd2ae5ed71462c540258bedcb51965123ad7e7ccf4b9a8cafaa4a63576d"
+checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 
 [[package]]
 name = "opaque-debug"
@@ -6109,6 +6116,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
 
 [[package]]
+name = "release_channel"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "once_cell",
+]
+
+[[package]]
 name = "rend"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6849,6 +6864,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.8.5",
+ "release_channel",
  "rpc",
  "rusqlite",
  "rust-embed",
@@ -6988,6 +7004,7 @@ dependencies = [
  "lazy_static",
  "postage",
  "pretty_assertions",
+ "release_channel",
  "rust-embed",
  "schemars",
  "serde",
@@ -9139,6 +9156,7 @@ dependencies = [
  "async-trait",
  "collections",
  "command_palette",
+ "copilot",
  "diagnostics",
  "editor",
  "futures 0.3.28",
@@ -9687,6 +9705,7 @@ dependencies = [
  "client",
  "collections",
  "db",
+ "derive_more",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -9840,6 +9859,7 @@ dependencies = [
  "rand 0.8.5",
  "recent_projects",
  "regex",
+ "release_channel",
  "rope",
  "rpc",
  "rsa 0.4.0",
