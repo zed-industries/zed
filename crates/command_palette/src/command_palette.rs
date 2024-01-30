@@ -236,7 +236,10 @@ impl PickerDelegate for CommandPaletteDelegate {
                     (interceptor.0)(&query, cx)
                 })
                 .flatten();
-            let release_channel = cx.update(|cx| ReleaseChannel::global(cx)).ok();
+            let release_channel = cx
+                .update(|cx| ReleaseChannel::try_global(cx))
+                .ok()
+                .flatten();
             if release_channel == Some(ReleaseChannel::Dev) {
                 if parse_zed_link(&query).is_some() {
                     intercept_result = Some(CommandInterceptResult {
