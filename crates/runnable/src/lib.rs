@@ -1,5 +1,6 @@
 //! Defines baseline interface of Runnables in Zed.
 // #![deny(missing_docs)]
+mod static_task;
 
 use anyhow::Result;
 use core::future::Future;
