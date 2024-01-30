@@ -18,7 +18,7 @@ use util::{
     ResultExt,
 };
 use workspace::{ModalView, Workspace};
-use zed_actions::OpenZedURL;
+use zed_actions::OpenZedUrl;
 
 actions!(command_palette, [Toggle]);
 
@@ -236,7 +236,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             if *RELEASE_CHANNEL == ReleaseChannel::Dev {
                 if parse_zed_link(&query).is_some() {
                     intercept_result = Some(CommandInterceptResult {
-                        action: OpenZedURL { url: query.clone() }.boxed_clone(),
+                        action: OpenZedUrl { url: query.clone() }.boxed_clone(),
                         string: query.clone(),
                         positions: vec![],
                     })
