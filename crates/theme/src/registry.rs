@@ -216,6 +216,7 @@ impl ThemeRegistry {
             .cloned()
     }
 
+    /// Loads the themes bundled with the Zed binary and adds them to the registry.
     pub fn load_bundled_themes(&self) {
         let theme_paths = self
             .assets
@@ -240,6 +241,7 @@ impl ThemeRegistry {
         }
     }
 
+    /// Loads the user themes from the specified directory and adds them to the registry.
     pub async fn load_user_themes(&self, themes_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
         let mut theme_paths = fs
             .read_dir(themes_path)
