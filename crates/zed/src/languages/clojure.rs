@@ -3,14 +3,10 @@ use async_trait::async_trait;
 pub use language::*;
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
-use std::{
-  any::Any,
-  env::consts,
-  path::PathBuf,
-};
+use std::{any::Any, env::consts, path::PathBuf};
 use util::{
-  fs::remove_matching,
-  github::{latest_github_release, GitHubLspBinaryVersion}
+    fs::remove_matching,
+    github::{latest_github_release, GitHubLspBinaryVersion},
 };
 
 #[derive(Copy, Clone)]
@@ -31,8 +27,7 @@ impl super::LspAdapter for ClojureLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
-            latest_github_release("clojure-lsp/clojure-lsp", false, delegate.http_client())
-                .await?;
+            latest_github_release("clojure-lsp/clojure-lsp", false, delegate.http_client()).await?;
         let platform = match consts::ARCH {
             "x86_64" => "amd64",
             "aarch64" => "aarch64",
@@ -63,43 +58,43 @@ impl super::LspAdapter for ClojureLspAdapter {
         let binary_path = folder_path.join("clojure-lsp");
 
         if fs::metadata(&binary_path).await.is_err() {
-          let mut response = delegate
-              .http_client()
-              .get(&version.url, Default::default(), true)
-              .await
-              .context("error downloading release")?;
-          let mut file = File::create(&zip_path)
-              .await
-              .with_context(|| format!("failed to create file {}", zip_path.display()))?;
-          if !response.status().is_success() {
-              Err(anyhow!(
-                  "download failed with status {}",
-                  response.status().to_string()
-              ))?;
-          }
-          futures::io::copy(response.body_mut(), &mut file).await?;
+            let mut response = delegate
+                .http_client()
+                .get(&version.url, Default::default(), true)
+                .await
+                .context("error downloading release")?;
+            let mut file = File::create(&zip_path)
+                .await
+                .with_context(|| format!("failed to create file {}", zip_path.display()))?;
+            if !response.status().is_success() {
+                Err(anyhow!(
+                    "download failed with status {}",
+                    response.status().to_string()
+                ))?;
+            }
+            futures::io::copy(response.body_mut(), &mut file).await?;
 
-          fs::create_dir_all(&folder_path)
-              .await
-              .with_context(|| format!("failed to create directory {}", folder_path.display()))?;
+            fs::create_dir_all(&folder_path)
+                .await
+                .with_context(|| format!("failed to create directory {}", folder_path.display()))?;
 
-          let unzip_status = smol::process::Command::new("unzip")
-              .arg(&zip_path)
-              .arg("-d")
-              .arg(&folder_path)
-              .output()
-              .await?
-              .status;
-          if !unzip_status.success() {
-              Err(anyhow!("failed to unzip elixir-ls archive"))?;
-          }
+            let unzip_status = smol::process::Command::new("unzip")
+                .arg(&zip_path)
+                .arg("-d")
+                .arg(&folder_path)
+                .output()
+                .await?
+                .status;
+            if !unzip_status.success() {
+                Err(anyhow!("failed to unzip elixir-ls archive"))?;
+            }
 
-          remove_matching(&container_dir, |entry| entry != folder_path).await;
+            remove_matching(&container_dir, |entry| entry != folder_path).await;
         }
 
         Ok(LanguageServerBinary {
-          path: binary_path,
-          arguments: vec![],
+            path: binary_path,
+            arguments: vec![],
         })
     }
 
@@ -110,7 +105,10 @@ impl super::LspAdapter for ClojureLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let binary_path = container_dir.join("bin").join("clojure-lsp");
         if binary_path.exists() {
-            Some(LanguageServerBinary {path: binary_path, arguments: vec![]})
+            Some(LanguageServerBinary {
+                path: binary_path,
+                arguments: vec![],
+            })
         } else {
             None
         }
@@ -122,7 +120,10 @@ impl super::LspAdapter for ClojureLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let binary_path = container_dir.join("bin").join("clojure-lsp");
         if binary_path.exists() {
-            Some(LanguageServerBinary {path: binary_path, arguments: vec!["--version".into()]})
+            Some(LanguageServerBinary {
+                path: binary_path,
+                arguments: vec!["--version".into()],
+            })
         } else {
             None
         }

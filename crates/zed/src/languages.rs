@@ -69,9 +69,9 @@ pub fn init(
     );
 
     language(
-      "clojure",
-      tree_sitter_clojure::language(),
-      vec![Arc::new(clojure::ClojureLspAdapter) as Arc<dyn LspAdapter>]
+        "clojure",
+        tree_sitter_clojure::language(),
+        vec![Arc::new(clojure::ClojureLspAdapter) as Arc<dyn LspAdapter>],
     );
     language(
         "cpp",
