@@ -13,7 +13,7 @@
         "cc": "code",
         "conf": "settings",
         "cpp": "code",
-        "css": "code",
+        "css": "css",
         "csv": "storage",
         "dat": "storage",
         "db": "storage",
@@ -128,6 +128,9 @@
         },
         "collapsed_folder": {
             "icon": "icons/file_icons/folder.svg"
+        },
+        "css": {
+          "icon": "icons/file_icons/css.svg"
         },
         "default": {
             "icon": "icons/file_icons/file.svg"
