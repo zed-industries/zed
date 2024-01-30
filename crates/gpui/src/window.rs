@@ -859,15 +859,14 @@ impl<'a> WindowContext<'a> {
 
             // At this point, we've established that this opaque layer is on top of the queried layer
             // and contains the position:
-            // - If the opaque layer is an extension of the queried layer, we don't want
-            // to consider the opaque layer to be on top and so we ignore it.
-            // - Else, we will bail early and say that the queried layer wasn't the top one.
-            let opaque_layer_is_extension_of_queried_layer = opaque_layer.len() >= layer.len()
-                && opaque_layer
-                    .iter()
-                    .zip(layer.iter())
-                    .all(|(a, b)| a.z_index == b.z_index);
-            if !opaque_layer_is_extension_of_queried_layer {
+            // If neither the opaque layer or the queried layer is an extension of the other then
+            // we know they are on different stacking orders, and return false.
+            let is_on_same_layer = opaque_layer
+                .iter()
+                .zip(layer.iter())
+                .all(|(a, b)| a.z_index == b.z_index);
+
+            if !is_on_same_layer {
                 return false;
             }
         }
@@ -908,15 +907,14 @@ impl<'a> WindowContext<'a> {
 
             // At this point, we've established that this opaque layer is on top of the queried layer
             // and contains the position:
-            // - If the opaque layer is an extension of the queried layer, we don't want
-            // to consider the opaque layer to be on top and so we ignore it.
-            // - Else, we will bail early and say that the queried layer wasn't the top one.
-            let opaque_layer_is_extension_of_queried_layer = opaque_layer.len() >= layer.len()
-                && opaque_layer
-                    .iter()
-                    .zip(layer.iter())
-                    .all(|(a, b)| a.z_index == b.z_index);
-            if !opaque_layer_is_extension_of_queried_layer {
+            // If neither the opaque layer or the queried layer is an extension of the other then
+            // we know they are on different stacking orders, and return false.
+            let is_on_same_layer = opaque_layer
+                .iter()
+                .zip(layer.iter())
+                .all(|(a, b)| a.z_index == b.z_index);
+
+            if !is_on_same_layer {
                 return false;
             }
         }

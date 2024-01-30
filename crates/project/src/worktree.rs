@@ -62,6 +62,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
+use text::BufferId;
 use util::{
     paths::{PathMatcher, HOME},
     ResultExt,
@@ -672,7 +673,7 @@ impl LocalWorktree {
 
     pub(crate) fn load_buffer(
         &mut self,
-        id: u64,
+        id: BufferId,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Model<Buffer>>> {
@@ -1043,7 +1044,7 @@ impl LocalWorktree {
         let buffer = buffer_handle.read(cx);
 
         let rpc = self.client.clone();
-        let buffer_id = buffer.remote_id();
+        let buffer_id: u64 = buffer.remote_id().into();
         let project_id = self.share.as_ref().map(|share| share.project_id);
 
         let text = buffer.as_rope().clone();
@@ -1481,7 +1482,7 @@ impl RemoteWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id();
+        let buffer_id = buffer.remote_id().into();
         let version = buffer.version();
         let rpc = self.client.clone();
         let project_id = self.project_id;
@@ -2840,7 +2841,7 @@ impl language::LocalFile for File {
 
     fn buffer_reloaded(
         &self,
-        buffer_id: u64,
+        buffer_id: BufferId,
         version: &clock::Global,
         fingerprint: RopeFingerprint,
         line_ending: LineEnding,
@@ -2853,7 +2854,7 @@ impl language::LocalFile for File {
                 .client
                 .send(proto::BufferReloaded {
                     project_id,
-                    buffer_id,
+                    buffer_id: buffer_id.into(),
                     version: serialize_version(version),
                     mtime: Some(mtime.into()),
                     fingerprint: serialize_fingerprint(fingerprint),
@@ -3220,10 +3221,7 @@ impl BackgroundScanner {
         }
     }
 
-    async fn run(
-        &mut self,
-        mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>,
-    ) {
+    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<fs::Event>>>>) {
         use futures::FutureExt as _;
 
         // Populate ignores above the root.
@@ -3270,9 +3268,10 @@ impl BackgroundScanner {
         // have the previous state loaded yet.
         self.phase = BackgroundScannerPhase::EventsReceivedDuringInitialScan;
         if let Poll::Ready(Some(events)) = futures::poll!(fs_events_rx.next()) {
-            let mut paths = events.into_iter().map(|e| e.path).collect::<Vec<_>>();
+            let mut paths = fs::fs_events_paths(events);
+
             while let Poll::Ready(Some(more_events)) = futures::poll!(fs_events_rx.next()) {
-                paths.extend(more_events.into_iter().map(|e| e.path));
+                paths.extend(fs::fs_events_paths(more_events));
             }
             self.process_events(paths).await;
         }
@@ -3311,9 +3310,10 @@ impl BackgroundScanner {
 
                 events = fs_events_rx.next().fuse() => {
                     let Some(events) = events else { break };
-                    let mut paths = events.into_iter().map(|e| e.path).collect::<Vec<_>>();
+                    let mut paths = fs::fs_events_paths(events);
+
                     while let Poll::Ready(Some(more_events)) = futures::poll!(fs_events_rx.next()) {
-                        paths.extend(more_events.into_iter().map(|e| e.path));
+                        paths.extend(fs::fs_events_paths(more_events));
                     }
                     self.process_events(paths.clone()).await;
                 }

@@ -59,7 +59,7 @@ pub(crate) struct Frame {
     pub(crate) scene: Scene,
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
-    pub(crate) next_stacking_order_id: u16,
+    pub(crate) next_stacking_order_ids: Vec<u16>,
     pub(crate) next_root_z_index: u16,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -85,7 +85,7 @@ impl Frame {
             scene: Scene::default(),
             depth_map: Vec::new(),
             z_index_stack: StackingOrder::default(),
-            next_stacking_order_id: 0,
+            next_stacking_order_ids: vec![0],
             next_root_z_index: 0,
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -106,7 +106,7 @@ impl Frame {
         self.mouse_listeners.values_mut().for_each(Vec::clear);
         self.dispatch_tree.clear();
         self.depth_map.clear();
-        self.next_stacking_order_id = 0;
+        self.next_stacking_order_ids = vec![0];
         self.next_root_z_index = 0;
         self.reused_views.clear();
         self.scene.clear();
@@ -351,8 +351,22 @@ impl<'a> ElementContext<'a> {
             }
         }
 
-        debug_assert!(next_stacking_order_id >= self.window.next_frame.next_stacking_order_id);
-        self.window.next_frame.next_stacking_order_id = next_stacking_order_id;
+        debug_assert!(
+            next_stacking_order_id
+                >= self
+                    .window
+                    .next_frame
+                    .next_stacking_order_ids
+                    .last()
+                    .copied()
+                    .unwrap()
+        );
+        *self
+            .window
+            .next_frame
+            .next_stacking_order_ids
+            .last_mut()
+            .unwrap() = next_stacking_order_id;
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -434,8 +448,13 @@ impl<'a> ElementContext<'a> {
         };
 
         let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
-        let new_stacking_order_id =
-            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let new_stacking_order_id = post_inc(
+            self.window_mut()
+                .next_frame
+                .next_stacking_order_ids
+                .last_mut()
+                .unwrap(),
+        );
         let new_context = StackingContext {
             z_index: new_root_z_index,
             id: new_stacking_order_id,
@@ -455,8 +474,14 @@ impl<'a> ElementContext<'a> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn with_z_index<R>(&mut self, z_index: u16, f: impl FnOnce(&mut Self) -> R) -> R {
-        let new_stacking_order_id =
-            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let new_stacking_order_id = post_inc(
+            self.window_mut()
+                .next_frame
+                .next_stacking_order_ids
+                .last_mut()
+                .unwrap(),
+        );
+        self.window_mut().next_frame.next_stacking_order_ids.push(0);
         let new_context = StackingContext {
             z_index,
             id: new_stacking_order_id,
@@ -465,6 +490,8 @@ impl<'a> ElementContext<'a> {
         self.window_mut().next_frame.z_index_stack.push(new_context);
         let result = f(self);
         self.window_mut().next_frame.z_index_stack.pop();
+
+        self.window_mut().next_frame.next_stacking_order_ids.pop();
 
         result
     }

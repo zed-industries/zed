@@ -58,6 +58,7 @@ waker-fn = "1.1.0"
 slotmap = "1.0.6"
 schemars.workspace = true
 bitflags = "2.4.0"
+anyhow.workspace = true
 
 [dev-dependencies]
 backtrace = "0.3"
@@ -74,7 +75,6 @@ cbindgen = "0.26.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 media = { path = "../media" }
-anyhow.workspace = true
 block = "0.1"
 cocoa = "0.25"
 core-foundation = { version = "0.9.3", features = ["with-uuid"] }

@@ -166,6 +166,7 @@ impl NodeRuntime for RealNodeRuntime {
 
             if let Some(directory) = directory {
                 command.current_dir(directory);
+                command.args(["--prefix".into(), directory.to_path_buf()]);
             }
 
             command.output().await.map_err(|e| anyhow!("{e}"))

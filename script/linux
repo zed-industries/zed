@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+# if not on Linux, do nothing
+[[ $(uname) == "Linux" ]] || exit 0
+
+# if sudo is not installed, define an empty alias
+maysudo=$(command -v sudo || true)
+export maysudo
+
+# Ubuntu, Debian, etc.
+apt=$(command -v apt-get || true)
+deps=(
+  libasound2-dev
+)
+if [[ -n $apt ]]; then
+  $maysudo "$apt" install -y "${deps[@]}"
+  exit 0
+fi
+
+# Fedora, CentOS, RHEL, etc.
+dnf=$(command -v dnf || true)
+deps=(
+  alsa-lib-devel
+)
+if [[ -n $dnf ]]; then
+  $maysudo "$dnf" install -y "${deps[@]}"
+  exit 0
+fi
+
+# Arch, Manjaro, etc.
+pacman=$(command -v pacman || true)
+deps=(
+  alsa-lib
+)
+if [[ -n $pacman ]]; then
+  $maysudo "$pacman" -S --noconfirm "${deps[@]}"
+  exit 0
+fi
+
+echo "Unsupported Linux distribution in script/linux"

@@ -1,21 +1,26 @@
 [files]
 ignore-files = true
+ignore-hidden = false
 extend-exclude = [
+    ".git/",
     # glsl isn't recognized by this tool
-    "crates/zed/src/languages/glsl/*",
+    "crates/zed/src/languages/glsl/",
     # File suffixes aren't typos
     "assets/icons/file_icons/file_types.json",
     # Not our typos
-    "crates/live_kit_server/*",
+    "crates/live_kit_server/",
     # Vim makes heavy use of partial typing tables
-    "crates/vim/*",
+    "crates/vim/",
     # Editor and file finder rely on partial typing and custom in-string syntax
     "crates/file_finder/src/file_finder_tests.rs",
     "crates/editor/src/editor_tests.rs",
-    # :/
-    "crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql",
 ]
 
 [default]
-extend-ignore-re = ["ba"]
+extend-ignore-re = [
+    '"ba"',
+    ":ba\\|z",
+    # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
+    "ADD COLUMN enviroment TEXT",
+]
 check-filename = true

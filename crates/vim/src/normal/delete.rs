@@ -472,4 +472,11 @@ mod test {
         the ˇlazy dog"})
             .await;
     }
+
+    #[gpui::test]
+    async fn test_delete_to_adjacent_character(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible("ˇax", ["d", "t", "x"]).await;
+        cx.assert_neovim_compatible("aˇx", ["d", "t", "x"]).await;
+    }
 }

@@ -2676,17 +2676,9 @@ mod tests {
     #[gpui::test]
     fn test_bundled_settings_and_themes(cx: &mut AppContext) {
         cx.text_system()
-            .add_fonts(&[
-                Assets
-                    .load("fonts/zed-sans/zed-sans-extended.ttf")
-                    .unwrap()
-                    .to_vec()
-                    .into(),
-                Assets
-                    .load("fonts/zed-mono/zed-mono-extended.ttf")
-                    .unwrap()
-                    .to_vec()
-                    .into(),
+            .add_fonts(vec![
+                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap(),
+                Assets.load("fonts/zed-mono/zed-mono-extended.ttf").unwrap(),
             ])
             .unwrap();
         let themes = ThemeRegistry::default();
@@ -2698,7 +2690,7 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
-        for theme_name in themes.list(false).map(|meta| meta.name) {
+        for theme_name in themes.list(false).into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
             if theme.name == ThemeSettings::get(None, cx).active_theme.name {

@@ -9,6 +9,7 @@ use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
 use util::{
+    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
     ResultExt,
@@ -31,8 +32,7 @@ impl LspAdapter for RustLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
-            latest_github_release("rust-analyzer/rust-analyzer", false, delegate.http_client())
-                .await?;
+            latest_github_release("rust-lang/rust-analyzer", false, delegate.http_client()).await?;
         let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
         let asset = release
             .assets
@@ -272,7 +272,7 @@ impl LspAdapter for RustLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -283,7 +283,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             path: last.ok_or_else(|| anyhow!("no cached binary"))?,
             arguments: Default::default(),
         })
-    })()
+    })
     .await
     .log_err()
 }
@@ -297,6 +297,7 @@ mod tests {
     use gpui::{Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
+    use text::BufferId;
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -509,8 +510,8 @@ mod tests {
         let language = crate::languages::language("rust", tree_sitter_rust::language(), None).await;
 
         cx.new_model(|cx| {
-            let mut buffer =
-                Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
+            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
+                .with_language(language, cx);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);

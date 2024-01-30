@@ -314,7 +314,7 @@ mod tests {
     use std::assert_eq;
 
     use super::*;
-    use text::Buffer;
+    use text::{Buffer, BufferId};
     use unindent::Unindent as _;
 
     #[test]
@@ -333,7 +333,7 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(0, 0, buffer_text);
+        let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::new();
         smol::block_on(diff.update(&diff_base, &buffer));
         assert_hunks(
@@ -393,7 +393,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(0, 0, buffer_text);
+        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::new();
         smol::block_on(diff.update(&diff_base, &buffer));
         assert_eq!(diff.hunks(&buffer).count(), 8);

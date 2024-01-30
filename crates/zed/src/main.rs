@@ -38,7 +38,7 @@ use std::{
     },
     thread,
 };
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
     channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
@@ -149,7 +149,7 @@ fn main() {
         cx.set_global(client.clone());
 
         zed::init(cx);
-        theme::init(theme::LoadThemes::All, cx);
+        theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
         command_palette::init(cx);
@@ -163,6 +163,36 @@ fn main() {
             cx,
         );
         assistant::init(cx);
+
+        // TODO: Should we be loading the themes in a different spot?
+        cx.spawn({
+            let fs = fs.clone();
+            |cx| async move {
+                if let Some(theme_registry) =
+                    cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                {
+                    if let Some(()) = theme_registry
+                        .load_user_themes(&paths::THEMES_DIR.clone(), fs)
+                        .await
+                        .log_err()
+                    {
+                        cx.update(|cx| {
+                            let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+                            if let Some(requested_theme) = theme_settings.requested_theme.clone() {
+                                if let Some(_theme) =
+                                    theme_settings.switch_theme(&requested_theme, cx)
+                                {
+                                    ThemeSettings::override_global(theme_settings, cx);
+                                }
+                            }
+                        })
+                        .log_err();
+                    }
+                }
+            }
+        })
+        .detach();
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
@@ -815,14 +845,14 @@ fn load_embedded_fonts(cx: &AppContext) {
             }
 
             scope.spawn(async {
-                let font_bytes = asset_source.load(font_path).unwrap().to_vec();
-                embedded_fonts.lock().push(Arc::from(font_bytes));
+                let font_bytes = asset_source.load(font_path).unwrap();
+                embedded_fonts.lock().push(font_bytes);
             });
         }
     }));
 
     cx.text_system()
-        .add_fonts(&embedded_fonts.into_inner())
+        .add_fonts(embedded_fonts.into_inner())
         .unwrap();
 }
 
