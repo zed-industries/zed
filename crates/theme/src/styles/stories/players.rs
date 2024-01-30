@@ -1,4 +1,4 @@
-use gpui::{div, img, px, IntoElement, ParentElement, Render, SharedUrl, Styled, ViewContext};
+use gpui::{div, img, px, IntoElement, ParentElement, Render, SharedUri, Styled, ViewContext};
 use story::Story;
 
 use crate::{ActiveTheme, PlayerColors};
@@ -53,7 +53,7 @@ impl Render for PlayerStory {
                             .border_2()
                             .border_color(player.cursor)
                             .child(
-                                img(SharedUrl::network(
+                                img(SharedUri::network(
                                     "https://avatars.githubusercontent.com/u/1714999?v=4",
                                 ))
                                 .rounded_full()
@@ -84,7 +84,7 @@ impl Render for PlayerStory {
                                     .border_color(player.background)
                                     .size(px(28.))
                                     .child(
-                                        img(SharedUrl::network(
+                                        img(SharedUri::network(
                                             "https://avatars.githubusercontent.com/u/1714999?v=4",
                                         ))
                                         .rounded_full()
@@ -102,7 +102,7 @@ impl Render for PlayerStory {
                                     .border_color(player.background)
                                     .size(px(28.))
                                     .child(
-                                        img(SharedUrl::network(
+                                        img(SharedUri::network(
                                             "https://avatars.githubusercontent.com/u/1714999?v=4",
                                         ))
                                         .rounded_full()
@@ -120,7 +120,7 @@ impl Render for PlayerStory {
                                     .border_color(player.background)
                                     .size(px(28.))
                                     .child(
-                                        img(SharedUrl::network(
+                                        img(SharedUri::network(
                                             "https://avatars.githubusercontent.com/u/1714999?v=4",
                                         ))
                                         .rounded_full()
