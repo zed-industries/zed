@@ -39,7 +39,7 @@
         "gitignore": "vcs",
         "gitmodules": "vcs",
         "gitkeep": "vcs",
-        "go": "code",
+        "go": "go",
         "h": "code",
         "handlebars": "code",
         "hbs": "template",
@@ -152,6 +152,9 @@
         },
         "expanded_folder": {
             "icon": "icons/file_icons/folder_open.svg"
+        },
+        "go": {
+            "icon": "icons/file_icons/go.svg"
         },
         "haskell": {
             "icon": "icons/file_icons/haskell.svg"
