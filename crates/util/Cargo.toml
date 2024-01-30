@@ -31,6 +31,9 @@ git2 = { workspace = true, optional = true }
 dirs = "3.0"
 take-until = "0.2.0"
 
+[target.'cfg(windows)'.dependencies]
+tendril = "0.4.3"
+
 [dev-dependencies]
 tempfile.workspace = true
 git2.workspace = true
