@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::AppContext;
+use gpui::{AppContext, AsyncAppContext};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -13,7 +13,9 @@ use std::{
     str,
     sync::Arc,
 };
-use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
+use util::{
+    channel::RELEASE_CHANNEL_NAME, merge_non_null_json_value_into, RangeExt, ResultExt as _,
+};
 
 /// A value that can be defined as a user setting.
 ///
@@ -100,6 +102,14 @@ pub trait Settings: 'static + Send + Sync {
         Self: Sized,
     {
         cx.global::<SettingsStore>().get(None)
+    }
+
+    #[track_caller]
+    fn try_read_global<'a, R>(cx: &'a AsyncAppContext, f: impl FnOnce(&Self) -> R) -> Option<R>
+    where
+        Self: Sized,
+    {
+        cx.try_read_global(|s: &SettingsStore, _| f(s.get(None)))
     }
 
     #[track_caller]
@@ -195,6 +205,15 @@ impl SettingsStore {
                 .log_err()
             {
                 user_values_stack = vec![user_settings];
+            }
+
+            if let Some(release_settings) = &self.raw_user_settings.get(&*RELEASE_CHANNEL_NAME) {
+                if let Some(release_settings) = setting_value
+                    .deserialize_setting(&release_settings)
+                    .log_err()
+                {
+                    user_values_stack.push(release_settings);
+                }
             }
 
             if let Some(setting) = setting_value
@@ -484,6 +503,15 @@ impl SettingsStore {
             }
         }
 
+        for release_stage in ["dev", "nightly", "stable", "preview"] {
+            let schema = combined_schema.schema.clone();
+            combined_schema
+                .schema
+                .object()
+                .properties
+                .insert(release_stage.to_string(), schema.into());
+        }
+
         serde_json::to_value(&combined_schema).unwrap()
     }
 
@@ -507,6 +535,16 @@ impl SettingsStore {
             {
                 user_settings_stack.push(user_settings);
                 paths_stack.push(None);
+            }
+
+            if let Some(release_settings) = &self.raw_user_settings.get(&*RELEASE_CHANNEL_NAME) {
+                if let Some(release_settings) = setting_value
+                    .deserialize_setting(&release_settings)
+                    .log_err()
+                {
+                    user_settings_stack.push(release_settings);
+                    paths_stack.push(None);
+                }
             }
 
             // If the global settings file changed, reload the global value for the field.

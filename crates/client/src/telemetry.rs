@@ -1,10 +1,9 @@
 mod event_coalescer;
 
-use crate::{TelemetrySettings, ZED_SERVER_URL};
+use crate::TelemetrySettings;
 use chrono::{DateTime, Utc};
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
-use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
@@ -13,7 +12,7 @@ use sysinfo::{
     CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt,
 };
 use tempfile::NamedTempFile;
-use util::http::HttpClient;
+use util::http::{HttpClient, ZedHttpClient};
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::{channel::ReleaseChannel, TryFutureExt};
@@ -21,7 +20,7 @@ use util::{channel::ReleaseChannel, TryFutureExt};
 use self::event_coalescer::EventCoalescer;
 
 pub struct Telemetry {
-    http_client: Arc<dyn HttpClient>,
+    http_client: Arc<ZedHttpClient>,
     executor: BackgroundExecutor,
     state: Arc<Mutex<TelemetryState>>,
 }
@@ -41,12 +40,6 @@ struct TelemetryState {
     first_event_date_time: Option<DateTime<Utc>>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
-}
-
-const EVENTS_URL_PATH: &'static str = "/api/events";
-
-lazy_static! {
-    static ref EVENTS_URL: String = format!("{}{}", *ZED_SERVER_URL, EVENTS_URL_PATH);
 }
 
 #[derive(Serialize, Debug)]
@@ -149,7 +142,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 impl Telemetry {
-    pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
+    pub fn new(client: Arc<ZedHttpClient>, cx: &mut AppContext) -> Arc<Self> {
         let release_channel = cx
             .try_global::<ReleaseChannel>()
             .map(|release_channel| release_channel.display_name());
@@ -548,7 +541,7 @@ impl Telemetry {
                     }
 
                     this.http_client
-                        .post_json(EVENTS_URL.as_str(), json_bytes.into())
+                        .post_json(&this.http_client.zed_url("/api/events"), json_bytes.into())
                         .await?;
                     anyhow::Ok(())
                 }

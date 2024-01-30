@@ -42,7 +42,7 @@ use theme::{ActiveTheme, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
     channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
-    http::{self, HttpClient},
+    http::{self, HttpClient, ZedHttpClient},
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt,
 };
@@ -59,7 +59,6 @@ fn main() {
     menu::init();
     zed_actions::init();
 
-    let http = http::client();
     init_paths();
     init_logger();
 
@@ -132,6 +131,9 @@ fn main() {
         cx.set_global(store);
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
+        client::init_settings(cx);
+
+        let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
@@ -201,7 +203,20 @@ fn main() {
         languages.set_theme(cx.theme().clone());
         cx.observe_global::<SettingsStore>({
             let languages = languages.clone();
-            move |cx| languages.set_theme(cx.theme().clone())
+            let http = http.clone();
+            let client = client.clone();
+
+            move |cx| {
+                languages.set_theme(cx.theme().clone());
+                let new_host = &client::ClientSettings::get_global(cx).server_url;
+                let mut host = http.zed_host.lock();
+                if &*host != new_host {
+                    *host = new_host.clone();
+                    if client.status().borrow().is_connected() {
+                        client.reconnect(&cx.to_async());
+                    }
+                }
+            }
         })
         .detach();
 
@@ -230,7 +245,7 @@ fn main() {
         cx.set_global(Arc::downgrade(&app_state));
 
         audio::init(Assets, cx);
-        auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
+        auto_update::init(http.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
         recent_projects::init(cx);
@@ -634,7 +649,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
     }));
 }
 
-fn upload_panics_and_crashes(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
+fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
         .spawn(async move {
@@ -650,10 +665,10 @@ fn upload_panics_and_crashes(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
 
 /// upload panics to us (via zed.dev)
 async fn upload_previous_panics(
-    http: Arc<dyn HttpClient>,
+    http: Arc<ZedHttpClient>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
-    let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+    let panic_report_url = http.zed_url("/api/panic");
     let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
     while let Some(child) = children.next().await {
         let child = child?;
@@ -717,7 +732,7 @@ static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)
 async fn upload_previous_crashes(
-    http: Arc<dyn HttpClient>,
+    http: Arc<ZedHttpClient>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
     if !telemetry_settings.diagnostics {
@@ -728,7 +743,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = format!("{}/api/crash", &*client::ZED_SERVER_URL);
+    let crash_report_url = http.zed_url("/api/crash");
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;

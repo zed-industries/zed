@@ -30,6 +30,7 @@ serde_json.workspace = true
 git2 = { workspace = true, optional = true }
 dirs = "3.0"
 take-until = "0.2.0"
+parking_lot.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"

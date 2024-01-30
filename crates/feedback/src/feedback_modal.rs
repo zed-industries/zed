@@ -2,7 +2,7 @@ use std::{ops::RangeInclusive, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail};
 use bitflags::bitflags;
-use client::{Client, ZED_SERVER_URL};
+use client::Client;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
@@ -16,7 +16,7 @@ use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
-use util::ResultExt;
+use util::{http::HttpClient, ResultExt};
 use workspace::{ModalView, Toast, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedRepo};
@@ -293,12 +293,12 @@ impl FeedbackModal {
             }
         }
 
-        let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
         let telemetry = zed_client.telemetry();
         let metrics_id = telemetry.metrics_id();
         let installation_id = telemetry.installation_id();
         let is_staff = telemetry.is_staff();
         let http_client = zed_client.http_client();
+        let feedback_endpoint = http_client.zed_url("/api/feedback");
         let request = FeedbackRequestBody {
             feedback_text: &feedback_text,
             email,
