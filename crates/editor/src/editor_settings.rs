@@ -8,6 +8,7 @@ pub struct EditorSettings {
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_completion_documentation: bool,
+    pub completion_documentation_secondary_query_debounce: u64,
     pub use_on_type_format: bool,
     pub scrollbar: Scrollbar,
     pub relative_line_numbers: bool,
@@ -72,6 +73,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub show_completion_documentation: Option<bool>,
+    /// The debounce delay before re-querying the language server for completion
+    /// documentation when not included in original completion list.
+    ///
+    /// Default: 300 ms
+    pub completion_documentation_secondary_query_debounce: Option<u64>,
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     ///

@@ -19,6 +19,7 @@ mod editor_settings;
 mod element;
 mod inlay_hint_cache;
 
+mod debounced_delay;
 mod git;
 mod highlight_matching_bracket;
 mod hover_popover;
@@ -45,6 +46,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use copilot::Copilot;
+use debounced_delay::DebouncedDelay;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
@@ -85,7 +87,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -383,6 +385,7 @@ pub struct Editor {
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
+    completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
@@ -701,6 +704,7 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
+    selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
 }
 
 impl CompletionsMenu {
@@ -741,30 +745,31 @@ impl CompletionsMenu {
     }
 
     fn pre_resolve_completion_documentation(
-        &self,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        matches: Arc<[StringMatch]>,
         editor: &Editor,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<Task<()>> {
+    ) -> Task<()> {
         let settings = EditorSettings::get_global(cx);
         if !settings.show_completion_documentation {
-            return None;
+            return Task::ready(());
         }
 
         let Some(provider) = editor.completion_provider.as_ref() else {
-            return None;
+            return Task::ready(());
         };
 
         let resolve_task = provider.resolve_completions(
-            self.matches.iter().map(|m| m.candidate_id).collect(),
-            self.completions.clone(),
+            matches.iter().map(|m| m.candidate_id).collect(),
+            completions.clone(),
             cx,
         );
 
-        return Some(cx.spawn(move |this, mut cx| async move {
+        return cx.spawn(move |this, mut cx| async move {
             if let Some(true) = resolve_task.await.log_err() {
                 this.update(&mut cx, |_, cx| cx.notify()).ok();
             }
-        }));
+        });
     }
 
     fn attempt_resolve_selected_completion_documentation(
@@ -785,12 +790,20 @@ impl CompletionsMenu {
         let resolve_task = project.update(cx, |project, cx| {
             project.resolve_completions(vec![completion_index], self.completions.clone(), cx)
         });
-        cx.spawn(move |this, mut cx| async move {
-            if let Some(true) = resolve_task.await.log_err() {
-                this.update(&mut cx, |_, cx| cx.notify()).ok();
-            }
-        })
-        .detach();
+
+        let delay_ms =
+            EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
+        let delay = Duration::from_millis(delay_ms);
+
+        self.selected_completion_documentation_resolve_debounce
+            .lock()
+            .fire_new(delay, cx, |_, cx| {
+                cx.spawn(move |this, mut cx| async move {
+                    if let Some(true) = resolve_task.await.log_err() {
+                        this.update(&mut cx, |_, cx| cx.notify()).ok();
+                    }
+                })
+            });
     }
 
     fn visible(&self) -> bool {
@@ -1434,6 +1447,7 @@ impl Editor {
             mouse_context_menu: None,
             completion_tasks: Default::default(),
             next_completion_id: 0,
+            completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
             next_inlay_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
@@ -3143,7 +3157,7 @@ impl Editor {
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let completions = completions.await.log_err();
-                let (menu, pre_resolve_task) = if let Some(completions) = completions {
+                let menu = if let Some(completions) = completions {
                     let mut menu = CompletionsMenu {
                         id,
                         initial_position: position,
@@ -3163,23 +3177,40 @@ impl Editor {
                         matches: Vec::new().into(),
                         selected_item: 0,
                         scroll_handle: UniformListScrollHandle::new(),
+                        selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
+                            DebouncedDelay::new(),
+                        )),
                     };
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
                     if menu.matches.is_empty() {
-                        (None, None)
+                        None
                     } else {
-                        let pre_resolve_task = this
-                            .update(&mut cx, |editor, cx| {
-                                menu.pre_resolve_completion_documentation(editor, cx)
-                            })
-                            .ok()
-                            .flatten();
-                        (Some(menu), pre_resolve_task)
+                        this.update(&mut cx, |editor, cx| {
+                            let completions = menu.completions.clone();
+                            let matches = menu.matches.clone();
+
+                            let delay_ms = EditorSettings::get_global(cx)
+                                .completion_documentation_secondary_query_debounce;
+                            let delay = Duration::from_millis(delay_ms);
+
+                            editor
+                                .completion_documentation_pre_resolve_debounce
+                                .fire_new(delay, cx, |editor, cx| {
+                                    CompletionsMenu::pre_resolve_completion_documentation(
+                                        completions,
+                                        matches,
+                                        editor,
+                                        cx,
+                                    )
+                                });
+                        })
+                        .ok();
+                        Some(menu)
                     }
                 } else {
-                    (None, None)
+                    None
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -3214,10 +3245,6 @@ impl Editor {
                         }
                     }
                 })?;
-
-                if let Some(pre_resolve_task) = pre_resolve_task {
-                    pre_resolve_task.await;
-                }
 
                 Ok::<_, anyhow::Error>(())
             }

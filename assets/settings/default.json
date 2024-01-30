@@ -62,6 +62,9 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
+  // The debounce delay before re-querying the language server for completion
+  // documentation when not included in original completion list.
+  "completion_documentation_secondary_query_debounce": 300,
   // Whether to show wrap guides in the editor. Setting this to true will
   // show a guide at the 'preferred_line_length' value if softwrap is set to
   // 'preferred_line_length', and will show any additional guides as specified

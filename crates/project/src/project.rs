@@ -1,3 +1,4 @@
+pub mod debounced_delay;
 mod ignore;
 pub mod lsp_command;
 pub mod lsp_ext_command;
@@ -17,11 +18,9 @@ use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
+use debounced_delay::DebouncedDelay;
 use futures::{
-    channel::{
-        mpsc::{self, UnboundedReceiver},
-        oneshot,
-    },
+    channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -140,7 +139,7 @@ pub struct Project {
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<BufferId>,
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
-    git_diff_debouncer: DelayedDebounced,
+    git_diff_debouncer: DebouncedDelay,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<Result<()>>,
@@ -154,52 +153,9 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
-struct DelayedDebounced {
-    task: Option<Task<()>>,
-    cancel_channel: Option<oneshot::Sender<()>>,
-}
-
 pub enum LanguageServerToQuery {
     Primary,
     Other(LanguageServerId),
-}
-
-impl DelayedDebounced {
-    fn new() -> DelayedDebounced {
-        DelayedDebounced {
-            task: None,
-            cancel_channel: None,
-        }
-    }
-
-    fn fire_new<F>(&mut self, delay: Duration, cx: &mut ModelContext<Project>, func: F)
-    where
-        F: 'static + Send + FnOnce(&mut Project, &mut ModelContext<Project>) -> Task<()>,
-    {
-        if let Some(channel) = self.cancel_channel.take() {
-            _ = channel.send(());
-        }
-
-        let (sender, mut receiver) = oneshot::channel::<()>();
-        self.cancel_channel = Some(sender);
-
-        let previous_task = self.task.take();
-        self.task = Some(cx.spawn(move |project, mut cx| async move {
-            let mut timer = cx.background_executor().timer(delay).fuse();
-            if let Some(previous_task) = previous_task {
-                previous_task.await;
-            }
-
-            futures::select_biased! {
-                _ = receiver => return,
-                    _ = timer => {}
-            }
-
-            if let Ok(task) = project.update(&mut cx, |project, cx| (func)(project, cx)) {
-                task.await;
-            }
-        }));
-    }
 }
 
 struct LspBufferSnapshot {
@@ -670,7 +626,7 @@ impl Project {
                 last_workspace_edits_by_language_server: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
-                git_diff_debouncer: DelayedDebounced::new(),
+                git_diff_debouncer: DebouncedDelay::new(),
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
@@ -774,7 +730,7 @@ impl Project {
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
-                git_diff_debouncer: DelayedDebounced::new(),
+                git_diff_debouncer: DebouncedDelay::new(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
