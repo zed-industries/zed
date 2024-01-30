@@ -10,10 +10,6 @@ use rodio::{
 
 type Sound = Buffered<SamplesConverter<Decoder<Cursor<Vec<u8>>>, f32>>;
 
-pub(crate) fn init(source: impl AssetSource, cx: &mut AppContext) {
-    cx.set_global(GlobalSoundRegistry(SoundRegistry::new(source)));
-}
-
 pub struct SoundRegistry {
     cache: Arc<parking_lot::Mutex<HashMap<String, Sound>>>,
     assets: Box<dyn AssetSource>,
@@ -33,6 +29,10 @@ impl SoundRegistry {
 
     pub fn global(cx: &AppContext) -> Arc<Self> {
         cx.global::<GlobalSoundRegistry>().0.clone()
+    }
+
+    pub(crate) fn set_global(source: impl AssetSource, cx: &mut AppContext) {
+        cx.set_global(GlobalSoundRegistry(SoundRegistry::new(source)));
     }
 
     pub fn get(&self, name: &str) -> Result<impl Source<Item = f32>> {

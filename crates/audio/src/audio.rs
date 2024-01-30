@@ -6,7 +6,7 @@ use util::ResultExt;
 mod assets;
 
 pub fn init(source: impl AssetSource, cx: &mut AppContext) {
-    assets::init(source, cx);
+    SoundRegistry::set_global(source, cx);
     cx.set_global(Audio::new());
 }
 

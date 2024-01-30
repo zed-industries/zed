@@ -34,11 +34,6 @@ struct GlobalThemeRegistry(Arc<ThemeRegistry>);
 
 impl Global for GlobalThemeRegistry {}
 
-/// Initializes the theme registry.
-pub fn init(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
-    cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
-}
-
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
 }
@@ -59,6 +54,11 @@ impl ThemeRegistry {
     /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
     pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
         cx.default_global::<GlobalThemeRegistry>().0.clone()
+    }
+
+    /// Sets the global [`ThemeRegistry`].
+    pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
+        cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
     }
 
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
