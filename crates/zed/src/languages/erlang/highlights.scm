@@ -93,6 +93,10 @@
 
 (expr_args "(" @open ")" @close)
 
+(external_fun
+    module: (module name: (atom) @type)
+    fun: (atom) @function)
+
 (remote
     module: (remote_module module: (atom) @type)
     fun: (atom) @function)
