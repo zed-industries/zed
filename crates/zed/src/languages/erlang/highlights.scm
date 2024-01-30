@@ -4,35 +4,71 @@
     "."
 ] @delimeter
 
-;; NOTE: `cond` and `let` are not covered by tree-sitter-erlang.
 [
     "after"
-    "and"
-    "andalso"
-    "band"
     "begin"
-    "bnot"
-    "bor"
-    "bsl"
-    "bsr"
-    "bxor"
     "case"
     "catch"
-    "div"
     "end"
     "fun"
     "if"
     "maybe"
-    "not"
     "of"
-    "or"
-    "orelse"
     "receive"
-    "rem"
     "try"
     "when"
-    "xor"
 ] @keyword
+
+; Term Comparisons
+[
+    "=="
+    "/="
+    "=<"
+    "<"
+    ">="
+    ">"
+    "=:="
+    "=/="
+] @operator
+
+; Arithmetic Expressions
+[
+    "+"
+    "-"
+    "*"
+    "/"
+    "bnot"
+    "div"
+    "rem"
+    "band"
+    "bor"
+    "bxor"
+    "bsl"
+    "bsr"
+] @operator
+
+; Boolean Expressions
+[
+    "and"
+    "or"
+    "not"
+    "xor"
+] @operator
+
+; Short-Circuit Expressions
+[
+    "andalso"
+    "orelse"
+] @operator
+
+; List Operations
+[
+    "++"
+    "--"
+] @operator
+
+; Send Expressions
+"!" @operator
 
 [
     (atom)
@@ -45,5 +81,20 @@
 ] @number
 
 (var) @variable
+
+(function_clause
+    name: _ @function)
+
+[
+    (module_attribute "(" @open ")" @close)
+    (pp_define "(" @open ")" @close)
+    (spec)
+] @keyword
+
+(expr_args "(" @open ")" @close)
+
+(remote
+    module: (remote_module module: (atom) @type)
+    fun: (atom) @function)
 
 (comment) @comment
