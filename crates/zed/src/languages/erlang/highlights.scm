@@ -19,7 +19,6 @@
     "when"
 ] @keyword
 
-; Term Comparisons
 [
     "=="
     "/="
