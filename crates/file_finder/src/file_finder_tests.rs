@@ -1087,8 +1087,8 @@ async fn test_select_first_history_file_by_default(cx: &mut gpui::TestAppContext
     open_close_queried_buffer("2", 1, "2_second", &workspace, cx).await;
     open_queried_buffer("3", 1, "3_third", &workspace, cx).await;
 
-    let pricker = open_file_picker(&workspace, cx);
-    pricker.update(cx, |finder, _| {
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.selected_index(), 1);
     });
 
