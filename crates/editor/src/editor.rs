@@ -8216,6 +8216,8 @@ impl Editor {
     }
 
     pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+        use git::permalink::{build_permalink, BuildPermalinkParams};
+
         let permalink = maybe!({
             let project = self.project.clone()?;
             let project = project.read(cx);
@@ -8226,44 +8228,23 @@ impl Editor {
             cwd.push(".git");
 
             let repo = project.fs().open_repo(&cwd)?;
-
-            let origin_url = repo.lock().origin_url()?;
-            if !origin_url.starts_with("git@github.com:") {
-                return None;
-            }
-
+            let origin_url = repo.lock().remote_url("origin")?;
             let sha = repo.lock().head_sha()?;
-
-            let repo_with_owner = origin_url
-                .trim_start_matches("git@github.com:")
-                .trim_end_matches(".git");
-
-            let (owner, repo) = repo_with_owner.split_once("/")?;
 
             let buffer = self.buffer().read(cx).as_singleton()?;
             let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
             let path = file.path().to_str().map(|path| path.to_string())?;
 
-            let line_selector = {
-                let selections = self.selections.all::<Point>(cx);
-                let selection = selections.iter().peekable().next();
+            let selections = self.selections.all::<Point>(cx);
+            let selection = selections.iter().peekable().next();
 
-                selection.map(|selection| {
-                    if selection.start.row == selection.end.row {
-                        return format!("L{}", selection.start.row + 1);
-                    } else {
-                        format!("L{}-L{}", selection.start.row + 1, selection.end.row + 1)
-                    }
-                })
-            };
-
-            let permalink = url::Url::parse("https://github.com").unwrap();
-            let mut permalink = permalink
-                .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
-                .unwrap();
-            permalink.set_fragment(line_selector.as_deref());
-
-            Some(permalink)
+            build_permalink(BuildPermalinkParams {
+                remote_url: &origin_url,
+                sha: &sha,
+                path: &path,
+                selection,
+            })
+            .log_err()
         });
 
         if let Some(permalink) = permalink {

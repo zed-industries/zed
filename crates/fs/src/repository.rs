@@ -27,8 +27,8 @@ pub trait GitRepository: Send {
     fn reload_index(&self);
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
 
-    /// Returns the URL of the `origin` remote.
-    fn origin_url(&self) -> Option<String>;
+    /// Returns the URL of the remote with the given name.
+    fn remote_url(&self, name: &str) -> Option<String>;
     fn branch_name(&self) -> Option<String>;
 
     /// Returns the SHA of the current HEAD.
@@ -94,8 +94,8 @@ impl GitRepository for LibGitRepository {
         None
     }
 
-    fn origin_url(&self) -> Option<String> {
-        let remote = self.find_remote("origin").ok()?;
+    fn remote_url(&self, name: &str) -> Option<String> {
+        let remote = self.find_remote(name).ok()?;
         remote.url().map(|url| url.to_string())
     }
 
@@ -271,7 +271,7 @@ impl GitRepository for FakeGitRepository {
         state.index_contents.get(path).cloned()
     }
 
-    fn origin_url(&self) -> Option<String> {
+    fn remote_url(&self, _name: &str) -> Option<String> {
         None
     }
 
