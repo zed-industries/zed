@@ -1,4 +1,5 @@
-use crate::{SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
+use crate::one_themes::one_dark;
+use crate::{SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
@@ -26,7 +27,7 @@ pub struct ThemeSettings {
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
     pub active_theme: Arc<Theme>,
-    pub theme_overrides: Option<ThemeContent>,
+    pub theme_overrides: Option<ThemeStyleContent>,
     pub themes: Option<ThemeFeatures>,
 }
 
@@ -115,7 +116,7 @@ pub struct ThemeSettingsContent {
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
-    pub theme_overrides: Option<ThemeContent>,
+    pub theme_overrides: Option<ThemeStyleContent>,
 }
 
 impl ThemeSettingsContent {
@@ -287,7 +288,7 @@ impl settings::Settings for ThemeSettings {
     ) -> Result<Self> {
         let is_system_in_dark_mode = get_system_is_dark_mode(cx);
 
-        let themes = cx.default_global::<ThemeRegistry>();
+        let themes = ThemeRegistry::default_global(cx);
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
@@ -305,7 +306,10 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            active_theme: themes.get(defaults.theme_to_use(true).unwrap()).unwrap(),
+            active_theme: themes
+                .get(defaults.theme_to_use(true).unwrap())
+                .or(themes.get(&one_dark().name))
+                .unwrap(),
             theme_overrides: None,
             themes: None,
         };
@@ -355,8 +359,7 @@ impl settings::Settings for ThemeSettings {
         cx: &AppContext,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
-        let theme_names = cx
-            .global::<ThemeRegistry>()
+        let theme_names = ThemeRegistry::global(cx)
             .list_names(params.staff_mode)
             .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();

@@ -1,5 +1,3 @@
-# NOTE: This file's location is hardcoded into the theme build system in 
-# styles/src/buildLicenses.ts
 no-clearly-defined = true
 private = { ignore = true }
 accepted = [

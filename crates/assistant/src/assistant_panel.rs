@@ -1,5 +1,5 @@
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
+    assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAiModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
     Assist, CycleMessageRole, InlineAssist, MessageId, MessageMetadata, MessageStatus,
@@ -10,7 +10,7 @@ use ai::prompts::repository_context::PromptCodeSnippet;
 use ai::{
     auth::ProviderCredential,
     completion::{CompletionProvider, CompletionRequest},
-    providers::open_ai::{OpenAICompletionProvider, OpenAIRequest, RequestMessage},
+    providers::open_ai::{OpenAiCompletionProvider, OpenAiRequest, RequestMessage},
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -35,7 +35,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
@@ -123,7 +123,7 @@ impl AssistantPanel {
                 .unwrap_or_default();
             // Defaulting currently to GPT4, allow for this to be set via config.
             let completion_provider =
-                OpenAICompletionProvider::new("gpt-4".into(), cx.background_executor().clone())
+                OpenAiCompletionProvider::new("gpt-4".into(), cx.background_executor().clone())
                     .await;
 
             // TODO: deserialize state.
@@ -717,7 +717,7 @@ impl AssistantPanel {
                 content: prompt,
             });
 
-            let request = Box::new(OpenAIRequest {
+            let request = Box::new(OpenAiRequest {
                 model: model.full_name().into(),
                 messages,
                 stream: true,
@@ -1096,6 +1096,7 @@ impl AssistantPanel {
             let conversation =
                 Conversation::deserialize(saved_conversation, path.clone(), languages, &mut cx)
                     .await?;
+
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
                 // the same conversation, we don't want to open it again.
@@ -1393,7 +1394,7 @@ struct Conversation {
     pending_summary: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    model: OpenAIModel,
+    model: OpenAiModel,
     token_count: Option<usize>,
     max_token_count: usize,
     pending_token_count: Task<Option<()>>,
@@ -1413,7 +1414,7 @@ impl Conversation {
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), "");
+            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "");
             buffer.set_language_registry(language_registry);
             cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
@@ -1501,18 +1502,24 @@ impl Conversation {
         };
         let model = saved_conversation.model;
         let completion_provider: Arc<dyn CompletionProvider> = Arc::new(
-            OpenAICompletionProvider::new(
+            OpenAiCompletionProvider::new(
                 model.full_name().into(),
                 cx.background_executor().clone(),
             )
             .await,
         );
-        cx.update(|cx| completion_provider.retrieve_credentials(cx))?;
+        cx.update(|cx| completion_provider.retrieve_credentials(cx))?
+            .await;
+
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), saved_conversation.text);
+            let mut buffer = Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                saved_conversation.text,
+            );
             for message in saved_conversation.messages {
                 message_anchors.push(MessageAnchor {
                     id: message.id,
@@ -1626,7 +1633,7 @@ impl Conversation {
         Some(self.max_token_count as isize - self.token_count? as isize)
     }
 
-    fn set_model(&mut self, model: OpenAIModel, cx: &mut ModelContext<Self>) {
+    fn set_model(&mut self, model: OpenAiModel, cx: &mut ModelContext<Self>) {
         self.model = model;
         self.count_remaining_tokens(cx);
         cx.notify();
@@ -1676,10 +1683,11 @@ impl Conversation {
 
         if should_assist {
             if !self.completion_provider.has_credentials() {
+                log::info!("completion provider has no credentials");
                 return Default::default();
             }
 
-            let request: Box<dyn CompletionRequest> = Box::new(OpenAIRequest {
+            let request: Box<dyn CompletionRequest> = Box::new(OpenAiRequest {
                 model: self.model.full_name().to_string(),
                 messages: self
                     .messages(cx)
@@ -1962,7 +1970,7 @@ impl Conversation {
                     content: "Summarize the conversation into a short title without punctuation"
                         .into(),
                 }));
-            let request: Box<dyn CompletionRequest> = Box::new(OpenAIRequest {
+            let request: Box<dyn CompletionRequest> = Box::new(OpenAiRequest {
                 model: self.model.full_name().to_string(),
                 messages: messages.collect(),
                 stream: true,

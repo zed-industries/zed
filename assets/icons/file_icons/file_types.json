@@ -37,6 +37,7 @@
         "gitattributes": "vcs",
         "gitignore": "vcs",
         "gitmodules": "vcs",
+        "gitkeep": "vcs",
         "go": "code",
         "h": "code",
         "handlebars": "code",
@@ -44,6 +45,7 @@
         "heex": "elixir",
         "htm": "template",
         "html": "template",
+        "hs": "haskell",
         "ib": "storage",
         "ico": "image",
         "ini": "settings",
@@ -52,6 +54,7 @@
         "jpg": "image",
         "js": "code",
         "json": "storage",
+        "jsonc": "storage",
         "ldf": "storage",
         "lock": "lock",
         "log": "log",
@@ -79,7 +82,7 @@
         "ps1": "terminal",
         "psd": "image",
         "py": "python",
-        "rb": "code",
+        "rb": "ruby",
         "rkt": "code",
         "rs": "rust",
         "rtf": "document",
@@ -97,6 +100,7 @@
         "tsv": "storage",
         "tsx": "code",
         "txt": "document",
+        "vue": "vue",
         "wav": "audio",
         "webm": "video",
         "xls": "document",
@@ -143,6 +147,9 @@
         "expanded_folder": {
             "icon": "icons/file_icons/folder_open.svg"
         },
+        "haskell": {
+            "icon": "icons/file_icons/haskell.svg"
+        },
         "image": {
             "icon": "icons/file_icons/image.svg"
         },
@@ -160,6 +167,9 @@
         },
         "python": {
             "icon": "icons/file_icons/python.svg"
+        },
+        "ruby": {
+            "icon": "icons/file_icons/ruby.svg"
         },
         "rust": {
             "icon": "icons/file_icons/rust.svg"
@@ -187,6 +197,9 @@
         },
         "video": {
             "icon": "icons/file_icons/video.svg"
+        },
+        "vue": {
+            "icon": "icons/file_icons/vue.svg"
         }
     }
 }

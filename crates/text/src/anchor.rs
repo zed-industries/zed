@@ -1,6 +1,6 @@
 use crate::{
-    locator::Locator, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset, ToPoint,
-    ToPointUtf16,
+    locator::Locator, BufferId, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset,
+    ToPoint, ToPointUtf16,
 };
 use anyhow::Result;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
@@ -11,7 +11,7 @@ pub struct Anchor {
     pub timestamp: clock::Lamport,
     pub offset: usize,
     pub bias: Bias,
-    pub buffer_id: Option<u64>,
+    pub buffer_id: Option<BufferId>,
 }
 
 impl Anchor {

@@ -6,6 +6,7 @@ use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{
+    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
     ResultExt,
@@ -244,7 +245,7 @@ impl super::LspAdapter for CLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last_clangd_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -266,7 +267,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
                 clangd_dir
             ))
         }
-    })()
+    })
     .await
     .log_err()
 }
@@ -277,6 +278,7 @@ mod tests {
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
+    use text::BufferId;
 
     #[gpui::test]
     async fn test_c_autoindent(cx: &mut TestAppContext) {
@@ -294,8 +296,8 @@ mod tests {
         let language = crate::languages::language("c", tree_sitter_c::language(), None).await;
 
         cx.new_model(|cx| {
-            let mut buffer =
-                Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
+            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
+                .with_language(language, cx);
 
             // empty function
             buffer.edit([(0..0, "int main() {}")], None, cx);

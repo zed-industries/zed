@@ -15,9 +15,6 @@ mod scale;
 mod schema;
 mod settings;
 mod styles;
-#[cfg(not(feature = "importing-themes"))]
-mod themes;
-mod user_theme;
 
 use std::sync::Arc;
 
@@ -29,11 +26,8 @@ pub use scale::*;
 pub use schema::*;
 pub use settings::*;
 pub use styles::*;
-#[cfg(not(feature = "importing-themes"))]
-pub use themes::*;
-pub use user_theme::*;
 
-use gpui::{AppContext, Hsla, SharedString};
+use gpui::{AppContext, AssetSource, Hsla, SharedString};
 use serde::Deserialize;
 
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
@@ -51,7 +45,6 @@ impl Appearance {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LoadThemes {
     /// Only load the base theme.
     ///
@@ -59,15 +52,20 @@ pub enum LoadThemes {
     JustBase,
 
     /// Load all of the built-in themes.
-    All,
+    All(Box<dyn AssetSource>),
 }
 
 pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
-    cx.set_global(ThemeRegistry::default());
-    match themes_to_load {
-        LoadThemes::JustBase => (),
-        LoadThemes::All => cx.global_mut::<ThemeRegistry>().load_user_themes(),
+    let (assets, load_user_themes) = match themes_to_load {
+        LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
+        LoadThemes::All(assets) => (assets, true),
+    };
+    registry::init(assets, cx);
+
+    if load_user_themes {
+        ThemeRegistry::global_mut(cx).load_user_themes();
     }
+
     ThemeSettings::register(cx);
     let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     cx.observe_global::<SettingsStore>(move |cx| {

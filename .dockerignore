@@ -6,6 +6,4 @@ script/node_modules
 styles/node_modules
 crates/collab/static/styles.css
 vendor/bin
-assets/themes/*.json
-assets/themes/internal/*.json
-assets/themes/staff/*.json
+assets/themes/

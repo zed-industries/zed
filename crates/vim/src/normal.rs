@@ -26,7 +26,7 @@ use log::error;
 use workspace::Workspace;
 
 use self::{
-    case::change_case,
+    case::{change_case, convert_to_lower_case, convert_to_upper_case},
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
     yank::{yank_motion, yank_object},
@@ -48,6 +48,8 @@ actions!(
         Yank,
         YankLine,
         ChangeCase,
+        ConvertToUpperCase,
+        ConvertToLowerCase,
         JoinLines,
     ]
 );
@@ -60,6 +62,8 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(insert_line_above);
     workspace.register_action(insert_line_below);
     workspace.register_action(change_case);
+    workspace.register_action(convert_to_upper_case);
+    workspace.register_action(convert_to_lower_case);
     workspace.register_action(yank_line);
 
     workspace.register_action(|_: &mut Workspace, _: &DeleteLeft, cx| {

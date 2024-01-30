@@ -11,6 +11,7 @@ use lsp::IoKind;
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
 use ui::{popover_menu, prelude::*, Button, Checkbox, ContextMenu, Label, Selection};
+use util::maybe;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
@@ -362,7 +363,7 @@ impl LspLogView {
             .get(&project.downgrade())
             .and_then(|project| project.servers.keys().copied().next());
         let model_changes_subscription = cx.observe(&log_store, |this, store, cx| {
-            (|| -> Option<()> {
+            maybe!({
                 let project_state = store.read(cx).projects.get(&this.project.downgrade())?;
                 if let Some(current_lsp) = this.current_server_id {
                     if !project_state.servers.contains_key(&current_lsp) {
@@ -393,7 +394,7 @@ impl LspLogView {
                 }
 
                 Some(())
-            })();
+            });
 
             cx.notify();
         });
