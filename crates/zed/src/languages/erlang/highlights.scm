@@ -29,12 +29,9 @@
     ">"
     "=:="
     "=/="
-] @operator
 
-; Arithmetic Expressions
-[
     "+"
-    "-"
+    ; "-"
     "*"
     "/"
     "bnot"
@@ -45,41 +42,32 @@
     "bxor"
     "bsl"
     "bsr"
-] @operator
 
-; Boolean Expressions
-[
     "and"
     "or"
     "not"
     "xor"
-] @operator
 
-; Short-Circuit Expressions
-[
     "andalso"
     "orelse"
-] @operator
 
-; List Operations
-[
     "++"
     "--"
+
+    "!"
+    "|"
+    "->"
 ] @operator
 
-; Send Expressions
-"!" @operator
+(unary_op_expr) @operator
+(binary_op_expr) @operator
 
-[
-    (atom)
-] @string.special.symbol
+(atom) @string.special.symbol
 (string) @string
-
 [
     (integer)
     (float)
 ] @number
-
 (var) @variable
 
 (function_clause
@@ -89,7 +77,10 @@
     (module_attribute "(" @open ")" @close)
     (pp_define "(" @open ")" @close)
     (spec)
+    (record_decl "(" @open ")" @close)
 ] @keyword
+
+(spec fun: (atom) @function)
 
 (expr_args "(" @open ")" @close)
 
@@ -100,5 +91,7 @@
 (remote
     module: (remote_module module: (atom) @type)
     fun: (atom) @function)
+
+(call expr: (atom) @function)
 
 (comment) @comment
