@@ -9,6 +9,7 @@ use client::{Client, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
+use env_logger::Builder;
 use fs::RealFs;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
@@ -483,7 +484,29 @@ fn init_paths() {
 
 fn init_logger() {
     if stdout_is_a_pty() {
-        env_logger::init();
+        Builder::new()
+            .format(|buf, record| {
+                use env_logger::fmt::Color;
+
+                let subtle = buf
+                    .style()
+                    .set_color(Color::Black)
+                    .set_intense(true)
+                    .clone();
+                write!(buf, "{}", subtle.value("["))?;
+                write!(
+                    buf,
+                    "{} ",
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
+                )?;
+                write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
+                if let Some(path) = record.module_path() {
+                    write!(buf, " {}", path)?;
+                }
+                write!(buf, "{}", subtle.value("]"))?;
+                writeln!(buf, " {}", record.args())
+            })
+            .init();
     } else {
         let level = LevelFilter::Info;
 
@@ -503,7 +526,8 @@ fn init_logger() {
             .expect("could not open logfile");
 
         let config = ConfigBuilder::new()
-            .set_time_format_str("%Y-%m-%dT%T") //All timestamps are UTC
+            .set_time_format_str("%Y-%m-%dT%T%:z")
+            .set_time_to_local(true)
             .build();
 
         simplelog::WriteLogger::init(level, config, log_file).expect("could not initialize logger");
