@@ -179,9 +179,10 @@ fn main() {
                         cx.update(|cx| {
                             let mut theme_settings = ThemeSettings::get_global(cx).clone();
 
-                            if let Some(requested_theme) = theme_settings.requested_theme.as_ref() {
-                                if let Some(theme) = theme_registry.get(requested_theme).log_err() {
-                                    theme_settings.active_theme = theme;
+                            if let Some(requested_theme) = theme_settings.requested_theme.clone() {
+                                if let Some(_theme) =
+                                    theme_settings.switch_theme(&requested_theme, cx)
+                                {
                                     ThemeSettings::override_global(theme_settings, cx);
                                 }
                             }

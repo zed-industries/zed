@@ -90,6 +90,25 @@ impl ThemeSettings {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
 
+    /// Switches to the theme with the given name, if it exists.
+    ///
+    /// Returns a `Some` containing the new theme if it was successful.
+    /// Returns `None` otherwise.
+    pub fn switch_theme(&mut self, theme: &str, cx: &mut AppContext) -> Option<Arc<Theme>> {
+        let themes = ThemeRegistry::default_global(cx);
+
+        let mut new_theme = None;
+
+        if let Some(theme) = themes.get(&theme).log_err() {
+            self.active_theme = theme.clone();
+            new_theme = Some(theme);
+        }
+
+        self.apply_theme_overrides();
+
+        new_theme
+    }
+
     /// Applies the theme overrides, if there are any, to the current theme.
     pub fn apply_theme_overrides(&mut self) {
         if let Some(theme_overrides) = &self.theme_overrides {
