@@ -1,6 +1,6 @@
 //! Defines baseline interface of Runnables in Zed.
 // #![deny(missing_docs)]
-mod static_task;
+mod static_runnable;
 
 use anyhow::Result;
 use core::future::Future;
@@ -8,7 +8,7 @@ use futures::future::BoxFuture;
 pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, AbortRegistration, Abortable};
 use futures::task::{Context, Poll};
-use std::pin::Pin;
+use gpui::AppContext;
 
 struct TaskHandle {
     fut: Abortable<BoxFuture<'static, ExecutionResult>>,
@@ -53,6 +53,6 @@ pub struct ExecutionResult {
 /// is to get spawned
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(&mut self) -> TaskHandle;
+    fn exec(&mut self, cx: &mut AppContext) -> TaskHandle;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }

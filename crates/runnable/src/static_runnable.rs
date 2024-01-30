@@ -1,19 +1,21 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Tasks {
+pub struct Runnables {
     pub version: String,
-    pub tasks: Vec<TaskDefinition>,
+    pub tasks: Vec<Definition>,
 }
+
 #[derive(Clone, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
-enum Reveal {
+pub enum Reveal {
     #[default]
     Always,
     Never,
     Silent,
 }
+
 #[derive(Clone, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Presentation {
     pub reveal: Reveal,
@@ -22,7 +24,7 @@ pub struct Presentation {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskDefinition {
+pub struct Definition {
     pub label: String,
     pub command: String,
     #[serde(default)]
