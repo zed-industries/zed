@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::AppContext;
+use gpui::{AppContext, AsyncAppContext};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -102,6 +102,14 @@ pub trait Settings: 'static + Send + Sync {
         Self: Sized,
     {
         cx.global::<SettingsStore>().get(None)
+    }
+
+    #[track_caller]
+    fn try_read_global<'a, R>(cx: &'a AsyncAppContext, f: impl FnOnce(&Self) -> R) -> Option<R>
+    where
+        Self: Sized,
+    {
+        cx.try_read_global(|s: &SettingsStore, _| f(s.get(None)))
     }
 
     #[track_caller]

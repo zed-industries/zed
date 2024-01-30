@@ -19,7 +19,7 @@ use gpui::{
     WeakModel,
 };
 use lazy_static::lazy_static;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
@@ -41,8 +41,8 @@ use std::{
 use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
-use util::channel::ReleaseChannel;
 use util::http::HttpClient;
+use util::{channel::ReleaseChannel, http::ZedHttpClient};
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
@@ -67,23 +67,6 @@ lazy_static! {
         std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| e.len() > 0);
 }
 
-/// A copy of ClientSettings::get(cx).server_url that can be accessed without the AppState lock.
-/// Only public so that `zed_server_url!` can access it, prefer that, or `zed_server()` instead.
-pub static SERVER_URL: Mutex<Option<String>> = Mutex::new(None);
-
-pub fn zed_server() -> String {
-    SERVER_URL.lock().clone().unwrap()
-}
-#[macro_export]
-macro_rules! zed_server_url {
-    ($lit:expr) => {
-        format!("{}{}", *$crate::SERVER_URL.lock().as_ref().unwrap(), $lit)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        format!("{}{}", *$crate::SERVER_URL.lock().as_ref().unwrap(), format!($fmt, $($arg)*))
-    };
-}
-
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -96,7 +79,7 @@ pub struct ClientSettingsContent {
 
 #[derive(Deserialize)]
 pub struct ClientSettings {
-    server_url: String,
+    pub server_url: String,
 }
 
 impl Settings for ClientSettings {
@@ -120,34 +103,14 @@ impl Settings for ClientSettings {
     }
 }
 
-pub fn init_settings(cx: &mut AppContext, client: &Arc<Client>) {
+pub fn init_settings(cx: &mut AppContext) {
     TelemetrySettings::register(cx);
     cx.update_global(|store: &mut SettingsStore, cx| {
         store.register_setting::<ClientSettings>(cx);
     });
-    let client = Arc::downgrade(client);
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let new_url = &ClientSettings::get_global(cx).server_url;
-
-        // we maintain our own copy of this setting so it can be accessed
-        // with an AsyncAppContext.
-        let mut server_url = SERVER_URL.lock();
-        if Some(new_url) != server_url.as_ref() {
-            *server_url = Some(new_url.trim_end_matches('/').into());
-        }
-        if client
-            .upgrade()
-            .is_some_and(|client| client.status().borrow().is_connected())
-        {
-            cx.dispatch_action(&Reconnect)
-        }
-    })
-    .detach();
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
-    init_settings(cx, client);
-
     let client = Arc::downgrade(client);
     cx.on_action({
         let client = client.clone();
@@ -189,7 +152,7 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
 pub struct Client {
     id: AtomicU64,
     peer: Arc<Peer>,
-    http: Arc<dyn HttpClient>,
+    http: Arc<ZedHttpClient>,
     telemetry: Arc<Telemetry>,
     state: RwLock<ClientState>,
 
@@ -458,8 +421,8 @@ impl settings::Settings for TelemetrySettings {
 }
 
 impl Client {
-    pub fn new(http: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
-        Arc::new(Self {
+    pub fn new(http: Arc<ZedHttpClient>, cx: &mut AppContext) -> Arc<Self> {
+        let client = Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(http.clone(), cx),
@@ -470,14 +433,16 @@ impl Client {
             authenticate: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             establish_connection: Default::default(),
-        })
+        });
+
+        client
     }
 
     pub fn id(&self) -> u64 {
         self.id.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+    pub fn http_client(&self) -> Arc<ZedHttpClient> {
         self.http.clone()
     }
 
@@ -993,14 +958,14 @@ impl Client {
     }
 
     async fn get_rpc_url(
-        http: Arc<dyn HttpClient>,
+        http: Arc<ZedHttpClient>,
         release_channel: Option<ReleaseChannel>,
     ) -> Result<Url> {
         if let Some(url) = &*ZED_RPC_URL {
             return Url::parse(url).context("invalid rpc url");
         }
 
-        let mut url = zed_server_url!("/rpc");
+        let mut url = http.zed_url("/rpc");
         if let Some(preview_param) =
             release_channel.and_then(|channel| channel.release_query_param())
         {
@@ -1121,11 +1086,10 @@ impl Client {
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
-                    let mut url = zed_server_url!(
+                    let mut url = http.zed_url(&format!(
                         "/native_app_signin?native_app_port={}&native_app_public_key={}",
-                        port,
-                        public_key_string
-                    );
+                        port, public_key_string
+                    ));
 
                     if let Some(impersonate_login) = IMPERSONATE_LOGIN.as_ref() {
                         log::info!("impersonating user @{}", impersonate_login);
@@ -1157,7 +1121,7 @@ impl Client {
                                     }
 
                                     let post_auth_url =
-                                        zed_server_url!("/native_app_signin_succeeded");
+                                        http.zed_url("/native_app_signin_succeeded");
                                     req.respond(
                                         tiny_http::Response::empty(302).with_header(
                                             tiny_http::Header::from_bytes(
@@ -1199,7 +1163,7 @@ impl Client {
     }
 
     async fn authenticate_as_admin(
-        http: Arc<dyn HttpClient>,
+        http: Arc<ZedHttpClient>,
         login: String,
         mut api_token: String,
     ) -> Result<Credentials> {
@@ -1420,7 +1384,7 @@ async fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credenti
     }
 
     let (user_id, access_token) = cx
-        .update(|cx| cx.read_credentials(&zed_server()))
+        .update(|cx| cx.read_credentials(&ClientSettings::get_global(cx).server_url))
         .log_err()?
         .await
         .log_err()??;
@@ -1437,7 +1401,7 @@ async fn write_credentials_to_keychain(
 ) -> Result<()> {
     cx.update(move |cx| {
         cx.write_credentials(
-            &zed_server(),
+            &ClientSettings::get_global(cx).server_url,
             &credentials.user_id.to_string(),
             credentials.access_token.as_bytes(),
         )
@@ -1446,7 +1410,7 @@ async fn write_credentials_to_keychain(
 }
 
 async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
-    cx.update(move |cx| cx.delete_credentials(&zed_server()))?
+    cx.update(move |cx| cx.delete_credentials(&ClientSettings::get_global(cx).server_url))?
         .await
 }
 
