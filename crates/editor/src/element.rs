@@ -157,7 +157,6 @@ impl EditorElement {
         register_action(view, cx, Editor::indent);
         register_action(view, cx, Editor::outdent);
         register_action(view, cx, Editor::delete_line);
-        register_action(view, cx, Editor::permalink_to_line);
         register_action(view, cx, Editor::join_lines);
         register_action(view, cx, Editor::sort_lines_case_sensitive);
         register_action(view, cx, Editor::sort_lines_case_insensitive);
@@ -277,6 +276,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_path);
         register_action(view, cx, Editor::copy_relative_path);
         register_action(view, cx, Editor::copy_highlight_json);
+        register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
