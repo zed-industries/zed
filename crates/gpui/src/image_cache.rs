@@ -68,22 +68,31 @@ impl ImageCache {
                         {
                             let uri = uri.clone();
                             async move {
-                                let mut response =
-                                    client.get(uri.as_ref(), ().into(), true).await?;
-                                let mut body = Vec::new();
-                                response.body_mut().read_to_end(&mut body).await?;
+                                match uri {
+                                    SharedUrl::File(uri) => {
+                                        let image = image::open(uri.as_ref())?.into_bgra8();
+                                        Ok(Arc::new(ImageData::new(image)))
+                                    }
+                                    SharedUrl::Network(uri) => {
+                                        let mut response =
+                                            client.get(uri.as_ref(), ().into(), true).await?;
+                                        let mut body = Vec::new();
+                                        response.body_mut().read_to_end(&mut body).await?;
 
-                                if !response.status().is_success() {
-                                    return Err(Error::BadStatus {
-                                        status: response.status(),
-                                        body: String::from_utf8_lossy(&body).into_owned(),
-                                    });
+                                        if !response.status().is_success() {
+                                            return Err(Error::BadStatus {
+                                                status: response.status(),
+                                                body: String::from_utf8_lossy(&body).into_owned(),
+                                            });
+                                        }
+
+                                        let format = image::guess_format(&body)?;
+                                        let image =
+                                            image::load_from_memory_with_format(&body, format)?
+                                                .into_bgra8();
+                                        Ok(Arc::new(ImageData::new(image)))
+                                    }
                                 }
-
-                                let format = image::guess_format(&body)?;
-                                let image = image::load_from_memory_with_format(&body, format)?
-                                    .into_bgra8();
-                                Ok(Arc::new(ImageData::new(image)))
                             }
                         }
                         .map_err({

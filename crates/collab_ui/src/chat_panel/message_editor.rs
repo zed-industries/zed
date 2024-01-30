@@ -365,7 +365,7 @@ impl Render for MessageEditor {
 mod tests {
     use super::*;
     use client::{Client, User, UserStore};
-    use gpui::TestAppContext;
+    use gpui::{SharedUrl, TestAppContext};
     use language::{Language, LanguageConfig};
     use rpc::proto;
     use settings::SettingsStore;
@@ -392,7 +392,7 @@ mod tests {
                         user: Arc::new(User {
                             github_login: "a-b".into(),
                             id: 101,
-                            avatar_uri: "avatar_a-b".into(),
+                            avatar_uri: SharedUrl::network("avatar_a-b"),
                         }),
                         kind: proto::channel_member::Kind::Member,
                         role: proto::ChannelRole::Member,
@@ -401,7 +401,7 @@ mod tests {
                         user: Arc::new(User {
                             github_login: "C_D".into(),
                             id: 102,
-                            avatar_uri: "avatar_C_D".into(),
+                            avatar_uri: SharedUrl::network("avatar_C_D"),
                         }),
                         kind: proto::channel_member::Kind::Member,
                         role: proto::ChannelRole::Member,
