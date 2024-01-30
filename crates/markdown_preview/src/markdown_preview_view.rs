@@ -27,9 +27,10 @@ impl MarkdownPreviewView {
                 return;
             }
             let languages = languages.clone();
-            let editor = workspace.active_item_as::<Editor>(cx).unwrap();
-            MarkdownPreviewView::deploy_preview(workspace, languages, editor, cx);
-            cx.notify();
+            if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
+                MarkdownPreviewView::deploy_preview(workspace, languages, editor, cx);
+                cx.notify();
+            }
         });
     }
 
@@ -67,13 +68,21 @@ impl MarkdownPreviewView {
         active_editor: View<Editor>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let existing = workspace
-            .active_pane()
-            .read(cx)
-            .items()
-            .find_map(|item| item.downcast::<MarkdownPreviewView>());
+        // TODO: Reactive any other pane used for this active_editor.
+        // for pane in workspace.panes() {
+        //     for item in pane.read(cx).items() {
+        //         if let Some(preview) = item.downcast::<MarkdownPreviewView>() {
+        //             let item_id = preview.item_id();
+        //             let handler = cx.handler_for(pane, move |pane, cx| {
+        //                 pane.close_item_by_id(item_id, workspace::SaveIntent::Close, cx)
+        //                     .detach_and_log_err(cx);
+        //             });
+        //             handler(cx);
+        //         }
+        //     }
+        // }
 
-        Self::existing_or_new_preview(workspace, languages, active_editor, existing, cx)
+        Self::existing_or_new_preview(workspace, languages, active_editor, None, cx)
     }
 
     fn existing_or_new_preview(
@@ -152,7 +161,7 @@ impl Render for MarkdownPreviewView {
             .p_4();
 
         for item in render_markdown(&self.contents, cx, &self.languages).into_iter() {
-            container = container.child(item.mb_2());
+            container = container.child(item);
         }
 
         div().flex_1().child(

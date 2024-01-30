@@ -1,14 +1,14 @@
 use std::{ops::Range, sync::Arc};
 
 use gpui::{
-    div, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, ElementId, Hsla, ParentElement,
+    div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, ElementId, Hsla, ParentElement,
     SharedString, Styled, StyledText, TextStyle, WindowContext,
 };
 use language::LanguageRegistry;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 use rich_text::render_rich_text;
 use theme::ActiveTheme;
-use ui::{h_flex, v_flex, HeadlineSize};
+use ui::{h_flex, v_flex};
 
 enum TableState {
     Header,
@@ -82,20 +82,20 @@ impl MarkdownTable {
 }
 
 struct Renderer<I> {
+    source_contents: String,
+
     iter: I,
 
     finished: Vec<Div>,
-    source_contents: String,
 
     language_registry: Arc<LanguageRegistry>,
 
-    // TODO: consider removing current_block as it doesn't serve it's original purpose
-    current_block: Div,
-
     table: Option<MarkdownTable>,
     list_depth: usize,
+    block_quote_depth: usize,
 
     ui_text_color: Hsla,
+    ui_text_muted_color: Hsla,
     ui_code_background: Hsla,
     ui_border_color: Hsla,
     ui_text_style: TextStyle,
@@ -110,6 +110,7 @@ where
         source_contents: String,
         language_registry: &Arc<LanguageRegistry>,
         ui_text_color: Hsla,
+        ui_text_muted_color: Hsla,
         ui_code_background: Hsla,
         ui_border_color: Hsla,
         text_style: TextStyle,
@@ -117,13 +118,14 @@ where
         Self {
             iter,
             source_contents,
-            current_block: div(),
             table: None,
             finished: vec![],
             language_registry: language_registry.clone(),
             list_depth: 0,
+            block_quote_depth: 0,
             ui_border_color,
             ui_text_color,
+            ui_text_muted_color,
             ui_code_background,
             ui_text_style: text_style,
         }
@@ -139,8 +141,8 @@ where
                     self.end_tag(tag, source_range);
                 }
                 Event::Rule => {
-                    self.finished
-                        .push(div().w_full().h(rems(1. / 4.)).bg(self.ui_border_color));
+                    let rule = div().w_full().h(px(2.)).bg(self.ui_border_color);
+                    self.finished.push(div().mb_4().child(rule));
                 }
                 _ => {
                     // TODO: SoftBreak, HardBreak, FootnoteReference
@@ -169,27 +171,8 @@ where
             Tag::List(_) => {
                 self.list_depth += 1;
             }
-            Tag::Paragraph => {
-                self.current_block = h_flex();
-            }
-            Tag::Heading(level, _, _) => {
-                let size: HeadlineSize = match level {
-                    HeadingLevel::H1 => HeadlineSize::XLarge,
-                    HeadingLevel::H2 => HeadlineSize::Large,
-                    HeadingLevel::H3 => HeadlineSize::Medium,
-                    HeadingLevel::H4 => HeadlineSize::Small,
-                    HeadingLevel::H5 => HeadlineSize::XSmall,
-                    HeadingLevel::H6 => HeadlineSize::XSmall,
-                };
-
-                let line_height =
-                    DefiniteLength::Absolute(AbsoluteLength::Rems(size.line_height()));
-
-                self.current_block = h_flex()
-                    .line_height(size.line_height())
-                    .text_size(size.size())
-                    .text_color(self.ui_text_color)
-                    .mb(line_height);
+            Tag::BlockQuote => {
+                self.block_quote_depth += 1;
             }
             Tag::Table(_text_alignments) => {
                 self.table = Some(MarkdownTable::new(self.ui_border_color));
@@ -201,24 +184,30 @@ where
     fn end_tag(&mut self, tag: Tag, source_range: Range<usize>) {
         match tag {
             Tag::Paragraph => {
+                if self.list_depth > 0 || self.block_quote_depth > 0 {
+                    return;
+                }
+
                 let element = self.render_md_from_range(source_range.clone());
-                let current_block = std::mem::replace(&mut self.current_block, div());
-                let paragraph = current_block.child(element);
+                let paragraph = h_flex().mb_3().child(element);
 
                 self.finished.push(paragraph);
             }
-            Tag::Heading(_level, _, _) => {
+            Tag::Heading(level, _, _) => {
+                let mut headline = self.headline(level);
+                if source_range.start > 0 {
+                    headline = headline.mt_4();
+                }
+
                 let element = self.render_md_from_range(source_range.clone());
-                let current_block = std::mem::replace(&mut self.current_block, div());
-                let headline = current_block.child(element);
+                let headline = headline.child(element);
 
                 self.finished.push(headline);
             }
             Tag::List(_) => {
                 if self.list_depth == 1 {
                     let element = self.render_md_from_range(source_range.clone());
-                    let current_block = std::mem::replace(&mut self.current_block, div());
-                    let list = current_block.child(element);
+                    let list = div().mb_3().child(element);
 
                     self.finished.push(list);
                 }
@@ -226,16 +215,24 @@ where
                 self.list_depth -= 1;
             }
             Tag::BlockQuote => {
-                // TODO: will render twice because there's <paragraph> in a block quote
                 let element = self.render_md_from_range(source_range.clone());
-                let current_block = std::mem::replace(&mut self.current_block, div());
 
-                let block_quote = current_block
-                    .pl_2()
-                    .bg(self.ui_code_background)
+                let block_quote = h_flex()
+                    .mb_3()
+                    .child(
+                        div()
+                            .w(px(4.))
+                            .bg(self.ui_border_color)
+                            .h_full()
+                            .mr_2()
+                            .mt_1(),
+                    )
+                    .text_color(self.ui_text_muted_color)
                     .child(element);
 
                 self.finished.push(block_quote);
+
+                self.block_quote_depth -= 1;
             }
             Tag::CodeBlock(kind) => {
                 let contents = self.source_contents[source_range.clone()].trim();
@@ -251,7 +248,9 @@ where
                 let contents = SharedString::from(contents);
 
                 let code_block = div()
+                    .mb_3()
                     .px_4()
+                    .py_0()
                     .bg(self.ui_code_background)
                     .child(StyledText::new(contents));
 
@@ -264,7 +263,7 @@ where
                 }
 
                 let table = self.table.take().unwrap();
-                let table = table.finish();
+                let table = table.finish().mb_4();
                 self.finished.push(table);
             }
             Tag::TableHead => {
@@ -295,6 +294,34 @@ where
             _ => {}
         }
     }
+
+    fn headline(&self, level: HeadingLevel) -> Div {
+        let size = match level {
+            HeadingLevel::H1 => rems(2.),
+            HeadingLevel::H2 => rems(1.5),
+            HeadingLevel::H3 => rems(1.25),
+            HeadingLevel::H4 => rems(1.),
+            HeadingLevel::H5 => rems(0.875),
+            HeadingLevel::H6 => rems(0.85),
+        };
+
+        let line_height = DefiniteLength::Absolute(AbsoluteLength::Rems(rems(1.25)));
+
+        let color = match level {
+            HeadingLevel::H6 => self.ui_text_muted_color,
+            _ => self.ui_text_color,
+        };
+
+        let headline = h_flex()
+            .w_full()
+            .line_height(line_height)
+            .text_size(size)
+            .text_color(color)
+            .mb_4()
+            .pb(rems(0.15));
+
+        headline
+    }
 }
 
 pub fn render_markdown(
@@ -302,9 +329,11 @@ pub fn render_markdown(
     cx: &WindowContext,
     language_registry: &Arc<LanguageRegistry>,
 ) -> Vec<Div> {
+    // TODO: Move all of this to the renderer
     let theme = cx.theme();
     let ui_code_background = theme.colors().surface_background;
     let ui_text_color = theme.colors().text;
+    let ui_text_muted_color = theme.colors().text_muted;
     let ui_border_color = theme.colors().border;
     let text_style = cx.text_style();
 
@@ -315,6 +344,7 @@ pub fn render_markdown(
         markdown_input.to_owned(),
         language_registry,
         ui_text_color,
+        ui_text_muted_color,
         ui_code_background,
         ui_border_color,
         text_style,
