@@ -4,6 +4,7 @@ use crate::{
     Point, Size,
 };
 use anyhow::Result;
+use blade_graphics as gpu;
 use collections::FxHashMap;
 use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
@@ -12,8 +13,8 @@ use std::{borrow::Cow, sync::Arc};
 pub(crate) struct BladeAtlas(Mutex<BladeAtlasState>);
 
 struct BladeAtlasState {
-    gpu: Arc<blade::Context>,
-    gpu_encoder: blade::CommandEncoder,
+    gpu: Arc<gpu::Context>,
+    gpu_encoder: gpu::CommandEncoder,
     upload_belt: BladeBelt,
     monochrome_textures: Vec<BladeAtlasTexture>,
     polychrome_textures: Vec<BladeAtlasTexture>,
@@ -38,15 +39,15 @@ impl BladeAtlasState {
 }
 
 impl BladeAtlas {
-    pub(crate) fn new(gpu: &Arc<blade::Context>) -> Self {
+    pub(crate) fn new(gpu: &Arc<gpu::Context>) -> Self {
         BladeAtlas(Mutex::new(BladeAtlasState {
             gpu: Arc::clone(gpu),
-            gpu_encoder: gpu.create_command_encoder(blade::CommandEncoderDesc {
+            gpu_encoder: gpu.create_command_encoder(gpu::CommandEncoderDesc {
                 name: "atlas",
                 buffer_count: 3,
             }),
             upload_belt: BladeBelt::new(BladeBeltDescriptor {
-                memory: blade::Memory::Upload,
+                memory: gpu::Memory::Upload,
                 min_chunk_size: 0x10000,
             }),
             monochrome_textures: Default::default(),
@@ -77,7 +78,7 @@ impl BladeAtlas {
         lock.gpu_encoder.start();
     }
 
-    pub fn finish_frame(&self) -> blade::SyncPoint {
+    pub fn finish_frame(&self) -> gpu::SyncPoint {
         let mut lock = self.0.lock();
         let gpu = lock.gpu.clone();
         let sync_point = gpu.submit(&mut lock.gpu_encoder);
@@ -137,32 +138,32 @@ impl BladeAtlasState {
         let usage;
         match kind {
             AtlasTextureKind::Monochrome => {
-                format = blade::TextureFormat::R8Unorm;
-                usage = blade::TextureUsage::COPY | blade::TextureUsage::RESOURCE;
+                format = gpu::TextureFormat::R8Unorm;
+                usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Polychrome => {
-                format = blade::TextureFormat::Bgra8Unorm;
-                usage = blade::TextureUsage::COPY | blade::TextureUsage::RESOURCE;
+                format = gpu::TextureFormat::Bgra8Unorm;
+                usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Path => {
-                format = blade::TextureFormat::R16Float;
-                usage = blade::TextureUsage::COPY
-                    | blade::TextureUsage::RESOURCE
-                    | blade::TextureUsage::TARGET;
+                format = gpu::TextureFormat::R16Float;
+                usage = gpu::TextureUsage::COPY
+                    | gpu::TextureUsage::RESOURCE
+                    | gpu::TextureUsage::TARGET;
             }
         }
 
-        let raw = self.gpu.create_texture(blade::TextureDesc {
+        let raw = self.gpu.create_texture(gpu::TextureDesc {
             name: "",
             format,
-            size: blade::Extent {
+            size: gpu::Extent {
                 width: size.width.into(),
                 height: size.height.into(),
                 depth: 1,
             },
             array_layer_count: 1,
             mip_level_count: 1,
-            dimension: blade::TextureDimension::D2,
+            dimension: gpu::TextureDimension::D2,
             usage,
         });
 
@@ -198,13 +199,13 @@ impl BladeAtlasState {
         transfers.copy_buffer_to_texture(
             src_data,
             bounds.size.width.to_bytes(texture.bytes_per_pixel()),
-            blade::TexturePiece {
+            gpu::TexturePiece {
                 texture: texture.raw,
                 mip_level: 0,
                 array_layer: 0,
                 origin: [bounds.origin.x.into(), bounds.origin.y.into(), 0],
             },
-            blade::Extent {
+            gpu::Extent {
                 width: bounds.size.width.into(),
                 height: bounds.size.height.into(),
                 depth: 1,
@@ -216,8 +217,8 @@ impl BladeAtlasState {
 struct BladeAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
-    raw: blade::Texture,
-    format: blade::TextureFormat,
+    raw: gpu::Texture,
+    format: gpu::TextureFormat,
 }
 
 impl BladeAtlasTexture {

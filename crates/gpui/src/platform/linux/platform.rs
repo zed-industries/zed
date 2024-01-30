@@ -115,6 +115,7 @@ impl Platform for LinuxPlatform {
                 xcb::Event::X(x::Event::ResizeRequest(ev)) => {
                     let this = self.0.lock();
                     LinuxWindowState::resize(&this.windows[&ev.window()], ev.width(), ev.height());
+                    repaint_x_window = Some(ev.window());
                 }
                 _ => {}
             }

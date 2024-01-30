@@ -3,6 +3,7 @@ use crate::{
     AnyWindowHandle, BladeAtlas, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
     PlatformWindow, Point, Size, WindowAppearance, WindowBounds, WindowOptions, XcbAtoms,
 };
+use blade_graphics as gpu;
 use parking_lot::Mutex;
 use std::{
     ffi::c_void,
@@ -15,6 +16,7 @@ use xcb::{x, Xid as _};
 struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    moved: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxWindowState {
@@ -24,6 +26,7 @@ pub(crate) struct LinuxWindowState {
     content_size: Size<Pixels>,
     sprite_atlas: Arc<BladeAtlas>,
     renderer: BladeRenderer,
+    //TODO: move out into a separate struct
     callbacks: Callbacks,
 }
 
@@ -136,9 +139,9 @@ impl LinuxWindowState {
         };
         let gpu = Arc::new(
             unsafe {
-                blade::Context::init_windowed(
+                gpu::Context::init_windowed(
                     &raw_window,
-                    blade::ContextDesc {
+                    gpu::ContextDesc {
                         validation: cfg!(debug_assertions),
                         capture: false,
                     },
@@ -146,7 +149,7 @@ impl LinuxWindowState {
             }
             .unwrap(),
         );
-        let gpu_extent = blade::Extent {
+        let gpu_extent = gpu::Extent {
             width: bound_width as u32,
             height: bound_height as u32,
             depth: 1,
@@ -186,7 +189,7 @@ impl LinuxWindowState {
         let mut this = self_ptr.lock();
         this.callbacks.resize = Some(fun);
         this.content_size = content_size;
-        this.renderer.resize(blade::Extent {
+        this.renderer.resize(gpu::Extent {
             width: width as u32,
             height: height as u32,
             depth: 1,
@@ -294,7 +297,9 @@ impl PlatformWindow for LinuxWindow {
 
     fn on_fullscreen(&self, _callback: Box<dyn FnMut(bool)>) {}
 
-    fn on_moved(&self, callback: Box<dyn FnMut()>) {}
+    fn on_moved(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().callbacks.moved = Some(callback);
+    }
 
     fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
 

@@ -3234,6 +3234,7 @@ dependencies = [
  "bindgen 0.65.1",
  "bitflags 2.4.1",
  "block",
+ "bytemuck",
  "cbindgen",
  "cocoa",
  "collections",

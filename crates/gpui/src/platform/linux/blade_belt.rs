@@ -1,10 +1,13 @@
+use blade_graphics as gpu;
+use std::mem;
+
 struct ReusableBuffer {
-    raw: blade::Buffer,
+    raw: gpu::Buffer,
     size: u64,
 }
 
 pub struct BladeBeltDescriptor {
-    pub memory: blade::Memory,
+    pub memory: gpu::Memory,
     pub min_chunk_size: u64,
 }
 
@@ -12,7 +15,7 @@ pub struct BladeBeltDescriptor {
 /// find staging space for uploads.
 pub struct BladeBelt {
     desc: BladeBeltDescriptor,
-    buffers: Vec<(ReusableBuffer, blade::SyncPoint)>,
+    buffers: Vec<(ReusableBuffer, gpu::SyncPoint)>,
     active: Vec<(ReusableBuffer, u64)>,
 }
 
@@ -25,7 +28,7 @@ impl BladeBelt {
         }
     }
 
-    pub fn destroy(&mut self, gpu: &blade::Context) {
+    pub fn destroy(&mut self, gpu: &gpu::Context) {
         for (buffer, _) in self.buffers.drain(..) {
             gpu.destroy_buffer(buffer.raw);
         }
@@ -34,7 +37,7 @@ impl BladeBelt {
         }
     }
 
-    pub fn alloc(&mut self, size: u64, gpu: &blade::Context) -> blade::BufferPiece {
+    pub fn alloc(&mut self, size: u64, gpu: &gpu::Context) -> gpu::BufferPiece {
         for &mut (ref rb, ref mut offset) in self.active.iter_mut() {
             if *offset + size <= rb.size {
                 let piece = rb.raw.at(*offset);
@@ -56,7 +59,7 @@ impl BladeBelt {
 
         let chunk_index = self.buffers.len() + self.active.len();
         let chunk_size = size.max(self.desc.min_chunk_size);
-        let chunk = gpu.create_buffer(blade::BufferDesc {
+        let chunk = gpu.create_buffer(gpu::BufferDesc {
             name: &format!("chunk-{}", chunk_index),
             size: chunk_size,
             memory: self.desc.memory,
@@ -69,15 +72,23 @@ impl BladeBelt {
         chunk.into()
     }
 
-    pub fn alloc_data(&mut self, data: &[u8], gpu: &blade::Context) -> blade::BufferPiece {
-        let bp = self.alloc(data.len() as u64, gpu);
+    //Note: assuming T: bytemuck::Zeroable
+    pub fn alloc_data<T>(&mut self, data: &[T], gpu: &gpu::Context) -> gpu::BufferPiece {
+        assert!(!data.is_empty());
+        let alignment = mem::align_of::<T>() as u64;
+        let total_bytes = data.len() * mem::size_of::<T>();
+        let mut bp = self.alloc(alignment + (total_bytes - 1) as u64, gpu);
+        let rem = bp.offset % alignment;
+        if rem != 0 {
+            bp.offset += alignment - rem;
+        }
         unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), bp.data(), data.len());
+            std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, bp.data(), total_bytes);
         }
         bp
     }
 
-    pub fn flush(&mut self, sp: &blade::SyncPoint) {
+    pub fn flush(&mut self, sp: &gpu::SyncPoint) {
         self.buffers
             .extend(self.active.drain(..).map(|(rb, _)| (rb, sp.clone())));
     }
