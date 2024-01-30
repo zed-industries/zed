@@ -31,6 +31,7 @@ pub struct Scrollbar {
     pub show: ShowScrollbar,
     pub git_diff: bool,
     pub selections: bool,
+    pub symbols_selections: bool,
 }
 
 /// When to show the scrollbar in the editor.
@@ -103,6 +104,10 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub selections: Option<bool>,
+    /// Whether to show symbols highlighted markers in the scrollbar.
+    ///
+    /// Default: true
+    pub symbols_selections: Option<bool>,
 }
 
 impl Settings for EditorSettings {

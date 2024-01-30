@@ -16,9 +16,10 @@ use crate::{
     },
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
-    CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, HalfPageDown, HalfPageUp, HoveredCursor, LineDown,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -1366,6 +1367,44 @@ impl EditorElement {
                 }
             }
 
+            if layout.is_singleton && scrollbar_settings.symbols_selections {
+                let selection_ranges = self.editor.read(cx).background_highlights_in_range(
+                    Anchor::min()..Anchor::max(),
+                    &layout.position_map.snapshot,
+                    cx.theme().colors(),
+                );
+                for hunk in selection_ranges {
+                    let start_display = Point::new(hunk.0.start.row(), 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = Point::new(hunk.0.end.row(), 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if hunk.0.start == hunk.0.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
+
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        cx.theme().status().info,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
             if layout.is_singleton && scrollbar_settings.git_diff {
                 for hunk in layout
                     .position_map
@@ -2032,8 +2071,12 @@ impl EditorElement {
                     ||
                     // Selections
                     (is_singleton && scrollbar_settings.selections && editor.has_background_highlights::<BufferSearchHighlights>())
+                    ||
+                    // Symbols Selections
+                    (is_singleton && scrollbar_settings.symbols_selections && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                    ||
                     // Scrollmanager
-                    || editor.scroll_manager.scrollbars_visible()
+                    editor.scroll_manager.scrollbars_visible()
                 }
                 ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
                 ShowScrollbar::Always => true,
