@@ -503,5 +503,28 @@
     //         }
     //     }
     // }
+  },
+  // The server to connect to. If the environment variable
+  // ZED_SERVER_URL is set, it will override this setting.
+  "server_url": "https://zed.dev",
+  // Settings overrides to use when using Zed Preview.
+  // Mostly useful for developers who are managing multiple instances of Zed.
+  "preview": {
+    // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Zed Nightly.
+  // Mostly useful for developers who are managing multiple instances of Zed.
+  "nightly": {
+    // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Zed Stable.
+  // Mostly useful for developers who are managing multiple instances of Zed.
+  "stable": {
+    // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Zed Stable.
+  // Mostly useful for developers who are managing multiple instances of Zed.
+  "dev": {
+    // "theme": "Andromeda"
   }
 }
