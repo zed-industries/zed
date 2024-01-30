@@ -120,22 +120,25 @@ impl Settings for ClientSettings {
     }
 }
 
-pub fn init_settings(cx: &mut AppContext) {
+pub fn init_settings(cx: &mut AppContext, client: &Arc<Client>) {
     TelemetrySettings::register(cx);
     cx.update_global(|store: &mut SettingsStore, cx| {
         store.register_setting::<ClientSettings>(cx);
     });
-    cx.observe_global::<SettingsStore>(|cx| {
+    let client = Arc::downgrade(client);
+    cx.observe_global::<SettingsStore>(move |cx| {
         let new_url = &ClientSettings::get_global(cx).server_url;
 
         // we maintain our own copy of this setting so it can be accessed
         // with an AsyncAppContext.
         let mut server_url = SERVER_URL.lock();
-        let was_some = *server_url != None;
         if Some(new_url) != server_url.as_ref() {
             *server_url = Some(new_url.trim_end_matches('/').into());
         }
-        if was_some {
+        if client
+            .upgrade()
+            .is_some_and(|client| client.status().borrow().is_connected())
+        {
             cx.dispatch_action(&Reconnect)
         }
     })
@@ -143,7 +146,7 @@ pub fn init_settings(cx: &mut AppContext) {
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
-    init_settings(cx);
+    init_settings(cx, client);
 
     let client = Arc::downgrade(client);
     cx.on_action({
