@@ -1,4 +1,3 @@
-use crate::one_themes::one_dark;
 use crate::{SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
 use anyhow::Result;
 use gpui::{
@@ -12,7 +11,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsJsonSchemaParams};
+use settings::{Settings, SettingsJsonSchemaParams, SettingsStore};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -28,6 +27,42 @@ pub struct ThemeSettings {
     pub buffer_line_height: BufferLineHeight,
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeContent>,
+    pub themes: Option<ThemeFeatures>,
+}
+
+impl ThemeSettings {
+    pub fn reload_theme(system_is_dark: bool, cx: &mut AppContext) {
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            let mut theme_settings = settings.get::<ThemeSettings>(None).clone();
+            if let Some(features) = &theme_settings.themes {
+                let themes = cx.default_global::<ThemeRegistry>();
+
+                if features.is_dark_mode(system_is_dark) {
+                    if let Some(theme) = features
+                        .dark
+                        .as_ref()
+                        .and_then(|dark_theme| themes.get(&dark_theme).log_err())
+                    {
+                        theme_settings.active_theme = theme;
+                        theme_settings.apply_theme_overrides();
+                        settings.override_global(theme_settings);
+                        cx.refresh();
+                    }
+                } else {
+                    if let Some(theme) = features
+                        .light
+                        .as_ref()
+                        .and_then(|light_theme| themes.get(&light_theme).log_err())
+                    {
+                        theme_settings.active_theme = theme;
+                        theme_settings.apply_theme_overrides();
+                        settings.override_global(theme_settings);
+                        cx.refresh();
+                    }
+                }
+            }
+        })
+    }
 }
 
 #[derive(Default)]
@@ -40,7 +75,16 @@ pub struct ThemeFeatures {
     #[serde(default)]
     pub dark: Option<String>,
     #[serde(default)]
-    pub mode: Option<String>,
+    pub mode: Option<ThemeMode>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    Auto,
+    #[default]
+    Dark,
+    Light,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -61,6 +105,9 @@ pub struct ThemeSettingsContent {
     pub buffer_font_features: Option<FontFeatures>,
     #[serde(default)]
     pub theme: Option<String>,
+
+    /// Set the themes to use for light and dark mode. Note that this
+    /// Supersedes the `theme` setting.
     #[serde(default)]
     pub themes: Option<ThemeFeatures>,
 
@@ -100,17 +147,21 @@ impl ThemeSettingsContent {
 
 impl ThemeFeatures {
     pub fn is_dark_mode(&self, system_is_dark: bool) -> bool {
-        match self.mode.as_deref() {
-            Some("auto") => system_is_dark,
-            Some("dark") => true,
-            Some("light") | _ => false,
+        match self.mode {
+            Some(ThemeMode::Auto) => system_is_dark,
+            Some(ThemeMode::Dark) => true,
+            Some(ThemeMode::Light) | _ => false,
         }
     }
 
     pub fn update_theme(&mut self, theme_name: String, system_is_dark: bool) {
-        match (self.mode.as_deref(), system_is_dark) {
-            (Some("dark"), _) | (Some("auto"), true) => self.dark = Some(theme_name),
-            (Some("light"), _) | (Some("auto"), false) => self.light = Some(theme_name),
+        match (self.mode.as_ref(), system_is_dark) {
+            (Some(ThemeMode::Dark), _) | (Some(ThemeMode::Auto), true) => {
+                self.dark = Some(theme_name)
+            }
+            (Some(ThemeMode::Light), _) | (Some(ThemeMode::Auto), false) => {
+                self.light = Some(theme_name)
+            }
             _ => {}
         }
     }
@@ -254,11 +305,9 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            active_theme: themes
-                .get(defaults.theme_to_use(true).unwrap())
-                .or(themes.get(&one_dark().name))
-                .unwrap(),
+            active_theme: themes.get(defaults.theme_to_use(true).unwrap()).unwrap(),
             theme_overrides: None,
+            themes: None,
         };
 
         for value in user_values.into_iter().copied().cloned() {
@@ -286,6 +335,7 @@ impl settings::Settings for ThemeSettings {
             }
 
             this.theme_overrides = value.theme_overrides;
+            this.themes = value.themes;
             this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));

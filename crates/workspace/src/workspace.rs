@@ -50,7 +50,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
-use settings::{update_settings_file, Settings};
+use settings::Settings;
 use shared_screen::SharedScreen;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
@@ -624,6 +624,7 @@ impl Workspace {
         }
 
         set_system_is_dark_mode(cx);
+        ThemeSettings::reload_theme(cx.is_dark_mode(), cx);
 
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
@@ -667,11 +668,10 @@ impl Workspace {
                     store.workspaces.remove(&window);
                 })
             }),
-            cx.observe_appearance_change(|this, cx| {
+            cx.observe_appearance_change(|_this, cx| {
                 set_system_is_dark_mode(cx);
 
-                let fs = this.app_state().fs.clone();
-                update_settings_file::<ThemeSettings>(fs, cx, |_| {})
+                ThemeSettings::reload_theme(cx.is_dark_mode(), cx)
             }),
         ];
 
