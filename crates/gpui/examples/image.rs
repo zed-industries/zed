@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use gpui::*;
 
@@ -32,7 +33,7 @@ impl RenderOnce for ImageContainer {
 }
 
 struct ImageShowcase {
-    local_resource: PathBuf,
+    local_resource: Arc<PathBuf>,
     remote_resource: SharedUri,
 }
 
@@ -63,7 +64,9 @@ fn main() {
     App::new().run(|cx: &mut AppContext| {
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|_cx| ImageShowcase {
-                local_resource: PathBuf::from_str("crates/zed/resources/app-icon.png").unwrap(),
+                local_resource: Arc::new(
+                    PathBuf::from_str("crates/zed/resources/app-icon.png").unwrap(),
+                ),
                 remote_resource: "https://picsum.photos/512/512".into(),
             })
         });

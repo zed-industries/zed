@@ -48,7 +48,7 @@ pub(crate) struct ImageCache {
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum UriOrPath {
     Uri(SharedUri),
-    Path(PathBuf),
+    Path(Arc<PathBuf>),
 }
 
 impl From<SharedUri> for UriOrPath {
@@ -57,8 +57,8 @@ impl From<SharedUri> for UriOrPath {
     }
 }
 
-impl From<PathBuf> for UriOrPath {
-    fn from(value: PathBuf) -> Self {
+impl From<Arc<PathBuf>> for UriOrPath {
+    fn from(value: Arc<PathBuf>) -> Self {
         Self::Path(value)
     }
 }
@@ -89,7 +89,7 @@ impl ImageCache {
                             async move {
                                 match uri_or_path {
                                     UriOrPath::Path(uri) => {
-                                        let image = image::open(uri)?.into_bgra8();
+                                        let image = image::open(uri.as_ref())?.into_bgra8();
                                         Ok(Arc::new(ImageData::new(image)))
                                     }
                                     UriOrPath::Uri(uri) => {

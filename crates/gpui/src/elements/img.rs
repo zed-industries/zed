@@ -16,7 +16,7 @@ pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
     Uri(SharedUri),
     /// Image content will be loaded from the provided file at render time.
-    File(PathBuf),
+    File(Arc<PathBuf>),
     /// Cached image data
     Data(Arc<ImageData>),
     // TODO: move surface definitions into mac platform module
@@ -42,8 +42,8 @@ impl From<String> for ImageSource {
     }
 }
 
-impl From<PathBuf> for ImageSource {
-    fn from(value: PathBuf) -> Self {
+impl From<Arc<PathBuf>> for ImageSource {
+    fn from(value: Arc<PathBuf>) -> Self {
         Self::File(value)
     }
 }
