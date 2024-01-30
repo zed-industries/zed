@@ -108,7 +108,7 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut container = v_flex()
+        let rendered_markdown = v_flex()
             .items_start()
             .justify_start()
             .key_context("MarkdownPreview")
@@ -117,15 +117,12 @@ impl Render for MarkdownPreviewView {
             .overflow_scroll()
             .size_full()
             .bg(cx.theme().colors().editor_background)
-            .p_4();
-
-        for item in render_markdown(&self.contents, &self.languages, cx).into_iter() {
-            container = container.child(item);
-        }
+            .p_4()
+            .children(render_markdown(&self.contents, &self.languages, cx));
 
         div().flex_1().child(
             canvas(move |bounds, cx| {
-                container.into_any().draw(
+                rendered_markdown.into_any().draw(
                     bounds.origin,
                     bounds.size.map(AvailableSpace::Definite),
                     cx,
