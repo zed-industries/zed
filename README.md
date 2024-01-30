@@ -6,7 +6,10 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 ## Installation
 
-You can [download](https://zed.dev/download) Zed today for macOS (v10.15+).
+You can [download](https://zed.dev/download) Zed today for macOS (v10.15+), or install via Homebrew:
+```sh
+brew install zed
+```
 
 Support for additional platforms is on our [roadmap](https://zed.dev/roadmap):
 
