@@ -33,36 +33,38 @@ pub struct ThemeSettings {
 
 impl ThemeSettings {
     pub fn reload_theme(system_is_dark: bool, cx: &mut AppContext) {
-        cx.update_global(|settings: &mut SettingsStore, cx| {
-            let mut theme_settings = settings.get::<ThemeSettings>(None).clone();
-            if let Some(features) = &theme_settings.themes {
-                let themes = cx.default_global::<ThemeRegistry>();
+        if cx.has_global::<SettingsStore>() {
+            cx.update_global(|settings: &mut SettingsStore, cx| {
+                let mut theme_settings = settings.get::<ThemeSettings>(None).clone();
+                if let Some(features) = &theme_settings.themes {
+                    let themes = cx.default_global::<ThemeRegistry>();
 
-                if features.is_dark_mode(system_is_dark) {
-                    if let Some(theme) = features
-                        .dark
-                        .as_ref()
-                        .and_then(|dark_theme| themes.get(&dark_theme).log_err())
-                    {
-                        theme_settings.active_theme = theme;
-                        theme_settings.apply_theme_overrides();
-                        settings.override_global(theme_settings);
-                        cx.refresh();
-                    }
-                } else {
-                    if let Some(theme) = features
-                        .light
-                        .as_ref()
-                        .and_then(|light_theme| themes.get(&light_theme).log_err())
-                    {
-                        theme_settings.active_theme = theme;
-                        theme_settings.apply_theme_overrides();
-                        settings.override_global(theme_settings);
-                        cx.refresh();
+                    if features.is_dark_mode(system_is_dark) {
+                        if let Some(theme) = features
+                            .dark
+                            .as_ref()
+                            .and_then(|dark_theme| themes.get(&dark_theme).log_err())
+                        {
+                            theme_settings.active_theme = theme;
+                            theme_settings.apply_theme_overrides();
+                            settings.override_global(theme_settings);
+                            cx.refresh();
+                        }
+                    } else {
+                        if let Some(theme) = features
+                            .light
+                            .as_ref()
+                            .and_then(|light_theme| themes.get(&light_theme).log_err())
+                        {
+                            theme_settings.active_theme = theme;
+                            theme_settings.apply_theme_overrides();
+                            settings.override_global(theme_settings);
+                            cx.refresh();
+                        }
                     }
                 }
-            }
-        })
+            })
+        }
     }
 }
 
