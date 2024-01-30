@@ -10,7 +10,7 @@ pub enum OpenAiModel {
     ThreePointFiveTurbo,
     #[serde(rename = "gpt-4-0613")]
     Four,
-    #[serde(rename = "gpt-4-1106-preview")]
+    #[serde(rename = "gpt-4-0125-preview")]
     FourTurbo,
 }
 
@@ -19,7 +19,7 @@ impl OpenAiModel {
         match self {
             OpenAiModel::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
             OpenAiModel::Four => "gpt-4-0613",
-            OpenAiModel::FourTurbo => "gpt-4-1106-preview",
+            OpenAiModel::FourTurbo => "gpt-4-0125-preview",
         }
     }
 
