@@ -64,7 +64,10 @@
 (binary_op_expr) @operator
 
 (atom) @string.special.symbol
-(string) @string
+[
+    (char)
+    (string)
+] @string
 [
     (integer)
     (float)
