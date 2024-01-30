@@ -14,8 +14,6 @@ brackets = [
 ]
 # Indent if a line ends brackets, "->" or most keywords. Also if prefixed
 # with "||". This should work with most formatting models.
-# The ((?!%).)* is to ensure this doesn't match inside comments.
-# increase_indent_pattern = "->\\s*$"
 increase_indent_pattern = "^*([{(\\[]]|\\->|after|begin|case|catch|fun|if|of|try|when|maybe|else|(\\|\\|.*))\\s*$"
 
 # Dedent after brackets, end or lone "->". The latter happens in a spec
