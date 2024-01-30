@@ -1007,7 +1007,7 @@ mod tests {
     use super::*;
     use editor::{DisplayPoint, Editor};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
-    use language::Buffer;
+    use language::{Buffer, BufferId};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -1029,7 +1029,7 @@ mod tests {
         let buffer = cx.new_model(|cx| {
             Buffer::new(
                 0,
-                cx.entity_id().as_u64(),
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
                 r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
                 rational expression[2][3]) is a sequence of characters that specifies a search
@@ -1385,7 +1385,13 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                buffer_text,
+            )
+        });
         let window = cx.add_window(|_| ());
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
@@ -1581,7 +1587,13 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                buffer_text,
+            )
+        });
         let cx = cx.add_empty_window();
 
         let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));

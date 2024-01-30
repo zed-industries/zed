@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [dependencies]
 any_ascii = "0.3.2"
 anyhow.workspace = true

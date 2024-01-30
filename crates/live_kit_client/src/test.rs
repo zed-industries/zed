@@ -5,6 +5,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use futures::Stream;
 use gpui::BackgroundExecutor;
 use live_kit_server::{proto, token};
+#[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
 use postage::watch;
@@ -845,6 +846,7 @@ impl Frame {
         self.height
     }
 
+    #[cfg(target_os = "macos")]
     pub fn image(&self) -> CVImageBuffer {
         unimplemented!("you can't call this in test mode")
     }

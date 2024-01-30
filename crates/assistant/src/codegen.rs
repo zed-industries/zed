@@ -365,7 +365,9 @@ mod tests {
     use futures::stream::{self};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
-    use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
+    use language::{
+        language_settings, tree_sitter_rust, Buffer, BufferId, Language, LanguageConfig, Point,
+    };
     use rand::prelude::*;
     use serde::Serialize;
     use settings::SettingsStore;
@@ -394,8 +396,9 @@ mod tests {
                 }
             }
         "};
-        let buffer =
-            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(0, BufferId::new(1).unwrap(), text).with_language(Arc::new(rust_lang()), cx)
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -460,8 +463,9 @@ mod tests {
                 le
             }
         "};
-        let buffer =
-            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(0, BufferId::new(1).unwrap(), text).with_language(Arc::new(rust_lang()), cx)
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let position = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -525,8 +529,9 @@ mod tests {
             "  \n",
             "}\n" //
         );
-        let buffer =
-            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(0, BufferId::new(1).unwrap(), text).with_language(Arc::new(rust_lang()), cx)
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let position = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);

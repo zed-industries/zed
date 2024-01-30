@@ -218,7 +218,22 @@ impl TerminalElement {
                         match cur_alac_color {
                             Some(cur_color) => {
                                 if bg == cur_color {
-                                    cur_rect = cur_rect.take().map(|rect| rect.extend());
+                                    // `cur_rect` can be None if it was moved to the `rects` vec after wrapping around
+                                    // from one line to the next. The variables are all set correctly but there is no current
+                                    // rect, so we create one if necessary.
+                                    cur_rect = cur_rect.map_or_else(
+                                        || {
+                                            Some(LayoutRect::new(
+                                                AlacPoint::new(
+                                                    line_index as i32,
+                                                    cell.point.column.0 as i32,
+                                                ),
+                                                1,
+                                                convert_color(&bg, theme),
+                                            ))
+                                        },
+                                        |rect| Some(rect.extend()),
+                                    );
                                 } else {
                                     cur_alac_color = Some(bg);
                                     if cur_rect.is_some() {

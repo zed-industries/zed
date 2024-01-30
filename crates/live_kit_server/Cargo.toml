@@ -6,7 +6,6 @@ description = "SDK for the LiveKit server API"
 publish = false
 license = "AGPL-3.0-or-later"
 
-
 [lib]
 path = "src/live_kit_server.rs"
 doctest = false

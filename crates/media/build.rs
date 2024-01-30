@@ -1,6 +1,7 @@
-use std::{env, path::PathBuf, process::Command};
-
+#[cfg(target_os = "macos")]
 fn main() {
+    use std::{env, path::PathBuf, process::Command};
+
     let sdk_path = String::from_utf8(
         Command::new("xcrun")
             .args(["--sdk", "macosx", "--show-sdk-path"])
@@ -37,3 +38,6 @@ fn main() {
         .write_to_file(out_path.join("bindings.rs"))
         .expect("couldn't write dispatch bindings");
 }
+
+#[cfg(not(target_os = "macos"))]
+fn main() {}

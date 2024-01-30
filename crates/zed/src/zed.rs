@@ -38,7 +38,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
 };
-use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
+use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 
 actions!(
     zed,
@@ -201,7 +201,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(|_, _: &ToggleFullScreen, cx| {
                 cx.toggle_full_screen();
             })
-            .register_action(|_, action: &OpenZedURL, cx| {
+            .register_action(|_, action: &OpenZedUrl, cx| {
                 cx.global::<Arc<OpenListener>>()
                     .open_urls(&[action.url.clone()])
             })
@@ -2690,7 +2690,7 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
-        for theme_name in themes.list(false).map(|meta| meta.name) {
+        for theme_name in themes.list(false).into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
             if theme.name == ThemeSettings::get(None, cx).active_theme.name {

@@ -1,13 +1,13 @@
 use std::{path::Path, sync::Arc};
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use gpui::{AppContext, AsyncAppContext, Model};
 use language::{point_to_lsp, proto::deserialize_anchor, Buffer};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
-use text::{PointUtf16, ToPointUtf16};
+use text::{BufferId, PointUtf16, ToPointUtf16};
 
 use crate::{lsp_command::LspCommand, Project};
 
@@ -83,7 +83,7 @@ impl LspCommand for ExpandMacro {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtExpandMacro {
         proto::LspExtExpandMacro {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -131,7 +131,7 @@ impl LspCommand for ExpandMacro {
         })
     }
 
-    fn buffer_id_from_proto(message: &proto::LspExtExpandMacro) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::LspExtExpandMacro) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }

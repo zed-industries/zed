@@ -299,7 +299,7 @@ impl ScrollManager {
 }
 
 impl Editor {
-    pub fn vertical_scroll_margin(&mut self) -> usize {
+    pub fn vertical_scroll_margin(&self) -> usize {
         self.scroll_manager.vertical_scroll_margin as usize
     }
 
