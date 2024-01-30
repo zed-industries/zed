@@ -31,6 +31,7 @@
       "up": "vim::Up",
       "l": "vim::Right",
       "right": "vim::Right",
+      "space": "vim::Space",
       "$": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
       "_": "vim::StartOfLineDownward",
