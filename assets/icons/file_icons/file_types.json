@@ -2,6 +2,7 @@
     "suffixes": {
         "aac": "audio",
         "accdb": "storage",
+        "avif": "image",
         "bak": "backup",
         "bash": "terminal",
         "bash_aliases": "terminal",
@@ -43,6 +44,7 @@
         "handlebars": "code",
         "hbs": "template",
         "heex": "elixir",
+        "heif": "image",
         "htm": "template",
         "html": "template",
         "hs": "haskell",
@@ -102,6 +104,7 @@
         "txt": "document",
         "vue": "vue",
         "wav": "audio",
+        "webp": "image",
         "webm": "video",
         "xls": "document",
         "xlsx": "document",
