@@ -3,7 +3,7 @@ use std::{any::Any, ops::Range, path::PathBuf, sync::Arc};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use language::{CodeLabel, LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp::{CompletionItemKind, LanguageServerBinary};
+use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
 use rope::Rope;
 
 const OPERATOR_CHAR: [char; 17] = [
@@ -241,5 +241,75 @@ impl LspAdapter for OCamlLspAdapter {
             }
             _ => None,
         }
+    }
+
+    async fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: SymbolKind,
+        language: &Arc<language::Language>,
+    ) -> Option<CodeLabel> {
+        let (text, filter_range, display_range) = match kind {
+            SymbolKind::PROPERTY => {
+                let text = format!("type t = {{ {}: (); }}", name);
+                let filter_range: Range<usize> = 0..name.len();
+                let display_range = 11..11 + name.len();
+                (text, filter_range, display_range)
+            }
+            SymbolKind::FUNCTION
+                if name.contains(OPERATOR_CHAR)
+                    || (name.starts_with("let") && name.contains(OPERATOR_CHAR)) =>
+            {
+                let text = format!("let ({}) () = ()", name);
+
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..filter_range.end + 1;
+                (text, filter_range, display_range)
+            }
+            SymbolKind::FUNCTION => {
+                let text = format!("let {} () = ()", name);
+
+                let filter_range = 4..4 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            SymbolKind::CONSTRUCTOR => {
+                let text = format!("type t = {}", name);
+                let filter_range = 0..name.len();
+                let display_range = 9..9 + name.len();
+                (text, filter_range, display_range)
+            }
+            SymbolKind::MODULE => {
+                let text = format!("module {} = struct end", name);
+                let filter_range = 7..7 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            SymbolKind::CLASS => {
+                let text = format!("class {} = object end", name);
+                let filter_range = 6..6 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            SymbolKind::METHOD => {
+                let text = format!("class c = object method {} = () end", name);
+                let filter_range = 0..name.len();
+                let display_range = 17..24 + name.len();
+                (text, filter_range, display_range)
+            }
+            SymbolKind::STRING => {
+                let text = format!("type {} = T", name);
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(CodeLabel {
+            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
+            text: text[display_range].to_string(),
+            filter_range,
+        })
     }
 }
