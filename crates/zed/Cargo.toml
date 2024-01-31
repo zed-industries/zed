@@ -112,6 +112,7 @@ tree-sitter-css.workspace = true
 tree-sitter-elixir.workspace = true
 tree-sitter-elm.workspace = true
 tree-sitter-embedded-template.workspace = true
+tree-sitter-gitcommit.workspace = true
 tree-sitter-gleam.workspace = true
 tree-sitter-glsl.workspace = true
 tree-sitter-go.workspace = true

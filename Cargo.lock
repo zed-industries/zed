@@ -8765,6 +8765,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-gitcommit"
+version = "0.3.3"
+source = "git+https://github.com/gbprod/tree-sitter-gitcommit#e8d9eda4e5ea0b08aa39d48dab0f6553058fbe0f"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-gleam"
 version = "0.34.0"
 source = "git+https://github.com/gleam-lang/tree-sitter-gleam?rev=58b7cac8fc14c92b0677c542610d8738c373fa81#58b7cac8fc14c92b0677c542610d8738c373fa81"
@@ -10323,6 +10332,7 @@ dependencies = [
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
+ "tree-sitter-gitcommit",
  "tree-sitter-gleam",
  "tree-sitter-glsl",
  "tree-sitter-go",

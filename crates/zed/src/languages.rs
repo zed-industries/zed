@@ -112,7 +112,7 @@ pub fn init(
             })],
         ),
     }
-
+    language("gitcommit", tree_sitter_gitcommit::language(), vec![]);
     language(
         "gleam",
         tree_sitter_gleam::language(),
