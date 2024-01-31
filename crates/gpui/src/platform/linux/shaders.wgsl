@@ -1,3 +1,17 @@
+struct Globals {
+    viewport_size: vec2<f32>,
+    pad: vec2<u32>,
+}
+
+var<uniform> globals: Globals;
+
+const M_PI_F: f32 = 3.1415926;
+
+struct ViewId {
+	lo: u32,
+	hi: u32,
+}
+
 struct Bounds {
     origin: vec2<f32>,
     size: vec2<f32>,
@@ -19,35 +33,6 @@ struct Hsla {
     s: f32,
     l: f32,
     a: f32,
-}
-
-struct Quad {
-    view_id: vec2<u32>,
-    layer_id: u32,
-    order: u32,
-    bounds: Bounds,
-    content_mask: Bounds,
-    background: Hsla,
-    border_color: Hsla,
-    corner_radii: Corners,
-    border_widths: Edges,
-}
-
-struct Globals {
-    viewport_size: vec2<f32>,
-    pad: vec2<u32>,
-}
-
-var<uniform> globals: Globals;
-var<storage, read> quads: array<Quad>;
-
-struct QuadsVarying {
-    @builtin(position) position: vec4<f32>,
-    @location(0) @interpolate(flat) background_color: vec4<f32>,
-    @location(1) @interpolate(flat) border_color: vec4<f32>,
-    @location(2) @interpolate(flat) quad_id: u32,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
 }
 
 fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
@@ -99,17 +84,62 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
 }
 
 fn over(below: vec4<f32>, above: vec4<f32>) -> vec4<f32> {
-  let alpha = above.a + below.a * (1.0 - above.a);
-  let color = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
-  return vec4<f32>(color, alpha);
+    let alpha = above.a + below.a * (1.0 - above.a);
+    let color = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
+    return vec4<f32>(color, alpha);
+}
+
+// A standard gaussian function, used for weighting samples
+fn gaussian(x: f32, sigma: f32) -> f32{
+    return exp(-(x * x) / (2.0 * sigma * sigma)) / (sqrt(2.0 * M_PI_F) * sigma);
+}
+
+// This approximates the error function, needed for the gaussian integral
+fn erf(v: vec2<f32>) -> vec2<f32> {
+    let s = sign(v);
+    let a = abs(v);
+    let r1 = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    let r2 = r1 * r1;
+    return s - s / (r2 * r2);
+}
+
+fn blur_along_x(x: f32, y: f32, sigma: f32, corner: f32, half_size: vec2<f32>) -> f32 {
+  let delta = min(half_size.y - corner - abs(y), 0.0);
+  let curved = half_size.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
+  let integral = 0.5 + 0.5 * erf((x + vec2<f32>(-curved, curved)) * (sqrt(0.5) / sigma));
+  return integral.y - integral.x;
+}
+
+// --- quads --- //
+
+struct Quad {
+    view_id: ViewId,
+    layer_id: u32,
+    order: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    background: Hsla,
+    border_color: Hsla,
+    corner_radii: Corners,
+    border_widths: Edges,
+}
+var<storage, read> b_quads: array<Quad>;
+
+struct QuadVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) background_color: vec4<f32>,
+    @location(1) @interpolate(flat) border_color: vec4<f32>,
+    @location(2) @interpolate(flat) quad_id: u32,
+    //TODO: use `clip_distance` once Naga supports it
+    @location(3) clip_distances: vec4<f32>,
 }
 
 @vertex
-fn vs_quads(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadsVarying {
+fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let quad = quads[instance_id];
+    let quad = b_quads[instance_id];
 
-    var out = QuadsVarying();
+    var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
     out.background_color = hsla_to_rgba(quad.background);
     out.border_color = hsla_to_rgba(quad.border_color);
@@ -119,7 +149,7 @@ fn vs_quads(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) inst
 }
 
 @fragment
-fn fs_quads(input: QuadsVarying) -> @location(0) vec4<f32> {
+fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // Alpha clip first, since we don't have `clip_distance`.
     let min_distance = min(
         min(input.clip_distances.x, input.clip_distances.y),
@@ -129,7 +159,7 @@ fn fs_quads(input: QuadsVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
-    let quad = quads[input.quad_id];
+    let quad = b_quads[input.quad_id];
     let half_size = quad.bounds.size / 2.0;
     let center = quad.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
@@ -180,4 +210,98 @@ fn fs_quads(input: QuadsVarying) -> @location(0) vec4<f32> {
     }
 
     return color * vec4<f32>(1.0, 1.0, 1.0, saturate(0.5 - distance));
+}
+
+// --- shadows --- //
+
+struct Shadow {
+    view_id: ViewId,
+    layer_id: u32,
+    order: u32,
+    bounds: Bounds,
+    corner_radii: Corners,
+    content_mask: Bounds,
+    color: Hsla,
+    blur_radius: f32,
+    pad: u32,
+}
+var<storage, read> b_shadows: array<Shadow>;
+
+struct ShadowVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) color: vec4<f32>,
+    @location(1) @interpolate(flat) shadow_id: u32,
+    //TODO: use `clip_distance` once Naga supports it
+    @location(3) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> ShadowVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let shadow = b_shadows[instance_id];
+
+    let margin = 3.0 * shadow.blur_radius;
+    // Set the bounds of the shadow and adjust its size based on the shadow's
+    // spread radius to achieve the spreading effect
+    var bounds = shadow.bounds;
+    bounds.origin -= vec2<f32>(margin);
+    bounds.size += 2.0 * vec2<f32>(margin);
+
+    var out = ShadowVarying();
+    out.position = to_device_position(unit_vertex, shadow.bounds);
+    out.color = hsla_to_rgba(shadow.color);
+    out.shadow_id = instance_id;
+    out.clip_distances = distance_from_clip_rect(unit_vertex, shadow.bounds, shadow.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
+    // Alpha clip first, since we don't have `clip_distance`.
+    let min_distance = min(
+        min(input.clip_distances.x, input.clip_distances.y),
+        min(input.clip_distances.z, input.clip_distances.w)
+    );
+    if min_distance <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+
+    let shadow = b_shadows[input.shadow_id];
+    let half_size = shadow.bounds.size / 2.0;
+    let center = shadow.bounds.origin + half_size;
+    let center_to_point = input.position.xy - center;
+
+    var corner_radius = 0.0;
+    if (center_to_point.x < 0.0) {
+        if (center_to_point.y < 0.0) {
+            corner_radius = shadow.corner_radii.top_left;
+        } else {
+            corner_radius = shadow.corner_radii.bottom_left;
+        }
+    } else {
+        if (center_to_point.y < 0.) {
+            corner_radius = shadow.corner_radii.top_right;
+        } else {
+            corner_radius = shadow.corner_radii.bottom_right;
+        }
+    }
+
+    // The signal is only non-zero in a limited range, so don't waste samples
+    let low = center_to_point.y - half_size.y;
+    let high = center_to_point.y + half_size.y;
+    let start = clamp(-3.0 * shadow.blur_radius, low, high);
+    let end = clamp(3.0 * shadow.blur_radius, low, high);
+
+    // Accumulate samples (we can get away with surprisingly few samples)
+    let step = (end - start) / 4.0;
+    var y = start + step * 0.5;
+    var alpha = 0.0;
+    for (var i = 0; i < 4; i += 1) {
+        let blur = blur_along_x(center_to_point.x, center_to_point.y - y,
+            shadow.blur_radius, corner_radius, half_size);
+        alpha +=  blur * gaussian(y, shadow.blur_radius) * step;
+        y += step;
+    }
+
+    return input.color * vec4<f32>(1.0, 1.0, 1.0, alpha);
 }

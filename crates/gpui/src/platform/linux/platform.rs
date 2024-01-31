@@ -112,10 +112,10 @@ impl Platform for LinuxPlatform {
                 xcb::Event::X(x::Event::Expose(ev)) => {
                     repaint_x_window = Some(ev.window());
                 }
-                xcb::Event::X(x::Event::ResizeRequest(ev)) => {
+                xcb::Event::X(x::Event::ConfigureNotify(ev)) => {
                     let this = self.0.lock();
                     LinuxWindowState::resize(&this.windows[&ev.window()], ev.width(), ev.height());
-                    repaint_x_window = Some(ev.window());
+                    this.xcb_connection.flush();
                 }
                 _ => {}
             }
@@ -175,7 +175,6 @@ impl Platform for LinuxPlatform {
 
         let window_ptr = LinuxWindowState::new_ptr(
             options,
-            handle,
             &this.xcb_connection,
             this.x_root_index,
             x_window,

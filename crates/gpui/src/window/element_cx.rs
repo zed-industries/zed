@@ -677,6 +677,7 @@ impl<'a> ElementContext<'a> {
                     corner_radii: corner_radii.scale(scale_factor),
                     color: shadow.color,
                     blur_radius: shadow.blur_radius.scale(scale_factor),
+                    pad: 0,
                 },
             );
         }

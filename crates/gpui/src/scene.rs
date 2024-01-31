@@ -577,6 +577,7 @@ pub(crate) struct Shadow {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub blur_radius: ScaledPixels,
+    pub pad: u32, // align to 8 bytes
 }
 
 impl Ord for Shadow {

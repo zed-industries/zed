@@ -7,7 +7,7 @@ use cbindgen::Config;
 
 fn main() {
     //generate_dispatch_bindings();
-    let _header_path = generate_shader_bindings();
+    //let header_path = generate_shader_bindings();
     //#[cfg(feature = "runtime_shaders")]
     //emit_stitched_shaders(&header_path);
     //#[cfg(not(feature = "runtime_shaders"))]
@@ -38,7 +38,7 @@ fn _generate_dispatch_bindings() {
         .expect("couldn't write dispatch bindings");
 }
 
-fn generate_shader_bindings() -> PathBuf {
+fn _generate_shader_bindings() -> PathBuf {
     let output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("scene.h");
     let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let mut config = Config::default();

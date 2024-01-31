@@ -182,13 +182,18 @@ tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1d897
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
 
 # TODO - Remove when corresponding Blade versions are published
-# Currently in https://github.com/kvark/blade/tree/zed
+[patch."https://github.com/kvark/blade"]
 blade-graphics = { path = "/x/Code/blade/blade-graphics" }
 blade-macros = { path = "/x/Code/blade/blade-macros" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
+
+# TODO - Remove this
+[profile.dev.package.blade-graphics]
+split-debuginfo = "off"
+debug = "full"
 
 [profile.dev.package.taffy]
 opt-level = 3

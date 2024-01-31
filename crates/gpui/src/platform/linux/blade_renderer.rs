@@ -1,5 +1,8 @@
+// Doing `if let` gives you nice scoping with passes/encoders
+#![allow(irrefutable_let_patterns)]
+
 use super::{BladeBelt, BladeBeltDescriptor};
-use crate::{PrimitiveBatch, Quad, Scene};
+use crate::{PrimitiveBatch, Quad, Scene, Shadow};
 use bytemuck::{Pod, Zeroable};
 
 use blade_graphics as gpu;
@@ -18,11 +21,18 @@ struct GlobalParams {
 #[derive(blade_macros::ShaderData)]
 struct ShaderQuadsData {
     globals: GlobalParams,
-    quads: gpu::BufferPiece,
+    b_quads: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
+struct ShaderShadowsData {
+    globals: GlobalParams,
+    b_shadows: gpu::BufferPiece,
 }
 
 struct BladePipelines {
     quads: gpu::RenderPipeline,
+    shadows: gpu::RenderPipeline,
 }
 
 impl BladePipelines {
@@ -31,18 +41,36 @@ impl BladePipelines {
             source: include_str!("shaders.wgsl"),
         });
         shader.check_struct_size::<Quad>();
-        let layout = <ShaderQuadsData as gpu::ShaderData>::layout();
+        shader.check_struct_size::<Shadow>();
+        let quads_layout = <ShaderQuadsData as gpu::ShaderData>::layout();
+        let shadows_layout = <ShaderShadowsData as gpu::ShaderData>::layout();
         Self {
             quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "quads",
-                data_layouts: &[&layout],
-                vertex: shader.at("vs_quads"),
+                data_layouts: &[&quads_layout],
+                vertex: shader.at("vs_quad"),
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_quads"),
+                fragment: shader.at("fs_quad"),
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
+            }),
+            shadows: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "shadows",
+                data_layouts: &[&shadows_layout],
+                vertex: shader.at("vs_shadow"),
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: shader.at("fs_shadow"),
                 color_targets: &[gpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
@@ -117,6 +145,14 @@ impl BladeRenderer {
         self.command_encoder.start();
         self.command_encoder.init_texture(frame.texture());
 
+        let globals = GlobalParams {
+            viewport_size: [
+                self.viewport_size.width as f32,
+                self.viewport_size.height as f32,
+            ],
+            pad: [0; 2],
+        };
+
         if let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
             colors: &[gpu::RenderTarget {
                 view: frame.texture_view(),
@@ -133,17 +169,23 @@ impl BladeRenderer {
                         encoder.bind(
                             0,
                             &ShaderQuadsData {
-                                globals: GlobalParams {
-                                    viewport_size: [
-                                        self.viewport_size.width as f32,
-                                        self.viewport_size.height as f32,
-                                    ],
-                                    pad: [0; 2],
-                                },
-                                quads: instances,
+                                globals,
+                                b_quads: instances,
                             },
                         );
                         encoder.draw(0, 4, 0, quads.len() as u32);
+                    }
+                    PrimitiveBatch::Shadows(shadows) => {
+                        let instances = self.instance_belt.alloc_data(shadows, &self.gpu);
+                        let mut encoder = pass.with(&self.pipelines.shadows);
+                        encoder.bind(
+                            0,
+                            &ShaderShadowsData {
+                                globals,
+                                b_shadows: instances,
+                            },
+                        );
+                        encoder.draw(0, 4, 0, shadows.len() as u32);
                     }
                     _ => continue,
                 }

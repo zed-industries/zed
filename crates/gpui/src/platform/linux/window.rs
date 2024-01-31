@@ -38,11 +38,13 @@ struct RawWindow {
     connection: *mut c_void,
     screen_id: i32,
     window_id: u32,
+    visual_id: u32,
 }
 unsafe impl raw_window_handle::HasRawWindowHandle for RawWindow {
     fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
         let mut wh = raw_window_handle::XcbWindowHandle::empty();
         wh.window = self.window_id;
+        wh.visual_id = self.visual_id;
         wh.into()
     }
 }
@@ -58,7 +60,6 @@ unsafe impl raw_window_handle::HasRawDisplayHandle for RawWindow {
 impl LinuxWindowState {
     pub fn new_ptr(
         options: WindowOptions,
-        handle: AnyWindowHandle,
         xcb_connection: &xcb::Connection,
         x_main_screen_index: i32,
         x_window: x::Window,
@@ -76,7 +77,7 @@ impl LinuxWindowState {
         let xcb_values = [
             x::Cw::BackPixel(screen.white_pixel()),
             x::Cw::EventMask(
-                x::EventMask::EXPOSURE | x::EventMask::RESIZE_REDIRECT | x::EventMask::KEY_PRESS,
+                x::EventMask::EXPOSURE | x::EventMask::STRUCTURE_NOTIFY | x::EventMask::KEY_PRESS,
             ),
         ];
 
@@ -136,6 +137,7 @@ impl LinuxWindowState {
             ) as *mut _,
             screen_id: x_screen_index,
             window_id: x_window.resource_id(),
+            visual_id: screen.root_visual(),
         };
         let gpu = Arc::new(
             unsafe {
