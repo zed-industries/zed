@@ -35,6 +35,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
+use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -1461,6 +1462,66 @@ impl EditorElement {
                         DiffHunkStatus::Added => cx.theme().status().created,
                         DiffHunkStatus::Modified => cx.theme().status().modified,
                         DiffHunkStatus::Removed => cx.theme().status().deleted,
+                    };
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        color,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
+            if layout.is_singleton && scrollbar_settings.diagnostics {
+                let max_point = layout
+                    .position_map
+                    .snapshot
+                    .display_snapshot
+                    .buffer_snapshot
+                    .max_point();
+
+                let mut entries = layout
+                    .position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
+                    .collect::<Vec<_>>();
+
+                // We want to sort by severity, in order to paint the most severe diagnostics last.
+                entries.sort_by_key(|entry| std::cmp::Reverse(entry.diagnostic.severity));
+
+                for entry in entries {
+                    let start_display = entry
+                        .range
+                        .start
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = entry
+                        .range
+                        .end
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if entry.range.start == entry.range.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
+
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+
+                    let color = match entry.diagnostic.severity {
+                        DiagnosticSeverity::ERROR => cx.theme().status().error,
+                        DiagnosticSeverity::WARNING => cx.theme().status().warning,
+                        DiagnosticSeverity::INFORMATION => cx.theme().status().info,
+                        _ => cx.theme().status().hint,
                     };
                     cx.paint_quad(quad(
                         bounds,

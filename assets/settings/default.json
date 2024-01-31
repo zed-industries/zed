@@ -127,7 +127,9 @@
     // Whether to show selections in the scrollbar.
     "selections": true,
     // Whether to show symbols selections in the scrollbar.
-    "symbols_selections": true
+    "symbols_selections": true,
+    // Whether to show diagnostic indicators in the scrollbar.
+    "diagnostics": true
   },
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
