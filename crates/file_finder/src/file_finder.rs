@@ -666,6 +666,7 @@ impl PickerDelegate for FileFinderDelegate {
         raw_query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
+        let raw_query = raw_query.replace(" ", "");
         let raw_query = raw_query.trim();
         if raw_query.is_empty() {
             let project = self.project.read(cx);
