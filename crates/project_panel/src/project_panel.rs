@@ -16,8 +16,7 @@ use gpui::{
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
-    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
+    repository::GitFileStatus, CopyOptions, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
@@ -114,6 +113,7 @@ actions!(
         Copy,
         CopyPath,
         CopyRelativePath,
+        Duplicate,
         RevealInFinder,
         OpenInTerminal,
         Cut,
@@ -410,6 +410,7 @@ impl ProjectPanel {
                         .separator()
                         .action("Cut", Box::new(Cut))
                         .action("Copy", Box::new(Copy))
+                        .action("Duplicate", Box::new(Duplicate))
                         .when_some(self.clipboard_entry, |menu, entry| {
                             menu.when(entry.worktree_id() == worktree_id, |menu| {
                                 menu.action("Paste", Box::new(Paste))
@@ -947,6 +948,17 @@ impl ProjectPanel {
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             cx.write_to_clipboard(ClipboardItem::new(entry.path.to_string_lossy().to_string()));
+        }
+    }
+
+    fn duplicate(&mut self, _: &Duplicate, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            // This is async
+            self.fs.duplicate(&*entry.path, CopyOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+            });
+            cx.notify();
         }
     }
 

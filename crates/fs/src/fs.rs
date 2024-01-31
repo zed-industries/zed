@@ -33,6 +33,7 @@ pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
+    async fn duplicate(&self, source: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
@@ -122,6 +123,11 @@ impl Fs for RealFs {
 
         smol::fs::copy(source, target).await?;
         Ok(())
+    }
+
+    async fn duplicate(&self, source: &Path, options: CopyOptions) -> Result<()> {
+        let file_name = source.with_extension("duplicate");
+        self.copy_file(source, &file_name, options).await
     }
 
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
@@ -890,6 +896,12 @@ impl Fs for FakeFs {
         }
         state.emit_event(&[target]);
         Ok(())
+    }
+
+    async fn duplicate(&self, source: &Path, options: CopyOptions) -> Result<()> {
+        let file_name = source.with_extension("duplicate");
+        self.copy_file(source, &file_name, options)
+            .await
     }
 
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
