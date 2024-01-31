@@ -485,6 +485,9 @@
     "JavaScript": {
       "tab_size": 2
     },
+    "Terraform": {
+      "tab_size": 2
+    },
     "TypeScript": {
       "tab_size": 2
     },
