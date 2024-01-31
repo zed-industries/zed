@@ -8829,6 +8829,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-gowork"
+version = "0.0.1"
+source = "git+https://github.com/d1y/tree-sitter-go-work#a2a4b99b53b3740855ff33f0b54cab0bb4ce6f45"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-haskell"
 version = "0.14.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-haskell?rev=cf98de23e4285b8e6bcb57b050ef2326e2cc284b#cf98de23e4285b8e6bcb57b050ef2326e2cc284b"
@@ -10357,6 +10366,7 @@ dependencies = [
  "tree-sitter-glsl",
  "tree-sitter-go",
  "tree-sitter-gomod",
+ "tree-sitter-gowork",
  "tree-sitter-haskell",
  "tree-sitter-heex",
  "tree-sitter-html",
