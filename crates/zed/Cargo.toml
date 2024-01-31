@@ -6,7 +6,6 @@ version = "0.121.0"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 name = "zed"
 path = "src/zed.rs"
@@ -60,6 +59,7 @@ project_panel = { path = "../project_panel" }
 project_symbols = { path = "../project_symbols" }
 quick_action_bar = { path = "../quick_action_bar" }
 recent_projects = { path = "../recent_projects" }
+release_channel = { path = "../release_channel" }
 rope = { path = "../rope"}
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
@@ -117,6 +117,7 @@ tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-clojure.workspace = true
 tree-sitter-cpp.workspace = true
+tree-sitter-c-sharp.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-elixir.workspace = true
 tree-sitter-elm.workspace = true
@@ -128,6 +129,7 @@ tree-sitter-heex.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-markdown.workspace = true
+tree-sitter-proto.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-toml.workspace = true
 tree-sitter-typescript.workspace = true
@@ -147,7 +149,7 @@ tree-sitter-vue.workspace = true
 tree-sitter-uiua.workspace = true
 tree-sitter-zig.workspace = true
 
-url = "2.2"
+url.workspace = true
 urlencoding = "2.1.2"
 uuid.workspace = true
 

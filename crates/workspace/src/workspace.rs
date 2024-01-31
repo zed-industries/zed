@@ -18,6 +18,7 @@ use client::{
     Client, ErrorExt, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
+use derive_more::{Deref, DerefMut};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
     channel::{mpsc, oneshot},
@@ -28,7 +29,7 @@ use gpui::{
     actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView,
     AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
     DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
+    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
     ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
     Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
@@ -59,6 +60,7 @@ use std::{
     borrow::Cow,
     cmp, env,
     path::{Path, PathBuf},
+    sync::Weak,
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
@@ -256,8 +258,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     });
 }
 
-type ProjectItemBuilders =
-    HashMap<TypeId, fn(Model<Project>, AnyModel, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
+#[derive(Clone, Default, Deref, DerefMut)]
+struct ProjectItemBuilders(
+    HashMap<TypeId, fn(Model<Project>, AnyModel, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>,
+);
+
+impl Global for ProjectItemBuilders {}
+
 pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     let builders = cx.default_global::<ProjectItemBuilders>();
     builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
@@ -273,13 +280,20 @@ type FollowableItemBuilder = fn(
     &mut Option<proto::view::Variant>,
     &mut WindowContext,
 ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
-type FollowableItemBuilders = HashMap<
-    TypeId,
-    (
-        FollowableItemBuilder,
-        fn(&AnyView) -> Box<dyn FollowableItemHandle>,
-    ),
->;
+
+#[derive(Default, Deref, DerefMut)]
+struct FollowableItemBuilders(
+    HashMap<
+        TypeId,
+        (
+            FollowableItemBuilder,
+            fn(&AnyView) -> Box<dyn FollowableItemHandle>,
+        ),
+    >,
+);
+
+impl Global for FollowableItemBuilders {}
+
 pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
     let builders = cx.default_global::<FollowableItemBuilders>();
     builders.insert(
@@ -296,16 +310,22 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
     );
 }
 
-type ItemDeserializers = HashMap<
-    Arc<str>,
-    fn(
-        Model<Project>,
-        WeakView<Workspace>,
-        WorkspaceId,
-        ItemId,
-        &mut ViewContext<Pane>,
-    ) -> Task<Result<Box<dyn ItemHandle>>>,
->;
+#[derive(Default, Deref, DerefMut)]
+struct ItemDeserializers(
+    HashMap<
+        Arc<str>,
+        fn(
+            Model<Project>,
+            WeakView<Workspace>,
+            WorkspaceId,
+            ItemId,
+            &mut ViewContext<Pane>,
+        ) -> Task<Result<Box<dyn ItemHandle>>>,
+    >,
+);
+
+impl Global for ItemDeserializers {}
+
 pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
     if let Some(serialized_item_kind) = I::serialized_item_kind() {
         let deserializers = cx.default_global::<ItemDeserializers>();
@@ -331,6 +351,10 @@ pub struct AppState {
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
+struct GlobalAppState(Weak<AppState>);
+
+impl Global for GlobalAppState {}
+
 pub struct WorkspaceStore {
     workspaces: HashSet<WindowHandle<Workspace>>,
     followers: Vec<Follower>,
@@ -345,6 +369,17 @@ struct Follower {
 }
 
 impl AppState {
+    pub fn global(cx: &AppContext) -> Weak<Self> {
+        cx.global::<GlobalAppState>().0.clone()
+    }
+    pub fn try_global(cx: &AppContext) -> Option<Weak<Self>> {
+        cx.try_global::<GlobalAppState>()
+            .map(|state| state.0.clone())
+    }
+    pub fn set_global(state: Weak<AppState>, cx: &mut AppContext) {
+        cx.set_global(GlobalAppState(state));
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
         use node_runtime::FakeNodeRuntime;
@@ -616,7 +651,7 @@ impl Workspace {
         let modal_layer = cx.new_view(|_| ModalLayer::new());
 
         let mut active_call = None;
-        if let Some(call) = cx.try_global::<Model<ActiveCall>>() {
+        if let Some(call) = ActiveCall::try_global(cx) {
             let call = call.clone();
             let mut subscriptions = Vec::new();
             subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
@@ -3657,7 +3692,7 @@ impl WorkspaceStore {
         update: proto::update_followers::Variant,
         cx: &AppContext,
     ) -> Option<()> {
-        let active_call = cx.try_global::<Model<ActiveCall>>()?;
+        let active_call = ActiveCall::try_global(cx)?;
         let room_id = active_call.read(cx).room()?.read(cx).id();
         let follower_ids: Vec<_> = self
             .followers

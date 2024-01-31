@@ -17,7 +17,7 @@ use time::UtcOffset;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, KeyBinding, Keymap,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
     TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
@@ -823,13 +823,13 @@ impl AppContext {
     }
 
     /// Check whether a global of the given type has been assigned.
-    pub fn has_global<G: 'static>(&self) -> bool {
+    pub fn has_global<G: Global>(&self) -> bool {
         self.globals_by_type.contains_key(&TypeId::of::<G>())
     }
 
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
     #[track_caller]
-    pub fn global<G: 'static>(&self) -> &G {
+    pub fn global<G: Global>(&self) -> &G {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -838,7 +838,7 @@ impl AppContext {
     }
 
     /// Access the global of the given type if a value has been assigned.
-    pub fn try_global<G: 'static>(&self) -> Option<&G> {
+    pub fn try_global<G: Global>(&self) -> Option<&G> {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -846,7 +846,7 @@ impl AppContext {
 
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
     #[track_caller]
-    pub fn global_mut<G: 'static>(&mut self) -> &mut G {
+    pub fn global_mut<G: Global>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -858,7 +858,7 @@ impl AppContext {
 
     /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
     /// yet been assigned.
-    pub fn default_global<G: 'static + Default>(&mut self) -> &mut G {
+    pub fn default_global<G: Global + Default>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -869,7 +869,7 @@ impl AppContext {
     }
 
     /// Sets the value of the global of the given type.
-    pub fn set_global<G: Any>(&mut self, global: G) {
+    pub fn set_global<G: Global>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
@@ -882,7 +882,7 @@ impl AppContext {
     }
 
     /// Remove the global of the given type from the app context. Does not notify global observers.
-    pub fn remove_global<G: Any>(&mut self) -> G {
+    pub fn remove_global<G: Global>(&mut self) -> G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         *self
@@ -895,7 +895,7 @@ impl AppContext {
 
     /// Updates the global of the given type with a closure. Unlike `global_mut`, this method provides
     /// your closure with mutable access to the `AppContext` and the global simultaneously.
-    pub fn update_global<G: 'static, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
+    pub fn update_global<G: Global, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
         self.update(|cx| {
             let mut global = cx.lease_global::<G>();
             let result = f(&mut global, cx);
@@ -905,7 +905,7 @@ impl AppContext {
     }
 
     /// Register a callback to be invoked when a global of the given type is updated.
-    pub fn observe_global<G: 'static>(
+    pub fn observe_global<G: Global>(
         &mut self,
         mut f: impl FnMut(&mut Self) + 'static,
     ) -> Subscription {
@@ -921,7 +921,7 @@ impl AppContext {
     }
 
     /// Move the global of the given type to the stack.
-    pub(crate) fn lease_global<G: 'static>(&mut self) -> GlobalLease<G> {
+    pub(crate) fn lease_global<G: Global>(&mut self) -> GlobalLease<G> {
         GlobalLease::new(
             self.globals_by_type
                 .remove(&TypeId::of::<G>())
@@ -931,7 +931,7 @@ impl AppContext {
     }
 
     /// Restore the global of the given type after it is moved to the stack.
-    pub(crate) fn end_global_lease<G: 'static>(&mut self, lease: GlobalLease<G>) {
+    pub(crate) fn end_global_lease<G: Global>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, lease.global);
@@ -1293,12 +1293,12 @@ pub(crate) enum Effect {
 }
 
 /// Wraps a global variable value during `update_global` while the value has been moved to the stack.
-pub(crate) struct GlobalLease<G: 'static> {
+pub(crate) struct GlobalLease<G: Global> {
     global: Box<dyn Any>,
     global_type: PhantomData<G>,
 }
 
-impl<G: 'static> GlobalLease<G> {
+impl<G: Global> GlobalLease<G> {
     fn new(global: Box<dyn Any>) -> Self {
         GlobalLease {
             global,
@@ -1307,7 +1307,7 @@ impl<G: 'static> GlobalLease<G> {
     }
 }
 
-impl<G: 'static> Deref for GlobalLease<G> {
+impl<G: Global> Deref for GlobalLease<G> {
     type Target = G;
 
     fn deref(&self) -> &Self::Target {
@@ -1315,7 +1315,7 @@ impl<G: 'static> Deref for GlobalLease<G> {
     }
 }
 
-impl<G: 'static> DerefMut for GlobalLease<G> {
+impl<G: Global> DerefMut for GlobalLease<G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.global.downcast_mut().unwrap()
     }

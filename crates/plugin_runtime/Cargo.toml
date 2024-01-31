@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [dependencies]
 wasmtime = "2.0"
 wasmtime-wasi = "2.0"

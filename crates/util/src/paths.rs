@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use globset::{Glob, GlobMatcher};
 use serde::{Deserialize, Serialize};
@@ -8,6 +11,7 @@ lazy_static::lazy_static! {
     pub static ref CONFIG_DIR: PathBuf = HOME.join(".config").join("zed");
     pub static ref CONVERSATIONS_DIR: PathBuf = HOME.join(".config/zed/conversations");
     pub static ref EMBEDDINGS_DIR: PathBuf = HOME.join(".config/zed/embeddings");
+    pub static ref THEMES_DIR: PathBuf = HOME.join(".config/zed/themes");
     pub static ref LOGS_DIR: PathBuf = HOME.join("Library/Logs/Zed");
     pub static ref SUPPORT_DIR: PathBuf = HOME.join("Library/Application Support/Zed");
     pub static ref PLUGINS_DIR: PathBuf = HOME.join("Library/Application Support/Zed/plugins");
@@ -39,6 +43,29 @@ pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn icon_suffix(&self) -> Option<&str>;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
+    fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
+    where
+        Self: From<&'a Path>,
+    {
+        #[cfg(unix)]
+        {
+            use std::os::unix::prelude::OsStrExt;
+            Ok(Self::from(Path::new(OsStr::from_bytes(bytes))))
+        }
+        #[cfg(windows)]
+        {
+            use anyhow::anyhow;
+            use tendril::fmt::{Format, WTF8};
+            WTF8::validate(bytes)
+                .then(|| {
+                    // Safety: bytes are valid WTF-8 sequence.
+                    Self::from(Path::new(unsafe {
+                        OsStr::from_encoded_bytes_unchecked(bytes)
+                    }))
+                })
+                .ok_or_else(|| anyhow!("Invalid WTF-8 sequence: {bytes:?}"))
+        }
+    }
 }
 
 impl<T: AsRef<Path>> PathExt for T {

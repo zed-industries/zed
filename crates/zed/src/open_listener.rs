@@ -6,8 +6,9 @@ use editor::Editor;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
-use gpui::AsyncAppContext;
+use gpui::{AppContext, AsyncAppContext, Global};
 use language::{Bias, Point};
+use release_channel::parse_zed_link;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
@@ -17,7 +18,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::{path::PathBuf, sync::atomic::AtomicBool};
-use util::channel::parse_zed_link;
 use util::paths::PathLikeWithPosition;
 use util::ResultExt;
 use workspace::AppState;
@@ -42,7 +42,19 @@ pub struct OpenListener {
     pub triggered: AtomicBool,
 }
 
+struct GlobalOpenListener(Arc<OpenListener>);
+
+impl Global for GlobalOpenListener {}
+
 impl OpenListener {
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        cx.global::<GlobalOpenListener>().0.clone()
+    }
+
+    pub fn set_global(listener: Arc<OpenListener>, cx: &mut AppContext) {
+        cx.set_global(GlobalOpenListener(listener))
+    }
+
     pub fn new() -> (Self, UnboundedReceiver<OpenRequest>) {
         let (tx, rx) = mpsc::unbounded();
         (

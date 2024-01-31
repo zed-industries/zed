@@ -8,8 +8,9 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, DismissEvent,
-    ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight, ListOffset, ListScrollEvent,
-    ListState, Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    ElementId, EventEmitter, Fill, FocusHandle, FocusableView, FontWeight, ListOffset,
+    ListScrollEvent, ListState, Model, Render, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -335,67 +336,78 @@ impl ChatPanel {
         };
         let this = cx.view().clone();
 
-        v_flex()
-            .w_full()
-            .relative()
-            .overflow_hidden()
-            .when(!is_continuation_from_previous, |this| {
-                this.pt_3().child(
-                    h_flex()
-                        .text_ui_sm()
-                        .child(
-                            div().absolute().child(
+        let mentioning_you = message
+            .mentions
+            .iter()
+            .any(|m| Some(m.1) == self.client.user_id());
+
+        v_flex().w_full().relative().child(
+            div()
+                .bg(if mentioning_you {
+                    Fill::from(cx.theme().colors().background)
+                } else {
+                    Fill::default()
+                })
+                .rounded_md()
+                .overflow_hidden()
+                .px_1()
+                .py_0p5()
+                .when(!is_continuation_from_previous, |this| {
+                    this.mt_1().child(
+                        h_flex()
+                            .text_ui_sm()
+                            .child(div().absolute().child(
                                 Avatar::new(message.sender.avatar_uri.clone()).size(rems(1.)),
+                            ))
+                            .child(
+                                div()
+                                    .pl(cx.rem_size() + px(6.0))
+                                    .pr(px(8.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(Label::new(message.sender.github_login.clone())),
+                            )
+                            .child(
+                                Label::new(format_timestamp(
+                                    OffsetDateTime::now_utc(),
+                                    message.timestamp,
+                                    self.local_timezone,
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                             ),
-                        )
+                    )
+                })
+                .when(mentioning_you, |this| this.mt_1())
+                .child(
+                    v_flex()
+                        .w_full()
+                        .text_ui_sm()
+                        .id(element_id)
+                        .group("")
+                        .child(text.element("body".into(), cx))
                         .child(
                             div()
-                                .pl(cx.rem_size() + px(6.0))
-                                .pr(px(8.0))
-                                .font_weight(FontWeight::BOLD)
-                                .child(Label::new(message.sender.github_login.clone())),
-                        )
-                        .child(
-                            Label::new(format_timestamp(
-                                OffsetDateTime::now_utc(),
-                                message.timestamp,
-                                self.local_timezone,
-                            ))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                                .absolute()
+                                .z_index(1)
+                                .right_0()
+                                .w_6()
+                                .bg(cx.theme().colors().panel_background)
+                                .when(!self.has_open_menu(message_id_to_remove), |el| {
+                                    el.visible_on_hover("")
+                                })
+                                .children(message_id_to_remove.map(|message_id| {
+                                    popover_menu(("menu", message_id))
+                                        .trigger(IconButton::new(
+                                            ("trigger", message_id),
+                                            IconName::Ellipsis,
+                                        ))
+                                        .menu(move |cx| {
+                                            Some(Self::render_message_menu(&this, message_id, cx))
+                                        })
+                                })),
                         ),
-                )
-            })
-            .when(is_continuation_from_previous, |this| this.pt_1())
-            .child(
-                v_flex()
-                    .w_full()
-                    .text_ui_sm()
-                    .id(element_id)
-                    .group("")
-                    .child(text.element("body".into(), cx))
-                    .child(
-                        div()
-                            .absolute()
-                            .z_index(1)
-                            .right_0()
-                            .w_6()
-                            .bg(cx.theme().colors().panel_background)
-                            .when(!self.has_open_menu(message_id_to_remove), |el| {
-                                el.visible_on_hover("")
-                            })
-                            .children(message_id_to_remove.map(|message_id| {
-                                popover_menu(("menu", message_id))
-                                    .trigger(IconButton::new(
-                                        ("trigger", message_id),
-                                        IconName::Ellipsis,
-                                    ))
-                                    .menu(move |cx| {
-                                        Some(Self::render_message_menu(&this, message_id, cx))
-                                    })
-                            })),
-                    ),
-            )
+                ),
+        )
     }
 
     fn has_open_menu(&self, message_id: Option<u64>) -> bool {

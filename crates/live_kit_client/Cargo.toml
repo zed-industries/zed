@@ -6,7 +6,6 @@ description = "Bindings to LiveKit Swift client SDK"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/live_kit_client.rs"
 doctest = false
@@ -41,6 +40,12 @@ nanoid = { version ="0.4", optional = true}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9.3"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+async-trait = { workspace = true }
+collections = { path = "../collections", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+live_kit_server = { path = "../live_kit_server" }
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }

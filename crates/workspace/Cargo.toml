@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/workspace.rs"
 doctest = false
@@ -44,6 +43,7 @@ async-recursion = "1.0.0"
 itertools = "0.10"
 bincode = "1.2.1"
 anyhow.workspace = true
+derive_more.workspace = true
 futures.workspace = true
 lazy_static.workspace = true
 log.workspace = true

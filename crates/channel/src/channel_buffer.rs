@@ -9,6 +9,7 @@ use rpc::{
     TypedEnvelope,
 };
 use std::{sync::Arc, time::Duration};
+use text::BufferId;
 use util::ResultExt;
 
 pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
@@ -53,7 +54,7 @@ impl ChannelBuffer {
                 channel_id: channel.id,
             })
             .await?;
-
+        let buffer_id = BufferId::new(response.buffer_id)?;
         let base_text = response.base_text;
         let operations = response
             .operations
@@ -63,12 +64,7 @@ impl ChannelBuffer {
 
         let buffer = cx.new_model(|cx| {
             let capability = channel_store.read(cx).channel_capability(channel.id);
-            language::Buffer::remote(
-                response.buffer_id,
-                response.replica_id as u16,
-                capability,
-                base_text,
-            )
+            language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
         buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
 
@@ -107,7 +103,7 @@ impl ChannelBuffer {
         }
     }
 
-    pub fn remote_id(&self, cx: &AppContext) -> u64 {
+    pub fn remote_id(&self, cx: &AppContext) -> BufferId {
         self.buffer.read(cx).remote_id()
     }
 
@@ -210,7 +206,7 @@ impl ChannelBuffer {
     pub fn acknowledge_buffer_version(&mut self, cx: &mut ModelContext<'_, ChannelBuffer>) {
         let buffer = self.buffer.read(cx);
         let version = buffer.version();
-        let buffer_id = buffer.remote_id();
+        let buffer_id = buffer.remote_id().into();
         let client = self.client.clone();
         let epoch = self.epoch();
 

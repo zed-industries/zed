@@ -111,7 +111,9 @@
     // Whether to show git diff indicators in the scrollbar.
     "git_diff": true,
     // Whether to show selections in the scrollbar.
-    "selections": true
+    "selections": true,
+    // Whether to show symbols selections in the scrollbar.
+    "symbols_selections": true
   },
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
@@ -503,5 +505,28 @@
     //         }
     //     }
     // }
+  },
+  // The server to connect to. If the environment variable
+  // ZED_SERVER_URL is set, it will override this setting.
+  "server_url": "https://zed.dev",
+  // Settings overrides to use when using Zed Preview.
+  // Mostly useful for developers who are managing multiple instances of Zed.
+  "preview": {
+    // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Zed Nightly.
+  // Mostly useful for developers who are managing multiple instances of Zed.
+  "nightly": {
+    // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Zed Stable.
+  // Mostly useful for developers who are managing multiple instances of Zed.
+  "stable": {
+    // "theme": "Andromeda"
+  },
+  // Settings overrides to use when using Zed Stable.
+  // Mostly useful for developers who are managing multiple instances of Zed.
+  "dev": {
+    // "theme": "Andromeda"
   }
 }

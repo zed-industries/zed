@@ -661,6 +661,7 @@ dependencies = [
  "log",
  "menu",
  "project",
+ "release_channel",
  "schemars",
  "serde",
  "serde_derive",
@@ -1188,6 +1189,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "rand 0.8.5",
+ "release_channel",
  "rpc",
  "schemars",
  "serde",
@@ -1361,6 +1363,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "rand 0.8.5",
+ "release_channel",
  "rpc",
  "schemars",
  "serde",
@@ -1428,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1596,6 +1599,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "copilot",
  "ctor",
  "editor",
  "env_logger",
@@ -1606,6 +1610,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "release_channel",
  "serde",
  "serde_json",
  "settings",
@@ -2040,6 +2045,7 @@ dependencies = [
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
+ "release_channel",
  "serde",
  "serde_derive",
  "smol",
@@ -2330,6 +2336,7 @@ dependencies = [
  "tree-sitter-typescript",
  "ui",
  "unindent",
+ "url",
  "util",
  "workspace",
 ]
@@ -2512,6 +2519,7 @@ dependencies = [
  "postage",
  "project",
  "regex",
+ "release_channel",
  "serde",
  "serde_derive",
  "serde_json",
@@ -2737,6 +2745,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
+ "notify",
  "parking_lot 0.11.2",
  "regex",
  "rope",
@@ -2756,7 +2765,7 @@ name = "fsevent"
 version = "2.0.2"
 dependencies = [
  "bitflags 1.3.2",
- "fsevent-sys",
+ "fsevent-sys 3.1.0",
  "parking_lot 0.11.2",
  "tempfile",
 ]
@@ -2766,6 +2775,15 @@ name = "fsevent-sys"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca6f5e6817058771c10f0eb0f05ddf1e35844266f972004fe8e4b21fda295bd5"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "fsevent-sys"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
 dependencies = [
  "libc",
 ]
@@ -2791,6 +2809,16 @@ name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
+
+[[package]]
+name = "futf"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df420e2e84819663797d1ec6544b13c5be84629e7bb00dc960d6917db2987843"
+dependencies = [
+ "mac",
+ "new_debug_unreachable",
+]
 
 [[package]]
 name = "futures"
@@ -3102,6 +3130,7 @@ dependencies = [
  "png",
  "postage",
  "rand 0.8.5",
+ "raw-window-handle 0.6.0",
  "refineable",
  "resvg",
  "schemars",
@@ -3510,6 +3539,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "inotify"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8069d3ec154eb856955c1c0fbffefbf5f3c40a104ec912d4797314c1801abff"
+dependencies = [
+ "bitflags 1.3.2",
+ "inotify-sys",
+ "libc",
+]
+
+[[package]]
+name = "inotify-sys"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e05c02b5e89bff3b946cedeca278abc628fe811e604f027c45a8aa3cf793d0eb"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "install_cli"
 version = "0.1.0"
 dependencies = [
@@ -3724,6 +3773,26 @@ checksum = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
 dependencies = [
  "winapi 0.2.8",
  "winapi-build",
+]
+
+[[package]]
+name = "kqueue"
+version = "1.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7447f1ca1b7b563588a205fe93dea8df60fd981423a768bc1c0ded35ed147d0c"
+dependencies = [
+ "kqueue-sys",
+ "libc",
+]
+
+[[package]]
+name = "kqueue-sys"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed9625ffda8729b85e45cf04090035ac368927b8cebc34898e7c120f52e4838b"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
 ]
 
 [[package]]
@@ -4079,6 +4148,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "mac"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c41e0c4fef86961ac6d6f8a82609f55f31b05e4fce149ac5710e439df7619ba4"
+
+[[package]]
 name = "mach2"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4281,6 +4356,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "927a765cd3fc26206e66b296465fa9d3e5ab003e651c1b3c060e7956d96b19d2"
 dependencies = [
  "libc",
+ "log",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.48.0",
 ]
@@ -4421,7 +4497,7 @@ dependencies = [
  "jni-sys",
  "ndk-sys",
  "num_enum",
- "raw-window-handle",
+ "raw-window-handle 0.5.2",
  "thiserror",
 ]
 
@@ -4450,6 +4526,12 @@ dependencies = [
  "libc",
  "winapi 0.3.9",
 ]
+
+[[package]]
+name = "new_debug_unreachable"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4a24736216ec316047a1fc4252e27dabb04218aa4a3f37c6e7ddbf1f9782b54"
 
 [[package]]
 name = "nix"
@@ -4532,6 +4614,25 @@ dependencies = [
  "text",
  "time",
  "util",
+]
+
+[[package]]
+name = "notify"
+version = "6.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6205bd8bb1e454ad2e27422015fb5e4f2bcc7e08fa8f27058670d208324a4d2d"
+dependencies = [
+ "bitflags 2.4.1",
+ "crossbeam-channel",
+ "filetime",
+ "fsevent-sys 4.1.0",
+ "inotify",
+ "kqueue",
+ "libc",
+ "log",
+ "mio 0.8.8",
+ "walkdir",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -4815,9 +4916,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd8b5dd2ae5ed71462c540258bedcb51965123ad7e7ccf4b9a8cafaa4a63576d"
+checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 
 [[package]]
 name = "opaque-debug"
@@ -5855,6 +5956,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2ff9a1f06a88b01621b7ae906ef0211290d1c8a168a15542486a8f61c0833b9"
 
 [[package]]
+name = "raw-window-handle"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42a9830a0e1b9fb145ebb365b8bc4ccd75f290f98c0247deafbbe2c75cefb544"
+
+[[package]]
 name = "rawpointer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6015,6 +6122,14 @@ name = "regex-syntax"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
+
+[[package]]
+name = "release_channel"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "once_cell",
+]
 
 [[package]]
 name = "rend"
@@ -6757,6 +6872,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.8.5",
+ "release_channel",
  "rpc",
  "rusqlite",
  "rust-embed",
@@ -6896,6 +7012,7 @@ dependencies = [
  "lazy_static",
  "postage",
  "pretty_assertions",
+ "release_channel",
  "rust-embed",
  "schemars",
  "serde",
@@ -7211,6 +7328,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "smol",
  "thread_local",
+ "util",
  "uuid 1.4.1",
 ]
 
@@ -7741,6 +7859,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tendril"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d24a120c5fc464a3458240ee02c299ebcb9d67b5249c8848b09d639dca8d7bb0"
+dependencies = [
+ "futf",
+ "mac",
+ "utf-8",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7850,7 +7979,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "color",
+ "derive_more",
  "fs",
+ "futures 0.3.28",
  "gpui",
  "indexmap 1.9.3",
  "itertools 0.11.0",
@@ -8384,6 +8515,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-c-sharp"
+version = "0.20.0"
+source = "git+https://github.com/tree-sitter/tree-sitter-c-sharp?rev=dd5e59721a5f8dae34604060833902b882023aaf#dd5e59721a5f8dae34604060833902b882023aaf"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-clojure"
 version = "0.0.9"
 source = "git+https://github.com/prcastro/tree-sitter-clojure?branch=update-ts#38b4f8d264248b2fd09575fbce66f7c22e8929d5"
@@ -8554,6 +8694,15 @@ name = "tree-sitter-php"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0db3788e709a5adfb583683a4b686a084e41a0f9e5a2fcb9a8e358f11481036a"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-proto"
+version = "0.0.2"
+source = "git+https://github.com/rewinfrey/tree-sitter-proto?rev=36d54f288aee112f13a67b550ad32634d0c2cb52#36d54f288aee112f13a67b550ad32634d0c2cb52"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -8919,6 +9068,7 @@ dependencies = [
  "isahc",
  "lazy_static",
  "log",
+ "parking_lot 0.11.2",
  "rand 0.8.5",
  "rust-embed",
  "serde",
@@ -8926,6 +9076,7 @@ dependencies = [
  "smol",
  "take-until",
  "tempfile",
+ "tendril",
  "url",
 ]
 
@@ -9022,6 +9173,7 @@ dependencies = [
  "async-trait",
  "collections",
  "command_palette",
+ "copilot",
  "diagnostics",
  "editor",
  "futures 0.3.28",
@@ -9570,6 +9722,7 @@ dependencies = [
  "client",
  "collections",
  "db",
+ "derive_more",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -9723,6 +9876,7 @@ dependencies = [
  "rand 0.8.5",
  "recent_projects",
  "regex",
+ "release_channel",
  "rope",
  "rpc",
  "rsa 0.4.0",
@@ -9750,6 +9904,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
+ "tree-sitter-c-sharp",
  "tree-sitter-clojure",
  "tree-sitter-cpp",
  "tree-sitter-css",
@@ -9768,6 +9923,7 @@ dependencies = [
  "tree-sitter-nix",
  "tree-sitter-nu",
  "tree-sitter-php",
+ "tree-sitter-proto",
  "tree-sitter-purescript",
  "tree-sitter-python",
  "tree-sitter-racket",

@@ -2,7 +2,7 @@ use std::{path::Path, str, sync::Arc};
 
 use collections::HashMap;
 
-use gpui::{AppContext, AssetSource};
+use gpui::{AppContext, AssetSource, Global};
 use serde_derive::Deserialize;
 use util::{maybe, paths::PathExt};
 
@@ -16,6 +16,8 @@ pub struct FileAssociations {
     suffixes: HashMap<String, String>,
     types: HashMap<String, TypeConfig>,
 }
+
+impl Global for FileAssociations {}
 
 const COLLAPSED_DIRECTORY_TYPE: &'static str = "collapsed_folder";
 const EXPANDED_DIRECTORY_TYPE: &'static str = "expanded_folder";

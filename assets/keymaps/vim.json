@@ -31,6 +31,7 @@
       "up": "vim::Up",
       "l": "vim::Right",
       "right": "vim::Right",
+      "space": "vim::Space",
       "$": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
       "_": "vim::StartOfLineDownward",
@@ -330,17 +331,15 @@
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       ";": "vim::RepeatFind",
-      ",": [
-        "vim::RepeatFind",
-        {
-          "backwards": true
-        }
-      ],
+      ",": "vim::RepeatFindReversed",
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
       "> >": "editor::Indent",
       "< <": "editor::Outdent",
+      "shift-h": "vim::WindowTop",
+      "shift-m": "vim::WindowMiddle",
+      "shift-l": "vim::WindowBottom",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem"
     }

@@ -241,7 +241,7 @@ pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
             Bias::Left => proto::Bias::Left as i32,
             Bias::Right => proto::Bias::Right as i32,
         },
-        buffer_id: anchor.buffer_id,
+        buffer_id: anchor.buffer_id.map(Into::into),
     }
 }
 
@@ -420,6 +420,11 @@ pub fn deserialize_diagnostics(
 
 /// Deserializes an [`Anchor`] from the RPC representation.
 pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
+    let buffer_id = if let Some(id) = anchor.buffer_id {
+        Some(BufferId::new(id).ok()?)
+    } else {
+        None
+    };
     Some(Anchor {
         timestamp: clock::Lamport {
             replica_id: anchor.replica_id as ReplicaId,
@@ -430,7 +435,7 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
             proto::Bias::Left => Bias::Left,
             proto::Bias::Right => Bias::Right,
         },
-        buffer_id: anchor.buffer_id,
+        buffer_id,
     })
 }
 

@@ -297,6 +297,7 @@ mod tests {
     use gpui::{Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
+    use text::BufferId;
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -509,8 +510,8 @@ mod tests {
         let language = crate::languages::language("rust", tree_sitter_rust::language(), None).await;
 
         cx.new_model(|cx| {
-            let mut buffer =
-                Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
+            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
+                .with_language(language, cx);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);

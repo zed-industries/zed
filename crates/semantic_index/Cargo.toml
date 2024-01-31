@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/semantic_index.rs"
 doctest = false
@@ -18,6 +17,7 @@ language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
+release_channel = { path = "../release_channel" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 anyhow.workspace = true

@@ -7,7 +7,6 @@ description = "Zed's GPU-accelerated UI framework"
 publish = false
 license = "Apache-2.0"
 
-
 [features]
 test-support = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
 
@@ -59,6 +58,7 @@ slotmap = "1.0.6"
 schemars.workspace = true
 bitflags = "2.4.0"
 anyhow.workspace = true
+raw-window-handle = "0.6.0"
 
 [dev-dependencies]
 backtrace = "0.3"

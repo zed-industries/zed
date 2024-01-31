@@ -30,7 +30,7 @@ use crate::providers::open_ai::OpenAiLanguageModel;
 use crate::providers::open_ai::OPEN_AI_API_URL;
 
 lazy_static! {
-    static ref OPEN_AI_BPE_TOKENIZER: CoreBPE = cl100k_base().unwrap();
+    pub(crate) static ref OPEN_AI_BPE_TOKENIZER: CoreBPE = cl100k_base().unwrap();
 }
 
 #[derive(Clone)]

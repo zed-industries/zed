@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [features]
 default = []
 stories = ["dep:itertools", "dep:story"]
@@ -21,7 +20,9 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+derive_more.workspace = true
 fs = { path = "../fs" }
+futures.workspace = true
 gpui = { path = "../gpui" }
 indexmap = { version = "1.6.2", features = ["serde"] }
 palette = { version = "0.7.3", default-features = false, features = ["std"] }

@@ -1,3 +1,5 @@
+pub mod permalink;
+
 use std::ops::Range;
 
 use git::diff::{DiffHunk, DiffHunkStatus};

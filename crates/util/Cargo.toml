@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "Apache-2.0"
 
-
 [lib]
 path = "src/util.rs"
 doctest = true
@@ -22,7 +21,7 @@ lazy_static.workspace = true
 futures.workspace = true
 isahc.workspace = true
 smol.workspace = true
-url = "2.2"
+url.workspace = true
 rand.workspace = true
 rust-embed.workspace = true
 tempfile = { workspace = true, optional = true }
@@ -31,6 +30,10 @@ serde_json.workspace = true
 git2 = { workspace = true, optional = true }
 dirs = "3.0"
 take-until = "0.2.0"
+parking_lot.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+tendril = "0.4.3"
 
 [dev-dependencies]
 tempfile.workspace = true

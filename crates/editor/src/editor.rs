@@ -104,12 +104,11 @@ use std::{
     ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
     path::Path,
     sync::Arc,
-    sync::Weak,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
-use text::{OffsetUtf16, Rope};
+use text::{BufferId, OffsetUtf16, Rope};
 use theme::{
     observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
     ThemeColors, ThemeSettings,
@@ -118,7 +117,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
     Tooltip,
 };
-use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -241,7 +240,7 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 
     cx.on_action(move |_: &workspace::NewFile, cx| {
-        let app_state = cx.global::<Weak<workspace::AppState>>();
+        let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
@@ -250,7 +249,7 @@ pub fn init(cx: &mut AppContext) {
         }
     });
     cx.on_action(move |_: &workspace::NewWindow, cx| {
-        let app_state = cx.global::<Weak<workspace::AppState>>();
+        let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
@@ -1289,19 +1288,37 @@ impl InlayHintRefreshReason {
 
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                String::new(),
+            )
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, cx)
     }
 
     pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                String::new(),
+            )
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, cx)
     }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                String::new(),
+            )
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::AutoHeight { max_lines }, buffer, None, cx)
     }
@@ -3034,6 +3051,8 @@ impl Editor {
             text_system: cx.text_system().clone(),
             editor_style: self.style.clone().unwrap(),
             rem_size: cx.rem_size(),
+            anchor: self.scroll_manager.anchor().anchor,
+            visible_rows: self.visible_line_count(),
         }
     }
 
@@ -8193,6 +8212,43 @@ impl Editor {
                     cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
                 }
             }
+        }
+    }
+
+    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+        use git::permalink::{build_permalink, BuildPermalinkParams};
+
+        let permalink = maybe!({
+            let project = self.project.clone()?;
+            let project = project.read(cx);
+
+            let worktree = project.visible_worktrees(cx).next()?;
+
+            let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+            cwd.push(".git");
+
+            let repo = project.fs().open_repo(&cwd)?;
+            let origin_url = repo.lock().remote_url("origin")?;
+            let sha = repo.lock().head_sha()?;
+
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+            let path = file.path().to_str().map(|path| path.to_string())?;
+
+            let selections = self.selections.all::<Point>(cx);
+            let selection = selections.iter().peekable().next();
+
+            build_permalink(BuildPermalinkParams {
+                remote_url: &origin_url,
+                sha: &sha,
+                path: &path,
+                selection: selection.map(|selection| selection.range()),
+            })
+            .log_err()
+        });
+
+        if let Some(permalink) = permalink {
+            cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
         }
     }
 

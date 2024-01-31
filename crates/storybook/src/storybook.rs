@@ -71,7 +71,7 @@ fn main() {
 
         let selector = story_selector;
 
-        let theme_registry = cx.global::<ThemeRegistry>();
+        let theme_registry = ThemeRegistry::global(cx);
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
         theme_settings.active_theme = theme_registry.get(&theme_name).unwrap();
         ThemeSettings::override_global(theme_settings, cx);
