@@ -311,6 +311,7 @@ pub fn init(
     );
     language("proto", tree_sitter_proto::language(), vec![]);
     language("terraform", tree_sitter_hcl::language(), vec![]);
+    language("hcl", tree_sitter_hcl::language(), vec![]);
 
     if let Ok(children) = std::fs::read_dir(&*PLUGINS_DIR) {
         for child in children {
