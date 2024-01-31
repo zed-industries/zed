@@ -207,6 +207,9 @@
           "displayLines": true
         }
       ],
+      "shift-h": "vim::WindowTop",
+      "shift-m": "vim::WindowMiddle",
+      "shift-l": "vim::WindowBottom",
       // z commands
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
@@ -337,9 +340,6 @@
       "shift-s": "vim::SubstituteLine",
       "> >": "editor::Indent",
       "< <": "editor::Outdent",
-      "shift-h": "vim::WindowTop",
-      "shift-m": "vim::WindowMiddle",
-      "shift-l": "vim::WindowBottom",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem"
     }
