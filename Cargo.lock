@@ -8207,6 +8207,7 @@ dependencies = [
  "palette",
  "pathfinder_color",
  "rust-embed",
+ "schemars",
  "serde",
  "serde_json",
  "simplelog",

@@ -7,13 +7,14 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 use json_comments::StripComments;
 use log::LevelFilter;
+use schemars::schema_for;
 use serde::Deserialize;
 use simplelog::{TermLogger, TerminalMode};
-use theme::{Appearance, AppearanceContent};
+use theme::{Appearance, AppearanceContent, ThemeFamilyContent};
 
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
@@ -74,6 +75,15 @@ struct Args {
     /// Whether to warn when values are missing from the theme.
     #[arg(long)]
     warn_on_missing: bool,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Prints the JSON schema for a theme.
+    PrintSchema,
 }
 
 fn main() -> Result<()> {
@@ -96,6 +106,21 @@ fn main() -> Result<()> {
 
     TermLogger::init(LevelFilter::Trace, log_config, TerminalMode::Mixed)
         .expect("could not initialize logger");
+
+    if let Some(command) = args.command {
+        match command {
+            Command::PrintSchema => {
+                let theme_family_schema = schema_for!(ThemeFamilyContent);
+
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&theme_family_schema).unwrap()
+                );
+
+                return Ok(());
+            }
+        }
+    }
 
     let theme_file_path = args.theme_path;
 
