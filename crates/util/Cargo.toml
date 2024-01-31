@@ -15,26 +15,26 @@ test-support = ["tempfile", "git2"]
 [dependencies]
 anyhow.workspace = true
 backtrace = "0.3"
-globset.workspace = true
-log.workspace = true
-lazy_static.workspace = true
+dirs = "3.0"
 futures.workspace = true
+git2 = { workspace = true, optional = true }
+globset.workspace = true
 isahc.workspace = true
-smol.workspace = true
-url.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+parking_lot.workspace = true
 rand.workspace = true
 rust-embed.workspace = true
-tempfile = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
-git2 = { workspace = true, optional = true }
-dirs = "3.0"
+smol.workspace = true
 take-until = "0.2.0"
-parking_lot.workspace = true
+tempfile = { workspace = true, optional = true }
+url.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"
 
 [dev-dependencies]
-tempfile.workspace = true
 git2.workspace = true
+tempfile.workspace = true

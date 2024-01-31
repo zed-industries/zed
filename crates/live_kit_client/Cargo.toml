@@ -23,20 +23,18 @@ test-support = [
 ]
 
 [dependencies]
-collections = { path = "../collections", optional = true }
-gpui = { path = "../gpui", optional = true }
-live_kit_server = { path = "../live_kit_server", optional = true }
-media = { path = "../media" }
-
 anyhow.workspace = true
 async-broadcast = "0.4"
+async-trait = { workspace = true, optional = true }
+collections = { path = "../collections", optional = true }
 futures.workspace = true
+gpui = { path = "../gpui", optional = true }
+live_kit_server = { path = "../live_kit_server", optional = true }
 log.workspace = true
+media = { path = "../media" }
+nanoid = { version ="0.4", optional = true}
 parking_lot.workspace = true
 postage.workspace = true
-
-async-trait = { workspace = true, optional = true }
-nanoid = { version ="0.4", optional = true}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9.3"
@@ -48,21 +46,20 @@ gpui = { path = "../gpui", features = ["test-support"] }
 live_kit_server = { path = "../live_kit_server" }
 
 [dev-dependencies]
-collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-live_kit_server = { path = "../live_kit_server" }
-media = { path = "../media" }
-nanoid = "0.4"
-
 anyhow.workspace = true
 async-trait.workspace = true
 block = "0.1"
-bytes = "1.2"
 byteorder = "1.4"
+bytes = "1.2"
+collections = { path = "../collections", features = ["test-support"] }
 foreign-types = "0.3"
 futures.workspace = true
+gpui = { path = "../gpui", features = ["test-support"] }
 hmac = "0.12"
 jwt = "0.16"
+live_kit_server = { path = "../live_kit_server" }
+media = { path = "../media" }
+nanoid = "0.4"
 parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

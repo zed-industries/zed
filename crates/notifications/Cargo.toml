@@ -18,6 +18,7 @@ test-support = [
 ]
 
 [dependencies]
+anyhow.workspace = true
 channel = { path = "../channel" }
 client = { path = "../client" }
 clock = { path = "../clock" }
@@ -29,10 +30,8 @@ rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
-util = { path = "../util" }
-
-anyhow.workspace = true
 time.workspace = true
+util = { path = "../util" }
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

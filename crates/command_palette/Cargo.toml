@@ -10,6 +10,7 @@ path = "src/command_palette.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 client = { path = "../client" }
 collections = { path = "../collections" }
 # HACK: We're only depending on `copilot` here for `CommandPaletteFilter`.  See the attached comment on that type.
@@ -20,23 +21,22 @@ gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 release_channel = { path = "../release_channel" }
+serde.workspace = true
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 zed_actions = { path = "../zed_actions" }
-anyhow.workspace = true
-serde.workspace = true
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+ctor.workspace = true
 editor = { path = "../editor", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-menu = { path = "../menu" }
+env_logger.workspace = true
 go_to_line = { path = "../go_to_line" }
+gpui = { path = "../gpui", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
+menu = { path = "../menu" }
+project = { path = "../project", features = ["test-support"] }
 serde_json.workspace = true
 workspace = { path = "../workspace", features = ["test-support"] }
-ctor.workspace = true
-env_logger.workspace = true

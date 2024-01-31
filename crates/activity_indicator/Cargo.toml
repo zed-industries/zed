@@ -10,20 +10,19 @@ path = "src/activity_indicator.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 auto_update = { path = "../auto_update" }
 editor = { path = "../editor" }
-language = { path = "../language" }
+futures.workspace = true
 gpui = { path = "../gpui" }
+language = { path = "../language" }
 project = { path = "../project" }
 settings = { path = "../settings" }
+smallvec.workspace = true
+theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
-theme = { path = "../theme" }
 workspace = { path = "../workspace", package = "workspace" }
-
-anyhow.workspace = true
-futures.workspace = true
-smallvec.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

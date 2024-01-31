@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "crates/assets",
     "crates/activity_indicator",
     "crates/ai",
+    "crates/assets",
     "crates/assistant",
     "crates/audio",
     "crates/auto_update",
@@ -19,8 +19,6 @@ members = [
     "crates/copilot",
     "crates/copilot_ui",
     "crates/db",
-    "crates/refineable",
-    "crates/refineable/derive_refineable",
     "crates/diagnostics",
     "crates/editor",
     "crates/feature_flags",
@@ -32,8 +30,8 @@ members = [
     "crates/git",
     "crates/go_to_line",
     "crates/gpui",
-    "crates/gpui_macros",
     "crates/gpui",
+    "crates/gpui_macros",
     "crates/gpui_macros",
     "crates/install_cli",
     "crates/journal",
@@ -59,7 +57,10 @@ members = [
     "crates/project_symbols",
     "crates/quick_action_bar",
     "crates/recent_projects",
+    "crates/refineable",
+    "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/rich_text",
     "crates/rope",
     "crates/rpc",
     "crates/search",
@@ -68,7 +69,7 @@ members = [
     "crates/snippet",
     "crates/sqlez",
     "crates/sqlez_macros",
-    "crates/rich_text",
+    "crates/story",
     "crates/storybook",
     "crates/sum_tree",
     "crates/terminal",
@@ -79,11 +80,10 @@ members = [
     "crates/theme_selector",
     "crates/ui",
     "crates/util",
-    "crates/story",
-    "crates/vim",
     "crates/vcs_menu",
-    "crates/workspace",
+    "crates/vim",
     "crates/welcome",
+    "crates/workspace",
     "crates/zed",
     "crates/zed_actions",
 ]
@@ -91,84 +91,83 @@ default-members = ["crates/zed"]
 resolver = "2"
 
 [workspace.dependencies]
-anyhow = { version = "1.0.57" }
-async-trait = { version = "0.1" }
+anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ctor = "0.2.6"
-derive_more = { version = "0.99.17" }
-env_logger = { version = "0.9" }
-futures = { version = "0.3" }
-globset = { version = "0.4" }
+derive_more = "0.99.17"
+env_logger = "0.9"
+futures = "0.3"
+git2 = { version = "0.15", default-features = false}
+globset = "0.4"
 indoc = "1"
 # We explicitly disable a http2 support in isahc.
 isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
-lazy_static = { version = "1.4.0" }
+lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
-ordered-float = { version = "2.1.1" }
-parking_lot = { version = "0.11.1" }
+ordered-float = "2.1.1"
+parking_lot = "0.11.1"
 postage = { version = "0.5", features = ["futures-traits"] }
-prost = { version = "0.8" }
-rand = { version = "0.8.5" }
+pretty_assertions = "1.3.0"
+prost = "0.8"
+rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
-regex = { version = "1.5" }
-rust-embed = { version = "8.0", features = ["include-exclude"] }
+regex = "1.5"
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
-schemars = { version = "0.8" }
+rust-embed = { version = "8.0", features = ["include-exclude"] }
+schemars = "0.8"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 serde_repr = "0.1"
 smallvec = { version = "1.6", features = ["union"] }
-smol = { version = "1.2" }
+smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
 sysinfo = "0.29.10"
-tempfile = { version = "3.9.0" }
-thiserror = { version = "1.0.29" }
-time = { version = "0.3", features = ["serde", "serde-well-known"] }
-toml = { version = "0.5" }
+tempfile = "3.9.0"
+thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
-tree-sitter = { version = "0.20" }
-unindent = { version = "0.1.7" }
-pretty_assertions = "1.3.0"
-git2 = { version = "0.15", default-features = false}
-url = "2.2"
-uuid = { version = "1.1.2", features = ["v4"] }
-
+time = { version = "0.3", features = ["serde", "serde-well-known"] }
+toml = "0.5"
+tree-sitter = "0.20"
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
-tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev="f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-sharp", rev = "dd5e59721a5f8dae34604060833902b882023aaf" }
+tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev="f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
-tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40"}
+tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-gleam = { git = "https://github.com/gleam-lang/tree-sitter-gleam", rev = "58b7cac8fc14c92b0677c542610d8738c373fa81" }
+tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
-tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
-tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
-tree-sitter-rust = "0.20.3"
-tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-tree-sitter-php = "0.21.1"
-tree-sitter-proto = {git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52"}
-tree-sitter-purescript = { git = "https://github.com/ivanmoreau/tree-sitter-purescript", rev = "a37140f0c7034977b90faa73c94fcb8a5e45ed08" }
-tree-sitter-python = "0.20.2"
-tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
-tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
-tree-sitter-ruby = "0.20.0"
 tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskell", rev = "cf98de23e4285b8e6bcb57b050ef2326e2cc284b" }
+tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
-tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9" }
-tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", rev = "697bb515471871e85ff799ea57a76298a71a9cca" }
-tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
-tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
+tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
 tree-sitter-lua = "0.0.14"
+tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "26bbaecda0039df4067861ab38ea8ea169f7f5aa" }
-tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
+tree-sitter-php = "0.21.1"
+tree-sitter-proto = {git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
+tree-sitter-purescript = { git = "https://github.com/ivanmoreau/tree-sitter-purescript", rev = "a37140f0c7034977b90faa73c94fcb8a5e45ed08" }
+tree-sitter-python = "0.20.2"
+tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
+tree-sitter-ruby = "0.20.0"
+tree-sitter-rust = "0.20.3"
+tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9" }
+tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", rev = "697bb515471871e85ff799ea57a76298a71a9cca" }
+tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
+tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
 tree-sitter-uiua = { git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2" }
+tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
+tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
+unindent = "0.1.7"
+url = "2.2"
+uuid = { version = "1.1.2", features = ["v4"] }
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "31c40449749c4263a91a43593831b82229049a4c" }
