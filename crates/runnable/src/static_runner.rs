@@ -1,25 +1,31 @@
 //! This module is responsible for executing static runnables, that is runnables defined by the user
 //! in the config file.
+use std::sync::atomic::AtomicU64;
+
 use crate::{ExecutionResult, Runnable, TaskHandle};
 use async_process::Command;
 use futures::FutureExt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StaticRunner {
+    id: crate::RunnableId,
     runnable: super::static_runnable::Definition,
 }
+static NEXT_RUNNABLE_ID: AtomicU64 = AtomicU64::new(0);
 
 impl StaticRunner {
     pub fn new(runnable: super::static_runnable::Definition) -> Self {
-        Self { runnable }
+        let id =
+            crate::RunnableId(NEXT_RUNNABLE_ID.fetch_add(1, std::sync::atomic::Ordering::AcqRel));
+        Self { id, runnable }
     }
 }
 impl Runnable for StaticRunner {
-    fn name(&self) -> String {
-        self.runnable.label.clone()
+    fn boxed_clone(&self) -> Box<dyn Runnable> {
+        Box::new(self.clone())
     }
 
-    fn exec(self, mut cx: gpui::AsyncWindowContext) -> anyhow::Result<crate::TaskHandle> {
+    fn exec(self, cx: gpui::AsyncWindowContext) -> anyhow::Result<crate::TaskHandle> {
         TaskHandle::new(
             Command::new(self.runnable.command)
                 .args(self.runnable.args)
@@ -40,8 +46,12 @@ impl Runnable for StaticRunner {
         )
     }
 
-    fn boxed_clone(&self) -> Box<dyn Runnable> {
-        Box::new(self.clone())
+    fn id(&self) -> crate::RunnableId {
+        self.id
+    }
+
+    fn name(&self) -> String {
+        self.runnable.label.clone()
     }
 }
 

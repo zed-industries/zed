@@ -7,13 +7,10 @@ use anyhow::Result;
 use core::future::Future;
 use futures::future::BoxFuture;
 pub use futures::stream::Aborted as TaskTerminated;
-use futures::stream::{AbortHandle, AbortRegistration, Abortable};
-use futures::task::{Context, Poll};
+use futures::stream::{AbortHandle, Abortable};
 use futures::FutureExt;
-use gpui::{AppContext, AsyncAppContext};
 use gpui::{AsyncWindowContext, Task};
 pub use static_runner::StaticRunner;
-use std::pin::pin;
 
 pub struct TaskHandle {
     fut: Task<Result<ExecutionResult, TaskTerminated>>,
@@ -55,9 +52,19 @@ pub struct ExecutionResult {
     pub details: String,
 }
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RunnableId(u64);
+
+impl From<RunnableId> for u64 {
+    fn from(value: RunnableId) -> Self {
+        value.0
+    }
+}
+
 /// Represents a short lived handle to a runnable, whose main purpose
 /// is to get spawned
 pub trait Runnable {
+    fn id(&self) -> RunnableId;
     fn name(&self) -> String;
     fn exec(self, cx: gpui::AsyncWindowContext) -> Result<TaskHandle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
