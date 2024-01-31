@@ -7,5 +7,5 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
-gpui = {path = "../gpui"}
+gpui = { path = "../gpui" }
 rust-embed.workspace = true

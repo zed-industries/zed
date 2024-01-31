@@ -28,7 +28,7 @@ smallvec.workspace = true
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
-workspace = {path = "../workspace" }
+workspace = { path = "../workspace" }
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
@@ -39,4 +39,4 @@ lsp = { path = "../lsp", features = ["test-support"] }
 serde_json.workspace = true
 theme = { path = "../theme", features = ["test-support"] }
 unindent.workspace = true
-workspace = {path = "../workspace", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }

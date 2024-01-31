@@ -23,7 +23,7 @@ smol.workspace = true
 text = { path = "../text" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }
-util = { path = "../util"}
+util = { path = "../util" }
 workspace = { path = "../workspace" }
 
 [dev-dependencies]

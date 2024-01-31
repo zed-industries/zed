@@ -35,7 +35,7 @@ serde_json.workspace = true
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 tokio = { version = "1.15", "optional" = true }
-ui = { path = "../ui"}
+ui = { path = "../ui" }
 workspace = { path = "../workspace" }
 zed_actions = { path = "../zed_actions" }
 

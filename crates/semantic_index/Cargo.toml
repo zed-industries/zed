@@ -48,7 +48,7 @@ ctor.workspace = true
 env_logger.workspace = true
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
-node_runtime = { path = "../node_runtime"}
+node_runtime = { path = "../node_runtime" }
 pretty_assertions.workspace = true
 project = { path = "../project", features = ["test-support"] }
 rand.workspace = true

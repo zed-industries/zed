@@ -20,7 +20,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-color = {path = "../color"}
+color = { path = "../color" }
 derive_more.workspace = true
 fs = { path = "../fs" }
 futures.workspace = true
