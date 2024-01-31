@@ -115,6 +115,7 @@ tree-sitter-embedded-template.workspace = true
 tree-sitter-gleam.workspace = true
 tree-sitter-glsl.workspace = true
 tree-sitter-go.workspace = true
+tree-sitter-gomod.workspace = true
 tree-sitter-haskell.workspace = true
 tree-sitter-heex.workspace = true
 tree-sitter-html.workspace = true
