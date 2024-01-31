@@ -20,7 +20,7 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
-use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{parse_zed_link, AppCommitSha, AppVersion, ReleaseChannel, RELEASE_CHANNEL};
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -116,6 +116,7 @@ fn main() {
 
     app.run(move |cx| {
         ReleaseChannel::init(cx);
+        AppVersion::init(env!("CARGO_PKG_VERSION"), cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
@@ -603,9 +604,13 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             std::process::exit(-1);
         }
 
-        let app_version = client::ZED_APP_VERSION
-            .or(app_metadata.app_version)
-            .map_or("dev".to_string(), |v| v.to_string());
+        let app_version = if let Some(version) = app_metadata.app_version {
+            version.to_string()
+        } else {
+            option_env!("CARGO_PKG_VERSION")
+                .unwrap_or("dev")
+                .to_string()
+        };
 
         let backtrace = Backtrace::new();
         let mut backtrace = backtrace
@@ -634,7 +639,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: app_version.clone(),
+            app_version: app_version.to_string(),
             release_channel: RELEASE_CHANNEL.display_name().into(),
             os_name: app_metadata.os_name.into(),
             os_version: app_metadata

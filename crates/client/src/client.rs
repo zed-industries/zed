@@ -15,14 +15,13 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
-    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, SemanticVersion,
-    Task, WeakModel,
+    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
-use release_channel::ReleaseChannel;
+use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -58,9 +57,6 @@ lazy_static! {
     pub static ref ADMIN_API_TOKEN: Option<String> = std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ZED_APP_VERSION: Option<SemanticVersion> = std::env::var("ZED_APP_VERSION")
-        .ok()
-        .and_then(|v| v.parse().ok());
     pub static ref ZED_APP_PATH: Option<PathBuf> =
         std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
     pub static ref ZED_ALWAYS_ACTIVE: bool =
@@ -1011,13 +1007,22 @@ impl Client {
             .update(|cx| ReleaseChannel::try_global(cx))
             .ok()
             .flatten();
+        let app_version = cx
+            .update(|cx| AppVersion::global(cx).to_string())
+            .ok()
+            .unwrap_or_default();
 
         let request = Request::builder()
             .header(
                 "Authorization",
                 format!("{} {}", credentials.user_id, credentials.access_token),
             )
-            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION);
+            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION)
+            .header("x-zed-app-version", app_version)
+            .header(
+                "x-zed-release-channel",
+                release_channel.map(|r| r.dev_name()).unwrap_or("unknown"),
+            );
 
         let http = self.http.clone();
         cx.background_executor().spawn(async move {

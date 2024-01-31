@@ -1,9 +1,9 @@
-use gpui::{AppContext, Global};
+use gpui::{AppContext, AsyncAppContext, Global, SemanticVersion};
 use once_cell::sync::Lazy;
 use std::env;
 
 #[doc(hidden)]
-pub static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
+static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
     Lazy::new(|| {
         env::var("ZED_RELEASE_CHANNEL")
             .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
@@ -11,6 +11,7 @@ pub static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
 } else {
     Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
 };
+
 #[doc(hidden)]
 pub static RELEASE_CHANNEL: Lazy<ReleaseChannel> =
     Lazy::new(|| match RELEASE_CHANNEL_NAME.as_str() {
@@ -36,6 +37,32 @@ impl AppCommitSha {
 
     pub fn set_global(sha: AppCommitSha, cx: &mut AppContext) {
         cx.set_global(GlobalAppCommitSha(sha))
+    }
+}
+
+struct GlobalAppVersion(SemanticVersion);
+
+impl Global for GlobalAppVersion {}
+
+pub struct AppVersion;
+
+impl AppVersion {
+    pub fn init(pkg_version: &str, cx: &mut AppContext) {
+        let version = if let Some(from_env) = env::var("ZED_APP_VERSION").ok() {
+            dbg!(from_env).parse().expect("invalid ZED_APP_VERSION")
+        } else {
+            dbg!(cx.app_metadata().app_version).unwrap_or_else(|| {
+                dbg!(pkg_version)
+                    .parse()
+                    .expect("invalid version in Cargo.toml")
+            })
+        };
+        println!("Zed version: {}", version);
+        cx.set_global(GlobalAppVersion(version))
+    }
+
+    pub fn global(cx: &AppContext) -> SemanticVersion {
+        cx.global::<GlobalAppVersion>().0
     }
 }
 

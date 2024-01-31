@@ -1,14 +1,13 @@
-use client::ZED_APP_VERSION;
 use gpui::AppContext;
 use human_bytes::human_bytes;
-use release_channel::ReleaseChannel;
+use release_channel::{AppVersion, ReleaseChannel};
 use serde::Serialize;
 use std::{env, fmt::Display};
 use sysinfo::{RefreshKind, System, SystemExt};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemSpecs {
-    app_version: Option<String>,
+    app_version: String,
     release_channel: &'static str,
     os_name: &'static str,
     os_version: Option<String>,
@@ -18,9 +17,7 @@ pub struct SystemSpecs {
 
 impl SystemSpecs {
     pub fn new(cx: &AppContext) -> Self {
-        let app_version = ZED_APP_VERSION
-            .or_else(|| cx.app_metadata().app_version)
-            .map(|v| v.to_string());
+        let app_version = AppVersion::global(cx).to_string();
         let release_channel = ReleaseChannel::global(cx).display_name();
         let os_name = cx.app_metadata().os_name;
         let system = System::new_with_specifics(RefreshKind::new().with_memory());
@@ -48,18 +45,15 @@ impl Display for SystemSpecs {
             Some(os_version) => format!("OS: {} {}", self.os_name, os_version),
             None => format!("OS: {}", self.os_name),
         };
-        let app_version_information = self
-            .app_version
-            .as_ref()
-            .map(|app_version| format!("Zed: v{} ({})", app_version, self.release_channel));
+        let app_version_information =
+            format!("Zed: v{} ({})", self.app_version, self.release_channel);
         let system_specs = [
             app_version_information,
-            Some(os_information),
-            Some(format!("Memory: {}", human_bytes(self.memory as f64))),
-            Some(format!("Architecture: {}", self.architecture)),
+            os_information,
+            format!("Memory: {}", human_bytes(self.memory as f64)),
+            format!("Architecture: {}", self.architecture),
         ]
         .into_iter()
-        .flatten()
         .collect::<Vec<String>>()
         .join("\n");
 
