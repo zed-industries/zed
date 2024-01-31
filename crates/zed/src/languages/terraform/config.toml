@@ -1,6 +1,7 @@
 name = "Terraform"
 path_suffixes = ["tf", "tfvars"]
-line_comment = "# "
+line_comments = ["# "]
+block_comments = [{ start = "/*", end = "*/" }]
 autoclose_before = ",}])"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
