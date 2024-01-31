@@ -14,6 +14,6 @@
 {"Key":"shift-l"}
 {"Get":{"state":"1 2 3\n4 5 6\n7 8 9\nˇ","mode":"Normal"}}
 {"Put":{"state":"1 2 3\n4 5 ˇ6\n7 8 9\n"}}
-{"Key":"999"}
+{"Key":"9"}
 {"Key":"shift-l"}
-{"Get":{"state":"1 2 3\n4 5 6\n7 8 9\nˇ","mode":"Normal"}}
+{"Get":{"state":"1 2 ˇ3\n4 5 6\n7 8 9\n","mode":"Normal"}}

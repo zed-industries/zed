@@ -1096,7 +1096,7 @@ fn window_bottom(
         } else {
             bottom_row_capped.saturating_sub(times as u32)
         };
-        let new_col = point.column().min(map.line_len(bottom_row_capped));
+        let new_col = point.column().min(map.line_len(new_row));
         let new_point = DisplayPoint::new(new_row, new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
@@ -1325,10 +1325,9 @@ mod test {
         cx.set_shared_state(indoc! {r"
           1 2 3
           4 5 ˇ6
-          7 8 9
-          "})
+          7 8 9"})
             .await;
-        cx.simulate_shared_keystrokes(["999", "shift-h"]).await;
+        cx.simulate_shared_keystrokes(["9", "shift-h"]).await;
         cx.assert_shared_state(indoc! {r"
           1 2 3
           4 5 6
@@ -1499,14 +1498,13 @@ mod test {
           ˇ"})
             .await;
 
-        // Test counts
         cx.set_shared_state(indoc! {r"
           1 2 3
           4 5 ˇ6
           7 8 9
           "})
             .await;
-        cx.simulate_shared_keystrokes(["999", "shift-l"]).await;
+        cx.simulate_shared_keystrokes(["9", "shift-l"]).await;
         cx.assert_shared_state(indoc! {r"
           1 2 ˇ3
           4 5 6
