@@ -8016,7 +8016,7 @@ impl Project {
             let is_private = buffer
                 .read(cx)
                 .file()
-                .map(|f| f.is_private(cx))
+                .map(|f| f.is_private())
                 .unwrap_or_default();
             if is_private {
                 Err(anyhow!(ErrorCode::UnsharedItem))
@@ -8082,7 +8082,7 @@ impl Project {
             let is_private = buffer
                 .read(cx)
                 .file()
-                .map(|f| f.is_private(cx))
+                .map(|f| f.is_private())
                 .unwrap_or_default();
             if is_private {
                 Err(anyhow!(ErrorCode::UnsharedItem))

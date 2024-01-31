@@ -188,7 +188,7 @@ impl FollowableItem for Editor {
         if buffer
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .map_or(false, |file| file.is_private(cx))
+            .map_or(false, |file| file.is_private())
         {
             return None;
         }

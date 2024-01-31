@@ -356,13 +356,6 @@ pub trait File: Send + Sync {
         self.as_local().is_some()
     }
 
-    /// Returns true if the file should not be shared with collaborators.
-    fn is_private(&self, cx: &AppContext) -> bool {
-        self.as_local()
-            .map(|local| LocalFile::is_private(local, cx))
-            .unwrap_or(false)
-    }
-
     /// Returns the file's mtime.
     fn mtime(&self) -> SystemTime;
 
@@ -391,7 +384,7 @@ pub trait File: Send + Sync {
     /// Converts this file into a protobuf message.
     fn to_proto(&self) -> rpc::proto::File;
 
-    /// Return whether Zed considers this to be a dotenv file.
+    /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
 }
 

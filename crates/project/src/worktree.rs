@@ -2879,18 +2879,6 @@ impl language::LocalFile for File {
         }
     }
 
-    fn is_private(&self, cx: &AppContext) -> bool {
-        let worktree = self.worktree.read(cx);
-        if let Some(id) = self.entry_id {
-            worktree
-                .entry_for_id(id)
-                .map(|entry| entry.is_ignored)
-                .unwrap_or_default()
-        } else {
-            false
-        }
-    }
-
     fn load(&self, cx: &AppContext) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
