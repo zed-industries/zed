@@ -1,7 +1,6 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    process::{self, Command},
 };
 
 use cbindgen::Config;
@@ -9,6 +8,9 @@ use cbindgen::Config;
 fn main() {
     generate_dispatch_bindings();
     let header_path = generate_shader_bindings();
+    #[cfg(feature = "runtime_shaders")]
+    emit_stitched_shaders(&header_path);
+    #[cfg(not(feature = "runtime_shaders"))]
     compile_metal_shaders(&header_path);
 }
 
@@ -95,11 +97,30 @@ fn generate_shader_bindings() -> PathBuf {
     output_path
 }
 
+/// To enable runtime compilation, we need to "stitch" the shaders file with the generated header
+/// so that it is self-contained.
+#[cfg(feature = "runtime_shaders")]
+fn emit_stitched_shaders(header_path: &Path) {
+    use std::str::FromStr;
+    fn stitch_header(header: &Path, shader_path: &Path) -> std::io::Result<PathBuf> {
+        let header_contents = std::fs::read_to_string(header)?;
+        let shader_contents = std::fs::read_to_string(shader_path)?;
+        let stitched_contents = format!("{header_contents}\n{shader_contents}");
+        let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("stitched_shaders.metal");
+        let _ = std::fs::write(&out_path, stitched_contents)?;
+        Ok(out_path)
+    }
+    let shader_source_path = "./src/platform/mac/shaders.metal";
+    let shader_path = PathBuf::from_str(shader_source_path).unwrap();
+    stitch_header(header_path, &shader_path).unwrap();
+    println!("cargo:rerun-if-changed={}", &shader_source_path);
+}
+#[cfg(not(feature = "runtime_shaders"))]
 fn compile_metal_shaders(header_path: &Path) {
+    use std::process::{self, Command};
     let shader_path = "./src/platform/mac/shaders.metal";
     let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
     let metallib_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
-
     println!("cargo:rerun-if-changed={}", shader_path);
 
     let output = Command::new("xcrun")
