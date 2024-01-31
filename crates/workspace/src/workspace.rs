@@ -2101,11 +2101,17 @@ impl Workspace {
         direction: SplitDirection,
         cx: &WindowContext,
     ) -> Option<View<Pane>> {
+        // Check whether we're in a dock and should focus the last active pane
         if self.should_focus_last_active_pane(direction, cx) {
             return self.last_active_center_pane.as_ref().and_then(|p| {
                 let p = p.upgrade()?;
                 (p.read(cx).items_len() != 0).then_some(p)
             });
+        }
+
+        // Or whether we're in a dock, there is no active pane, and should focus another dock
+        if self.should_focus_dock(direction, cx) {
+            return None;
         }
 
         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
@@ -2144,6 +2150,25 @@ impl Workspace {
         for (possible_direction, dock) in [
             (SplitDirection::Right, &self.left_dock),
             (SplitDirection::Up, &self.bottom_dock),
+            (SplitDirection::Left, &self.right_dock),
+        ] {
+            if possible_direction != direction {
+                continue;
+            }
+            let dock = dock.read(cx);
+            if dock.is_open() && dock.focus_handle(cx).contains_focused(cx) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn should_focus_dock(&self, direction: SplitDirection, cx: &WindowContext<'_>) -> bool {
+        for (possible_direction, dock) in [
+            (SplitDirection::Right, &self.left_dock),
+            (SplitDirection::Up, &self.bottom_dock),
+            (SplitDirection::Left, &self.bottom_dock),
+            (SplitDirection::Right, &self.bottom_dock),
             (SplitDirection::Left, &self.right_dock),
         ] {
             if possible_direction != direction {
