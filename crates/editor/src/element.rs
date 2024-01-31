@@ -25,7 +25,7 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    black, div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
+    div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Hsla, InteractiveBounds,
     InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
@@ -1153,7 +1153,9 @@ impl EditorElement {
                     )
                 }
 
-                cx.with_z_index(0, |cx| {
+                cx.with_z_index(0, |cx| self.paint_redactions(text_bounds, &layout, cx));
+
+                cx.with_z_index(1, |cx| {
                     for cursor in cursors {
                         cursor.paint(content_origin, cx);
                     }
@@ -1165,32 +1167,27 @@ impl EditorElement {
     fn paint_redactions(
         &mut self,
         text_bounds: Bounds<Pixels>,
-        layout: &mut LayoutState,
+        layout: &LayoutState,
         cx: &mut ElementContext,
     ) {
         let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
         let line_end_overshoot = layout.line_end_overshoot();
-        let redaction_color = black();
 
-        cx.with_content_mask(
-            Some(ContentMask {
-                bounds: text_bounds,
-            }),
-            |cx| {
-                for range in layout.redacted_ranges.iter() {
-                    self.paint_highlighted_range(
-                        range.clone(),
-                        redaction_color,
-                        Pixels::ZERO,
-                        line_end_overshoot,
-                        layout,
-                        content_origin,
-                        text_bounds,
-                        cx,
-                    );
-                }
-            },
-        )
+        // A softer than perfect black
+        let redaction_color = gpui::rgb(0x0e1111);
+
+        for range in layout.redacted_ranges.iter() {
+            self.paint_highlighted_range(
+                range.clone(),
+                redaction_color.into(),
+                Pixels::ZERO,
+                line_end_overshoot,
+                layout,
+                content_origin,
+                text_bounds,
+                cx,
+            );
+        }
     }
 
     fn paint_overlays(
@@ -3055,10 +3052,6 @@ impl Element for EditorElement {
                                 self.paint_gutter(gutter_bounds, &mut layout, cx);
                             }
                             self.paint_text(text_bounds, &mut layout, cx);
-
-                            cx.with_z_index(0, |cx| {
-                                self.paint_redactions(text_bounds, &mut layout, cx)
-                            });
 
                             cx.with_z_index(0, |cx| {
                                 self.paint_mouse_listeners(
