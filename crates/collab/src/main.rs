@@ -28,6 +28,9 @@ async fn main() -> Result<()> {
         Some("version") => {
             println!("collab v{VERSION}");
         }
+        Some("migrate") => {
+            run_migrations().await?;
+        }
         Some("serve") => {
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
