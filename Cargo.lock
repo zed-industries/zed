@@ -8791,6 +8791,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-gomod"
+version = "1.0.2"
+source = "git+https://github.com/camdencheek/tree-sitter-go-mod#bbe2fe3be4b87e06a613e685250f473d2267f430"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-haskell"
 version = "0.14.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-haskell?rev=cf98de23e4285b8e6bcb57b050ef2326e2cc284b#cf98de23e4285b8e6bcb57b050ef2326e2cc284b"
@@ -10316,6 +10325,7 @@ dependencies = [
  "tree-sitter-gleam",
  "tree-sitter-glsl",
  "tree-sitter-go",
+ "tree-sitter-gomod",
  "tree-sitter-haskell",
  "tree-sitter-heex",
  "tree-sitter-html",
