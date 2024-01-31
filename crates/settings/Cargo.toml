@@ -13,31 +13,30 @@ doctest = false
 test-support = ["gpui/test-support", "fs/test-support"]
 
 [dependencies]
-collections = { path = "../collections" }
-gpui = { path = "../gpui" }
-fs = { path = "../fs" }
-feature_flags = { path = "../feature_flags" }
-release_channel = { path = "../release_channel" }
-util = { path = "../util" }
-
 anyhow.workspace = true
+collections = { path = "../collections" }
+feature_flags = { path = "../feature_flags" }
+fs = { path = "../fs" }
 futures.workspace = true
-serde_json_lenient = {version = "0.1", features = ["preserve_order", "raw_value"]}
+gpui = { path = "../gpui" }
 lazy_static.workspace = true
 postage.workspace = true
+release_channel = { path = "../release_channel" }
 rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+serde_json_lenient = {version = "0.1", features = ["preserve_order", "raw_value"] }
 smallvec.workspace = true
 toml.workspace = true
-tree-sitter.workspace = true
 tree-sitter-json = "*"
+tree-sitter.workspace = true
+util = { path = "../util" }
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true

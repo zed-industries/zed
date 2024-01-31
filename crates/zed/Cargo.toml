@@ -16,156 +16,147 @@ name = "Zed"
 path = "src/main.rs"
 
 [dependencies]
-ai = { path = "../ai"}
+activity_indicator = { path = "../activity_indicator" }
+ai = { path = "../ai" }
+anyhow.workspace = true
+assets = { path = "../assets" }
+assistant = { path = "../assistant" }
+async-compression.workspace = true
+async-recursion = "0.3"
+async-tar = "0.4.2"
+async-trait.workspace = true
 audio = { path = "../audio" }
-activity_indicator = { path = "../activity_indicator"}
 auto_update = { path = "../auto_update" }
+backtrace = "0.3"
 breadcrumbs = { path = "../breadcrumbs" }
 call = { path = "../call" }
 channel = { path = "../channel" }
+chrono = "0.4"
 cli = { path = "../cli" }
+client = { path = "../client" }
 collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
-# component_test = { path = "../component_test" }
-client = { path = "../client" }
-# clock = { path = "../clock" }
 copilot = { path = "../copilot" }
 copilot_ui = { path = "../copilot_ui" }
-diagnostics = { path = "../diagnostics" }
+ctor.workspace = true
 db = { path = "../db" }
+diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
+env_logger.workspace = true
+feature_flags = { path = "../feature_flags" }
 feedback = { path = "../feedback" }
 file_finder = { path = "../file_finder" }
-search = { path = "../search" }
 fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
+futures.workspace = true
 go_to_line = { path = "../go_to_line" }
 gpui = { path = "../gpui" }
+ignore = "0.4"
+image = "0.23"
+indexmap = "1.6.2"
 install_cli = { path = "../install_cli" }
+isahc.workspace = true
 journal = { path = "../journal" }
 language = { path = "../language" }
 language_selector = { path = "../language_selector" }
+language_tools = { path = "../language_tools" }
+lazy_static.workspace = true
+libc = "0.2"
+log.workspace = true
 lsp = { path = "../lsp" }
 menu = { path = "../menu" }
-language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
 notifications = { path = "../notifications" }
-assistant = { path = "../assistant" }
+num_cpus = "1.13.0"
 outline = { path = "../outline" }
-# plugin_runtime = { path = "../plugin_runtime",optional = true }
+parking_lot.workspace = true
+postage.workspace = true
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }
 project_symbols = { path = "../project_symbols" }
 quick_action_bar = { path = "../quick_action_bar" }
-recent_projects = { path = "../recent_projects" }
-release_channel = { path = "../release_channel" }
-rope = { path = "../rope"}
-rpc = { path = "../rpc" }
-settings = { path = "../settings" }
-feature_flags = { path = "../feature_flags" }
-sum_tree = { path = "../sum_tree" }
-shellexpand = "2.1.0"
-text = { path = "../text" }
-terminal_view = { path = "../terminal_view" }
-theme = { path = "../theme" }
-theme_selector = { path = "../theme_selector" }
-util = { path = "../util" }
-semantic_index = { path = "../semantic_index" }
-vim = { path = "../vim" }
-workspace = { path = "../workspace" }
-welcome = { path = "../welcome" }
-zed_actions = {path = "../zed_actions"}
-assets = {path = "../assets"}
-anyhow.workspace = true
-async-compression.workspace = true
-async-tar = "0.4.2"
-async-recursion = "0.3"
-async-trait.workspace = true
-backtrace = "0.3"
-chrono = "0.4"
-ctor.workspace = true
-env_logger.workspace = true
-futures.workspace = true
-ignore = "0.4"
-image = "0.23"
-indexmap = "1.6.2"
-isahc.workspace = true
-lazy_static.workspace = true
-libc = "0.2"
-log.workspace = true
-num_cpus = "1.13.0"
-parking_lot.workspace = true
-postage.workspace = true
 rand.workspace = true
+recent_projects = { path = "../recent_projects" }
 regex.workspace = true
+release_channel = { path = "../release_channel" }
+rope = { path = "../rope" }
+rpc = { path = "../rpc" }
 rsa = "0.4"
 rust-embed.workspace = true
+schemars.workspace = true
+search = { path = "../search" }
+semantic_index = { path = "../semantic_index" }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-schemars.workspace = true
+settings = { path = "../settings" }
+shellexpand = "2.1.0"
 simplelog = "0.9"
 smallvec.workspace = true
 smol.workspace = true
+sum_tree = { path = "../sum_tree" }
 tempfile.workspace = true
+terminal_view = { path = "../terminal_view" }
+text = { path = "../text" }
+theme = { path = "../theme" }
+theme_selector = { path = "../theme_selector" }
 thiserror.workspace = true
 tiny_http = "0.8"
 toml.workspace = true
-tree-sitter.workspace = true
 tree-sitter-bash.workspace = true
+tree-sitter-c-sharp.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-cpp.workspace = true
-tree-sitter-c-sharp.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-elixir.workspace = true
 tree-sitter-elm.workspace = true
 tree-sitter-embedded-template.workspace = true
-tree-sitter-glsl.workspace = true
 tree-sitter-gleam.workspace = true
+tree-sitter-glsl.workspace = true
 tree-sitter-go.workspace = true
-tree-sitter-heex.workspace = true
-tree-sitter-json.workspace = true
-tree-sitter-rust.workspace = true
-tree-sitter-markdown.workspace = true
-tree-sitter-proto.workspace = true
-tree-sitter-python.workspace = true
-tree-sitter-toml.workspace = true
-tree-sitter-typescript.workspace = true
-tree-sitter-ruby.workspace = true
 tree-sitter-haskell.workspace = true
+tree-sitter-heex.workspace = true
 tree-sitter-html.workspace = true
-tree-sitter-php.workspace = true
-tree-sitter-purescript.workspace = true
-tree-sitter-scheme.workspace = true
-tree-sitter-svelte.workspace = true
-tree-sitter-racket.workspace = true
-tree-sitter-yaml.workspace = true
+tree-sitter-json.workspace = true
 tree-sitter-lua.workspace = true
+tree-sitter-markdown.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
-tree-sitter-vue.workspace = true
+tree-sitter-php.workspace = true
+tree-sitter-proto.workspace = true
+tree-sitter-purescript.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-racket.workspace = true
+tree-sitter-ruby.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-scheme.workspace = true
+tree-sitter-svelte.workspace = true
+tree-sitter-toml.workspace = true
+tree-sitter-typescript.workspace = true
 tree-sitter-uiua.workspace = true
+tree-sitter-vue.workspace = true
+tree-sitter-yaml.workspace = true
 tree-sitter-zig.workspace = true
-
+tree-sitter.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"
+util = { path = "../util" }
 uuid.workspace = true
+vim = { path = "../vim" }
+welcome = { path = "../welcome" }
+workspace = { path = "../workspace" }
+zed_actions = { path = "../zed_actions" }
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }
-# client = { path = "../client", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
-# lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
-# rpc = { path = "../rpc", features = ["test-support"] }
-# settings = { path = "../settings", features = ["test-support"] }
 text = { path = "../text", features = ["test-support"] }
-# util = { path = "../util", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
 unindent.workspace = true
+workspace = { path = "../workspace", features = ["test-support"] }
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]

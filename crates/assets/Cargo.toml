@@ -6,6 +6,6 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
+anyhow.workspace = true
 gpui = {path = "../gpui"}
 rust-embed.workspace = true
-anyhow.workspace = true

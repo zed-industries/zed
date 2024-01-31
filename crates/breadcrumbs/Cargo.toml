@@ -13,15 +13,15 @@ doctest = false
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
-ui = { path = "../ui" }
+itertools = "0.10"
 language = { path = "../language" }
+outline = { path = "../outline" }
 project = { path = "../project" }
 search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+ui = { path = "../ui" }
 workspace = { path = "../workspace" }
-outline = { path = "../outline" }
-itertools = "0.10"
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

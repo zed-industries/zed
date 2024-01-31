@@ -13,39 +13,38 @@ doctest = false
 test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
+anyhow.workspace = true
 client = { path = "../client" }
+clock = { path = "../clock" }
 collections = { path = "../collections" }
 db = { path = "../db" }
-gpui = { path = "../gpui" }
-util = { path = "../util" }
-rpc = { path = "../rpc" }
-text = { path = "../text" }
-language = { path = "../language" }
-release_channel = { path = "../release_channel" }
-settings = { path = "../settings" }
 feature_flags = { path = "../feature_flags" }
-sum_tree = { path = "../sum_tree" }
-clock = { path = "../clock" }
-
-anyhow.workspace = true
 futures.workspace = true
+gpui = { path = "../gpui" }
 image = "0.23"
+language = { path = "../language" }
 lazy_static.workspace = true
-smallvec.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
+release_channel = { path = "../release_channel" }
+rpc = { path = "../rpc" }
 schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+settings = { path = "../settings" }
+smallvec.workspace = true
 smol.workspace = true
+sum_tree = { path = "../sum_tree" }
+tempfile.workspace = true
+text = { path = "../text" }
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
-uuid.workspace = true
 url.workspace = true
-serde.workspace = true
-serde_derive.workspace = true
-tempfile = "3"
+util = { path = "../util" }
+uuid.workspace = true
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
