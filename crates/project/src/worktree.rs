@@ -230,7 +230,7 @@ pub struct LocalSnapshot {
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     file_scan_exclusions: Vec<PathMatcher>,
-    dot_env_files: Vec<PathMatcher>,
+    private_files: Vec<PathMatcher>,
 }
 
 struct BackgroundScannerState {
@@ -326,16 +326,16 @@ impl Worktree {
                             .as_deref(),
                         "file_scan_exclusions",
                     );
-                    let new_dotenvs = path_matchers(
+                    let new_private_files = path_matchers(
                         ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
                         "private_files",
                     );
 
                     if new_file_scan_exclusions != this.snapshot.file_scan_exclusions
-                        || new_dotenvs != this.snapshot.dot_env_files
+                        || new_private_files != this.snapshot.private_files
                     {
                         this.snapshot.file_scan_exclusions = new_file_scan_exclusions;
-                        this.snapshot.dot_env_files = new_dotenvs;
+                        this.snapshot.private_files = new_private_files;
 
                         log::info!(
                             "Re-scanning directories, new scan exclude files: {:?}, new dotenv files: {:?}",
@@ -345,7 +345,7 @@ impl Worktree {
                                 .map(ToString::to_string)
                                 .collect::<Vec<_>>(),
                             this.snapshot
-                                .dot_env_files
+                                .private_files
                                 .iter()
                                 .map(ToString::to_string)
                                 .collect::<Vec<_>>()
@@ -382,7 +382,7 @@ impl Worktree {
                         .as_deref(),
                     "file_scan_exclusions",
                 ),
-                dot_env_files: path_matchers(
+                private_files: path_matchers(
                     ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
                     "private_files",
                 ),
@@ -1033,7 +1033,7 @@ impl LocalWorktree {
                         mtime: entry.mtime,
                         is_local: true,
                         is_deleted: false,
-                        is_dotenv: entry.is_dotenv,
+                        is_private: entry.is_private,
                     },
                     text,
                     diff_base,
@@ -1048,7 +1048,7 @@ impl LocalWorktree {
                         .with_context(|| {
                             format!("Excluded file {abs_path:?} got removed during loading")
                         })?;
-                    let is_dotenv = snapshot.is_path_dotenv(path.as_ref());
+                    let is_private = snapshot.is_path_private(path.as_ref());
                     Ok((
                         File {
                             entry_id: None,
@@ -1057,7 +1057,7 @@ impl LocalWorktree {
                             mtime: metadata.mtime,
                             is_local: true,
                             is_deleted: false,
-                            is_dotenv,
+                            is_private,
                         },
                         text,
                         diff_base,
@@ -1086,7 +1086,7 @@ impl LocalWorktree {
         let save = self.write_file(path.as_ref(), text, buffer.line_ending(), cx);
         let fs = Arc::clone(&self.fs);
         let abs_path = self.absolutize(&path);
-        let is_dotenv = self.snapshot.is_path_dotenv(&path);
+        let is_private = self.snapshot.is_path_private(&path);
 
         cx.spawn(move |this, mut cx| async move {
             let entry = save.await?;
@@ -1094,7 +1094,7 @@ impl LocalWorktree {
             let this = this.upgrade().context("worktree dropped")?;
 
             let (entry_id, mtime, path, is_dotenv) = match entry {
-                Some(entry) => (Some(entry.id), entry.mtime, entry.path, entry.is_dotenv),
+                Some(entry) => (Some(entry.id), entry.mtime, entry.path, entry.is_private),
                 None => {
                     let metadata = fs
                         .metadata(&abs_path)
@@ -1107,7 +1107,7 @@ impl LocalWorktree {
                         .with_context(|| {
                             format!("Excluded buffer {path:?} got removed during saving")
                         })?;
-                    (None, metadata.mtime, path, is_dotenv)
+                    (None, metadata.mtime, path, is_private)
                 }
             };
 
@@ -1119,7 +1119,7 @@ impl LocalWorktree {
                     mtime,
                     is_local: true,
                     is_deleted: false,
-                    is_dotenv,
+                    is_private: is_dotenv,
                 });
 
                 if let Some(project_id) = project_id {
@@ -2330,9 +2330,9 @@ impl LocalSnapshot {
         paths
     }
 
-    pub fn is_path_dotenv(&self, path: &Path) -> bool {
+    pub fn is_path_private(&self, path: &Path) -> bool {
         path.ancestors().any(|ancestor| {
-            self.dot_env_files
+            self.private_files
                 .iter()
                 .any(|exclude_matcher| exclude_matcher.is_match(&ancestor))
         })
@@ -2790,7 +2790,7 @@ pub struct File {
     pub(crate) entry_id: Option<ProjectEntryId>,
     pub(crate) is_local: bool,
     pub(crate) is_deleted: bool,
-    pub(crate) is_dotenv: bool,
+    pub(crate) is_private: bool,
 }
 
 impl language::File for File {
@@ -2865,7 +2865,7 @@ impl language::File for File {
     }
 
     fn is_private(&self) -> bool {
-        self.is_dotenv
+        self.is_private
     }
 }
 
@@ -2922,7 +2922,7 @@ impl File {
             entry_id: Some(entry.id),
             is_local: true,
             is_deleted: false,
-            is_dotenv: entry.is_dotenv,
+            is_private: entry.is_private,
         })
     }
 
@@ -2948,7 +2948,7 @@ impl File {
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
             is_deleted: proto.is_deleted,
-            is_dotenv: false,
+            is_private: false,
         })
     }
 
@@ -2994,7 +2994,7 @@ pub struct Entry {
     pub is_external: bool,
     pub git_status: Option<GitFileStatus>,
     /// Whether this entry is considered to be a `.env` file.
-    pub is_dotenv: bool,
+    pub is_private: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3049,7 +3049,7 @@ impl Entry {
             is_symlink: metadata.is_symlink,
             is_ignored: false,
             is_external: false,
-            is_dotenv: false,
+            is_private: false,
             git_status: None,
         }
     }
@@ -3822,9 +3822,9 @@ impl BackgroundScanner {
             {
                 let relative_path = job.path.join(child_name);
                 let state = self.state.lock();
-                if state.snapshot.is_path_dotenv(&relative_path) {
-                    log::debug!("detected dotenv file: {relative_path:?}");
-                    child_entry.is_dotenv = true;
+                if state.snapshot.is_path_private(&relative_path) {
+                    log::debug!("detected private file: {relative_path:?}");
+                    child_entry.is_private = true;
                 }
                 drop(state)
             }
@@ -3929,7 +3929,7 @@ impl BackgroundScanner {
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
-                    fs_entry.is_dotenv = state.snapshot.is_path_dotenv(path);
+                    fs_entry.is_private = state.snapshot.is_path_private(path);
 
                     if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
                         if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(path) {
@@ -4612,7 +4612,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 is_ignored: entry.is_ignored,
                 is_external: entry.is_external,
                 git_status: git_status_from_proto(entry.git_status),
-                is_dotenv: false,
+                is_private: false,
             })
         } else {
             Err(anyhow!(

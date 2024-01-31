@@ -1138,7 +1138,7 @@ impl ProjectPanel {
                         is_symlink: false,
                         is_ignored: false,
                         is_external: false,
-                        is_dotenv: false,
+                        is_private: false,
                         git_status: entry.git_status,
                     });
                 }
@@ -1300,7 +1300,7 @@ impl ProjectPanel {
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
-                        is_dotenv: entry.is_dotenv,
+                        is_dotenv: entry.is_private,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
