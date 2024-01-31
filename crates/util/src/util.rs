@@ -3,6 +3,7 @@ pub mod fs;
 pub mod github;
 pub mod http;
 pub mod paths;
+mod semantic_version;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -10,6 +11,7 @@ pub use backtrace::Backtrace;
 use futures::Future;
 use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
+pub use semantic_version::SemanticVersion;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},

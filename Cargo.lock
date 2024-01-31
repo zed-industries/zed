@@ -1486,6 +1486,7 @@ dependencies = [
  "prometheus",
  "prost 0.8.0",
  "rand 0.8.5",
+ "release_channel",
  "reqwest",
  "rpc",
  "scrypt",

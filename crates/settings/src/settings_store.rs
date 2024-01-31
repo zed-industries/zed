@@ -210,7 +210,7 @@ impl SettingsStore {
 
             if let Some(release_settings) = &self
                 .raw_user_settings
-                .get(&*release_channel::RELEASE_CHANNEL_NAME)
+                .get(&*release_channel::RELEASE_CHANNEL.dev_name())
             {
                 if let Some(release_settings) = setting_value
                     .deserialize_setting(&release_settings)
@@ -543,7 +543,7 @@ impl SettingsStore {
 
             if let Some(release_settings) = &self
                 .raw_user_settings
-                .get(&*release_channel::RELEASE_CHANNEL_NAME)
+                .get(&*release_channel::RELEASE_CHANNEL.dev_name())
             {
                 if let Some(release_settings) = setting_value
                     .deserialize_setting(&release_settings)

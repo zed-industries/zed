@@ -329,6 +329,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
 fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
+    release_channel::init("0.0.0", cx);
     client::init_settings(cx);
 
     let http = FakeHttpClient::with_404_response();
