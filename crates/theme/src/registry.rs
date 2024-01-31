@@ -259,7 +259,7 @@ impl ThemeRegistry {
                 continue;
             };
 
-            let Some(theme) = serde_json::from_reader(reader).log_err() else {
+            let Some(theme) = serde_json_lenient::from_reader(reader).log_err() else {
                 continue;
             };
 
