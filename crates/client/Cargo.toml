@@ -3,8 +3,7 @@ name = "client"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
-
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/client.rs"
@@ -19,6 +18,7 @@ collections = { path = "../collections" }
 db = { path = "../db" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
+release_channel = { path = "../release_channel" }
 rpc = { path = "../rpc" }
 text = { path = "../text" }
 settings = { path = "../settings" }
@@ -41,12 +41,12 @@ serde_derive.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
 uuid.workspace = true
-url = "2.2"
+url.workspace = true
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }

@@ -8,10 +8,12 @@ pub struct EditorSettings {
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_completion_documentation: bool,
+    pub completion_documentation_secondary_query_debounce: u64,
     pub use_on_type_format: bool,
     pub scrollbar: Scrollbar,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub redact_private_values: bool,
 }
 
 /// When to populate a new search's query based on the text under the cursor.
@@ -31,6 +33,7 @@ pub struct Scrollbar {
     pub show: ShowScrollbar,
     pub git_diff: bool,
     pub selections: bool,
+    pub symbols_selections: bool,
 }
 
 /// When to show the scrollbar in the editor.
@@ -71,6 +74,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub show_completion_documentation: Option<bool>,
+    /// The debounce delay before re-querying the language server for completion
+    /// documentation when not included in original completion list.
+    ///
+    /// Default: 300 ms
+    pub completion_documentation_secondary_query_debounce: Option<u64>,
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     ///
@@ -86,6 +94,13 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
+
+    /// Hide the values of variables in `private` files, as defined by the
+    /// private_files setting. This only changes the visual representation,
+    /// the values are still present in the file and can be selected / copied / pasted
+    ///
+    /// Default: false
+    pub redact_private_values: Option<bool>,
 }
 
 /// Scrollbar related settings
@@ -103,6 +118,10 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub selections: Option<bool>,
+    /// Whether to show symbols highlighted markers in the scrollbar.
+    ///
+    /// Default: true
+    pub symbols_selections: Option<bool>,
 }
 
 impl Settings for EditorSettings {

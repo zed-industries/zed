@@ -31,6 +31,7 @@
       "up": "vim::Up",
       "l": "vim::Right",
       "right": "vim::Right",
+      "space": "vim::Space",
       "$": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
       "_": "vim::StartOfLineDownward",
@@ -206,6 +207,9 @@
           "displayLines": true
         }
       ],
+      "shift-h": "vim::WindowTop",
+      "shift-m": "vim::WindowMiddle",
+      "shift-l": "vim::WindowBottom",
       // z commands
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
@@ -330,12 +334,7 @@
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       ";": "vim::RepeatFind",
-      ",": [
-        "vim::RepeatFind",
-        {
-          "backwards": true
-        }
-      ],
+      ",": "vim::RepeatFindReversed",
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
@@ -400,7 +399,8 @@
   {
     "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
     "bindings": {
-      "u": "editor::Undo",
+      "u": "vim::ConvertToLowerCase",
+      "U": "vim::ConvertToUpperCase",
       "o": "vim::OtherEnd",
       "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",

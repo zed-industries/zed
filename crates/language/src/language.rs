@@ -52,7 +52,7 @@ use std::{
 };
 use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
-use tree_sitter::{self, Query};
+use tree_sitter::{self, wasmtime, Query, WasmStore};
 use unicase::UniCase;
 use util::{http::HttpClient, paths::PathExt};
 use util::{post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
@@ -96,7 +96,9 @@ impl LspBinaryStatusSender {
 
 thread_local! {
     static PARSER: RefCell<Parser> = {
-        RefCell::new(Parser::new())
+        let mut parser = Parser::new();
+        parser.set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap()).unwrap();
+        RefCell::new(parser)
     };
 }
 
@@ -104,6 +106,7 @@ lazy_static! {
     pub(crate) static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
     /// A shared grammar for plain text, exposed for reuse by downstream crates.
     #[doc(hidden)]
+    pub static ref WASM_ENGINE: wasmtime::Engine = wasmtime::Engine::default();
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
@@ -450,6 +453,7 @@ pub struct LanguageQueries {
     pub embedding: Option<Cow<'static, str>>,
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
+    pub redactions: Option<Cow<'static, str>>,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
@@ -620,6 +624,7 @@ pub struct Grammar {
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
+    pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub embedding_config: Option<EmbeddingConfig>,
@@ -659,6 +664,11 @@ struct InjectionConfig {
     content_capture_ix: u32,
     language_capture_ix: Option<u32>,
     patterns: Vec<InjectionPatternConfig>,
+}
+
+struct RedactionConfig {
+    pub query: Query,
+    pub redaction_capture_ix: u32,
 }
 
 struct OverrideConfig {
@@ -706,8 +716,8 @@ enum AvailableGrammar {
         get_queries: fn(&str) -> LanguageQueries,
     },
     Wasm {
-        _grammar_name: Arc<str>,
-        _path: Arc<Path>,
+        path: Arc<Path>,
+        get_queries: fn(&Path) -> LanguageQueries,
     },
 }
 
@@ -773,9 +783,6 @@ impl LanguageRegistry {
     }
 
     /// Clear out all of the loaded languages and reload them from scratch.
-    ///
-    /// This is useful in development, when queries have changed.
-    #[cfg(debug_assertions)]
     pub fn reload(&self) {
         self.state.write().reload();
     }
@@ -802,15 +809,17 @@ impl LanguageRegistry {
         });
     }
 
-    pub fn register_wasm(&self, path: Arc<Path>, grammar_name: Arc<str>, config: LanguageConfig) {
+    pub fn register_wasm(
+        &self,
+        path: Arc<Path>,
+        config: LanguageConfig,
+        get_queries: fn(&Path) -> LanguageQueries,
+    ) {
         let state = &mut *self.state.write();
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
             config,
-            grammar: AvailableGrammar::Wasm {
-                _grammar_name: grammar_name,
-                _path: path,
-            },
+            grammar: AvailableGrammar::Wasm { path, get_queries },
             lsp_adapters: Vec::new(),
             loaded: false,
         });
@@ -944,8 +953,23 @@ impl LanguageRegistry {
                                             asset_dir,
                                             get_queries,
                                         } => (grammar, (get_queries)(asset_dir)),
-                                        AvailableGrammar::Wasm { .. } => {
-                                            Err(anyhow!("not supported"))?
+                                        AvailableGrammar::Wasm { path, get_queries } => {
+                                            let grammar_name =
+                                                &language.config.grammar_name.as_ref().ok_or_else(
+                                                    || anyhow!("missing grammar name"),
+                                                )?;
+                                            let mut wasm_path = path.join(grammar_name.as_ref());
+                                            wasm_path.set_extension("wasm");
+                                            let wasm_bytes = std::fs::read(&wasm_path)?;
+                                            let grammar = PARSER.with(|parser| {
+                                                let mut parser = parser.borrow_mut();
+                                                let mut store = parser.take_wasm_store().unwrap();
+                                                let grammar =
+                                                    store.load_language(&grammar_name, &wasm_bytes);
+                                                parser.set_wasm_store(store).unwrap();
+                                                grammar
+                                            })?;
+                                            (grammar, get_queries(path.as_ref()))
                                         }
                                     };
                                     Language::new(language.config, Some(grammar))
@@ -1172,7 +1196,6 @@ impl LanguageRegistryState {
         *self.subscription.0.borrow_mut() = ();
     }
 
-    #[cfg(debug_assertions)]
     fn reload(&mut self) {
         self.languages.clear();
         self.version += 1;
@@ -1287,6 +1310,7 @@ impl Language {
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
+                    redactions_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1342,6 +1366,11 @@ impl Language {
             self = self
                 .with_override_query(query.as_ref())
                 .context("Error loading override query")?;
+        }
+        if let Some(query) = queries.redactions {
+            self = self
+                .with_redaction_query(query.as_ref())
+                .context("Error loading redaction query")?;
         }
         Ok(self)
     }
@@ -1570,6 +1599,22 @@ impl Language {
             query,
             values: override_configs_by_id,
         });
+        Ok(self)
+    }
+
+    pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
+        let grammar = self.grammar_mut();
+        let query = Query::new(&grammar.ts_language, source)?;
+        let mut redaction_capture_ix = None;
+        get_capture_indices(&query, &mut [("redact", &mut redaction_capture_ix)]);
+
+        if let Some(redaction_capture_ix) = redaction_capture_ix {
+            grammar.redactions_config = Some(RedactionConfig {
+                query,
+                redaction_capture_ix,
+            });
+        }
+
         Ok(self)
     }
 

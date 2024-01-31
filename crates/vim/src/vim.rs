@@ -15,11 +15,12 @@ mod utils;
 mod visual;
 
 use anyhow::Result;
-use collections::{CommandPaletteFilter, HashMap};
+use collections::HashMap;
 use command_palette::CommandPaletteInterceptor;
+use copilot::CommandPaletteFilter;
 use editor::{movement, Editor, EditorEvent, EditorMode};
 use gpui::{
-    actions, impl_actions, Action, AppContext, EntityId, KeyContext, Subscription, View,
+    actions, impl_actions, Action, AppContext, EntityId, Global, KeyContext, Subscription, View,
     ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
@@ -171,9 +172,9 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
     .detach()
 }
 
-/// The state pertaining to Vim mode. Stored as a global.
+/// The state pertaining to Vim mode.
 #[derive(Default)]
-pub struct Vim {
+struct Vim {
     active_editor: Option<WeakView<Editor>>,
     editor_subscription: Option<Subscription>,
     enabled: bool,
@@ -181,6 +182,8 @@ pub struct Vim {
     workspace_state: WorkspaceState,
     default_state: EditorState,
 }
+
+impl Global for Vim {}
 
 impl Vim {
     fn read(cx: &mut AppContext) -> &Self {
@@ -512,7 +515,9 @@ impl Vim {
             });
 
             if self.enabled {
-                cx.set_global::<CommandPaletteInterceptor>(Box::new(command::command_interceptor));
+                cx.set_global::<CommandPaletteInterceptor>(CommandPaletteInterceptor(Box::new(
+                    command::command_interceptor,
+                )));
             } else if cx.has_global::<CommandPaletteInterceptor>() {
                 let _ = cx.remove_global::<CommandPaletteInterceptor>();
             }

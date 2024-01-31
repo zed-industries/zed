@@ -62,6 +62,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
+use text::BufferId;
 use util::{
     paths::{PathMatcher, HOME},
     ResultExt,
@@ -229,6 +230,7 @@ pub struct LocalSnapshot {
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     file_scan_exclusions: Vec<PathMatcher>,
+    private_files: Vec<PathMatcher>,
 }
 
 struct BackgroundScannerState {
@@ -318,14 +320,32 @@ impl Worktree {
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 if let Self::Local(this) = this {
-                    let new_file_scan_exclusions =
-                        file_scan_exclusions(ProjectSettings::get_global(cx));
-                    if new_file_scan_exclusions != this.snapshot.file_scan_exclusions {
+                    let new_file_scan_exclusions = path_matchers(
+                        ProjectSettings::get_global(cx)
+                            .file_scan_exclusions
+                            .as_deref(),
+                        "file_scan_exclusions",
+                    );
+                    let new_private_files = path_matchers(
+                        ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
+                        "private_files",
+                    );
+
+                    if new_file_scan_exclusions != this.snapshot.file_scan_exclusions
+                        || new_private_files != this.snapshot.private_files
+                    {
                         this.snapshot.file_scan_exclusions = new_file_scan_exclusions;
+                        this.snapshot.private_files = new_private_files;
+
                         log::info!(
-                            "Re-scanning directories, new scan exclude files: {:?}",
+                            "Re-scanning directories, new scan exclude files: {:?}, new dotenv files: {:?}",
                             this.snapshot
                                 .file_scan_exclusions
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>(),
+                            this.snapshot
+                                .private_files
                                 .iter()
                                 .map(ToString::to_string)
                                 .collect::<Vec<_>>()
@@ -356,7 +376,16 @@ impl Worktree {
                 .map_or(String::new(), |f| f.to_string_lossy().to_string());
 
             let mut snapshot = LocalSnapshot {
-                file_scan_exclusions: file_scan_exclusions(ProjectSettings::get_global(cx)),
+                file_scan_exclusions: path_matchers(
+                    ProjectSettings::get_global(cx)
+                        .file_scan_exclusions
+                        .as_deref(),
+                    "file_scan_exclusions",
+                ),
+                private_files: path_matchers(
+                    ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
+                    "private_files",
+                ),
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot {
@@ -649,20 +678,22 @@ fn start_background_scan_tasks(
     vec![background_scanner, scan_state_updater]
 }
 
-fn file_scan_exclusions(project_settings: &ProjectSettings) -> Vec<PathMatcher> {
-    project_settings.file_scan_exclusions.as_deref().unwrap_or(&[]).iter()
-    .sorted()
-    .filter_map(|pattern| {
-        PathMatcher::new(pattern)
-            .map(Some)
-            .unwrap_or_else(|e| {
-                log::error!(
-                    "Skipping pattern {pattern} in `file_scan_exclusions` project settings due to parsing error: {e:#}"
-                );
-                None
-            })
-    })
-    .collect()
+fn path_matchers(values: Option<&[String]>, context: &'static str) -> Vec<PathMatcher> {
+    values
+        .unwrap_or(&[])
+        .iter()
+        .sorted()
+        .filter_map(|pattern| {
+            PathMatcher::new(pattern)
+                .map(Some)
+                .unwrap_or_else(|e| {
+                    log::error!(
+                        "Skipping pattern {pattern} in `{}` project settings due to parsing error: {e:#}", context
+                    );
+                    None
+                })
+        })
+        .collect()
 }
 
 impl LocalWorktree {
@@ -672,7 +703,7 @@ impl LocalWorktree {
 
     pub(crate) fn load_buffer(
         &mut self,
-        id: u64,
+        id: BufferId,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Model<Buffer>>> {
@@ -1002,6 +1033,7 @@ impl LocalWorktree {
                         mtime: entry.mtime,
                         is_local: true,
                         is_deleted: false,
+                        is_private: entry.is_private,
                     },
                     text,
                     diff_base,
@@ -1016,6 +1048,7 @@ impl LocalWorktree {
                         .with_context(|| {
                             format!("Excluded file {abs_path:?} got removed during loading")
                         })?;
+                    let is_private = snapshot.is_path_private(path.as_ref());
                     Ok((
                         File {
                             entry_id: None,
@@ -1024,6 +1057,7 @@ impl LocalWorktree {
                             mtime: metadata.mtime,
                             is_local: true,
                             is_deleted: false,
+                            is_private,
                         },
                         text,
                         diff_base,
@@ -1043,7 +1077,7 @@ impl LocalWorktree {
         let buffer = buffer_handle.read(cx);
 
         let rpc = self.client.clone();
-        let buffer_id = buffer.remote_id();
+        let buffer_id: u64 = buffer.remote_id().into();
         let project_id = self.share.as_ref().map(|share| share.project_id);
 
         let text = buffer.as_rope().clone();
@@ -1052,14 +1086,15 @@ impl LocalWorktree {
         let save = self.write_file(path.as_ref(), text, buffer.line_ending(), cx);
         let fs = Arc::clone(&self.fs);
         let abs_path = self.absolutize(&path);
+        let is_private = self.snapshot.is_path_private(&path);
 
         cx.spawn(move |this, mut cx| async move {
             let entry = save.await?;
             let abs_path = abs_path?;
             let this = this.upgrade().context("worktree dropped")?;
 
-            let (entry_id, mtime, path) = match entry {
-                Some(entry) => (Some(entry.id), entry.mtime, entry.path),
+            let (entry_id, mtime, path, is_dotenv) = match entry {
+                Some(entry) => (Some(entry.id), entry.mtime, entry.path, entry.is_private),
                 None => {
                     let metadata = fs
                         .metadata(&abs_path)
@@ -1072,7 +1107,7 @@ impl LocalWorktree {
                         .with_context(|| {
                             format!("Excluded buffer {path:?} got removed during saving")
                         })?;
-                    (None, metadata.mtime, path)
+                    (None, metadata.mtime, path, is_private)
                 }
             };
 
@@ -1084,6 +1119,7 @@ impl LocalWorktree {
                     mtime,
                     is_local: true,
                     is_deleted: false,
+                    is_private: is_dotenv,
                 });
 
                 if let Some(project_id) = project_id {
@@ -1481,7 +1517,7 @@ impl RemoteWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id();
+        let buffer_id = buffer.remote_id().into();
         let version = buffer.version();
         let rpc = self.client.clone();
         let project_id = self.project_id;
@@ -2294,6 +2330,14 @@ impl LocalSnapshot {
         paths
     }
 
+    pub fn is_path_private(&self, path: &Path) -> bool {
+        path.ancestors().any(|ancestor| {
+            self.private_files
+                .iter()
+                .any(|exclude_matcher| exclude_matcher.is_match(&ancestor))
+        })
+    }
+
     pub fn is_path_excluded(&self, mut path: PathBuf) -> bool {
         loop {
             if self
@@ -2746,6 +2790,7 @@ pub struct File {
     pub(crate) entry_id: Option<ProjectEntryId>,
     pub(crate) is_local: bool,
     pub(crate) is_deleted: bool,
+    pub(crate) is_private: bool,
 }
 
 impl language::File for File {
@@ -2818,6 +2863,10 @@ impl language::File for File {
             is_deleted: self.is_deleted,
         }
     }
+
+    fn is_private(&self) -> bool {
+        self.is_private
+    }
 }
 
 impl language::LocalFile for File {
@@ -2840,7 +2889,7 @@ impl language::LocalFile for File {
 
     fn buffer_reloaded(
         &self,
-        buffer_id: u64,
+        buffer_id: BufferId,
         version: &clock::Global,
         fingerprint: RopeFingerprint,
         line_ending: LineEnding,
@@ -2853,7 +2902,7 @@ impl language::LocalFile for File {
                 .client
                 .send(proto::BufferReloaded {
                     project_id,
-                    buffer_id,
+                    buffer_id: buffer_id.into(),
                     version: serialize_version(version),
                     mtime: Some(mtime.into()),
                     fingerprint: serialize_fingerprint(fingerprint),
@@ -2873,6 +2922,7 @@ impl File {
             entry_id: Some(entry.id),
             is_local: true,
             is_deleted: false,
+            is_private: entry.is_private,
         })
     }
 
@@ -2898,6 +2948,7 @@ impl File {
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
             is_deleted: proto.is_deleted,
+            is_private: false,
         })
     }
 
@@ -2942,6 +2993,8 @@ pub struct Entry {
     /// entries in that they are not included in searches.
     pub is_external: bool,
     pub git_status: Option<GitFileStatus>,
+    /// Whether this entry is considered to be a `.env` file.
+    pub is_private: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2996,6 +3049,7 @@ impl Entry {
             is_symlink: metadata.is_symlink,
             is_ignored: false,
             is_external: false,
+            is_private: false,
             git_status: None,
         }
     }
@@ -3220,10 +3274,7 @@ impl BackgroundScanner {
         }
     }
 
-    async fn run(
-        &mut self,
-        mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>,
-    ) {
+    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<fs::Event>>>>) {
         use futures::FutureExt as _;
 
         // Populate ignores above the root.
@@ -3270,9 +3321,10 @@ impl BackgroundScanner {
         // have the previous state loaded yet.
         self.phase = BackgroundScannerPhase::EventsReceivedDuringInitialScan;
         if let Poll::Ready(Some(events)) = futures::poll!(fs_events_rx.next()) {
-            let mut paths = events.into_iter().map(|e| e.path).collect::<Vec<_>>();
+            let mut paths = fs::fs_events_paths(events);
+
             while let Poll::Ready(Some(more_events)) = futures::poll!(fs_events_rx.next()) {
-                paths.extend(more_events.into_iter().map(|e| e.path));
+                paths.extend(fs::fs_events_paths(more_events));
             }
             self.process_events(paths).await;
         }
@@ -3311,9 +3363,10 @@ impl BackgroundScanner {
 
                 events = fs_events_rx.next().fuse() => {
                     let Some(events) = events else { break };
-                    let mut paths = events.into_iter().map(|e| e.path).collect::<Vec<_>>();
+                    let mut paths = fs::fs_events_paths(events);
+
                     while let Poll::Ready(Some(more_events)) = futures::poll!(fs_events_rx.next()) {
-                        paths.extend(more_events.into_iter().map(|e| e.path));
+                        paths.extend(fs::fs_events_paths(more_events));
                     }
                     self.process_events(paths.clone()).await;
                 }
@@ -3732,7 +3785,7 @@ impl BackgroundScanner {
                     ancestor_inodes.insert(child_entry.inode);
 
                     new_jobs.push(Some(ScanJob {
-                        abs_path: child_abs_path,
+                        abs_path: child_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
                         ignore_stack: if child_entry.is_ignored {
@@ -3764,6 +3817,16 @@ impl BackgroundScanner {
                         }
                     }
                 }
+            }
+
+            {
+                let relative_path = job.path.join(child_name);
+                let state = self.state.lock();
+                if state.snapshot.is_path_private(&relative_path) {
+                    log::debug!("detected private file: {relative_path:?}");
+                    child_entry.is_private = true;
+                }
+                drop(state)
             }
 
             new_entries.push(child_entry);
@@ -3866,8 +3929,9 @@ impl BackgroundScanner {
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
+                    fs_entry.is_private = state.snapshot.is_path_private(path);
 
-                    if !is_dir && !fs_entry.is_ignored {
+                    if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
                         if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(path) {
                             if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
                                 let repo_path = RepoPath(repo_path.into());
@@ -4548,6 +4612,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 is_ignored: entry.is_ignored,
                 is_external: entry.is_external,
                 git_status: git_status_from_proto(entry.git_status),
+                is_private: false,
             })
         } else {
             Err(anyhow!(

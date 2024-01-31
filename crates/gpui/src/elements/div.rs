@@ -17,11 +17,11 @@
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
-    ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, IntoElement,
-    IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
-    WindowContext,
+    ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global,
+    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
+    ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task,
+    View, Visibility, WindowContext,
 };
 
 use collections::HashMap;
@@ -2069,6 +2069,8 @@ impl ElementClickedState {
 
 #[derive(Default)]
 pub(crate) struct GroupBounds(HashMap<SharedString, SmallVec<[Bounds<Pixels>; 1]>>);
+
+impl Global for GroupBounds {}
 
 impl GroupBounds {
     pub fn get(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<Pixels>> {

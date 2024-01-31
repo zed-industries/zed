@@ -3,8 +3,7 @@ name = "fs"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
-
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/fs.rs"
@@ -19,8 +18,7 @@ sum_tree = { path = "../sum_tree" }
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-tempfile = "3"
-fsevent = { path = "../fsevent" }
+tempfile.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
@@ -34,6 +32,12 @@ libc = "0.2"
 time.workspace = true
 
 gpui = { path = "../gpui", optional = true}
+
+[target.'cfg(target_os = "macos")'.dependencies]
+fsevent = { path = "../fsevent" }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify = "6.1.1"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

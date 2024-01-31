@@ -1,0 +1,12 @@
+{
+  "name": "danger",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "danger": "danger"
+  },
+  "devDependencies": {
+    "danger": "11.3.1"
+  }
+}

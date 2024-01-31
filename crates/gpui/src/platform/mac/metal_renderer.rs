@@ -17,7 +17,11 @@ use objc::{self, msg_send, sel, sel_impl};
 use smallvec::SmallVec;
 use std::{ffi::c_void, mem, ptr, sync::Arc};
 
+#[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
+#[cfg(feature = "runtime_shaders")]
+const SHADERS_SOURCE_FILE: &'static str =
+    include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
 const INSTANCE_BUFFER_SIZE: usize = 32 * 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value (maybe even we could adjust dynamically...)
 
 pub(crate) struct MetalRenderer {
@@ -60,7 +64,11 @@ impl MetalRenderer {
                     | AutoresizingMask::HEIGHT_SIZABLE
             ];
         }
-
+        #[cfg(feature = "runtime_shaders")]
+        let library = device
+            .new_library_with_source(&SHADERS_SOURCE_FILE, &metal::CompileOptions::new())
+            .expect("error building metal library");
+        #[cfg(not(feature = "runtime_shaders"))]
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
             .expect("error building metal library");

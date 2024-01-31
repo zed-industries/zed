@@ -8,13 +8,14 @@ mod test;
 use crate::{
     Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout,
-    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result,
-    Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
+    SharedString, Size, Task, TaskLabel, WindowContext,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
 use parking::Unparker;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -138,7 +139,7 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
-pub(crate) trait PlatformWindow {
+pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
@@ -204,7 +205,7 @@ pub trait PlatformDispatcher: Send + Sync {
 }
 
 pub(crate) trait PlatformTextSystem: Send + Sync {
-    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
     fn all_font_names(&self) -> Vec<String>;
     fn all_font_families(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;

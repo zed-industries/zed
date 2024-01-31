@@ -1263,7 +1263,7 @@ async fn rejoin_room(
     Ok(())
 }
 
-/// leave room disonnects from the room.
+/// leave room disconnects from the room.
 async fn leave_room(
     _: proto::LeaveRoom,
     response: Response<proto::LeaveRoom>,

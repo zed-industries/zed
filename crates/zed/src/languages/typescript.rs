@@ -15,8 +15,12 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, github::latest_github_release};
-use util::{github::GitHubLspBinaryVersion, ResultExt};
+use util::{
+    async_maybe,
+    fs::remove_matching,
+    github::{latest_github_release, GitHubLspBinaryVersion},
+    ResultExt,
+};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -172,7 +176,7 @@ async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let old_server_path = container_dir.join(TypeScriptLspAdapter::OLD_SERVER_PATH);
         let new_server_path = container_dir.join(TypeScriptLspAdapter::NEW_SERVER_PATH);
         if new_server_path.exists() {
@@ -191,7 +195,7 @@ async fn get_cached_ts_server_binary(
                 container_dir
             ))
         }
-    })()
+    })
     .await
     .log_err()
 }
@@ -324,7 +328,7 @@ async fn get_cached_eslint_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         // This is unfortunate but we don't know what the version is to build a path directly
         let mut dir = fs::read_dir(&container_dir).await?;
         let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
@@ -337,7 +341,7 @@ async fn get_cached_eslint_server_binary(
             path: node.binary_path().await?,
             arguments: eslint_server_binary_arguments(&server_path),
         })
-    })()
+    })
     .await
     .log_err()
 }
@@ -345,6 +349,7 @@ async fn get_cached_eslint_server_binary(
 #[cfg(test)]
 mod tests {
     use gpui::{Context, TestAppContext};
+    use text::BufferId;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -372,7 +377,8 @@ mod tests {
         .unindent();
 
         let buffer = cx.new_model(|cx| {
-            language::Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+            language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+                .with_language(language, cx)
         });
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(

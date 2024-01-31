@@ -2,7 +2,7 @@ use super::*;
 use crate::LanguageConfig;
 use rand::rngs::StdRng;
 use std::{env, ops::Range, sync::Arc};
-use text::Buffer;
+use text::{Buffer, BufferId};
 use tree_sitter::Node;
 use unindent::Unindent as _;
 use util::test::marked_text_ranges;
@@ -86,7 +86,7 @@ fn test_syntax_map_layers_for_range() {
 
     let mut buffer = Buffer::new(
         0,
-        0,
+        BufferId::new(1).unwrap(),
         r#"
             fn a() {
                 assert_eq!(
@@ -185,7 +185,7 @@ fn test_dynamic_language_injection() {
 
     let mut buffer = Buffer::new(
         0,
-        0,
+        BufferId::new(1).unwrap(),
         r#"
             This is a code block:
 
@@ -860,7 +860,7 @@ fn test_random_edits(
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut buffer = Buffer::new(0, 0, text);
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new();
     syntax_map.set_language_registry(registry.clone());
@@ -1040,7 +1040,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str]) -> (Buffer, SyntaxMap
         .now_or_never()
         .unwrap()
         .unwrap();
-    let mut buffer = Buffer::new(0, 0, Default::default());
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), Default::default());
 
     let mut mutated_syntax_map = SyntaxMap::new();
     mutated_syntax_map.set_language_registry(registry.clone());

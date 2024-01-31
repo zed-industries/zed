@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "Apache-2.0"
 
-
 [lib]
 path = "src/media.rs"
 doctest = false
@@ -14,8 +13,10 @@ doctest = false
 anyhow.workspace = true
 block = "0.1"
 bytes = "1.2"
-core-foundation = "0.9.3"
 foreign-types = "0.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9.3"
 metal = "0.21.0"
 objc = "0.2"
 

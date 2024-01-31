@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, DismissEvent,
-    FocusableView, ForegroundExecutor, Model, ModelContext, Render, Result, Task, View,
+    FocusableView, ForegroundExecutor, Global, Model, ModelContext, Render, Result, Task, View,
     ViewContext, VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
@@ -144,7 +144,7 @@ impl AsyncAppContext {
 
     /// Determine whether global state of the specified type has been assigned.
     /// Returns an error if the `AppContext` has been dropped.
-    pub fn has_global<G: 'static>(&self) -> Result<bool> {
+    pub fn has_global<G: Global>(&self) -> Result<bool> {
         let app = self
             .app
             .upgrade()
@@ -157,7 +157,7 @@ impl AsyncAppContext {
     ///
     /// Panics if no global state of the specified type has been assigned.
     /// Returns an error if the `AppContext` has been dropped.
-    pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> Result<R> {
+    pub fn read_global<G: Global, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> Result<R> {
         let app = self
             .app
             .upgrade()
@@ -172,7 +172,7 @@ impl AsyncAppContext {
     /// if no state of the specified type has been assigned.
     ///
     /// Returns an error if no state of the specified type has been assigned the `AppContext` has been dropped.
-    pub fn try_read_global<G: 'static, R>(
+    pub fn try_read_global<G: Global, R>(
         &self,
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
@@ -183,7 +183,7 @@ impl AsyncAppContext {
 
     /// A convenience method for [AppContext::update_global]
     /// for updating the global state of the specified type.
-    pub fn update_global<G: 'static, R>(
+    pub fn update_global<G: Global, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> Result<R> {
@@ -235,7 +235,7 @@ impl AsyncWindowContext {
     }
 
     /// A convenience method for [`AppContext::global`].
-    pub fn read_global<G: 'static, R>(
+    pub fn read_global<G: Global, R>(
         &mut self,
         read: impl FnOnce(&G, &WindowContext) -> R,
     ) -> Result<R> {
@@ -249,7 +249,7 @@ impl AsyncWindowContext {
         update: impl FnOnce(&mut G, &mut WindowContext) -> R,
     ) -> Result<R>
     where
-        G: 'static,
+        G: Global,
     {
         self.window.update(self, |_, cx| cx.update_global(update))
     }

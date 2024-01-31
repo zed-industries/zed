@@ -1,0 +1,7 @@
+name = "Go Work"
+path_suffixes = ["work"]
+line_comments = ["//"]
+autoclose_before = ")"
+brackets = [
+    { start = "(", end = ")", close = true, newline = true}
+]

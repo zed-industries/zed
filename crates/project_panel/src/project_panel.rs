@@ -1,5 +1,6 @@
 pub mod file_associations;
 mod project_panel_settings;
+use client::{ErrorCode, ErrorExt};
 use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
@@ -35,6 +36,7 @@ use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
+    notifications::DetachAndPromptErr,
     Workspace,
 };
 
@@ -101,6 +103,7 @@ pub struct EntryDetails {
     is_processing: bool,
     is_cut: bool,
     git_status: Option<GitFileStatus>,
+    is_dotenv: bool,
 }
 
 actions!(
@@ -258,6 +261,7 @@ impl ProjectPanel {
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                         if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            let file_path = entry.path.clone();
                             workspace
                                 .open_path(
                                     ProjectPath {
@@ -268,7 +272,15 @@ impl ProjectPanel {
                                     focus_opened_item,
                                     cx,
                                 )
-                                .detach_and_log_err(cx);
+                                .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
+                                    match e.error_code() {
+                                        ErrorCode::UnsharedItem => Some(format!(
+                                            "{} is not shared by the host. This could be because it has been marked as `private`",
+                                            file_path.display()
+                                        )),
+                                        _ => None,
+                                    }
+                                });
                             if !focus_opened_item {
                                 if let Some(project_panel) = project_panel.upgrade() {
                                     let focus_handle = project_panel.read(cx).focus_handle.clone();
@@ -561,10 +573,12 @@ impl ProjectPanel {
         }
     }
 
-    fn open_file(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+    fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, true, cx);
+            } else {
+                self.toggle_expanded(entry.id, cx);
             }
         }
     }
@@ -1135,6 +1149,7 @@ impl ProjectPanel {
                         is_symlink: false,
                         is_ignored: false,
                         is_external: false,
+                        is_private: false,
                         git_status: entry.git_status,
                     });
                 }
@@ -1296,6 +1311,7 @@ impl ProjectPanel {
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
+                        is_dotenv: entry.is_private,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1380,7 +1396,7 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                        div().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
                         div().size(IconSize::default().rems()).invisible()
                     })
@@ -1476,7 +1492,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
-                .on_action(cx.listener(Self::open_file))
+                .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
@@ -2456,6 +2472,101 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "a": {
+                    "one.txt": "",
+                    "two.txt": "",
+                    "inner_dir": {
+                        "three.txt": "",
+                        "four.txt": "",
+                    }
+                },
+                "b": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "root/a", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        let pasted_dir = find_project_entry(&panel, "root/b/a", cx);
+        assert_ne!(pasted_dir, None, "Pasted directory should have an entry");
+
+        let pasted_dir_file = find_project_entry(&panel, "root/b/a/one.txt", cx);
+        assert_ne!(
+            pasted_dir_file, None,
+            "Pasted directory file should have an entry"
+        );
+
+        let pasted_dir_inner_dir = find_project_entry(&panel, "root/b/a/inner_dir", cx);
+        assert_ne!(
+            pasted_dir_inner_dir, None,
+            "Directories inside pasted directory should have an entry"
+        );
+
+        toggle_expand_dir(&panel, "root/b", cx);
+        toggle_expand_dir(&panel, "root/b/a", cx);
+        toggle_expand_dir(&panel, "root/b/a/inner_dir", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root",
+                "    > a",
+                "    v b",
+                "        v a",
+                "            v inner_dir  <== selected",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt",
+            ]
+        );
+
+        select_path(&panel, "root", cx);
+        panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
+        cx.executor().run_until_parked();
+        panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root  <== selected",
+                "    > a",
+                "    > a copy",
+                "    > a copy 1",
+                "    v b",
+                "        v a",
+                "            v inner_dir",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt"
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
@@ -2481,7 +2592,7 @@ mod tests {
 
         toggle_expand_dir(&panel, "src/test", cx);
         select_path(&panel, "src/test/first.rs", cx);
-        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -2509,7 +2620,7 @@ mod tests {
         ensure_no_open_items_and_panes(&workspace, cx);
 
         select_path(&panel, "src/test/second.rs", cx);
-        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -2712,6 +2823,50 @@ mod tests {
                 "          third.rs"
             ],
             "File list should be unchanged after failed rename confirmation"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                    }
+                },
+                "file_1.py": "# File contents",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        cx.executor().run_until_parked();
+        select_path(&panel, "project_root/dir_1", cx);
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        select_path(&panel, "project_root/dir_1/nested_dir", cx);
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        > nested_dir  <== selected",
+                "      file_1.py",
+            ]
         );
     }
 

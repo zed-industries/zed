@@ -5,13 +5,13 @@ use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
 use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SharedString, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, SharedString,
+    Task, WeakModel,
 };
 use language::Capability;
+use release_channel::RELEASE_CHANNEL;
 use rpc::{
     proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
@@ -22,7 +22,7 @@ use util::{async_maybe, maybe, ResultExt};
 pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let channel_store =
         cx.new_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
-    cx.set_global(channel_store);
+    cx.set_global(GlobalChannelStore(channel_store));
 }
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -143,9 +143,13 @@ enum OpenedModelHandle<E> {
     Loading(Shared<Task<Result<Model<E>, Arc<anyhow::Error>>>>),
 }
 
+struct GlobalChannelStore(Model<ChannelStore>);
+
+impl Global for GlobalChannelStore {}
+
 impl ChannelStore {
     pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<Model<Self>>().clone()
+        cx.global::<GlobalChannelStore>().0.clone()
     }
 
     pub fn new(

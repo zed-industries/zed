@@ -5,10 +5,11 @@ use std::{
     ops::{Range, Sub},
 };
 use sum_tree::Bias;
+use text::BufferId;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
-    pub buffer_id: Option<u64>,
+    pub buffer_id: Option<BufferId>,
     pub excerpt_id: ExcerptId,
     pub text_anchor: text::Anchor,
 }
