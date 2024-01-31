@@ -18,6 +18,7 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
+use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
@@ -56,6 +57,9 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
     OpenRequest,
 };
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() {
     menu::init();
