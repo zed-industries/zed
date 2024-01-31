@@ -2,12 +2,12 @@
 
 Zed includes a vim emulation layer known as “vim mode”. This document aims to describe how it works, and how to make the most out of it.
 
-### Philosophy
+## Philosophy
 Vim mode in Zed is supposed to primarily "do what you expect": it mostly tries to copy vim exactly, but will use Zed-specific functionality when available to make things smoother.
 
 This means Zed will never be 100% vim compatible, but should be 100% vim familiar! We expect that our vim mode already copes with 90% of your workflow, and we'd like to keep improving it. If you find things that you can’t yet do in vim mode, but which you rely on in your current workflow, please leave feedback in the editor itself (`:feedback`), or [file an issue](https://github.com/zed-industries/zed/issues).
 
-### Zed-specific features
+## Zed-specific features
 Zed is built on a modern foundation that (among other things) uses tree-sitter to understand the content of the file you're editing, and supports multiple cursors out of the box.
 
 Vim mode has several "core Zed" key bindings, that will help you make the most of Zed's specific feature set.
@@ -45,7 +45,7 @@ Vim mode emulates visual block mode using Zed's multiple cursor support. This ag
 
 Finally, Vim mode's search and replace functionality is backed by Zed's. This means that the pattern syntax is slightly different, see the section on [Regex differences](#regex-differences) for details.
 
-### Custom key bindings
+## Custom key bindings
 Zed does not yet have an equivalent to vim’s `map` command to convert one set of keystrokes into another, however you can bind any sequence of keys to fire any Action documented in the  [Key bindings documentation](https://docs.zed.dev/configuration/key-bindings).
 
 You can edit your personal key bindings with `:keymap`.
@@ -84,7 +84,7 @@ You can see the bindings that are enabled by default in vim mode [here](https://
 
 The details of the context are a little out of scope for this doc, but suffice to say that `menu` is true when a menu is open (e.g. the completions menu), `VimWaiting` is true after you type `f` or `t` when we’re waiting for a new key (and you probably don’t want bindings to happen). Please reach out on [GitHub](https://github.com/zed-industries/zed) if you want help making a key bindings work.
 
-### Command palette
+## Command palette
 
 Vim mode allows you to enable Zed’s command palette with `:`. This means that you can use vim's command palette to run any action that Zed supports.
 
@@ -140,7 +140,7 @@ Currently supported vim-specific commands (as of Zed 0.106):
 ```
 
 
-### Related settings
+## Related settings
 There are a few Zed settings that you may also enjoy if you use vim mode:
 ```json
 {
@@ -153,7 +153,7 @@ There are a few Zed settings that you may also enjoy if you use vim mode:
 }
 ```
 
-### Regex differences
+## Regex differences
 
 Zed uses a different regular expression engine from Vim. This means that you will have to use a different syntax for some things.
 
