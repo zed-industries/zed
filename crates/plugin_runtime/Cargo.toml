@@ -6,16 +6,16 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-wasmtime = "2.0"
-wasmtime-wasi = "2.0"
-wasi-common = "2.0"
 anyhow.workspace = true
+bincode = "1.3"
+pollster = "0.2.5"
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-bincode = "1.3"
-pollster = "0.2.5"
 smol.workspace = true
+wasi-common = "2.0"
+wasmtime = "2.0"
+wasmtime-wasi = "2.0"
 
 [build-dependencies]
 wasmtime = { version = "2.0", features = ["all-arch"] }

@@ -10,30 +10,29 @@ path = "src/file_finder.rs"
 doctest = false
 
 [dependencies]
-editor = { path = "../editor" }
+anyhow.workspace = true
 collections = { path = "../collections" }
+editor = { path = "../editor" }
 fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 picker = { path = "../picker" }
+postage.workspace = true
 project = { path = "../project" }
+serde.workspace = true
 settings = { path = "../settings" }
 text = { path = "../text" }
-util = { path = "../util" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }
+util = { path = "../util" }
 workspace = { path = "../workspace" }
-postage.workspace = true
-anyhow.workspace = true
-serde.workspace = true
 
 [dev-dependencies]
+ctor.workspace = true
 editor = { path = "../editor", features = ["test-support"] }
+env_logger.workspace = true
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
-theme = { path = "../theme", features = ["test-support"] }
-
 serde_json.workspace = true
-ctor.workspace = true
-env_logger.workspace = true
+theme = { path = "../theme", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }

@@ -9,14 +9,14 @@ license = "GPL-3.0-or-later"
 path = "src/rope.rs"
 
 [dependencies]
+arrayvec = "0.7.1"
 bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "950bc5482c216c395049ae33ae4501e08975f17f" }
+log.workspace = true
 smallvec.workspace = true
 sum_tree = { path = "../sum_tree" }
-arrayvec = "0.7.1"
-log.workspace = true
 util = { path = "../util" }
 
 [dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
 rand.workspace = true
 util = { path = "../util", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"]  }
