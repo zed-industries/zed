@@ -2784,8 +2784,10 @@ impl Workspace {
                         item_tasks.push(task);
                         leader_view_ids.push(id);
                         break;
-                    } else {
-                        assert!(variant.is_some());
+                    } else if variant.is_none() {
+                        Err(anyhow!(
+                            "failed to construct view from leader (maybe from a different version of zed?)"
+                        ))?;
                     }
                 }
             }
