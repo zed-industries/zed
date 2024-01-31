@@ -6470,6 +6470,7 @@ impl Project {
                             path: entry.path.clone(),
                             worktree: worktree_handle.clone(),
                             is_deleted: false,
+                            is_private: entry.is_private,
                         }
                     } else if let Some(entry) = snapshot.entry_for_path(old_file.path().as_ref()) {
                         File {
@@ -6479,6 +6480,7 @@ impl Project {
                             path: entry.path.clone(),
                             worktree: worktree_handle.clone(),
                             is_deleted: false,
+                            is_private: entry.is_private,
                         }
                     } else {
                         File {
@@ -6488,6 +6490,7 @@ impl Project {
                             mtime: old_file.mtime(),
                             worktree: worktree_handle.clone(),
                             is_deleted: true,
+                            is_private: old_file.is_private,
                         }
                     };
 

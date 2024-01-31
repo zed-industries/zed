@@ -1153,13 +1153,41 @@ impl EditorElement {
                     )
                 }
 
-                cx.with_z_index(0, |cx| {
+                cx.with_z_index(0, |cx| self.paint_redactions(text_bounds, &layout, cx));
+
+                cx.with_z_index(1, |cx| {
                     for cursor in cursors {
                         cursor.paint(content_origin, cx);
                     }
                 });
             },
         )
+    }
+
+    fn paint_redactions(
+        &mut self,
+        text_bounds: Bounds<Pixels>,
+        layout: &LayoutState,
+        cx: &mut ElementContext,
+    ) {
+        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let line_end_overshoot = layout.line_end_overshoot();
+
+        // A softer than perfect black
+        let redaction_color = gpui::rgb(0x0e1111);
+
+        for range in layout.redacted_ranges.iter() {
+            self.paint_highlighted_range(
+                range.clone(),
+                redaction_color.into(),
+                Pixels::ZERO,
+                line_end_overshoot,
+                layout,
+                content_origin,
+                text_bounds,
+                cx,
+            );
+        }
     }
 
     fn paint_overlays(
@@ -1957,6 +1985,8 @@ impl EditorElement {
                 cx.theme().colors(),
             );
 
+            let redacted_ranges = editor.redacted_ranges(start_anchor..end_anchor, &snapshot.display_snapshot, cx);
+
             let mut newest_selection_head = None;
 
             if editor.show_local_selections {
@@ -2298,6 +2328,7 @@ impl EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
+                redacted_ranges,
                 line_numbers,
                 display_hunks,
                 blocks,
@@ -3082,6 +3113,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    redacted_ranges: Vec<Range<DisplayPoint>>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
@@ -3093,6 +3125,12 @@ pub struct LayoutState {
     fold_indicators: Vec<Option<IconButton>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
+}
+
+impl LayoutState {
+    fn line_end_overshoot(&self) -> Pixels {
+        0.15 * self.position_map.line_height
+    }
 }
 
 struct CodeActionsIndicator {

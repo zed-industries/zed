@@ -8493,6 +8493,31 @@ impl Editor {
         results
     }
 
+    /// Get the text ranges corresponding to the redaction query
+    pub fn redacted_ranges(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Range<DisplayPoint>> {
+        display_snapshot
+            .buffer_snapshot
+            .redacted_ranges(search_range, |file| {
+                if let Some(file) = file {
+                    file.is_private()
+                        && EditorSettings::get(Some((file.worktree_id(), file.path())), cx)
+                            .redact_private_values
+                } else {
+                    false
+                }
+            })
+            .map(|range| {
+                range.start.to_display_point(display_snapshot)
+                    ..range.end.to_display_point(display_snapshot)
+            })
+            .collect()
+    }
+
     pub fn highlight_text<T: 'static>(
         &mut self,
         ranges: Vec<Range<Anchor>>,

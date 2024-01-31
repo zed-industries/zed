@@ -357,6 +357,7 @@ const QUERY_FILENAME_PREFIXES: &[(
     ("embedding", |q| &mut q.embedding),
     ("injections", |q| &mut q.injections),
     ("overrides", |q| &mut q.overrides),
+    ("redactions", |q| &mut q.redactions),
 ];
 
 fn load_queries(name: &str) -> LanguageQueries {

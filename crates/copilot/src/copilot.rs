@@ -1251,6 +1251,10 @@ mod tests {
         fn worktree_id(&self) -> usize {
             0
         }
+
+        fn is_private(&self) -> bool {
+            false
+        }
     }
 
     impl language::LocalFile for File {

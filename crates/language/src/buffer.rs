@@ -383,6 +383,9 @@ pub trait File: Send + Sync {
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self) -> rpc::proto::File;
+
+    /// Return whether Zed considers this to be a dotenv file.
+    fn is_private(&self) -> bool;
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
@@ -2874,6 +2877,43 @@ impl BufferSnapshot {
                 return Some((open, close));
             }
             None
+        })
+    }
+
+    /// Returns anchor ranges for any matches of the redaction query.
+    /// The buffer can be associated with multiple languages, and the redaction query associated with each
+    /// will be run on the relevant section of the buffer.
+    pub fn redacted_ranges<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar
+                .redactions_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
+
+        let configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.redactions_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            let redacted_range = syntax_matches
+                .peek()
+                .and_then(|mat| {
+                    configs[mat.grammar_index].and_then(|config| {
+                        mat.captures
+                            .iter()
+                            .find(|capture| capture.index == config.redaction_capture_ix)
+                    })
+                })
+                .map(|mat| mat.node.byte_range());
+            syntax_matches.advance();
+            redacted_range
         })
     }
 

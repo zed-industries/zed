@@ -36,6 +36,7 @@ use text::{
     BufferId, Edit, TextSummary,
 };
 use theme::SyntaxTheme;
+
 use util::post_inc;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -2784,6 +2785,26 @@ impl MultiBufferSnapshot {
             .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
+    fn excerpts_for_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (&'a Excerpt, usize)> + 'a {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&range.start, Bias::Right, &());
+        cursor.prev(&());
+
+        iter::from_fn(move || {
+            cursor.next(&());
+            if cursor.start() < &range.end {
+                cursor.item().map(|item| (item, *cursor.start()))
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn excerpt_boundaries_in_range<R, T>(
         &self,
         range: R,
@@ -2940,6 +2961,37 @@ impl MultiBufferSnapshot {
                     Some((start_bracket_range, end_bracket_range))
                 })
         })
+    }
+
+    pub fn redacted_ranges<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+        redaction_enabled: impl Fn(Option<&Arc<dyn File>>) -> bool + 'a,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        self.excerpts_for_range(range.clone())
+            .filter_map(move |(excerpt, excerpt_offset)| {
+                redaction_enabled(excerpt.buffer.file()).then(move || {
+                    let excerpt_buffer_start =
+                        excerpt.range.context.start.to_offset(&excerpt.buffer);
+
+                    excerpt
+                        .buffer
+                        .redacted_ranges(excerpt.range.context.clone())
+                        .map(move |mut redacted_range| {
+                            // Re-base onto the excerpts coordinates in the multibuffer
+                            redacted_range.start =
+                                excerpt_offset + (redacted_range.start - excerpt_buffer_start);
+                            redacted_range.end =
+                                excerpt_offset + (redacted_range.end - excerpt_buffer_start);
+
+                            redacted_range
+                        })
+                        .skip_while(move |redacted_range| redacted_range.end < range.start)
+                        .take_while(move |redacted_range| redacted_range.start < range.end)
+                })
+            })
+            .flatten()
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
