@@ -373,6 +373,7 @@ impl ProjectPanel {
 
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let is_root = Some(entry) == worktree.root_entry();
+            let is_file = entry.is_file();
             let is_dir = entry.is_dir();
             let worktree_id = worktree.id();
             let is_local = project.is_local();
@@ -410,7 +411,9 @@ impl ProjectPanel {
                         .separator()
                         .action("Cut", Box::new(Cut))
                         .action("Copy", Box::new(Copy))
-                        .action("Duplicate", Box::new(Duplicate))
+                        .when(is_file, |menu| {
+                            menu.action("Duplicate", Box::new(Duplicate))
+                        })
                         .when_some(self.clipboard_entry, |menu, entry| {
                             menu.when(entry.worktree_id() == worktree_id, |menu| {
                                 menu.action("Paste", Box::new(Paste))
@@ -873,6 +876,10 @@ impl ProjectPanel {
         }
     }
 
+    fn duplicate(&mut self, _: &Duplicate, cx: &mut ViewContext<Self>) {
+        todo!()
+    }
+
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         maybe!({
             let (worktree, entry) = self.selected_entry(cx)?;
@@ -948,17 +955,6 @@ impl ProjectPanel {
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             cx.write_to_clipboard(ClipboardItem::new(entry.path.to_string_lossy().to_string()));
-        }
-    }
-
-    fn duplicate(&mut self, _: &Duplicate, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
-            // This is async
-            self.fs.duplicate(&*entry.path, CopyOptions {
-                overwrite: false,
-                ignore_if_exists: false,
-            });
-            cx.notify();
         }
     }
 
@@ -1501,6 +1497,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::delete))
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
+                        .on_action(cx.listener(Self::duplicate))
                         .on_action(cx.listener(Self::paste))
                 })
                 .when(project.is_local(), |el| {
