@@ -29,7 +29,7 @@ settings = { path = "../settings" }
 smallvec.workspace = true
 smol.workspace = true
 theme = { path = "../theme" }
-ui = {path = "../ui"}
+ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 

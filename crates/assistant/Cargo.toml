@@ -14,7 +14,7 @@ ai = { path = "../ai" }
 anyhow.workspace = true
 chrono.workspace = true
 client = { path = "../client" }
-collections = { path = "../collections"}
+collections = { path = "../collections" }
 editor = { path = "../editor" }
 fs = { path = "../fs" }
 futures.workspace = true

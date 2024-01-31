@@ -29,7 +29,7 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 log.workspace = true
 lsp = { path = "../lsp" }
-node_runtime = { path = "../node_runtime"}
+node_runtime = { path = "../node_runtime" }
 parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

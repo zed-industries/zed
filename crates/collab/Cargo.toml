@@ -71,7 +71,7 @@ collections = { path = "../collections", features = ["test-support"] }
 ctor.workspace = true
 editor = { path = "../editor", features = ["test-support"] }
 env_logger.workspace = true
-file_finder = { path = "../file_finder"}
+file_finder = { path = "../file_finder" }
 fs = { path = "../fs", features = ["test-support"] }
 git = { path = "../git", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
@@ -80,7 +80,7 @@ language = { path = "../language", features = ["test-support"] }
 lazy_static.workspace = true
 live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
-menu = { path = "../menu"}
+menu = { path = "../menu" }
 node_runtime = { path = "../node_runtime" }
 notifications = { path = "../notifications", features = ["test-support"] }
 pretty_assertions.workspace = true
