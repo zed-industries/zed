@@ -1,0 +1,4 @@
+name = "Git commit"
+path_suffixes = ["COMMIT_EDITMSG"]
+line_comments = ["#"]
+brackets = []
