@@ -123,7 +123,7 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub symbols_selections: Option<bool>,
-    /// Whether to show symbols diagnostic indicators in the scrollbar.
+    /// Whether to show diagnostic indicators in the scrollbar.
     ///
     /// Default: true
     pub diagnostics: Option<bool>,
