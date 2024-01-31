@@ -185,6 +185,14 @@ impl FollowableItem for Editor {
 
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
+        if buffer
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+            .map_or(false, |file| file.is_private())
+        {
+            return None;
+        }
+
         let scroll_anchor = self.scroll_manager.anchor();
         let excerpts = buffer
             .read(cx)

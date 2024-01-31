@@ -176,9 +176,17 @@ impl Member {
                     return div().into_any();
                 }
 
-                let leader = follower_states.get(pane).and_then(|state| {
+                let follower_state = follower_states.get(pane);
+
+                let leader = follower_state.and_then(|state| {
                     let room = active_call?.read(cx).room()?.read(cx);
                     room.remote_participant_for_peer_id(state.leader_id)
+                });
+
+                let is_in_unshared_view = follower_state.map_or(false, |state| {
+                    state.active_view_id.is_some_and(|view_id| {
+                        !state.items_by_leader_view_id.contains_key(&view_id)
+                    })
                 });
 
                 let mut leader_border = None;
@@ -198,7 +206,14 @@ impl Member {
                             project_id: leader_project_id,
                         } => {
                             if Some(leader_project_id) == project.read(cx).remote_id() {
-                                None
+                                if is_in_unshared_view {
+                                    Some(Label::new(format!(
+                                        "{} is in an unshared pane",
+                                        leader.user.github_login
+                                    )))
+                                } else {
+                                    None
+                                }
                             } else {
                                 leader_join_data = Some((leader_project_id, leader.user.id));
                                 Some(Label::new(format!(

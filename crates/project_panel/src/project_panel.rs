@@ -1,5 +1,6 @@
 pub mod file_associations;
 mod project_panel_settings;
+use client::{ErrorCode, ErrorExt};
 use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
@@ -35,6 +36,7 @@ use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
+    notifications::DetachAndPromptErr,
     Workspace,
 };
 
@@ -259,6 +261,7 @@ impl ProjectPanel {
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                         if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            let file_path = entry.path.clone();
                             workspace
                                 .open_path(
                                     ProjectPath {
@@ -269,7 +272,15 @@ impl ProjectPanel {
                                     focus_opened_item,
                                     cx,
                                 )
-                                .detach_and_log_err(cx);
+                                .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
+                                    match e.error_code() {
+                                        ErrorCode::UnsharedItem => Some(format!(
+                                            "{} is not shared by the host. This could be because it has been marked as `private`",
+                                            file_path.display()
+                                        )),
+                                        _ => None,
+                                    }
+                                });
                             if !focus_opened_item {
                                 if let Some(project_panel) = project_panel.upgrade() {
                                     let focus_handle = project_panel.read(cx).focus_handle.clone();

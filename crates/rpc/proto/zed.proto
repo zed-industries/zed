@@ -216,6 +216,7 @@ enum ErrorCode {
     BadPublicNesting = 9;
     CircularNesting = 10;
     WrongMoveTarget = 11;
+    UnsharedItem = 12;
 }
 
 message Test {
