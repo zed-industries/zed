@@ -8011,11 +8011,20 @@ impl Project {
             .update(&mut cx, |this, cx| this.open_buffer_for_symbol(&symbol, cx))?
             .await?;
 
-        Ok(proto::OpenBufferForSymbolResponse {
-            buffer_id: this.update(&mut cx, |this, cx| {
-                this.create_buffer_for_peer(&buffer, peer_id, cx).into()
-            })?,
-        })
+        this.update(&mut cx, |this, cx| {
+            let is_private = buffer
+                .read(cx)
+                .file()
+                .map(|f| f.is_private(cx))
+                .unwrap_or_default();
+            if is_private {
+                Err(anyhow!("buffer is private"))
+            } else {
+                Ok(proto::OpenBufferForSymbolResponse {
+                    buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
+                })
+            }
+        })?
     }
 
     fn symbol_signature(&self, project_path: &ProjectPath) -> [u8; 32] {
@@ -8037,11 +8046,7 @@ impl Project {
         let buffer = this
             .update(&mut cx, |this, cx| this.open_buffer_by_id(buffer_id, cx))?
             .await?;
-        this.update(&mut cx, |this, cx| {
-            Ok(proto::OpenBufferResponse {
-                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
-            })
-        })?
+        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
     }
 
     async fn handle_open_buffer_by_path(
@@ -8063,10 +8068,28 @@ impl Project {
         })?;
 
         let buffer = open_buffer.await?;
-        this.update(&mut cx, |this, cx| {
-            Ok(proto::OpenBufferResponse {
-                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
-            })
+        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+    }
+
+    fn respond_to_open_buffer_request(
+        this: Model<Self>,
+        buffer: Model<Buffer>,
+        peer_id: proto::PeerId,
+        cx: &mut AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        this.update(cx, |this, cx| {
+            let is_private = buffer
+                .read(cx)
+                .file()
+                .map(|f| f.is_private(cx))
+                .unwrap_or_default();
+            if is_private {
+                Err(anyhow!("buffer is private"))
+            } else {
+                Ok(proto::OpenBufferResponse {
+                    buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
+                })
+            }
         })?
     }
 

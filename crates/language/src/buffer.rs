@@ -356,6 +356,13 @@ pub trait File: Send + Sync {
         self.as_local().is_some()
     }
 
+    /// Returns true if the file should not be shared with collaborators.
+    fn is_private(&self, cx: &AppContext) -> bool {
+        self.as_local()
+            .map(|local| LocalFile::is_private(local, cx))
+            .unwrap_or(false)
+    }
+
     /// Returns the file's mtime.
     fn mtime(&self) -> SystemTime;
 
@@ -406,6 +413,11 @@ pub trait LocalFile: File {
         mtime: SystemTime,
         cx: &mut AppContext,
     );
+
+    /// Returns true if the file should not be shared with collaborators.
+    fn is_private(&self, _: &AppContext) -> bool {
+        false
+    }
 }
 
 /// The auto-indent behavior associated with an editing operation.
