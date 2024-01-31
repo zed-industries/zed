@@ -183,11 +183,11 @@ impl Member {
                     room.remote_participant_for_peer_id(state.leader_id)
                 });
 
-                let is_in_unshared_view = follower_state.map_or(false, |state|
-                    state.active_view_id.is_some_and(|view_id|
+                let is_in_unshared_view = follower_state.map_or(false, |state| {
+                    state.active_view_id.is_some_and(|view_id| {
                         !state.items_by_leader_view_id.contains_key(&view_id)
-                    )
-                );
+                    })
+                });
 
                 let mut leader_border = None;
                 let mut leader_status_box = None;
