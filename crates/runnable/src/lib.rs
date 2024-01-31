@@ -10,19 +10,21 @@ pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, AbortRegistration, Abortable};
 use futures::task::{Context, Poll};
 use futures::FutureExt;
-use gpui::AppContext;
+use gpui::{AppContext, AsyncAppContext};
+use gpui::{AsyncWindowContext, Task};
 pub use static_runner::StaticRunner;
+use std::pin::pin;
 
-pub struct TaskHandle<'a> {
-    fut: Abortable<BoxFuture<'a, ExecutionResult>>,
+pub struct TaskHandle {
+    fut: Task<Result<ExecutionResult, TaskTerminated>>,
     cancel_token: AbortHandle,
 }
 
-impl<'a> TaskHandle<'a> {
-    pub fn new(fut: BoxFuture<'a, ExecutionResult>) -> Self {
+impl TaskHandle {
+    pub fn new(fut: BoxFuture<'static, ExecutionResult>, cx: AsyncWindowContext) -> Result<Self> {
         let (cancel_token, abort_registration) = AbortHandle::new_pair();
-        let fut = Abortable::new(fut, abort_registration);
-        Self { fut, cancel_token }
+        let fut = cx.spawn(move |_| Abortable::new(fut, abort_registration));
+        Ok(Self { fut, cancel_token })
     }
 
     /// Returns a handle that can be used to cancel this task.
@@ -31,14 +33,15 @@ impl<'a> TaskHandle<'a> {
     }
 }
 
-impl<'a> Future for TaskHandle<'a> {
+impl Future for TaskHandle {
     type Output = Result<ExecutionResult, TaskTerminated>;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        self.fut.poll_unpin(cx)
+        let ret = self.fut.poll_unpin(cx);
+        ret
     }
 }
 
@@ -56,6 +59,6 @@ pub struct ExecutionResult {
 /// is to get spawned
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(self, cx: &mut gpui::AsyncWindowContext) -> TaskHandle;
+    fn exec(self, cx: gpui::AsyncWindowContext) -> Result<TaskHandle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }

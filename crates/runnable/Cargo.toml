@@ -13,3 +13,6 @@ futures.workspace = true
 serde.workspace = true
 serde_json = "1.0.113"
 async-process = "2.0.1"
+
+[dev-dependencies]
+gpui = {path = "../gpui", features = ["test-support"]}
