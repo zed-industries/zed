@@ -11,7 +11,7 @@ use crate::{
     Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
     SharedString, Size, Task, TaskLabel, WindowContext,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use parking::Unparker;
@@ -23,11 +23,10 @@ use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use std::{
     any::Any,
-    fmt::{self, Debug, Display},
+    fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
-    str::FromStr,
     sync::Arc,
 };
 use uuid::Uuid;
@@ -39,6 +38,7 @@ pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 use time::UtcOffset;
+pub use util::SemanticVersion;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
@@ -694,45 +694,6 @@ pub enum CursorStyle {
 impl Default for CursorStyle {
     fn default() -> Self {
         Self::Arrow
-    }
-}
-
-/// A datastructure representing a semantic version number
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct SemanticVersion {
-    major: usize,
-    minor: usize,
-    patch: usize,
-}
-
-impl FromStr for SemanticVersion {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        let mut components = s.trim().split('.');
-        let major = components
-            .next()
-            .ok_or_else(|| anyhow!("missing major version number"))?
-            .parse()?;
-        let minor = components
-            .next()
-            .ok_or_else(|| anyhow!("missing minor version number"))?
-            .parse()?;
-        let patch = components
-            .next()
-            .ok_or_else(|| anyhow!("missing patch version number"))?
-            .parse()?;
-        Ok(Self {
-            major,
-            minor,
-            patch,
-        })
-    }
-}
-
-impl Display for SemanticVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
     }
 }
 

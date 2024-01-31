@@ -1,4 +1,4 @@
-use gpui::{AppContext, AsyncAppContext, Global, SemanticVersion};
+use gpui::{AppContext, Global, SemanticVersion};
 use once_cell::sync::Lazy;
 use std::env;
 
@@ -49,15 +49,12 @@ pub struct AppVersion;
 impl AppVersion {
     pub fn init(pkg_version: &str, cx: &mut AppContext) {
         let version = if let Some(from_env) = env::var("ZED_APP_VERSION").ok() {
-            dbg!(from_env).parse().expect("invalid ZED_APP_VERSION")
+            from_env.parse().expect("invalid ZED_APP_VERSION")
         } else {
-            dbg!(cx.app_metadata().app_version).unwrap_or_else(|| {
-                dbg!(pkg_version)
-                    .parse()
-                    .expect("invalid version in Cargo.toml")
-            })
+            cx.app_metadata()
+                .app_version
+                .unwrap_or_else(|| pkg_version.parse().expect("invalid version in Cargo.toml"))
         };
-        println!("Zed version: {}", version);
         cx.set_global(GlobalAppVersion(version))
     }
 
