@@ -10337,6 +10337,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-make"
+version = "0.0.1"
+source = "git+https://github.com/caius/tree-sitter-make?rev=b35c2714e73d2846b26061b06cda4fa56d61e3a5#b35c2714e73d2846b26061b06cda4fa56d61e3a5"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-markdown"
 version = "0.0.1"
 source = "git+https://github.com/MDeiml/tree-sitter-markdown?rev=330ecab87a3e3a7211ac69bbadc19eabecdb1cca#330ecab87a3e3a7211ac69bbadc19eabecdb1cca"
@@ -12066,6 +12075,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-json 0.20.0",
  "tree-sitter-lua",
+ "tree-sitter-make",
  "tree-sitter-markdown",
  "tree-sitter-nix",
  "tree-sitter-nu",
