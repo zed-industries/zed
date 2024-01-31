@@ -92,7 +92,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 settings = { path = "../settings" }
 shellexpand = "2.1.0"
-simplelog = "0.9"
+simplelog = { git = "https://github.com/Drakulix/simplelog.rs" }
 smallvec.workspace = true
 smol.workspace = true
 sum_tree = { path = "../sum_tree" }
@@ -102,6 +102,7 @@ text = { path = "../text" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 thiserror.workspace = true
+time.workspace = true
 tiny_http = "0.8"
 toml.workspace = true
 tree-sitter-bash.workspace = true

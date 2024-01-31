@@ -16,7 +16,7 @@ test-support = [
     "util/test-support",
 ]
 runtime_shaders = []
-wgpu = []
+wgpu = ["dep:wgpu"]
 
 [lib]
 path = "src/gpui.rs"
@@ -68,13 +68,16 @@ util = { path = "../util" }
 uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
 
+# TODO: Handle this better once we have actual cross-platform building
+wgpu = { version = "0.19.1", optional = true }
+
 [dev-dependencies]
 backtrace = "0.3"
 collections = { path = "../collections", features = ["test-support"] }
 dhat = "0.3"
 env_logger.workspace = true
 png = "0.16"
-simplelog = "0.9"
+simplelog = { git = "https://github.com/Drakulix/simplelog.rs" }
 util = { path = "../util", features = ["test-support"] }
 
 [build-dependencies]

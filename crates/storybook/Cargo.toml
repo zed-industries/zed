@@ -30,7 +30,7 @@ picker = { path = "../picker" }
 rust-embed.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }
-simplelog = "0.9"
+simplelog = { git = "https://github.com/Drakulix/simplelog.rs" }
 smallvec.workspace = true
 story = { path = "../story" }
 strum = { version = "0.25.0", features = ["derive"] }

@@ -526,9 +526,16 @@ fn init_logger() {
             .open(&*paths::LOG)
             .expect("could not open logfile");
 
+        let format = Box::leak(
+            time::format_description::parse("%Y-%m-%dT%T%:z")
+                .unwrap()
+                .into_boxed_slice(),
+        );
+
         let config = ConfigBuilder::new()
-            .set_time_format_str("%Y-%m-%dT%T%:z")
-            .set_time_to_local(true)
+            .set_time_format_custom(format)
+            .set_time_offset_to_local()
+            .unwrap()
             .build();
 
         simplelog::WriteLogger::init(level, config, log_file).expect("could not initialize logger");

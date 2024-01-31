@@ -64,7 +64,7 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 sha2 = "0.10"
-simplelog = "0.9"
+simplelog = { git = "https://github.com/Drakulix/simplelog.rs" }
 
 [build-dependencies]
 serde.workspace = true

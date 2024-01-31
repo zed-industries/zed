@@ -21,7 +21,7 @@ rust-embed.workspace = true
 schemars = { workspace = true, features = ["indexmap"] }
 serde.workspace = true
 serde_json.workspace = true
-simplelog = "0.9"
+simplelog = { git = "https://github.com/Drakulix/simplelog.rs" }
 strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }
 uuid.workspace = true
