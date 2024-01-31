@@ -39,7 +39,7 @@
         "gitignore": "vcs",
         "gitmodules": "vcs",
         "gitkeep": "vcs",
-        "go": "code",
+        "go": "go",
         "h": "code",
         "handlebars": "code",
         "hbs": "template",
@@ -74,7 +74,7 @@
         "ogg": "video",
         "pdb": "storage",
         "pdf": "document",
-        "php": "code",
+        "php": "php",
         "png": "image",
         "ppt": "document",
         "pptx": "document",
@@ -156,6 +156,9 @@
         "haskell": {
             "icon": "icons/file_icons/haskell.svg"
         },
+        "go": {
+            "icon": "icons/file_icons/go.svg"
+        },
         "image": {
             "icon": "icons/file_icons/image.svg"
         },
@@ -167,6 +170,9 @@
         },
         "phoenix": {
             "icon": "icons/file_icons/phoenix.svg"
+        },
+        "php": {
+            "icon": "icons/file_icons/php.svg"
         },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"

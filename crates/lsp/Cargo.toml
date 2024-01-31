@@ -13,13 +13,11 @@ doctest = false
 test-support = ["async-pipe"]
 
 [dependencies]
-collections = { path = "../collections" }
-gpui = { path = "../gpui" }
-util = { path = "../util" }
-
 anyhow.workspace = true
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553", optional = true }
+collections = { path = "../collections" }
 futures.workspace = true
+gpui = { path = "../gpui" }
 log.workspace = true
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", branch = "updated-completion-list-item-defaults" }
 parking_lot.workspace = true
@@ -28,12 +26,12 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 smol.workspace = true
+util = { path = "../util" }
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
-
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 ctor.workspace = true
 env_logger.workspace = true
+gpui = { path = "../gpui", features = ["test-support"] }
 unindent.workspace = true
+util = { path = "../util", features = ["test-support"] }

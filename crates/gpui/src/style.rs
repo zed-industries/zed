@@ -3,8 +3,8 @@ use std::{iter, mem, ops::Range};
 use crate::{
     black, phi, point, quad, rems, AbsoluteLength, Bounds, ContentMask, Corners, CornersRefinement,
     CursorStyle, DefiniteLength, Edges, EdgesRefinement, ElementContext, Font, FontFeatures,
-    FontStyle, FontWeight, Global, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun,
+    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
+    SizeRefinement, Styled, TextRun,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -14,13 +14,14 @@ pub use taffy::style::{
     Overflow, Position,
 };
 
-#[cfg(debug_assertions)]
 /// Use this struct for interfacing with the 'debug_below' styling from your own elements.
 /// If a parent element has this style set on it, then this struct will be set as a global in
 /// GPUI.
+#[cfg(debug_assertions)]
 pub struct DebugBelow;
 
-impl Global for DebugBelow {}
+#[cfg(debug_assertions)]
+impl crate::Global for DebugBelow {}
 
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]

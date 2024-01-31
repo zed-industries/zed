@@ -23,14 +23,14 @@ Solargraph has formatting and diagnostics disabled by default. We can tell Zed t
 
 ```json
 {
-   "lsp": {
-      "solargraph": {
-         "initialization_options": {
-            "diagnostics": true,
-            "formatting": true
-         }
+  "lsp": {
+    "solargraph": {
+      "initialization_options": {
+        "diagnostics": true,
+        "formatting": true
       }
-   }
+    }
+  }
 }
 ```
 

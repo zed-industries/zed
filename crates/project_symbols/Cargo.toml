@@ -10,30 +10,29 @@ path = "src/project_symbols.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 editor = { path = "../editor" }
 fuzzy = {   path = "../fuzzy" }
 gpui = { path = "../gpui" }
+ordered-float.workspace = true
 picker = { path = "../picker" }
+postage.workspace = true
 project = { path = "../project" }
-text = { path = "../text" }
+serde_json.workspace = true
 settings = { path = "../settings" }
-workspace = { path = "../workspace" }
+smol.workspace = true
+text = { path = "../text" }
 theme = { path = "../theme" }
 util = { path = "../util" }
-
-anyhow.workspace = true
-ordered-float.workspace = true
-postage.workspace = true
-smol.workspace = true
-serde_json.workspace = true
+workspace = { path = "../workspace" }
 
 [dev-dependencies]
-futures.workspace = true
 editor = { path = "../editor", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
+futures.workspace = true
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
 theme = { path = "../theme", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

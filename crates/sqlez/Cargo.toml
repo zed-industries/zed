@@ -7,12 +7,12 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
+futures.workspace = true
 indoc.workspace = true
+lazy_static.workspace = true
 libsqlite3-sys = { version = "0.26", features = ["bundled"] }
+parking_lot.workspace = true
 smol.workspace = true
 thread_local = "1.1.4"
-lazy_static.workspace = true
-parking_lot.workspace = true
-futures.workspace = true
 util = { path = "../util" }
 uuid.workspace = true

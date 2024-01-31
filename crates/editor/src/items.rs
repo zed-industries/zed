@@ -73,18 +73,16 @@ impl FollowableItem for Editor {
             .iter()
             .map(|excerpt| excerpt.buffer_id)
             .collect::<HashSet<_>>();
-        let buffers = project
-            .update(cx, |project, cx| {
-                buffer_ids
-                    .iter()
-                    .map(|id| BufferId::new(*id).map(|id| project.open_buffer_by_id(id, cx)))
-                    .collect::<Result<Vec<_>>>()
-            })
-            .ok()?;
+        let buffers = project.update(cx, |project, cx| {
+            buffer_ids
+                .iter()
+                .map(|id| BufferId::new(*id).map(|id| project.open_buffer_by_id(id, cx)))
+                .collect::<Result<Vec<_>>>()
+        });
 
         let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
-            let mut buffers = futures::future::try_join_all(buffers)
+            let mut buffers = futures::future::try_join_all(buffers?)
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
             let editor = pane.update(&mut cx, |pane, cx| {

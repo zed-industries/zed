@@ -9,11 +9,6 @@ if [[ $# < 1 ]]; then
 fi
 environment=$1
 
-if [[ ${environment} == "preview" || ${environment} == "nightly" ]]; then
-  echo "website does not exist in preview or nightly"
-  exit 1
-fi
-
 export_vars_for_environment ${environment}
 
 export ZED_DO_CERTIFICATE_ID=$(doctl compute certificate list --format ID --no-header)

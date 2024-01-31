@@ -6,7 +6,7 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-serde.workspace = true
-serde_derive.workspace = true
 bincode = "1.3"
 plugin_macros = { path = "../plugin_macros" }
+serde.workspace = true
+serde_derive.workspace = true

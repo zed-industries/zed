@@ -10,14 +10,12 @@ path = "src/audio.rs"
 doctest = false
 
 [dependencies]
-gpui = { path = "../gpui" }
-collections = { path = "../collections" }
-util = { path = "../util" }
-
-
-rodio ={version = "0.17.1", default-features=false, features = ["wav"]}
-
-log.workspace = true
-futures.workspace = true
 anyhow.workspace = true
+collections = { path = "../collections" }
+derive_more.workspace = true
+futures.workspace = true
+gpui = { path = "../gpui" }
+log.workspace = true
 parking_lot.workspace = true
+rodio = { version = "0.17.1", default-features = false, features = ["wav"] }
+util = { path = "../util" }
