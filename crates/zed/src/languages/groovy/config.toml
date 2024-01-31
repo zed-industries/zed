@@ -1,0 +1,11 @@
+name = "Groovy"
+path_suffixes = ["groovy", "gradle"]
+line_comments = ["// "]
+autoclose_before = ",]}"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+]
+increase_indent_pattern = ":\\s*[|>]?\\s*$"
+prettier_parser_name = "groovy"
