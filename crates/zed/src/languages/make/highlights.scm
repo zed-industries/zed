@@ -24,9 +24,6 @@
 (automatic_variable
  [ "@" "%" "<" "?" "^" "+" "/" "*" "D" "F"] @punctuation.special)
 
-(automatic_variable
- "/" @error . ["D" "F"])
-
 [
  "="
  ":="
@@ -57,9 +54,9 @@
  "if"
  "or"  ; boolean functions are conditional in make grammar
  "and"
-] @conditional
+] @keyword
 
-"foreach" @repeat
+"foreach" @keyword
 
 [
  "define"
@@ -77,7 +74,7 @@
  "include"
  "sinclude"
  "-include"
-] @include
+] @keyword
 
 [
  "subst"
@@ -107,13 +104,13 @@
  "file"
  "value"
  "shell"
-] @keyword.function
+] @function
 
 [
  "error"
  "warning"
  "info"
-] @exception
+] @label
 
 ;; Variable
 (variable_assignment
@@ -129,15 +126,15 @@
 
 (function_call
   function: "error"
-  (arguments (text) @text.danger))
+  (arguments (text) @text.literal))
 
 (function_call
   function: "warning"
-  (arguments (text) @text.warning))
+  (arguments (text) @text.literal))
 
 (function_call
   function: "info"
-  (arguments (text) @text.note))
+  (arguments (text) @text.literal))
 
 ;; Install Command Categories
 ;; Others special variables
@@ -145,27 +142,26 @@
 [
  "VPATH"
  ".RECIPEPREFIX"
-] @constant.builtin
+] @constant
 
 (variable_assignment
-  name: (word) @clean @constant.builtin
+  name: (word) @clean @constant
         (#match? @clean "^(AR|AS|CC|CXX|CPP|FC|M2C|PC|CO|GET|LEX|YACC|LINT|MAKEINFO|TEX|TEXI2DVI|WEAVE|CWEAVE|TANGLE|CTANGLE|RM|ARFLAGS|ASFLAGS|CFLAGS|CXXFLAGS|COFLAGS|CPPFLAGS|FFLAGS|GFLAGS|LDFLAGS|LDLIBS|LFLAGS|YFLAGS|PFLAGS|RFLAGS|LINTFLAGS|PRE_INSTALL|POST_INSTALL|NORMAL_INSTALL|PRE_UNINSTALL|POST_UNINSTALL|NORMAL_UNINSTALL|MAKEFILE_LIST|MAKE_RESTARTS|MAKE_TERMOUT|MAKE_TERMERR|\.DEFAULT_GOAL|\.RECIPEPREFIX|\.EXTRA_PREREQS)$"))
 
 (variable_reference
-  (word) @clean @constant.builtin
+  (word) @clean @constant
   (#match? @clean "^(AR|AS|CC|CXX|CPP|FC|M2C|PC|CO|GET|LEX|YACC|LINT|MAKEINFO|TEX|TEXI2DVI|WEAVE|CWEAVE|TANGLE|CTANGLE|RM|ARFLAGS|ASFLAGS|CFLAGS|CXXFLAGS|COFLAGS|CPPFLAGS|FFLAGS|GFLAGS|LDFLAGS|LDLIBS|LFLAGS|YFLAGS|PFLAGS|RFLAGS|LINTFLAGS|PRE_INSTALL|POST_INSTALL|NORMAL_INSTALL|PRE_UNINSTALL|POST_UNINSTALL|NORMAL_UNINSTALL|MAKEFILE_LIST|MAKE_RESTARTS|MAKE_TERMOUT|MAKE_TERMERR|\.DEFAULT_GOAL|\.RECIPEPREFIX|\.EXTRA_PREREQS\.VARIABLES|\.FEATURES|\.INCLUDE_DIRS|\.LOADED)$"))
 
-;; Standart targets
+;; Standard targets
 (targets
-  (word) @constant.macro
-  (#match? @constant.macro "^(all|install|install-html|install-dvi|install-pdf|install-ps|uninstall|install-strip|clean|distclean|mostlyclean|maintainer-clean|TAGS|info|dvi|html|pdf|ps|dist|check|installcheck|installdirs)$"))
+  (word) @constant
+  (#match? @constant "^(all|install|install-html|install-dvi|install-pdf|install-ps|uninstall|install-strip|clean|distclean|mostlyclean|maintainer-clean|TAGS|info|dvi|html|pdf|ps|dist|check|installcheck|installdirs)$"))
 
 (targets
-  (word) @constant.macro
-  (#match? @constant.macro "^(all|install|install-html|install-dvi|install-pdf|install-ps|uninstall|install-strip|clean|distclean|mostlyclean|maintainer-clean|TAGS|info|dvi|html|pdf|ps|dist|check|installcheck|installdirs)$"))
+  (word) @constant
+  (#match? @constant "^(all|install|install-html|install-dvi|install-pdf|install-ps|uninstall|install-strip|clean|distclean|mostlyclean|maintainer-clean|TAGS|info|dvi|html|pdf|ps|dist|check|installcheck|installdirs)$"))
 
 ;; Builtin targets
 (targets
-  (word) @constant.macro
-  (#match? @constant.macro "^\.(PHONY|SUFFIXES|DEFAULT|PRECIOUS|INTERMEDIATE|SECONDARY|SECONDEXPANSION|DELETE_ON_ERROR|IGNORE|LOW_RESOLUTION_TIME|SILENT|EXPORT_ALL_VARIABLES|NOTPARALLEL|ONESHELL|POSIX)$"))
-
+  (word) @constant
+  (#match? @constant "^\.(PHONY|SUFFIXES|DEFAULT|PRECIOUS|INTERMEDIATE|SECONDARY|SECONDEXPANSION|DELETE_ON_ERROR|IGNORE|LOW_RESOLUTION_TIME|SILENT|EXPORT_ALL_VARIABLES|NOTPARALLEL|ONESHELL|POSIX)$"))
