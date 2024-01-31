@@ -56,6 +56,7 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
+use rpc::{ErrorCode, ErrorExt};
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
@@ -1760,7 +1761,7 @@ impl Project {
         cx.background_executor().spawn(async move {
             wait_for_loading_buffer(loading_watch)
                 .await
-                .map_err(|error| anyhow!("{project_path:?} opening failure: {error:#}"))
+                .map_err(|e| e.cloned())
         })
     }
 
@@ -8018,7 +8019,7 @@ impl Project {
                 .map(|f| f.is_private(cx))
                 .unwrap_or_default();
             if is_private {
-                Err(anyhow!("buffer is private"))
+                Err(anyhow!(ErrorCode::UnsharedItem))
             } else {
                 Ok(proto::OpenBufferForSymbolResponse {
                     buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
@@ -8084,7 +8085,7 @@ impl Project {
                 .map(|f| f.is_private(cx))
                 .unwrap_or_default();
             if is_private {
-                Err(anyhow!("buffer is private"))
+                Err(anyhow!(ErrorCode::UnsharedItem))
             } else {
                 Ok(proto::OpenBufferResponse {
                     buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
