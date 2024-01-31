@@ -2167,6 +2167,9 @@ impl EditorElement {
                     // Symbols Selections
                     (is_singleton && scrollbar_settings.symbols_selections && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
                     ||
+                    // Diagnostics
+                    (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
+                    ||
                     // Scrollmanager
                     editor.scroll_manager.scrollbars_visible()
                 }
