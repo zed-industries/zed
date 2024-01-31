@@ -8,7 +8,14 @@ publish = false
 license = "Apache-2.0"
 
 [features]
-test-support = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
+test-support = [
+    "backtrace",
+    "dhat",
+    "env_logger",
+    "collections/test-support",
+    "util/test-support",
+]
+runtime_shaders = []
 
 [lib]
 path = "src/gpui.rs"
