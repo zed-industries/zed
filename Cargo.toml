@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "crates/assets",
     "crates/activity_indicator",
     "crates/ai",
+    "crates/assets",
     "crates/assistant",
     "crates/audio",
     "crates/auto_update",
@@ -19,8 +19,6 @@ members = [
     "crates/copilot",
     "crates/copilot_ui",
     "crates/db",
-    "crates/refineable",
-    "crates/refineable/derive_refineable",
     "crates/diagnostics",
     "crates/editor",
     "crates/feature_flags",
@@ -32,8 +30,8 @@ members = [
     "crates/git",
     "crates/go_to_line",
     "crates/gpui",
-    "crates/gpui_macros",
     "crates/gpui",
+    "crates/gpui_macros",
     "crates/gpui_macros",
     "crates/install_cli",
     "crates/journal",
@@ -59,7 +57,10 @@ members = [
     "crates/project_symbols",
     "crates/quick_action_bar",
     "crates/recent_projects",
+    "crates/refineable",
+    "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/rich_text",
     "crates/rope",
     "crates/rpc",
     "crates/search",
@@ -68,7 +69,7 @@ members = [
     "crates/snippet",
     "crates/sqlez",
     "crates/sqlez_macros",
-    "crates/rich_text",
+    "crates/story",
     "crates/storybook",
     "crates/sum_tree",
     "crates/terminal",
@@ -79,11 +80,10 @@ members = [
     "crates/theme_selector",
     "crates/ui",
     "crates/util",
-    "crates/story",
-    "crates/vim",
     "crates/vcs_menu",
-    "crates/workspace",
+    "crates/vim",
     "crates/welcome",
+    "crates/workspace",
     "crates/zed",
     "crates/zed_actions",
 ]
@@ -137,7 +137,7 @@ tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-shar
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev="f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
-tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40"}
+tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-gleam = { git = "https://github.com/gleam-lang/tree-sitter-gleam", rev = "58b7cac8fc14c92b0677c542610d8738c373fa81" }
 tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
@@ -151,7 +151,7 @@ tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown",
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "26bbaecda0039df4067861ab38ea8ea169f7f5aa" }
 tree-sitter-php = "0.21.1"
-tree-sitter-proto = {git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52"}
+tree-sitter-proto = {git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
 tree-sitter-purescript = { git = "https://github.com/ivanmoreau/tree-sitter-purescript", rev = "a37140f0c7034977b90faa73c94fcb8a5e45ed08" }
 tree-sitter-python = "0.20.2"
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
@@ -166,6 +166,7 @@ tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", r
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
 unindent = "0.1.7"
+url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmtime = "16"
 

@@ -1,4 +1,5 @@
 use assets::SoundRegistry;
+use derive_more::{Deref, DerefMut};
 use gpui::{AppContext, AssetSource, Global};
 use rodio::{OutputStream, OutputStreamHandle};
 use util::ResultExt;
@@ -7,7 +8,7 @@ mod assets;
 
 pub fn init(source: impl AssetSource, cx: &mut AppContext) {
     SoundRegistry::set_global(source, cx);
-    cx.set_global(Audio::new());
+    cx.set_global(GlobalAudio(Audio::new()));
 }
 
 pub enum Sound {
@@ -37,7 +38,10 @@ pub struct Audio {
     output_handle: Option<OutputStreamHandle>,
 }
 
-impl Global for Audio {}
+#[derive(Deref, DerefMut)]
+struct GlobalAudio(Audio);
+
+impl Global for GlobalAudio {}
 
 impl Audio {
     pub fn new() -> Self {
@@ -58,11 +62,11 @@ impl Audio {
     }
 
     pub fn play_sound(sound: Sound, cx: &mut AppContext) {
-        if !cx.has_global::<Self>() {
+        if !cx.has_global::<GlobalAudio>() {
             return;
         }
 
-        cx.update_global::<Self, _>(|this, cx| {
+        cx.update_global::<GlobalAudio, _>(|this, cx| {
             let output_handle = this.ensure_output_exists()?;
             let source = SoundRegistry::global(cx).get(sound.file()).log_err()?;
             output_handle.play_raw(source).log_err()?;
@@ -71,11 +75,11 @@ impl Audio {
     }
 
     pub fn end_call(cx: &mut AppContext) {
-        if !cx.has_global::<Self>() {
+        if !cx.has_global::<GlobalAudio>() {
             return;
         }
 
-        cx.update_global::<Self, _>(|this, _| {
+        cx.update_global::<GlobalAudio, _>(|this, _| {
             this._output_stream.take();
             this.output_handle.take();
         });

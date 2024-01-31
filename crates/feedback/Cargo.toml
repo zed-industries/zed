@@ -12,38 +12,36 @@ path = "src/feedback.rs"
 test-support = []
 
 [dependencies]
+anyhow.workspace = true
+bitflags = "2.4.1"
 client = { path = "../client" }
 db = { path = "../db" }
 editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-menu = { path = "../menu" }
-project = { path = "../project" }
-release_channel = { path = "../release_channel" }
-settings = { path = "../settings" }
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-util = { path = "../util" }
-workspace = { path = "../workspace"}
-
-bitflags = "2.4.1"
-human_bytes = "0.4.1"
-
-anyhow.workspace = true
 futures.workspace = true
+gpui = { path = "../gpui" }
+human_bytes = "0.4.1"
 isahc.workspace = true
+language = { path = "../language" }
 lazy_static.workspace = true
 log.workspace = true
+menu = { path = "../menu" }
 postage.workspace = true
+project = { path = "../project" }
 regex.workspace = true
+release_channel = { path = "../release_channel" }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+settings = { path = "../settings" }
 smallvec.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
+theme = { path = "../theme" }
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
+ui = { path = "../ui" }
 urlencoding = "2.1.2"
+util = { path = "../util" }
+workspace = { path = "../workspace"}
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

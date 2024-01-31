@@ -10,20 +10,20 @@ path = "src/copilot_ui.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 copilot = { path = "../copilot" }
 editor = { path = "../editor" }
 fs = { path = "../fs" }
-zed_actions = { path = "../zed_actions"}
+futures.workspace = true
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
+smol.workspace = true
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = {path = "../workspace" }
-anyhow.workspace = true
-smol.workspace = true
-futures.workspace = true
+zed_actions = { path = "../zed_actions"}
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

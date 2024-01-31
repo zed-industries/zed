@@ -6,14 +6,14 @@ use std::env;
 pub static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
     Lazy::new(|| {
         env::var("ZED_RELEASE_CHANNEL")
-            .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").to_string())
+            .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
     })
 } else {
-    Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").to_string())
+    Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
 };
 #[doc(hidden)]
 pub static RELEASE_CHANNEL: Lazy<ReleaseChannel> =
-    Lazy::new(|| match RELEASE_CHANNEL_NAME.as_str().trim() {
+    Lazy::new(|| match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => ReleaseChannel::Dev,
         "nightly" => ReleaseChannel::Nightly,
         "preview" => ReleaseChannel::Preview,

@@ -646,6 +646,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "derive_more",
  "futures 0.3.28",
  "gpui",
  "log",
@@ -1437,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2441,6 +2442,7 @@ dependencies = [
  "tree-sitter-typescript",
  "ui",
  "unindent",
+ "url",
  "util",
  "workspace",
 ]

@@ -26,7 +26,13 @@ pub struct Branch {
 pub trait GitRepository: Send {
     fn reload_index(&self);
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
+
+    /// Returns the URL of the remote with the given name.
+    fn remote_url(&self, name: &str) -> Option<String>;
     fn branch_name(&self) -> Option<String>;
+
+    /// Returns the SHA of the current HEAD.
+    fn head_sha(&self) -> Option<String>;
 
     /// Get the statuses of all of the files in the index that start with the given
     /// path and have changes with respect to the HEAD commit. This is fast because
@@ -88,10 +94,20 @@ impl GitRepository for LibGitRepository {
         None
     }
 
+    fn remote_url(&self, name: &str) -> Option<String> {
+        let remote = self.find_remote(name).ok()?;
+        remote.url().map(|url| url.to_string())
+    }
+
     fn branch_name(&self) -> Option<String> {
         let head = self.head().log_err()?;
         let branch = String::from_utf8_lossy(head.shorthand_bytes());
         Some(branch.to_string())
+    }
+
+    fn head_sha(&self) -> Option<String> {
+        let head = self.head().ok()?;
+        head.target().map(|oid| oid.to_string())
     }
 
     fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
@@ -255,9 +271,17 @@ impl GitRepository for FakeGitRepository {
         state.index_contents.get(path).cloned()
     }
 
+    fn remote_url(&self, _name: &str) -> Option<String> {
+        None
+    }
+
     fn branch_name(&self) -> Option<String> {
         let state = self.state.lock();
         state.branch_name.clone()
+    }
+
+    fn head_sha(&self) -> Option<String> {
+        None
     }
 
     fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {

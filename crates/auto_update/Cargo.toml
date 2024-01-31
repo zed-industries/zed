@@ -10,23 +10,23 @@ path = "src/auto_update.rs"
 doctest = false
 
 [dependencies]
-db = { path = "../db" }
-client = { path = "../client" }
-gpui = { path = "../gpui" }
-menu = { path = "../menu" }
-project = { path = "../project" }
-release_channel = { path = "../release_channel" }
-settings = { path = "../settings" }
-theme = { path = "../theme" }
-workspace = { path = "../workspace" }
-util = { path = "../util" }
 anyhow.workspace = true
+client = { path = "../client" }
+db = { path = "../db" }
+gpui = { path = "../gpui" }
 isahc.workspace = true
 lazy_static.workspace = true
 log.workspace = true
+menu = { path = "../menu" }
+project = { path = "../project" }
+release_channel = { path = "../release_channel" }
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+settings = { path = "../settings" }
 smol.workspace = true
 tempfile.workspace = true
+theme = { path = "../theme" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }

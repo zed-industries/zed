@@ -20,24 +20,23 @@ test-support = [
 ]
 
 [dependencies]
-collections = { path = "../collections" }
-# context_menu = { path = "../context_menu" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-settings = { path = "../settings" }
-theme = { path = "../theme" }
-lsp = { path = "../lsp" }
-node_runtime = { path = "../node_runtime"}
-util = { path = "../util" }
+anyhow.workspace = true
 async-compression.workspace = true
 async-tar = "0.4.2"
-anyhow.workspace = true
+collections = { path = "../collections" }
+futures.workspace = true
+gpui = { path = "../gpui" }
+language = { path = "../language" }
 log.workspace = true
+lsp = { path = "../lsp" }
+node_runtime = { path = "../node_runtime"}
+parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
+settings = { path = "../settings" }
 smol.workspace = true
-futures.workspace = true
-parking_lot.workspace = true
+theme = { path = "../theme" }
+util = { path = "../util" }
 
 [dev-dependencies]
 clock = { path = "../clock" }

@@ -14,44 +14,41 @@ neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
 
 [dependencies]
 anyhow.workspace = true
-serde.workspace = true
-serde_derive.workspace = true
-itertools = "0.10"
-log.workspace = true
-
 async-compat = { version = "0.2.1", "optional" = true }
 async-trait = { workspace = true, "optional" = true }
-nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
-tokio = { version = "1.15", "optional" = true }
-serde_json.workspace = true
-regex.workspace = true
-
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
 # HACK: We're only depending on `copilot` here for `CommandPaletteFilter`.  See the attached comment on that type.
 copilot = { path = "../copilot" }
+diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+itertools = "0.10"
 language = { path = "../language" }
+log.workspace = true
+nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
+regex.workspace = true
 search = { path = "../search" }
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
 settings = { path = "../settings" }
-workspace = { path = "../workspace" }
 theme = { path = "../theme" }
+tokio = { version = "1.15", "optional" = true }
 ui = { path = "../ui"}
-diagnostics = { path = "../diagnostics" }
+workspace = { path = "../workspace" }
 zed_actions = { path = "../zed_actions" }
 
 [dev-dependencies]
-indoc.workspace = true
-parking_lot.workspace = true
-futures.workspace = true
-
 editor = { path = "../editor", features = ["test-support"] }
+futures.workspace = true
 gpui = { path = "../gpui", features = ["test-support"] }
+indoc.workspace = true
 language = { path = "../language", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
-settings = { path = "../settings" }
-workspace = { path = "../workspace", features = ["test-support"] }
-theme = { path = "../theme", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
+parking_lot.workspace = true
+project = { path = "../project", features = ["test-support"] }
+settings = { path = "../settings" }
+theme = { path = "../theme", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }

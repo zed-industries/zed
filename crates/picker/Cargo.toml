@@ -11,19 +11,18 @@ doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
-ui = { path = "../ui" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }
+parking_lot.workspace = true
 settings = { path = "../settings" }
-util = { path = "../util" }
 theme = { path = "../theme" }
+ui = { path = "../ui" }
+util = { path = "../util" }
 workspace = { path = "../workspace"}
 
-parking_lot.workspace = true
-
 [dev-dependencies]
+ctor.workspace = true
 editor = { path = "../editor", features = ["test-support"] }
+env_logger.workspace = true
 gpui = { path = "../gpui", features = ["test-support"] }
 serde_json.workspace = true
-ctor.workspace = true
-env_logger.workspace = true
