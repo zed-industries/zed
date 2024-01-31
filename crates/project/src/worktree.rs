@@ -3863,7 +3863,7 @@ impl BackgroundScanner {
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
 
-                    if !is_dir && !fs_entry.is_ignored {
+                    if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
                         if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(path) {
                             if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
                                 let repo_path = RepoPath(repo_path.into());
