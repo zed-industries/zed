@@ -8183,6 +8183,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "serde_json_lenient",
  "serde_repr",
  "settings",
  "story",

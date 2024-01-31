@@ -27,7 +27,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-serde_json_lenient = {version = "0.1", features = ["preserve_order", "raw_value"] }
+serde_json_lenient.workspace = true
 smallvec.workspace = true
 toml.workspace = true
 tree-sitter-json = "*"
