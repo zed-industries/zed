@@ -8,8 +8,8 @@ var<uniform> globals: Globals;
 const M_PI_F: f32 = 3.1415926;
 
 struct ViewId {
-	lo: u32,
-	hi: u32,
+    lo: u32,
+    hi: u32,
 }
 
 struct Bounds {
@@ -110,6 +110,22 @@ fn blur_along_x(x: f32, y: f32, sigma: f32, corner: f32, half_size: vec2<f32>) -
   return integral.y - integral.x;
 }
 
+fn pick_corner_radius(point: vec2<f32>, radii: Corners) -> f32 {
+    if (point.x < 0.0) {
+        if (point.y < 0.0) {
+            return radii.top_left;
+        } else {
+            return radii.bottom_left;
+        }
+    } else {
+        if (point.y < 0.0) {
+            return radii.top_right;
+        } else {
+            return radii.bottom_right;
+        }
+    }
+}
+
 // --- quads --- //
 
 struct Quad {
@@ -151,11 +167,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 @fragment
 fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // Alpha clip first, since we don't have `clip_distance`.
-    let min_distance = min(
-        min(input.clip_distances.x, input.clip_distances.y),
-        min(input.clip_distances.z, input.clip_distances.w)
-    );
-    if min_distance <= 0.0 {
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
 
@@ -164,20 +176,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let center = quad.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
 
-    var corner_radius = 0.0;
-    if (center_to_point.x < 0.0) {
-        if (center_to_point.y < 0.0) {
-            corner_radius = quad.corner_radii.top_left;
-        } else {
-            corner_radius = quad.corner_radii.bottom_left;
-        }
-    } else {
-        if (center_to_point.y < 0.) {
-            corner_radius = quad.corner_radii.top_right;
-        } else {
-            corner_radius = quad.corner_radii.bottom_right;
-        }
-    }
+    let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
 
     let rounded_edge_to_point = abs(center_to_point) - half_size + corner_radius;
     let distance =
@@ -258,11 +257,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
 @fragment
 fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     // Alpha clip first, since we don't have `clip_distance`.
-    let min_distance = min(
-        min(input.clip_distances.x, input.clip_distances.y),
-        min(input.clip_distances.z, input.clip_distances.w)
-    );
-    if min_distance <= 0.0 {
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
 
@@ -271,20 +266,7 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     let center = shadow.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
 
-    var corner_radius = 0.0;
-    if (center_to_point.x < 0.0) {
-        if (center_to_point.y < 0.0) {
-            corner_radius = shadow.corner_radii.top_left;
-        } else {
-            corner_radius = shadow.corner_radii.bottom_left;
-        }
-    } else {
-        if (center_to_point.y < 0.) {
-            corner_radius = shadow.corner_radii.top_right;
-        } else {
-            corner_radius = shadow.corner_radii.bottom_right;
-        }
-    }
+    let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);
 
     // The signal is only non-zero in a limited range, so don't waste samples
     let low = center_to_point.y - half_size.y;
