@@ -1,7 +1,9 @@
 mod app_menu;
 mod keystroke;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "wgpu")))]
 mod mac;
+#[cfg(all(target_os = "macos", feature = "wgpu"))]
+mod mac_wgpu;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
@@ -34,8 +36,10 @@ use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keystroke::*;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "wgpu")))]
 pub(crate) use mac::*;
+#[cfg(all(target_os = "macos", feature = "wgpu"))]
+pub(crate) use mac_wgpu::*;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 use time::UtcOffset;

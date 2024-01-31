@@ -16,6 +16,7 @@ test-support = [
     "util/test-support",
 ]
 runtime_shaders = []
+wgpu = []
 
 [lib]
 path = "src/gpui.rs"

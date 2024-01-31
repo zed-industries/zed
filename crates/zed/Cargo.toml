@@ -51,7 +51,7 @@ fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 futures.workspace = true
 go_to_line = { path = "../go_to_line" }
-gpui = { path = "../gpui" }
+gpui = { path = "../gpui", features = ["wgpu"] }
 ignore = "0.4"
 image = "0.23"
 indexmap = "1.6.2"
