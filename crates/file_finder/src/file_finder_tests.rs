@@ -1062,38 +1062,6 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_select_previous_history_file_by_default(cx: &mut gpui::TestAppContext) {
-    let app_state = init_test(cx);
-
-    app_state
-        .fs
-        .as_fake()
-        .insert_tree(
-            "/root",
-            json!({
-                "test": {
-                    "1_qw": "// First file that matches the query",
-                    "2_second": "// Second file",
-                    "3_third": "// Third file",
-                }
-            }),
-        )
-        .await;
-
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-
-    open_close_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
-    open_close_queried_buffer("2", 1, "2_second", &workspace, cx).await;
-    open_queried_buffer("3", 1, "3_third", &workspace, cx).await;
-
-    let picker = open_file_picker(&workspace, cx);
-    picker.update(cx, |picker, _| {
-        assert_match_selection(&picker, 1, "2_second");
-    });
-}
-
-#[gpui::test]
 async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
@@ -1116,8 +1084,94 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
     open_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
 
     let picker = open_file_picker(&workspace, cx);
-    picker.update(cx, |picker, _| {
-        assert_match_selection(&picker, 0, "1_qw");
+    picker.update(cx, |finder, _| {
+        assert_match_selection(&finder, 0, "1_qw");
+    });
+}
+
+#[gpui::test]
+async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
+    cx: &mut TestAppContext,
+) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "bar.rs": "// Bar file",
+                    "lib.rs": "// Lib file",
+                    "maaa.rs": "// Maaaaaaa",
+                    "main.rs": "// Main file",
+                    "moo.rs": "// Moooooo",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
+    open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
+    open_queried_buffer("main", 1, "main.rs", &workspace, cx).await;
+
+    // main.rs is on top, previously used is selected
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "main.rs");
+        assert_match_selection(finder, 1, "lib.rs");
+    });
+
+    // all files match, main.rs is still on top
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches(".rs".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 5);
+        assert_match_at_position(finder, 0, "main.rs");
+        assert_match_selection(finder, 1, "bar.rs");
+    });
+
+    // main.rs is not among matches, select top item
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches("b".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_at_position(finder, 0, "bar.rs");
+    });
+
+    // main.rs is back, put it on top and select next item
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches("m".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "main.rs");
+        assert_match_selection(finder, 1, "moo.rs");
+    });
+
+    // get back to the initial state
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches("".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "main.rs");
+        assert_match_selection(finder, 1, "lib.rs");
     });
 }
 
@@ -1397,10 +1451,18 @@ fn assert_match_selection(
     expected_file_name: &str,
 ) {
     assert_eq!(finder.delegate.selected_index(), expected_selection_index);
+    assert_match_at_position(finder, expected_selection_index, expected_file_name);
+}
+
+fn assert_match_at_position(
+    finder: &Picker<FileFinderDelegate>,
+    match_index: usize,
+    expected_file_name: &str,
+) {
     let match_item = finder
         .delegate
         .matches
-        .get(expected_selection_index)
+        .get(match_index)
         .expect("Finder should have a match item with the given index");
     let match_file_name = match match_item {
         Match::History(found_path, _) => found_path.absolute.as_deref().unwrap().file_name(),
