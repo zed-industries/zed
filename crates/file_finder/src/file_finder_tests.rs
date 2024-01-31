@@ -1062,7 +1062,7 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_select_first_history_file_by_default(cx: &mut gpui::TestAppContext) {
+async fn test_select_previous_history_file_by_default(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     app_state
@@ -1082,17 +1082,15 @@ async fn test_select_first_history_file_by_default(cx: &mut gpui::TestAppContext
 
     let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
     let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-    // generate some history to select from, but leave the last buffer open
+
     open_close_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
     open_close_queried_buffer("2", 1, "2_second", &workspace, cx).await;
     open_queried_buffer("3", 1, "3_third", &workspace, cx).await;
 
     let picker = open_file_picker(&workspace, cx);
-    picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.selected_index(), 1);
+    picker.update(cx, |picker, _| {
+        assert_match_selection(&picker, 1, "2_second");
     });
-
-    cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
 }
 
 #[gpui::test]
@@ -1117,12 +1115,10 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
     // Open new buffer
     open_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
 
-    let pricker = open_file_picker(&workspace, cx);
-    pricker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.selected_index(), 0);
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |picker, _| {
+        assert_match_selection(&picker, 0, "1_qw");
     });
-
-    cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
 }
 
 #[gpui::test]
@@ -1393,4 +1389,23 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
             .map(|path_match| Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path))
             .collect(),
     }
+}
+
+fn assert_match_selection(
+    finder: &Picker<FileFinderDelegate>,
+    expected_selection_index: usize,
+    expected_file_name: &str,
+) {
+    assert_eq!(finder.delegate.selected_index(), expected_selection_index);
+    let match_item = finder
+        .delegate
+        .matches
+        .get(expected_selection_index)
+        .expect("Finder should have a match item with the given index");
+    let match_file_name = match match_item {
+        Match::History(found_path, _) => found_path.absolute.as_deref().unwrap().file_name(),
+        Match::Search(path_match) => path_match.0.path.file_name(),
+    };
+    let match_file_name = match_file_name.unwrap().to_string_lossy().to_string();
+    assert_eq!(match_file_name.as_str(), expected_file_name);
 }
