@@ -3,15 +3,53 @@ name: Publish Collab Server Image
 on:
   push:
     tags:
-      - collab-v*
+      - collab-production
+      - collab-staging
+    branches:
+      - test-collab-deploy
 
 env:
   DOCKER_BUILDKIT: 1
   DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
 jobs:
+  style:
+    name: Check formatting and Clippy lints
+    runs-on:
+      - self-hosted
+      - test
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+          fetch-depth: 0
+
+      - name: Run style checks
+        uses: ./.github/actions/check_style
+
+  tests:
+    name: Run tests
+    runs-on:
+      - self-hosted
+      - test
+    needs: style
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Run tests
+        uses: ./.github/actions/run_test
+
   publish:
     name: Publish collab server image
+    needs:
+      - style
+      - tests
     runs-on:
       - self-hosted
       - deploy
@@ -29,21 +67,44 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: 'recursive'
+          submodules: "recursive"
 
-      - name: Determine version
+      - name: Build docker image
+        run: docker build . --tag registry.digitalocean.com/zed/collab:${GITHUB_SHA}
+
+      - name: Publish docker image
+        run: docker push registry.digitalocean.com/zed/collab:${GITHUB_SHA}
+
+  deploy:
+    name: Deploy new server image
+    needs:
+      - publish
+    runs-on:
+      - self-hosted
+      - deploy
+
+      - name: Sign into Kubernetes
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
+
+      - name: Determine namepsace
         run: |
           set -eu
-          version=$(script/get-crate-version collab)
-          if [[ $GITHUB_REF_NAME != "collab-v${version}" ]]; then
+          if [[ $GITHUB_REF_NAME = "collab-production" ]]; then
+            echo "Deploying collab:${GITHUB_SHA} to production"
+            echo "KUBE_NAMESPACE=production" >> $GITHUB_ENV
+          elif [[ $GITHUB_REF_NAME = "collab-staging" ]]; then
+            echo "Deploying collab:${GITHUB_SHA} to staging"
+            echo "KUBE_NAMESPACE=staging" >> $GITHUB_ENV
+          elif [[ $GITHUB_REF_NAME = "test-collab-deploy" ]]; then
+            echo "Deploying collab:${GITHUB_SHA} to staging"
+            echo "KUBE_NAMESPACE=staging" >> $GITHUB_ENV
+          else
             echo "release tag ${GITHUB_REF_NAME} does not match version ${version}"
             exit 1
           fi
-          echo "Publishing collab version: ${version}"
-          echo "COLLAB_VERSION=${version}" >> $GITHUB_ENV
 
-      - name: Build docker image
-        run: docker build . --tag registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}
+      - name: Start rollout
+        run: echo kubectl -n "$KUBE_NAMESPACE" set image deployment/collab collab=registry.digitalocean.com/zed/collab:${GITHUB_SHA}
 
-      - name: Publish docker image
-        run: docker push registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}
+      - name: Wait for rollout to finish
+        run: kubectl -n "$KUBE_NAMESPACE" rollout status deployment/collab
