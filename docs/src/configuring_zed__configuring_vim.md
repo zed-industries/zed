@@ -3,14 +3,17 @@
 Zed includes a vim emulation layer known as “vim mode”. This document aims to describe how it works, and how to make the most out of it.
 
 ## Philosophy
+
 Vim mode in Zed is supposed to primarily "do what you expect": it mostly tries to copy vim exactly, but will use Zed-specific functionality when available to make things smoother.
 
 This means Zed will never be 100% vim compatible, but should be 100% vim familiar! We expect that our vim mode already copes with 90% of your workflow, and we'd like to keep improving it. If you find things that you can’t yet do in vim mode, but which you rely on in your current workflow, please leave feedback in the editor itself (`:feedback`), or [file an issue](https://github.com/zed-industries/zed/issues).
 
 ## Zed-specific features
+
 Zed is built on a modern foundation that (among other things) uses tree-sitter to understand the content of the file you're editing, and supports multiple cursors out of the box.
 
 Vim mode has several "core Zed" key bindings, that will help you make the most of Zed's specific feature set.
+
 ```
 # Normal mode
 g d   Go to definition
@@ -46,7 +49,8 @@ Vim mode emulates visual block mode using Zed's multiple cursor support. This ag
 Finally, Vim mode's search and replace functionality is backed by Zed's. This means that the pattern syntax is slightly different, see the section on [Regex differences](#regex-differences) for details.
 
 ## Custom key bindings
-Zed does not yet have an equivalent to vim’s `map` command to convert one set of keystrokes into another, however you can bind any sequence of keys to fire any Action documented in the  [Key bindings documentation](https://docs.zed.dev/configuration/key-bindings).
+
+Zed does not yet have an equivalent to vim’s `map` command to convert one set of keystrokes into another, however you can bind any sequence of keys to fire any Action documented in the [Key bindings documentation](https://docs.zed.dev/configuration/key-bindings).
 
 You can edit your personal key bindings with `:keymap`.
 For vim-specific shortcuts, you may find the following template a good place to start:
@@ -95,6 +99,7 @@ We do not (yet) emulate the full power of vim’s command line, in particular we
 As mentioned above, one thing to be aware of is that the regex engine is slightly different from vim's in `:%s/a/b`.
 
 Currently supported vim-specific commands (as of Zed 0.106):
+
 ```
 # window management
 :w[rite][!], :wq[!], :q[uit][!], :wa[ll][!], :wqa[ll][!], :qa[ll][!], :[e]x[it][!], :up[date]
@@ -139,9 +144,10 @@ Currently supported vim-specific commands (as of Zed 0.106):
     to sort the current selection (with i, case-insensitively)
 ```
 
-
 ## Related settings
+
 There are a few Zed settings that you may also enjoy if you use vim mode:
+
 ```json
 {
   // disable cursor blink
@@ -149,7 +155,7 @@ There are a few Zed settings that you may also enjoy if you use vim mode:
   // use relative line numbers
   "relative_line_numbers": true,
   // hide the scroll bar
-  "scrollbar": {"show": "never"}
+  "scrollbar": { "show": "never" }
 }
 ```
 
@@ -158,12 +164,13 @@ There are a few Zed settings that you may also enjoy if you use vim mode:
 Zed uses a different regular expression engine from Vim. This means that you will have to use a different syntax for some things.
 
 Notably:
-* Vim uses `\(` and `\)` to represent capture groups, in Zed these are `(` and `)`.
-* On the flip side, `(` and `)` represent literal parentheses, but in Zed these must be escaped to `\(` and `\)`.
-* When replacing, Vim uses `\0` to represent the entire match, in Zed this is `$0`, same for numbered capture groups `\1` -> `$1`.
-* Vim uses `\<` and `\>` to represent word boundaries, in Zed these are both handled by `\b`
-* Vim uses `/g` to indicate "all matches on one line", in Zed this is implied
-* Vim uses `/i` to indicate "case-insensitive", in Zed you can either use `(?i)` at the start of the pattern or toggle case-sensitivity with `cmd-option-c`.
+
+- Vim uses `\(` and `\)` to represent capture groups, in Zed these are `(` and `)`.
+- On the flip side, `(` and `)` represent literal parentheses, but in Zed these must be escaped to `\(` and `\)`.
+- When replacing, Vim uses `\0` to represent the entire match, in Zed this is `$0`, same for numbered capture groups `\1` -> `$1`.
+- Vim uses `\<` and `\>` to represent word boundaries, in Zed these are both handled by `\b`
+- Vim uses `/g` to indicate "all matches on one line", in Zed this is implied
+- Vim uses `/i` to indicate "case-insensitive", in Zed you can either use `(?i)` at the start of the pattern or toggle case-sensitivity with `cmd-option-c`.
 
 To help with the transition, the command palette will fix parentheses and replace groups for you when you run `:%s//`. So `%s:/\(a\)(b)/\1/` will be converted into a search for "(a)\(b\)" and a replacement of "$1".
 
