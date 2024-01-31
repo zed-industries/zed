@@ -328,7 +328,7 @@ impl Worktree {
                     );
                     let new_dotenvs = path_matchers(
                         ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
-                        "dotenv_files",
+                        "private_files",
                     );
 
                     if new_file_scan_exclusions != this.snapshot.file_scan_exclusions
@@ -384,7 +384,7 @@ impl Worktree {
                 ),
                 dot_env_files: path_matchers(
                     ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
-                    "dotenv_files",
+                    "private_files",
                 ),
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),

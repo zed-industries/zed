@@ -1172,18 +1172,25 @@ impl EditorElement {
         let line_end_overshoot = layout.line_end_overshoot();
         let redaction_color = black();
 
-        for range in layout.redacted_ranges.iter() {
-            self.paint_highlighted_range(
-                range.clone(),
-                redaction_color,
-                Pixels::ZERO,
-                line_end_overshoot,
-                layout,
-                content_origin,
-                text_bounds,
-                cx,
-            );
-        }
+        cx.with_content_mask(
+            Some(ContentMask {
+                bounds: text_bounds,
+            }),
+            |cx| {
+                for range in layout.redacted_ranges.iter() {
+                    self.paint_highlighted_range(
+                        range.clone(),
+                        redaction_color,
+                        Pixels::ZERO,
+                        line_end_overshoot,
+                        layout,
+                        content_origin,
+                        text_bounds,
+                        cx,
+                    );
+                }
+            },
+        )
     }
 
     fn paint_overlays(
