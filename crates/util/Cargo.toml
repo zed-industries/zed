@@ -21,7 +21,7 @@ lazy_static.workspace = true
 futures.workspace = true
 isahc.workspace = true
 smol.workspace = true
-url = "2.2"
+url.workspace = true
 rand.workspace = true
 rust-embed.workspace = true
 tempfile = { workspace = true, optional = true }

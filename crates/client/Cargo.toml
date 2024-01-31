@@ -46,7 +46,7 @@ thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
 uuid.workspace = true
-url = "2.2"
+url.workspace = true
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
