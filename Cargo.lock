@@ -3255,6 +3255,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "signpost",
  "simplelog",
  "slotmap",
  "smallvec",
@@ -7311,6 +7312,12 @@ dependencies = [
  "digest 0.10.7",
  "rand_core 0.6.4",
 ]
+
+[[package]]
+name = "signpost"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acde4ef7ee97ad3bac7c4f73ee22ddb71067aa1d427a22efa76284de48eada41"
 
 [[package]]
 name = "simdutf8"

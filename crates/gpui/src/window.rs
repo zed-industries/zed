@@ -341,8 +341,16 @@ impl Window {
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             move || {
-                measure("frame duration", || {
-                    handle.update(&mut cx, |_, cx| cx.draw()).log_err();
+                signpost::trace_function(42, &[0; 4], || {
+                    measure("frame duration", || {
+                        handle
+                            .update(&mut cx, |_, cx| {
+                                cx.window
+                                    .platform_window
+                                    .draw(&cx.window.rendered_frame.scene);
+                            })
+                            .log_err();
+                    })
                 })
             }
         }));
@@ -380,10 +388,12 @@ impl Window {
         platform_window.on_input({
             let mut cx = cx.to_async();
             Box::new(move |event| {
-                handle
-                    .update(&mut cx, |_, cx| cx.dispatch_event(event))
-                    .log_err()
-                    .unwrap_or(false)
+                signpost::trace_function(41, &[0; 4], || {
+                    handle
+                        .update(&mut cx, |_, cx| cx.dispatch_event(event))
+                        .log_err()
+                        .unwrap_or(false)
+                })
             })
         });
 
@@ -1071,9 +1081,7 @@ impl<'a> WindowContext<'a> {
                 .retain(&(), |listener| listener(&event, self));
         }
 
-        self.window
-            .platform_window
-            .draw(&self.window.rendered_frame.scene);
+        self.window.platform_window.invalidate();
         self.window.refreshing = false;
         self.window.drawing = false;
     }

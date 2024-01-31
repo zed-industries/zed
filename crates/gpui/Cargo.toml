@@ -47,6 +47,7 @@ seahash = "4.1"
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+signpost = "0.1"
 slotmap = "1.0.6"
 smallvec.workspace = true
 smol.workspace = true

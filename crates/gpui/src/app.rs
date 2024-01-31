@@ -652,25 +652,19 @@ impl AppContext {
                     }
                 }
             } else {
-                for window in self.windows.values() {
-                    if let Some(window) = window.as_ref() {
-                        if window.dirty {
-                            window.platform_window.invalidate();
-                        }
-                    }
-                }
-
-                #[cfg(any(test, feature = "test-support"))]
                 for window in self
                     .windows
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        (window.dirty || window.focus_invalidated).then_some(window.handle)
+                        window.dirty.then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, cx| cx.draw()).unwrap();
+                    self.update_window(window, |_, cx| {
+                        cx.draw();
+                    })
+                    .unwrap();
                 }
 
                 if self.pending_effects.is_empty() {
