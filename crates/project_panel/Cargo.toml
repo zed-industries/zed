@@ -31,6 +31,7 @@ theme = { path = "../theme" }
 ui = { path = "../ui" }
 unicase = "2.6"
 util = { path = "../util" }
+client = { path = "../client" }
 workspace = { path = "../workspace", package = "workspace" }
 
 [dev-dependencies]

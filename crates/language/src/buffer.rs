@@ -384,7 +384,7 @@ pub trait File: Send + Sync {
     /// Converts this file into a protobuf message.
     fn to_proto(&self) -> rpc::proto::File;
 
-    /// Return whether Zed considers this to be a dotenv file.
+    /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
 }
 
@@ -406,6 +406,11 @@ pub trait LocalFile: File {
         mtime: SystemTime,
         cx: &mut AppContext,
     );
+
+    /// Returns true if the file should not be shared with collaborators.
+    fn is_private(&self, _: &AppContext) -> bool {
+        false
+    }
 }
 
 /// The auto-indent behavior associated with an editing operation.
