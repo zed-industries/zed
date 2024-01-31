@@ -1,0 +1,6 @@
+name = "Make"
+path_suffixes = ["Makefile", "makefile", "GNUmakefile"]
+line_comments = ["#"]
+brackets = [
+  { start = "(", end = ")", close = true, newline = true },
+]

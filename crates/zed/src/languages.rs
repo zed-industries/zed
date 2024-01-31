@@ -95,6 +95,7 @@ pub fn init(
         ("html", tree_sitter_html::language()),
         ("json", tree_sitter_json::language()),
         ("lua", tree_sitter_lua::language()),
+        ("make", tree_sitter_make::language()),
         ("markdown", tree_sitter_markdown::language()),
         ("nix", tree_sitter_nix::language()),
         ("nu", tree_sitter_nu::language()),
@@ -202,6 +203,7 @@ pub fn init(
             languages.clone(),
         ))],
     );
+    language("make", vec![]);
     language("markdown", vec![]);
     language(
         "python",
