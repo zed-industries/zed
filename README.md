@@ -40,7 +40,7 @@ We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automati
 
 ## 💪 Thanks To All Contributors
 
-Thanks a lot for spending your time helping Cerbos grow. Keep rocking 🥂
+Thanks a lot for spending your time helping Zed grow. Keep rocking 🥂
 
 <a>
   <img src="https://contributors-img.web.app/image?repo=zed-industries/zed" alt="Contributors"/>
