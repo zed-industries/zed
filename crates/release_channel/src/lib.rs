@@ -76,11 +76,12 @@ struct GlobalReleaseChannel(ReleaseChannel);
 
 impl Global for GlobalReleaseChannel {}
 
-impl ReleaseChannel {
-    pub fn init(cx: &mut AppContext) {
-        cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
-    }
+pub fn init(pkg_version: &str, cx: &mut AppContext) {
+    AppVersion::init(pkg_version, cx);
+    cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
+}
 
+impl ReleaseChannel {
     pub fn global(cx: &AppContext) -> Self {
         cx.global::<GlobalReleaseChannel>().0
     }

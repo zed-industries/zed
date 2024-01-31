@@ -20,7 +20,7 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
-use release_channel::{parse_zed_link, AppCommitSha, AppVersion, ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -115,8 +115,7 @@ fn main() {
     });
 
     app.run(move |cx| {
-        ReleaseChannel::init(cx);
-        AppVersion::init(env!("CARGO_PKG_VERSION"), cx);
+        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }

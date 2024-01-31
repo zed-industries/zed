@@ -2,7 +2,6 @@ use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
 use gpui::{AppContext, AsyncAppContext, Global};
 use lazy_static::lazy_static;
-use release_channel::ReleaseChannel;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
 use smallvec::SmallVec;
@@ -210,7 +209,7 @@ impl SettingsStore {
 
             if let Some(release_settings) = &self
                 .raw_user_settings
-                .get(ReleaseChannel::global(cx).dev_name())
+                .get(&*release_channel::RELEASE_CHANNEL.dev_name())
             {
                 if let Some(release_settings) = setting_value
                     .deserialize_setting(&release_settings)
@@ -543,7 +542,7 @@ impl SettingsStore {
 
             if let Some(release_settings) = &self
                 .raw_user_settings
-                .get(ReleaseChannel::global(cx).dev_name())
+                .get(&*release_channel::RELEASE_CHANNEL.dev_name())
             {
                 if let Some(release_settings) = setting_value
                     .deserialize_setting(&release_settings)

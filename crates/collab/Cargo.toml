@@ -61,6 +61,7 @@ util = { path = "../util" }
 uuid.workspace = true
 
 [dev-dependencies]
+release_channel = { path = "../release_channel" }
 async-trait.workspace = true
 audio = { path = "../audio" }
 call = { path = "../call", features = ["test-support"] }
