@@ -286,7 +286,7 @@ impl ProjectPanel {
                                 });
 
                             if let Some(project_panel) = project_panel.upgrade() {
-                                // Always select the entry, regardless whether it is opened or not.
+                                // Always select the entry, regardless of whether it is opened or not.
                                 project_panel.update(cx, |project_panel, _| {
                                     project_panel.selection = Some(Selection {
                                         worktree_id,
