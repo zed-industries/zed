@@ -336,6 +336,14 @@ impl ChatPanel {
         };
         let this = cx.view().clone();
 
+        // TODO: get it from the message
+        let reply_to: RichText = RichText {
+            text: SharedString::from("Some that that i replayed to, lorem ipsum dolor sit amet, consectetur adipiscing elit."),
+            highlights: vec![],
+            link_ranges: vec![],
+            link_urls: Arc::new([]),
+        };
+
         let mentioning_you = message
             .mentions
             .iter()
@@ -353,7 +361,7 @@ impl ChatPanel {
                 .px_1()
                 .py_0p5()
                 .when(!is_continuation_from_previous, |this| {
-                    this.mt_1().child(
+                    this.mt_2().child(
                         h_flex()
                             .text_ui_sm()
                             .child(div().absolute().child(
@@ -374,6 +382,39 @@ impl ChatPanel {
                                 ))
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
+                            ),
+                    )
+                })
+                .when(message.reply_to_message_id.is_some(), |this| {
+                    this.mt_2().pl_1().child(
+                        v_flex()
+                            .text_ui_xs()
+                            .child(
+                                h_flex()
+                                    .gap_x_1()
+                                    .items_center()
+                                    .justify_start()
+                                    .overflow_x_hidden()
+                                    .whitespace_nowrap()
+                                    .child("Replied to:")
+                                    .child(
+                                        Avatar::new(message.sender.avatar_uri.clone())
+                                            .size(rems(0.8)),
+                                    )
+                                    .child(
+                                        Label::new(message.sender.github_login.clone())
+                                            .size(LabelSize::XSmall),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .border_l_3()
+                                    .rounded_md()
+                                    .border_color(cx.theme().colors().border)
+                                    .px_1()
+                                    .py_0p5()
+                                    .mb_1()
+                                    .child(reply_to.element("replay".into(), cx)),
                             ),
                     )
                 })
@@ -747,6 +788,7 @@ mod tests {
             }),
             nonce: 5,
             mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
+            reply_to_message_id: None,
         };
 
         let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);

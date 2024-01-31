@@ -1,5 +1,5 @@
 use anyhow::Result;
-use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
+use channel::{ChannelId, ChannelMembership, ChannelMessageId, ChannelStore, MessageParams};
 use client::UserId;
 use collections::{HashMap, HashSet};
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
@@ -34,6 +34,7 @@ pub struct MessageEditor {
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
     channel_id: Option<ChannelId>,
+    reply_to_message_id: Option<ChannelMessageId>,
 }
 
 struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
@@ -112,6 +113,7 @@ impl MessageEditor {
             channel_id: None,
             mentions: Vec::new(),
             mentions_task: None,
+            reply_to_message_id: None,
         }
     }
 
@@ -173,7 +175,11 @@ impl MessageEditor {
             editor.clear(cx);
             self.mentions.clear();
 
-            MessageParams { text, mentions }
+            MessageParams {
+                text,
+                mentions,
+                reply_to_message_id: self.reply_to_message_id,
+            }
         })
     }
 
@@ -424,6 +430,7 @@ mod tests {
                 MessageParams {
                     text,
                     mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
+                    reply_to_message_id: None
                 }
             );
         });

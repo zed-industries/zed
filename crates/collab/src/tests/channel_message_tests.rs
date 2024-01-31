@@ -43,6 +43,7 @@ async fn test_basic_channel_messages(
                 MessageParams {
                     text: "hi @user_c!".into(),
                     mentions: vec![(3..10, client_c.id())],
+                    reply_to_message_id: None,
                 },
                 cx,
             )

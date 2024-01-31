@@ -161,6 +161,10 @@ impl Database {
                         upper_half: nonce.0,
                         lower_half: nonce.1,
                     }),
+                    reply_to_message_id: match row.reply_to_message_id {
+                        Some(reply_message_id) => Some(reply_message_id.to_proto()),
+                        None => None,
+                    },
                 }
             })
             .collect::<Vec<_>>();
@@ -207,6 +211,7 @@ impl Database {
         mentions: &[proto::ChatMention],
         timestamp: OffsetDateTime,
         nonce: u128,
+        reply_to_message_id: Option<MessageId>,
     ) -> Result<CreatedChannelMessage> {
         self.transaction(|tx| async move {
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
@@ -245,6 +250,7 @@ impl Database {
                 sent_at: ActiveValue::Set(timestamp),
                 nonce: ActiveValue::Set(Uuid::from_u128(nonce)),
                 id: ActiveValue::NotSet,
+                reply_to_message_id: ActiveValue::Set(reply_to_message_id),
             })
             .on_conflict(
                 OnConflict::columns([
