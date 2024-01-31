@@ -67,6 +67,7 @@ serde_json.workspace = true
 serde_derive.workspace = true
 smallvec.workspace = true
 smol.workspace = true
+url.workspace = true
 
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-html = { workspace = true, optional = true }

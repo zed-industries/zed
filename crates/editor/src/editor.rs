@@ -117,7 +117,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
     Tooltip,
 };
-use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -8212,6 +8212,43 @@ impl Editor {
                     cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
                 }
             }
+        }
+    }
+
+    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+        use git::permalink::{build_permalink, BuildPermalinkParams};
+
+        let permalink = maybe!({
+            let project = self.project.clone()?;
+            let project = project.read(cx);
+
+            let worktree = project.visible_worktrees(cx).next()?;
+
+            let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+            cwd.push(".git");
+
+            let repo = project.fs().open_repo(&cwd)?;
+            let origin_url = repo.lock().remote_url("origin")?;
+            let sha = repo.lock().head_sha()?;
+
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+            let path = file.path().to_str().map(|path| path.to_string())?;
+
+            let selections = self.selections.all::<Point>(cx);
+            let selection = selections.iter().peekable().next();
+
+            build_permalink(BuildPermalinkParams {
+                remote_url: &origin_url,
+                sha: &sha,
+                path: &path,
+                selection: selection.map(|selection| selection.range()),
+            })
+            .log_err()
+        });
+
+        if let Some(permalink) = permalink {
+            cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
         }
     }
 
