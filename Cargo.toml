@@ -130,7 +130,7 @@ thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 toml = "0.5"
-tree-sitter = "0.20"
+tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
 tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-sharp", rev = "dd5e59721a5f8dae34604060833902b882023aaf" }
@@ -168,10 +168,11 @@ tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "
 unindent = "0.1.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
+wasmtime = "16"
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "31c40449749c4263a91a43593831b82229049a4c" }
-# wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1d8975319c2d5de1bf710e7e21db25b0eee4bc66" }
+wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
