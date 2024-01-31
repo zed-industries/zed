@@ -74,7 +74,7 @@
         "ogg": "video",
         "pdb": "storage",
         "pdf": "document",
-        "php": "code",
+        "php": "php",
         "png": "image",
         "ppt": "document",
         "pptx": "document",
@@ -170,6 +170,9 @@
         },
         "phoenix": {
             "icon": "icons/file_icons/phoenix.svg"
+        },
+        "php": {
+            "icon": "icons/file_icons/php.svg"
         },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
