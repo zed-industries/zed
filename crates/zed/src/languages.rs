@@ -124,6 +124,7 @@ pub fn init(
         vec![Arc::new(go::GoLspAdapter)],
     );
     language("gomod", tree_sitter_gomod::language(), vec![]);
+    language("gowork", tree_sitter_gowork::language(), vec![]);
     language(
         "zig",
         tree_sitter_zig::language(),
