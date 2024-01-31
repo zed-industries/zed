@@ -383,6 +383,9 @@ pub trait File: Send + Sync {
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self) -> rpc::proto::File;
+
+    /// Return whether Zed considers this to be a dotenv file.
+    fn is_private(&self) -> bool;
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.

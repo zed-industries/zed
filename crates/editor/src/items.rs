@@ -1366,5 +1366,9 @@ mod tests {
         fn to_proto(&self) -> rpc::proto::File {
             unimplemented!()
         }
+
+        fn is_private(&self) -> bool {
+            false
+        }
     }
 }

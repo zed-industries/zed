@@ -225,8 +225,9 @@ impl CopilotButton {
         let file = snapshot.file_at(suggestion_anchor).cloned();
 
         self.editor_enabled = Some(
-            all_language_settings(self.file.as_ref(), cx)
-                .copilot_enabled(language, file.as_ref().map(|file| file.path().as_ref())),
+            file.as_ref().map(|file| !file.is_private()).unwrap_or(true)
+                && all_language_settings(self.file.as_ref(), cx)
+                    .copilot_enabled(language, file.as_ref().map(|file| file.path().as_ref())),
         );
         self.language = language.cloned();
         self.file = file;

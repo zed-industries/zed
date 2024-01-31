@@ -8440,9 +8440,9 @@ impl Editor {
             .buffer_snapshot
             .redacted_ranges(search_range, |file| {
                 if let Some(file) = file {
-                    file.file_name(cx) == ".env"
+                    file.is_private()
                         && EditorSettings::get(Some((file.worktree_id(), file.path())), cx)
-                            .redact_env_values
+                            .redact_private_values
                 } else {
                     false
                 }
