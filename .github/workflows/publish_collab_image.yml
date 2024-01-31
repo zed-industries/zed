@@ -83,6 +83,7 @@ jobs:
       - self-hosted
       - deploy
 
+    steps:
       - name: Sign into Kubernetes
         run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
 
