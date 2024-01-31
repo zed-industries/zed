@@ -11,6 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
+use fsevent::StreamFlags;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
@@ -171,35 +172,8 @@ fn main() {
         );
         assistant::init(cx);
 
-        // TODO: Should we be loading the themes in a different spot?
-        cx.spawn({
-            let fs = fs.clone();
-            |cx| async move {
-                if let Some(theme_registry) =
-                    cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
-                {
-                    if let Some(()) = theme_registry
-                        .load_user_themes(&paths::THEMES_DIR.clone(), fs)
-                        .await
-                        .log_err()
-                    {
-                        cx.update(|cx| {
-                            let mut theme_settings = ThemeSettings::get_global(cx).clone();
-
-                            if let Some(requested_theme) = theme_settings.requested_theme.clone() {
-                                if let Some(_theme) =
-                                    theme_settings.switch_theme(&requested_theme, cx)
-                                {
-                                    ThemeSettings::override_global(theme_settings, cx);
-                                }
-                            }
-                        })
-                        .log_err();
-                    }
-                }
-            }
-        })
-        .detach();
+        load_user_themes_in_background(fs.clone(), cx);
+        watch_themes(fs.clone(), cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
@@ -897,6 +871,81 @@ fn load_embedded_fonts(cx: &AppContext) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())
         .unwrap();
+}
+
+/// Spawns a background task to load the user themes from the themes directory.
+fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    cx.spawn({
+        let fs = fs.clone();
+        |cx| async move {
+            if let Some(theme_registry) =
+                cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+            {
+                if let Some(()) = theme_registry
+                    .load_user_themes(&paths::THEMES_DIR.clone(), fs)
+                    .await
+                    .log_err()
+                {
+                    cx.update(|cx| {
+                        let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+                        if let Some(requested_theme) = theme_settings.requested_theme.clone() {
+                            if let Some(_theme) = theme_settings.switch_theme(&requested_theme, cx)
+                            {
+                                ThemeSettings::override_global(theme_settings, cx);
+                            }
+                        }
+                    })
+                    .log_err();
+                }
+            }
+        }
+    })
+    .detach();
+}
+
+/// Spawns a background task to watch the themes directory for changes.
+fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    cx.spawn(|cx| async move {
+        let mut events = fs
+            .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
+            .await;
+
+        while let Some(events) = events.next().await {
+            for event in events {
+                if event.flags.contains(StreamFlags::ITEM_REMOVED) {
+                    // Theme was removed, don't need to reload.
+                    // We may want to remove the theme from the registry, in this case.
+                } else {
+                    if let Some(theme_registry) =
+                        cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                    {
+                        if let Some(()) = theme_registry
+                            .load_user_theme(&event.path, fs.clone())
+                            .await
+                            .log_err()
+                        {
+                            cx.update(|cx| {
+                                let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+                                if let Some(requested_theme) =
+                                    theme_settings.requested_theme.clone()
+                                {
+                                    if let Some(_theme) =
+                                        theme_settings.switch_theme(&requested_theme, cx)
+                                    {
+                                        ThemeSettings::override_global(theme_settings, cx);
+                                    }
+                                }
+                            })
+                            .log_err();
+                        }
+                    }
+                }
+            }
+        }
+    })
+    .detach()
 }
 
 async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
