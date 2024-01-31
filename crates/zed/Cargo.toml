@@ -66,6 +66,7 @@ libc = "0.2"
 log.workspace = true
 lsp = { path = "../lsp" }
 menu = { path = "../menu" }
+mimalloc = "0.1"
 node_runtime = { path = "../node_runtime" }
 notifications = { path = "../notifications" }
 num_cpus = "1.13.0"
