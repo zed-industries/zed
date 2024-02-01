@@ -34,7 +34,6 @@ pub struct MessageEditor {
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
     channel_id: Option<ChannelId>,
-    reply_to_message_id: Option<ChannelMessageId>,
 }
 
 struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
@@ -113,7 +112,6 @@ impl MessageEditor {
             channel_id: None,
             mentions: Vec::new(),
             mentions_task: None,
-            reply_to_message_id: None,
         }
     }
 
@@ -178,7 +176,7 @@ impl MessageEditor {
             MessageParams {
                 text,
                 mentions,
-                reply_to_message_id: self.reply_to_message_id,
+                reply_to_message_id: None,
             }
         })
     }
