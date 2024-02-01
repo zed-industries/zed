@@ -4,7 +4,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt, AsyncBufRead};
+use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
