@@ -522,6 +522,17 @@ pub enum SplitDirection {
     Right,
 }
 
+impl std::fmt::Display for SplitDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SplitDirection::Up => write!(f, "up"),
+            SplitDirection::Down => write!(f, "down"),
+            SplitDirection::Left => write!(f, "left"),
+            SplitDirection::Right => write!(f, "right"),
+        }
+    }
+}
+
 impl SplitDirection {
     pub fn all() -> [Self; 4] {
         [Self::Up, Self::Down, Self::Left, Self::Right]

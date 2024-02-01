@@ -3,13 +3,15 @@
 set -eu
 source script/lib/deploy-helpers.sh
 
-if [[ $# < 1 ]]; then
+if [[ $# != 1 ]]; then
   echo "Usage: $0 <production|staging>"
   exit 1
 fi
-environment=$1
 
-export_vars_for_environment ${environment}
+environment=$1
+url="$(url_for_environment $environment)"
+tag="$(tag_for_environment $environment)"
+
 target_zed_kube_cluster
 
 deployed_image_id=$(
@@ -20,18 +22,9 @@ deployed_image_id=$(
     | cut -d: -f2
 )
 
-job_image_ids=$(
-  kubectl \
-    --namespace=${environment} \
-    get jobs \
-    -o 'jsonpath={range .items[0:5]}{.spec.template.spec.containers[0].image}{"\n"}{end}' \
-    2> /dev/null \
-    || true
-)
+echo "Deployed image version: $deployed_image_id"
 
-echo "Deployed image version:"
-echo "$deployed_image_id"
-echo
-echo "Migration job image versions:"
-echo "$job_image_ids"
-echo
+git fetch >/dev/null
+if [[ "$(git rev-parse tags/$tag)" != $deployed_image_id ]]; then
+    echo "NOTE: tags/$tag $(git rev-parse tags/$tag) is not yet deployed"
+fi;

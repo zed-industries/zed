@@ -1367,6 +1367,7 @@ dependencies = [
  "image",
  "lazy_static",
  "log",
+ "once_cell",
  "parking_lot 0.11.2",
  "postage",
  "rand 0.8.5",
@@ -1377,6 +1378,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "sha2 0.10.7",
  "smol",
  "sum_tree",
  "sysinfo",
@@ -1438,7 +1440,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1484,6 +1486,7 @@ dependencies = [
  "prometheus",
  "prost 0.8.0",
  "rand 0.8.5",
+ "release_channel",
  "reqwest",
  "rpc",
  "scrypt",
@@ -2422,6 +2425,7 @@ dependencies = [
  "postage",
  "project",
  "rand 0.8.5",
+ "release_channel",
  "rich_text",
  "rpc",
  "schemars",
@@ -2658,6 +2662,7 @@ dependencies = [
  "env_logger",
  "fuzzy",
  "gpui",
+ "itertools 0.11.0",
  "language",
  "menu",
  "picker",
@@ -4017,6 +4022,7 @@ dependencies = [
  "language",
  "lsp",
  "project",
+ "release_channel",
  "serde",
  "serde_json",
  "settings",
@@ -4261,6 +4267,7 @@ dependencies = [
  "lsp-types",
  "parking_lot 0.11.2",
  "postage",
+ "release_channel",
  "serde",
  "serde_derive",
  "serde_json",
@@ -4312,6 +4319,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "markdown_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "language",
+ "lazy_static",
+ "log",
+ "menu",
+ "project",
+ "pulldown-cmark",
+ "rich_text",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -5795,6 +5822,7 @@ dependencies = [
  "pretty_assertions",
  "rand 0.8.5",
  "regex",
+ "release_channel",
  "rpc",
  "schemars",
  "serde",
@@ -5859,6 +5887,7 @@ dependencies = [
  "picker",
  "postage",
  "project",
+ "release_channel",
  "serde_json",
  "settings",
  "smol",
@@ -8784,6 +8813,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-erlang"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93ced5145ebb17f83243bf055b74e108da7cc129e12faab4166df03f59b287f4"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-gitcommit"
 version = "0.3.3"
 source = "git+https://github.com/gbprod/tree-sitter-gitcommit#e8d9eda4e5ea0b08aa39d48dab0f6553058fbe0f"
@@ -9419,6 +9458,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "project",
  "regex",
+ "release_channel",
  "search",
  "serde",
  "serde_derive",
@@ -10312,6 +10352,7 @@ dependencies = [
  "libc",
  "log",
  "lsp",
+ "markdown_preview",
  "menu",
  "mimalloc",
  "node_runtime",
@@ -10361,6 +10402,7 @@ dependencies = [
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
+ "tree-sitter-erlang",
  "tree-sitter-gitcommit",
  "tree-sitter-gleam",
  "tree-sitter-glsl",

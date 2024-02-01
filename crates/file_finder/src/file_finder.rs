@@ -8,6 +8,7 @@ use gpui::{
     actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
+use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
@@ -64,33 +65,15 @@ impl FileFinder {
                 FoundPath::new(project_path, abs_path)
             });
 
-        // if exists, bubble the currently opened path to the top
-        let history_items = currently_opened_path
-            .clone()
+        let history_items = workspace
+            .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
-            .chain(
-                workspace
-                    .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
-                    .into_iter()
-                    .filter(|(history_path, _)| {
-                        Some(history_path)
-                            != currently_opened_path
-                                .as_ref()
-                                .map(|found_path| &found_path.project)
-                    })
-                    .filter(|(_, history_abs_path)| {
-                        history_abs_path.as_ref()
-                            != currently_opened_path
-                                .as_ref()
-                                .and_then(|found_path| found_path.absolute.as_ref())
-                    })
-                    .filter(|(_, history_abs_path)| match history_abs_path {
-                        Some(abs_path) => history_file_exists(abs_path),
-                        None => true,
-                    })
-                    .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
-            )
-            .collect();
+            .filter(|(_, history_abs_path)| match history_abs_path {
+                Some(abs_path) => history_file_exists(abs_path),
+                None => true,
+            })
+            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path))
+            .collect::<Vec<_>>();
 
         let project = workspace.project().clone();
         let weak_workspace = cx.view().downgrade();
@@ -139,7 +122,7 @@ pub struct FileFinderDelegate {
     latest_search_query: Option<PathLikeWithPosition<FileSearchQuery>>,
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
-    selected_index: Option<usize>,
+    selected_index: usize,
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
 }
@@ -209,31 +192,21 @@ impl Matches {
     fn push_new_matches(
         &mut self,
         history_items: &Vec<FoundPath>,
+        currently_opened: Option<&FoundPath>,
         query: &PathLikeWithPosition<FileSearchQuery>,
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
     ) {
-        let matching_history_paths = matching_history_item_paths(history_items, query);
+        let matching_history_paths =
+            matching_history_item_paths(history_items, currently_opened, query);
         let new_search_matches = new_search_matches
             .filter(|path_match| !matching_history_paths.contains_key(&path_match.0.path));
-        let history_items_to_show = history_items.iter().filter_map(|history_item| {
-            Some((
-                history_item.clone(),
-                Some(
-                    matching_history_paths
-                        .get(&history_item.project.path)?
-                        .clone(),
-                ),
-            ))
-        });
-        self.history.clear();
-        util::extend_sorted(
-            &mut self.history,
-            history_items_to_show,
-            100,
-            |(_, a), (_, b)| b.cmp(a),
-        );
 
+        self.set_new_history(
+            currently_opened,
+            Some(&matching_history_paths),
+            history_items,
+        );
         if extend_old_matches {
             self.search
                 .retain(|path_match| !matching_history_paths.contains_key(&path_match.0.path));
@@ -242,14 +215,59 @@ impl Matches {
         }
         util::extend_sorted(&mut self.search, new_search_matches, 100, |a, b| b.cmp(a));
     }
+
+    fn set_new_history<'a>(
+        &mut self,
+        currently_opened: Option<&'a FoundPath>,
+        query_matches: Option<&'a HashMap<Arc<Path>, ProjectPanelOrdMatch>>,
+        history_items: impl IntoIterator<Item = &'a FoundPath> + 'a,
+    ) {
+        let history_items_to_show = history_items
+            .into_iter()
+            .chain(currently_opened)
+            .filter_map(|history_item| match &query_matches {
+                Some(query_matches) => Some((
+                    history_item.clone(),
+                    Some(query_matches.get(&history_item.project.path)?.clone()),
+                )),
+                None => Some((history_item.clone(), None)),
+            })
+            .sorted_by(|(path_a, match_a), (path_b, match_b)| {
+                match (
+                    Some(path_a) == currently_opened,
+                    Some(path_b) == currently_opened,
+                ) {
+                    (true, false) => cmp::Ordering::Less,
+                    (false, true) => cmp::Ordering::Greater,
+                    _ => match_b.cmp(match_a),
+                }
+            });
+
+        self.history.clear();
+        util::extend_sorted(
+            &mut self.history,
+            history_items_to_show.collect::<Vec<_>>(),
+            100,
+            |(path_a, match_a), (path_b, match_b)| match (
+                Some(path_a) == currently_opened,
+                Some(path_b) == currently_opened,
+            ) {
+                (true, false) => cmp::Ordering::Less,
+                (false, true) => cmp::Ordering::Greater,
+                _ => match_b.cmp(match_a).then(path_b.cmp(path_a)),
+            },
+        );
+    }
 }
 
 fn matching_history_item_paths(
     history_items: &Vec<FoundPath>,
+    currently_opened: Option<&FoundPath>,
     query: &PathLikeWithPosition<FileSearchQuery>,
 ) -> HashMap<Arc<Path>, ProjectPanelOrdMatch> {
     let history_items_by_worktrees = history_items
         .iter()
+        .chain(currently_opened)
         .filter_map(|found_path| {
             let candidate = PathMatchCandidate {
                 path: &found_path.project.path,
@@ -301,7 +319,7 @@ fn matching_history_item_paths(
     matching_history_paths
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct FoundPath {
     project: ProjectPath,
     absolute: Option<PathBuf>,
@@ -372,7 +390,7 @@ impl FileFinderDelegate {
             latest_search_query: None,
             currently_opened_path,
             matches: Matches::default(),
-            selected_index: None,
+            selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
         }
@@ -427,7 +445,6 @@ impl FileFinderDelegate {
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             picker
                 .update(&mut cx, |picker, cx| {
-                    picker.delegate.selected_index.take();
                     picker
                         .delegate
                         .set_search_matches(search_id, did_cancel, query, matches, cx)
@@ -454,12 +471,14 @@ impl FileFinderDelegate {
                         .map(|query| query.path_like.path_query());
             self.matches.push_new_matches(
                 &self.history_items,
+                self.currently_opened_path.as_ref(),
                 &query,
                 matches.into_iter(),
                 extend_old_matches,
             );
             self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
+            self.selected_index = self.calculate_selected_index();
             cx.notify();
         }
     }
@@ -630,6 +649,19 @@ impl FileFinderDelegate {
                 .log_err();
         })
     }
+
+    /// Skips first history match (that is displayed topmost) if it's currently opened.
+    fn calculate_selected_index(&self) -> usize {
+        if let Some(Match::History(path, _)) = self.matches.get(0) {
+            if Some(path) == self.currently_opened_path.as_ref() {
+                let elements_after_first = self.matches.len() - 1;
+                if elements_after_first > 0 {
+                    return 1;
+                }
+            }
+        }
+        0
+    }
 }
 
 impl PickerDelegate for FileFinderDelegate {
@@ -644,11 +676,11 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn selected_index(&self) -> usize {
-        self.selected_index.unwrap_or(0)
+        self.selected_index
     }
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
-        self.selected_index = Some(ix);
+        self.selected_index = ix;
         cx.notify();
     }
 
@@ -671,22 +703,22 @@ impl PickerDelegate for FileFinderDelegate {
         if raw_query.is_empty() {
             let project = self.project.read(cx);
             self.latest_search_id = post_inc(&mut self.search_count);
-            self.selected_index.take();
             self.matches = Matches {
-                history: self
-                    .history_items
-                    .iter()
-                    .filter(|history_item| {
-                        project
-                            .worktree_for_id(history_item.project.worktree_id, cx)
-                            .is_some()
-                            || (project.is_local() && history_item.absolute.is_some())
-                    })
-                    .cloned()
-                    .map(|p| (p, None))
-                    .collect(),
+                history: Vec::new(),
                 search: Vec::new(),
             };
+            self.matches.set_new_history(
+                self.currently_opened_path.as_ref(),
+                None,
+                self.history_items.iter().filter(|history_item| {
+                    project
+                        .worktree_for_id(history_item.project.worktree_id, cx)
+                        .is_some()
+                        || (project.is_local() && history_item.absolute.is_some())
+                }),
+            );
+
+            self.selected_index = self.calculate_selected_index();
             cx.notify();
             Task::ready(())
         } else {

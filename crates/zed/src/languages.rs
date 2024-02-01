@@ -15,6 +15,7 @@ mod css;
 mod deno;
 mod elixir;
 mod elm;
+mod erlang;
 mod gleam;
 mod go;
 mod haskell;
@@ -113,6 +114,12 @@ pub fn init(
         ),
     }
     language("gitcommit", tree_sitter_gitcommit::language(), vec![]);
+    language(
+        "erlang",
+        tree_sitter_erlang::language(),
+        vec![Arc::new(erlang::ErlangLspAdapter)],
+    );
+
     language(
         "gleam",
         tree_sitter_gleam::language(),

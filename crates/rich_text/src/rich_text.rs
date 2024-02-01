@@ -47,7 +47,7 @@ pub struct Mention {
 }
 
 impl RichText {
-    pub fn element(&self, id: ElementId, cx: &mut WindowContext) -> AnyElement {
+    pub fn element(&self, id: ElementId, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
         let code_background = theme.colors().surface_background;
 
@@ -83,7 +83,12 @@ impl RichText {
         )
         .on_click(self.link_ranges.clone(), {
             let link_urls = self.link_urls.clone();
-            move |ix, cx| cx.open_url(&link_urls[ix])
+            move |ix, cx| {
+                let url = &link_urls[ix];
+                if url.starts_with("http") {
+                    cx.open_url(url);
+                }
+            }
         })
         .tooltip({
             let link_ranges = self.link_ranges.clone();
@@ -256,7 +261,7 @@ pub fn render_markdown_mut(
     }
 }
 
-pub fn render_markdown(
+pub fn render_rich_text(
     block: String,
     mentions: &[Mention],
     language_registry: &Arc<LanguageRegistry>,

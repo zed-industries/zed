@@ -3216,6 +3216,7 @@ pub mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init("0.0.0", cx);
             client::init_settings(cx);
             language::init(cx);
             Project::init_settings(cx);

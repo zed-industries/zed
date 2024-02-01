@@ -43,6 +43,7 @@ zed_actions = { path = "../zed_actions" }
 editor = { path = "../editor", features = ["test-support"] }
 futures.workspace = true
 gpui = { path = "../gpui", features = ["test-support"] }
+release_channel = { path = "../release_channel" }
 indoc.workspace = true
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }

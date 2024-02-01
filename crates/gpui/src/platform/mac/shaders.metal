@@ -61,6 +61,16 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
                               [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
+
+  // Fast path when the quad is not rounded and doesn't have any border.
+  if (quad.corner_radii.top_left == 0. && quad.corner_radii.bottom_left == 0. &&
+      quad.corner_radii.top_right == 0. &&
+      quad.corner_radii.bottom_right == 0. && quad.border_widths.top == 0. &&
+      quad.border_widths.left == 0. && quad.border_widths.right == 0. &&
+      quad.border_widths.bottom == 0.) {
+    return input.background_color;
+  }
+
   float2 half_size =
       float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
   float2 center =

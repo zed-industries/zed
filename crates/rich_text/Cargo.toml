@@ -22,7 +22,7 @@ futures.workspace = true
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lazy_static.workspace = true
-pulldown-cmark = { version = "0.9.2", default-features = false }
+pulldown-cmark.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 sum_tree = { path = "../sum_tree" }
