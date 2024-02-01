@@ -10,6 +10,8 @@ use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
 use std::{borrow::Cow, sync::Arc};
 
+pub(crate) const PATH_TEXTURE_FORMAT: gpu::TextureFormat = gpu::TextureFormat::R16Float;
+
 pub(crate) struct BladeAtlas(Mutex<BladeAtlasState>);
 
 struct BladeAtlasState {
@@ -32,6 +34,7 @@ impl BladeAtlasState {
         }
         for texture in self.path_textures.drain(..) {
             self.gpu.destroy_texture(texture.raw);
+            self.gpu.destroy_texture_view(texture.raw_view.unwrap());
         }
         self.gpu.destroy_command_encoder(&mut self.gpu_encoder);
         self.upload_belt.destroy(&self.gpu);
@@ -78,12 +81,27 @@ impl BladeAtlas {
         lock.gpu_encoder.start();
     }
 
+    pub fn allocate(&self, size: Size<DevicePixels>, texture_kind: AtlasTextureKind) -> AtlasTile {
+        let mut lock = self.0.lock();
+        lock.allocate(size, texture_kind)
+    }
+
     pub fn finish_frame(&self) -> gpu::SyncPoint {
         let mut lock = self.0.lock();
         let gpu = lock.gpu.clone();
         let sync_point = gpu.submit(&mut lock.gpu_encoder);
         lock.upload_belt.flush(&sync_point);
         sync_point
+    }
+
+    pub fn get_texture_view(&self, id: AtlasTextureId) -> gpu::TextureView {
+        let lock = self.0.lock();
+        let textures = match id.kind {
+            crate::AtlasTextureKind::Monochrome => &lock.monochrome_textures,
+            crate::AtlasTextureKind::Polychrome => &lock.polychrome_textures,
+            crate::AtlasTextureKind::Path => &lock.path_textures,
+        };
+        textures[id.index as usize].raw_view.unwrap()
     }
 }
 
@@ -146,7 +164,7 @@ impl BladeAtlasState {
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Path => {
-                format = gpu::TextureFormat::R16Float;
+                format = PATH_TEXTURE_FORMAT;
                 usage = gpu::TextureUsage::COPY
                     | gpu::TextureUsage::RESOURCE
                     | gpu::TextureUsage::TARGET;
@@ -166,6 +184,17 @@ impl BladeAtlasState {
             dimension: gpu::TextureDimension::D2,
             usage,
         });
+        let raw_view = if usage.contains(gpu::TextureUsage::TARGET) {
+            Some(self.gpu.create_texture_view(gpu::TextureViewDesc {
+                name: "",
+                texture: raw,
+                format,
+                dimension: gpu::ViewDimension::D2,
+                subresources: &Default::default(),
+            }))
+        } else {
+            None
+        };
 
         let textures = match kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
@@ -180,6 +209,7 @@ impl BladeAtlasState {
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             format,
             raw,
+            raw_view,
         };
         textures.push(atlas_texture);
         textures.last_mut().unwrap()
@@ -218,6 +248,7 @@ struct BladeAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
     raw: gpu::Texture,
+    raw_view: Option<gpu::TextureView>,
     format: gpu::TextureFormat,
 }
 

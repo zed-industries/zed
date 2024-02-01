@@ -1,6 +1,6 @@
 use super::BladeRenderer;
 use crate::{
-    BladeAtlas, Bounds, GlobalPixels, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
+    Bounds, GlobalPixels, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
     PlatformWindow, Point, Size, WindowAppearance, WindowBounds, WindowOptions, XcbAtoms,
 };
 use blade_graphics as gpu;
@@ -57,7 +57,6 @@ pub(crate) struct LinuxWindowState {
     x_window: x::Window,
     callbacks: Mutex<Callbacks>,
     inner: Mutex<LinuxWindowInner>,
-    sprite_atlas: Arc<BladeAtlas>,
 }
 
 #[derive(Clone)]
@@ -186,7 +185,6 @@ impl LinuxWindowState {
             height: bounds.size.height as u32,
             depth: 1,
         };
-        let sprite_atlas = Arc::new(BladeAtlas::new(&gpu));
 
         Self {
             xcb_connection: Arc::clone(xcb_connection),
@@ -200,16 +198,11 @@ impl LinuxWindowState {
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
             }),
-            sprite_atlas,
         }
     }
 
     pub fn destroy(&self) {
-        self.sprite_atlas.destroy();
-        {
-            let mut inner = self.inner.lock();
-            inner.renderer.destroy();
-        }
+        self.inner.lock().renderer.destroy();
         self.xcb_connection.send_request(&x::UnmapWindow {
             window: self.x_window,
         });
@@ -379,6 +372,7 @@ impl PlatformWindow for LinuxWindow {
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
-        self.0.sprite_atlas.clone()
+        let mut inner = self.0.inner.lock();
+        inner.renderer.atlas().clone()
     }
 }

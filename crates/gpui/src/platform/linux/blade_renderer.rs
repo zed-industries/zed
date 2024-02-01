@@ -2,8 +2,12 @@
 #![allow(irrefutable_let_patterns)]
 
 use super::{BladeBelt, BladeBeltDescriptor};
-use crate::{PrimitiveBatch, Quad, Scene, Shadow};
+use crate::{
+    AtlasTextureKind, AtlasTile, BladeAtlas, ContentMask, Path, PathId, PathVertex, PrimitiveBatch,
+    Quad, ScaledPixels, Scene, Shadow, PATH_TEXTURE_FORMAT,
+};
 use bytemuck::{Pod, Zeroable};
+use collections::HashMap;
 
 use blade_graphics as gpu;
 use std::sync::Arc;
@@ -33,6 +37,7 @@ struct ShaderShadowsData {
 struct BladePipelines {
     quads: gpu::RenderPipeline,
     shadows: gpu::RenderPipeline,
+    path_rasterization: gpu::RenderPipeline,
 }
 
 impl BladePipelines {
@@ -77,6 +82,22 @@ impl BladePipelines {
                     write_mask: gpu::ColorWrites::default(),
                 }],
             }),
+            path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "path_rasterization",
+                data_layouts: &[&shadows_layout],
+                vertex: shader.at("vs_path_rasterization"),
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: shader.at("fs_path_rasterization"),
+                color_targets: &[gpu::ColorTargetState {
+                    format: PATH_TEXTURE_FORMAT,
+                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
+            }),
         }
     }
 }
@@ -88,6 +109,8 @@ pub struct BladeRenderer {
     pipelines: BladePipelines,
     instance_belt: BladeBelt,
     viewport_size: gpu::Extent,
+    path_tiles: HashMap<PathId, AtlasTile>,
+    atlas: Arc<BladeAtlas>,
 }
 
 impl BladeRenderer {
@@ -106,6 +129,8 @@ impl BladeRenderer {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
         });
+        let atlas = Arc::new(BladeAtlas::new(&gpu));
+
         Self {
             gpu,
             command_encoder,
@@ -113,6 +138,8 @@ impl BladeRenderer {
             pipelines,
             instance_belt,
             viewport_size: size,
+            path_tiles: HashMap::default(),
+            atlas,
         }
     }
 
@@ -126,6 +153,7 @@ impl BladeRenderer {
 
     pub fn destroy(&mut self) {
         self.wait_for_gpu();
+        self.atlas.destroy();
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
@@ -140,10 +168,55 @@ impl BladeRenderer {
         self.viewport_size = size;
     }
 
+    pub fn atlas(&self) -> &Arc<BladeAtlas> {
+        &self.atlas
+    }
+
+    fn rasterize_paths(&mut self, paths: &[Path<ScaledPixels>]) {
+        self.path_tiles.clear();
+        let mut vertices_by_texture_id = HashMap::default();
+
+        for path in paths {
+            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+            let tile = self
+                .atlas
+                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path);
+            vertices_by_texture_id
+                .entry(tile.texture_id)
+                .or_insert(Vec::new())
+                .extend(path.vertices.iter().map(|vertex| PathVertex {
+                    xy_position: vertex.xy_position - clipped_bounds.origin
+                        + tile.bounds.origin.map(Into::into),
+                    st_position: vertex.st_position,
+                    content_mask: ContentMask {
+                        bounds: tile.bounds.map(Into::into),
+                    },
+                }));
+            self.path_tiles.insert(path.id, tile);
+        }
+
+        for (texture_id, vertices) in vertices_by_texture_id {
+            let instances = self.instance_belt.alloc_data(&vertices, &self.gpu);
+            let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
+                colors: &[gpu::RenderTarget {
+                    view: self.atlas.get_texture_view(texture_id),
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }],
+                depth_stencil: None,
+            });
+
+            let mut encoder = pass.with(&self.pipelines.path_rasterization);
+            encoder.draw(0, vertices.len() as u32, 0, 1);
+        }
+    }
+
     pub fn draw(&mut self, scene: &Scene) {
         let frame = self.gpu.acquire_frame();
         self.command_encoder.start();
         self.command_encoder.init_texture(frame.texture());
+
+        self.rasterize_paths(scene.paths());
 
         let globals = GlobalParams {
             viewport_size: [
@@ -187,6 +260,7 @@ impl BladeRenderer {
                         );
                         encoder.draw(0, 4, 0, shadows.len() as u32);
                     }
+                    PrimitiveBatch::Paths(paths) => {}
                     _ => continue,
                 }
             }
