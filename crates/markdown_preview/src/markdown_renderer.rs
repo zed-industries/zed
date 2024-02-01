@@ -174,7 +174,7 @@ where
                 }
 
                 let element = self.render_md_from_range(source_range.clone(), cx);
-                let paragraph = h_flex().mb_3().child(element);
+                let paragraph = div().mb_3().child(element);
 
                 self.finished.push(paragraph);
             }

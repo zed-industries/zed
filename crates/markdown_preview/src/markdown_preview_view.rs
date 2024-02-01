@@ -114,13 +114,16 @@ impl Render for MarkdownPreviewView {
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle)
             .id("MarkdownPreview")
-            .overflow_scroll()
+            .overflow_y_scroll()
+            .overflow_x_hidden()
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
             .children(render_markdown(&self.contents, &self.languages, cx));
 
         div().flex_1().child(
+            // FIXME: This shouldn't be necessary
+            // but the overflow_scroll above doesn't seem to work without it
             canvas(move |bounds, cx| {
                 rendered_markdown.into_any().draw(
                     bounds.origin,
