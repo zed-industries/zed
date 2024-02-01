@@ -110,3 +110,6 @@ jobs:
 
       - name: Wait for rollout to finish
         run: kubectl -n "$KUBE_NAMESPACE" rollout status deployment/collab
+
+      - name: Cleanup
+        run: docker system prune --filter 'until=720h' -f
