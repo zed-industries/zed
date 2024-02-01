@@ -61,7 +61,7 @@ impl FileFinder {
                 let abs_path = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
-                FoundPath::new(project_path, abs_path)
+                FoundPath::new_opened_file(project_path, abs_path)
             });
 
         // if exists, bubble the currently opened path to the top
@@ -139,7 +139,7 @@ pub struct FileFinderDelegate {
     latest_search_query: Option<PathLikeWithPosition<FileSearchQuery>>,
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
-    selected_index: Option<usize>,
+    selected_index: usize,
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
 }
@@ -231,7 +231,15 @@ impl Matches {
             &mut self.history,
             history_items_to_show,
             100,
-            |(_, a), (_, b)| b.cmp(a),
+            |(ap, a), (bp, b)| {
+                if ap.opened_file {
+                    return cmp::Ordering::Less;
+                }
+                if bp.opened_file {
+                    return cmp::Ordering::Greater;
+                }
+                b.cmp(a)
+            },
         );
 
         if extend_old_matches {
@@ -305,11 +313,24 @@ fn matching_history_item_paths(
 struct FoundPath {
     project: ProjectPath,
     absolute: Option<PathBuf>,
+    opened_file: bool,
 }
 
 impl FoundPath {
     fn new(project: ProjectPath, absolute: Option<PathBuf>) -> Self {
-        Self { project, absolute }
+        Self {
+            project,
+            absolute,
+            opened_file: false,
+        }
+    }
+
+    fn new_opened_file(project: ProjectPath, absolute: Option<PathBuf>) -> Self {
+        Self {
+            project,
+            absolute,
+            opened_file: true,
+        }
     }
 }
 
@@ -372,7 +393,7 @@ impl FileFinderDelegate {
             latest_search_query: None,
             currently_opened_path,
             matches: Matches::default(),
-            selected_index: None,
+            selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
         }
@@ -427,7 +448,6 @@ impl FileFinderDelegate {
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             picker
                 .update(&mut cx, |picker, cx| {
-                    picker.delegate.selected_index.take();
                     picker
                         .delegate
                         .set_search_matches(search_id, did_cancel, query, matches, cx)
@@ -460,6 +480,7 @@ impl FileFinderDelegate {
             );
             self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
+            self.selected_index = self.calculate_selected_index();
             cx.notify();
         }
     }
@@ -630,6 +651,20 @@ impl FileFinderDelegate {
                 .log_err();
         })
     }
+
+    /// Calculates selection index after the user performed search.
+    /// Prefers to return 1 if the top visible item corresponds to the currently opened file, otherwise returns 0.
+    fn calculate_selected_index(&self) -> usize {
+        let first = self.matches.history.get(0);
+        if let Some(first) = first {
+            if !first.0.opened_file {
+                return 0;
+            }
+        } else {
+            return 0;
+        }
+        (self.matches.len() - 1).min(1)
+    }
 }
 
 impl PickerDelegate for FileFinderDelegate {
@@ -644,11 +679,11 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn selected_index(&self) -> usize {
-        self.selected_index.unwrap_or(0)
+        self.selected_index
     }
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
-        self.selected_index = Some(ix);
+        self.selected_index = ix;
         cx.notify();
     }
 
@@ -671,7 +706,6 @@ impl PickerDelegate for FileFinderDelegate {
         if raw_query.is_empty() {
             let project = self.project.read(cx);
             self.latest_search_id = post_inc(&mut self.search_count);
-            self.selected_index.take();
             self.matches = Matches {
                 history: self
                     .history_items
@@ -687,6 +721,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .collect(),
                 search: Vec::new(),
             };
+            self.selected_index = self.calculate_selected_index();
             cx.notify();
             Task::ready(())
         } else {
