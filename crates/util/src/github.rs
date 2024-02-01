@@ -68,7 +68,6 @@ pub async fn latest_github_release(
 
     releases
         .into_iter()
-        .filter(|release| !release.assets.is_empty())
-        .find(|release| release.pre_release == pre_release)
+        .find(|release| !release.assets.is_empty() && release.pre_release == pre_release)
         .ok_or(anyhow!("Failed to find a release"))
 }
