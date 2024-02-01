@@ -106,7 +106,7 @@ jobs:
           fi
 
       - name: Start rollout
-        run: echo kubectl -n "$KUBE_NAMESPACE" set image deployment/collab collab=registry.digitalocean.com/zed/collab:${GITHUB_SHA}
+        run: kubectl -n "$KUBE_NAMESPACE" set image deployment/collab collab=registry.digitalocean.com/zed/collab:${GITHUB_SHA}
 
       - name: Wait for rollout to finish
         run: kubectl -n "$KUBE_NAMESPACE" rollout status deployment/collab
