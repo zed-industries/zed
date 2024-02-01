@@ -109,8 +109,8 @@
         "xls": "document",
         "xlsx": "document",
         "xml": "template",
-        "yaml": "settings",
-        "yml": "settings",
+        "yaml": "yaml",
+        "yml": "yaml",
         "zlogin": "terminal",
         "zsh": "terminal",
         "zsh_aliases": "terminal",
@@ -173,6 +173,9 @@
         },
         "php": {
             "icon": "icons/file_icons/php.svg"
+        },
+        "yaml": {
+            "icon": "icons/file_icons/yaml.svg"
         },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
