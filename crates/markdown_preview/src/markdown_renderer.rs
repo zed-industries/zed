@@ -5,7 +5,7 @@ use gpui::{
     Styled, StyledText, WindowContext,
 };
 use language::LanguageRegistry;
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 use rich_text::render_rich_text;
 use theme::{ActiveTheme, Theme};
 use ui::{h_flex, v_flex};
@@ -16,6 +16,7 @@ enum TableState {
 }
 
 struct MarkdownTable {
+    column_alignments: Vec<Alignment>,
     header: Vec<Div>,
     body: Vec<Vec<Div>>,
     current_row: Vec<Div>,
@@ -24,8 +25,9 @@ struct MarkdownTable {
 }
 
 impl MarkdownTable {
-    fn new(border_color: Hsla) -> Self {
+    fn new(border_color: Hsla, column_alignments: Vec<Alignment>) -> Self {
         Self {
+            column_alignments,
             header: Vec::new(),
             body: Vec::new(),
             current_row: Vec::new(),
@@ -47,9 +49,15 @@ impl MarkdownTable {
     }
 
     fn add_cell(&mut self, contents: AnyElement) {
-        let cell = div()
-            .child(contents)
+        let container = match self.alignment_for_next_cell() {
+            Alignment::Left | Alignment::None => div(),
+            Alignment::Center => v_flex().items_center(),
+            Alignment::Right => v_flex().items_end(),
+        };
+
+        let cell = container
             .w_full()
+            .child(contents)
             .px_2()
             .py_1()
             .border_color(self.border_color);
@@ -78,6 +86,13 @@ impl MarkdownTable {
             table = table.child(row_div);
         }
         table
+    }
+
+    fn alignment_for_next_cell(&self) -> Alignment {
+        self.column_alignments
+            .get(self.current_row.len())
+            .copied()
+            .unwrap_or(Alignment::None)
     }
 }
 
@@ -141,8 +156,11 @@ where
             Tag::BlockQuote => {
                 self.block_quote_depth += 1;
             }
-            Tag::Table(_text_alignments) => {
-                self.table = Some(MarkdownTable::new(self.theme.colors().border));
+            Tag::Table(column_alignments) => {
+                self.table = Some(MarkdownTable::new(
+                    self.theme.colors().border,
+                    column_alignments,
+                ));
             }
             _ => {}
         }
