@@ -3,22 +3,19 @@
 set -eu
 source script/lib/deploy-helpers.sh
 
-if [[ $# < 2 ]]; then
-  echo "Usage: $0 <production|staging> <tag-name>"
+if [[ $# != 1 ]]; then
+  echo "Usage: $0 <production|staging>"
   exit 1
 fi
 environment=$1
-version=$2
+tag="$(tag_for_environment $environment)"
 
-export_vars_for_environment ${environment}
-image_id=$(image_id_for_version ${version})
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" != "main" ]; then
+  echo "You must be on main to run this script"
+  exit 1
+fi
 
-export ZED_DO_CERTIFICATE_ID=$(doctl compute certificate list --format ID --no-header)
-export ZED_KUBE_NAMESPACE=${environment}
-export ZED_IMAGE_ID=${image_id}
-
-target_zed_kube_cluster
-envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-kubectl -n "$environment" rollout status deployment/collab --watch
-
-echo "deployed collab v${version} to ${environment}"
+echo git pull --ff-only origin main
+echo git tag -f $tag
+echo git push -f origin $tag
