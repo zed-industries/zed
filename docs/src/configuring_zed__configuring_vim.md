@@ -50,7 +50,7 @@ Finally, Vim mode's search and replace functionality is backed by Zed's. This me
 
 ## Custom key bindings
 
-Zed does not yet have an equivalent to vim’s `map` command to convert one set of keystrokes into another, however you can bind any sequence of keys to fire any Action documented in the [Key bindings documentation](https://docs.zed.dev/configuration/key-bindings).
+Zed does not yet have an equivalent to vim’s `map` command to convert one set of keystrokes into another, however you can bind any sequence of keys to fire any Action documented in the [Key bindings documentation](https://zed.dev/docs/key-bindings).
 
 You can edit your personal key bindings with `:keymap`.
 For vim-specific shortcuts, you may find the following template a good place to start:
