@@ -95,9 +95,6 @@ jobs:
           elif [[ $GITHUB_REF_NAME = "collab-staging" ]]; then
             echo "Deploying collab:$GITHUB_SHA to staging"
             echo "KUBE_NAMESPACE=staging" >> $GITHUB_ENV
-          elif [[ $GITHUB_REF_NAME = "test-collab-deploy" ]]; then
-            echo "Deploying collab:$GITHUB_SHA to staging"
-            echo "KUBE_NAMESPACE=staging" >> $GITHUB_ENV
           else
             echo "cowardly refusing to deploy from an unknown branch"
             exit 1
