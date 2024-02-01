@@ -1446,6 +1446,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
     }
 }
 
+#[track_caller]
 fn assert_match_selection(
     finder: &Picker<FileFinderDelegate>,
     expected_selection_index: usize,
@@ -1455,6 +1456,7 @@ fn assert_match_selection(
     assert_match_at_position(finder, expected_selection_index, expected_file_name);
 }
 
+#[track_caller]
 fn assert_match_at_position(
     finder: &Picker<FileFinderDelegate>,
     match_index: usize,
@@ -1464,11 +1466,11 @@ fn assert_match_at_position(
         .delegate
         .matches
         .get(match_index)
-        .expect("Finder should have a match item with the given index");
+        .unwrap_or_else(|| panic!("Finder has no match for index {match_index}"));
     let match_file_name = match match_item {
         Match::History(found_path, _) => found_path.absolute.as_deref().unwrap().file_name(),
         Match::Search(path_match) => path_match.0.path.file_name(),
     };
-    let match_file_name = match_file_name.unwrap().to_string_lossy().to_string();
-    assert_eq!(match_file_name.as_str(), expected_file_name);
+    let match_file_name = match_file_name.unwrap().to_string_lossy();
+    assert_eq!(match_file_name, expected_file_name);
 }

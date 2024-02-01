@@ -61,7 +61,7 @@ impl FileFinder {
                 let abs_path = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
-                FoundPath::new_opened_file(project_path, abs_path)
+                FoundPath::active_in_pane(project_path, abs_path)
             });
 
         // if exists, bubble the currently opened path to the top
@@ -231,14 +231,13 @@ impl Matches {
             &mut self.history,
             history_items_to_show,
             100,
-            |(ap, a), (bp, b)| {
-                if ap.opened_file {
-                    return cmp::Ordering::Less;
-                }
-                if bp.opened_file {
-                    return cmp::Ordering::Greater;
-                }
-                b.cmp(a)
+            |(path_a, match_a), (path_b, match_b)| match (
+                path_a.active_in_pane,
+                path_b.active_in_pane,
+            ) {
+                (true, false) => return cmp::Ordering::Less,
+                (false, true) => return cmp::Ordering::Greater,
+                _ => match_b.cmp(match_a),
             },
         );
 
@@ -313,7 +312,7 @@ fn matching_history_item_paths(
 struct FoundPath {
     project: ProjectPath,
     absolute: Option<PathBuf>,
-    opened_file: bool,
+    active_in_pane: bool,
 }
 
 impl FoundPath {
@@ -321,15 +320,15 @@ impl FoundPath {
         Self {
             project,
             absolute,
-            opened_file: false,
+            active_in_pane: false,
         }
     }
 
-    fn new_opened_file(project: ProjectPath, absolute: Option<PathBuf>) -> Self {
+    fn active_in_pane(project: ProjectPath, absolute: Option<PathBuf>) -> Self {
         Self {
             project,
             absolute,
-            opened_file: true,
+            active_in_pane: true,
         }
     }
 }
@@ -652,18 +651,17 @@ impl FileFinderDelegate {
         })
     }
 
-    /// Calculates selection index after the user performed search.
-    /// Prefers to return 1 if the top visible item corresponds to the currently opened file, otherwise returns 0.
+    /// Pane-dependent, skips first history match (that is displayed topmost) if it's active on the pane.
     fn calculate_selected_index(&self) -> usize {
-        let first = self.matches.history.get(0);
-        if let Some(first) = first {
-            if !first.0.opened_file {
-                return 0;
+        if let Some(Match::History(path, _)) = self.matches.get(0) {
+            if path.active_in_pane {
+                let elements_after_first = self.matches.len() - 1;
+                if elements_after_first > 0 {
+                    return 1;
+                }
             }
-        } else {
-            return 0;
         }
-        (self.matches.len() - 1).min(1)
+        0
     }
 }
 
