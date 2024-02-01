@@ -4,8 +4,8 @@ use gpui::{
     ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
     InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState, Interactivity,
     IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
-    Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem,
-    UnderlineStyle, WeakView, WhiteSpace, WindowContext,
+    Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle,
+    UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -185,7 +185,7 @@ impl TerminalElement {
         grid: &Vec<IndexedCell>,
         text_style: &TextStyle,
         // terminal_theme: &TerminalStyle,
-        text_system: &TextSystem,
+        text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
         cx: &WindowContext<'_>,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
