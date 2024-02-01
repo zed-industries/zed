@@ -1,5 +1,6 @@
 mod assets;
 mod color;
+mod syntax;
 mod util;
 mod vscode;
 

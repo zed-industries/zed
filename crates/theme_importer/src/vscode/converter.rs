@@ -6,10 +6,9 @@ use theme::{
     ThemeColorsContent, ThemeContent, ThemeStyleContent,
 };
 
+use crate::syntax::ZedSyntaxToken;
 use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 use crate::ThemeMetadata;
-
-use super::ZedSyntaxToken;
 
 pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<FontWeightContent> {
     match font_style {
@@ -212,10 +211,12 @@ impl VsCodeThemeConverter {
                 });
 
             let best_match = override_match
-                .or_else(|| syntax_token.find_best_token_color_match(&self.theme.token_colors))
+                .or_else(|| {
+                    syntax_token.find_best_vscode_token_color_match(&self.theme.token_colors)
+                })
                 .or_else(|| {
                     syntax_token.fallbacks().iter().find_map(|fallback| {
-                        fallback.find_best_token_color_match(&self.theme.token_colors)
+                        fallback.find_best_vscode_token_color_match(&self.theme.token_colors)
                     })
                 });
 
