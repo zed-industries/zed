@@ -24,6 +24,14 @@
 ;; First match wins in this file
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Primitive types
+(string) @string
+(char) @constant
+(integer) @number
+(var) @variable
+(atom) @string.special.symbol
+
 ;; Attributes
 
 ;; module attribute
@@ -220,10 +228,3 @@
 
 (dotdotdot) @comment.discard
 (comment) @comment
-
-;; Primitive types
-(string) @string
-(char) @constant
-(integer) @number
-(var) @variable
-(atom) @string.special.symbol
