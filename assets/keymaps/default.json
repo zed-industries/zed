@@ -151,19 +151,6 @@
         }
       ],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
-      // Can't make this default:
-      // "alt-up": [
-      //   "editor::MoveUpByLines",
-      //   {
-      //     "lines": 3
-      //   }
-      // ],
-      // "alt-down": [
-      //   "editor::MoveDownByLines",
-      //   {
-      //     "lines": 3
-      //   }
-      // ],
       "alt-shift-up": [
         "editor::SelectUpByLines",
         {
