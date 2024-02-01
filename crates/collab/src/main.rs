@@ -14,6 +14,7 @@ use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,7 +27,7 @@ async fn main() -> Result<()> {
 
     match args().skip(1).next().as_deref() {
         Some("version") => {
-            println!("collab v{VERSION}");
+            println!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"));
         }
         Some("migrate") => {
             run_migrations().await?;
@@ -105,7 +106,7 @@ async fn run_migrations() -> Result<()> {
 }
 
 async fn handle_root() -> String {
-    format!("collab v{VERSION}")
+    format!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"))
 }
 
 async fn handle_liveness_probe(Extension(state): Extension<Arc<AppState>>) -> Result<String> {
