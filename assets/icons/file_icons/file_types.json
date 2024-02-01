@@ -110,7 +110,7 @@
         "xlsx": "document",
         "xml": "template",
         "yaml": "yaml",
-        "yml": "settings",
+        "yml": "yaml"
         "zlogin": "terminal",
         "zsh": "terminal",
         "zsh_aliases": "terminal",
