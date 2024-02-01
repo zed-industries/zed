@@ -4265,6 +4265,7 @@ dependencies = [
  "lsp-types",
  "parking_lot 0.11.2",
  "postage",
+ "release_channel",
  "serde",
  "serde_derive",
  "serde_json",

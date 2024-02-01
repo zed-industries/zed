@@ -3130,7 +3130,9 @@ impl Project {
             (None, override_options) => initialization_options = override_options,
             _ => {}
         }
-        let language_server = language_server.initialize(initialization_options).await?;
+        let language_server = cx
+            .update(|cx| language_server.initialize(initialization_options, cx))?
+            .await?;
 
         language_server
             .notify::<lsp::notification::DidChangeConfiguration>(

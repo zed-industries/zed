@@ -195,11 +195,11 @@ impl Prettier {
             },
             Path::new("/"),
             None,
-            cx,
+            cx.clone(),
         )
         .context("prettier server creation")?;
-        let server = executor
-            .spawn(server.initialize(None))
+        let server = cx
+            .update(|cx| executor.spawn(server.initialize(None, cx)))?
             .await
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {
