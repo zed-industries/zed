@@ -65,7 +65,9 @@ impl LspAdapter for OCamlLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<CodeLabel> {
         let name = &completion.label;
-        match completion.kind.zip(completion.detail.as_ref()) {
+        let detail = completion.detail.as_ref().map(|s| s.replace("\n", " "));
+
+        match completion.kind.zip(detail) {
             // Error of 'b : ('a, 'b) result
             // Stack_overflow : exn
             Some((CompletionItemKind::CONSTRUCTOR | CompletionItemKind::ENUM_MEMBER, detail)) => {
