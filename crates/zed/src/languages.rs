@@ -66,6 +66,7 @@ pub fn init(
     };
 
     language("bash", tree_sitter_bash::language(), vec![]);
+    language("bicep",tree_sitter_bicep::language(), vec![]);
     language(
         "c",
         tree_sitter_c::language(),
