@@ -1,14 +1,15 @@
 {
     "suffixes": {
+        "Emakefile": "erlang",
         "aac": "audio",
         "accdb": "storage",
         "app.src": "erlang",
         "avif": "image",
         "bak": "backup",
+        "bash": "terminal",
         "bash_aliases": "terminal",
         "bash_logout": "terminal",
         "bash_profile": "terminal",
-        "bash": "terminal",
         "bashrc": "terminal",
         "bmp": "image",
         "c": "code",
@@ -24,12 +25,11 @@
         "doc": "document",
         "docx": "document",
         "eex": "elixir",
-        "Emakefile": "erlang",
         "erl": "erlang",
         "escript": "erlang",
+        "eslintrc": "eslint",
         "eslintrc.js": "eslint",
         "eslintrc.json": "eslint",
-        "eslintrc": "eslint",
         "ex": "elixir",
         "exs": "elixir",
         "fish": "terminal",
@@ -42,6 +42,7 @@
         "gitattributes": "vcs",
         "gitignore": "vcs",
         "gitkeep": "vcs",
+        "gitmodules": "vcs",
         "go": "go",
         "h": "code",
         "handlebars": "code",
@@ -119,10 +120,10 @@
         "yml": "yaml",
         "yrl": "erlang",
         "zlogin": "terminal",
+        "zsh": "terminal",
         "zsh_aliases": "terminal",
         "zsh_histfile": "terminal",
         "zsh_profile": "terminal",
-        "zsh": "terminal",
         "zshenv": "terminal",
         "zshrc": "terminal"
     },
@@ -140,7 +141,7 @@
             "icon": "icons/file_icons/folder.svg"
         },
         "css": {
-          "icon": "icons/file_icons/css.svg"
+            "icon": "icons/file_icons/css.svg"
         },
         "default": {
             "icon": "icons/file_icons/file.svg"
