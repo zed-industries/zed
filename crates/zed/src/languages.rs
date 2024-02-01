@@ -12,6 +12,7 @@ use self::{deno::DenoSettings, elixir::ElixirSettings};
 mod c;
 mod csharp;
 mod css;
+mod dart;
 mod deno;
 mod elixir;
 mod elm;
@@ -310,6 +311,11 @@ pub fn init(
         vec![Arc::new(uiua::UiuaLanguageServer {})],
     );
     language("proto", tree_sitter_proto::language(), vec![]);
+    language(
+        "dart",
+        tree_sitter_dart::language(),
+        vec![Arc::new(dart::DartLanguageServer {})],
+    );
 
     if let Ok(children) = std::fs::read_dir(&*PLUGINS_DIR) {
         for child in children {

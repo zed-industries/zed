@@ -4,7 +4,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
+use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt, AsyncBufRead};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
@@ -307,7 +307,7 @@ impl LanguageServer {
         response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
         cx: AsyncAppContext,
-    ) -> anyhow::Result<()>
+    ) -> Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
         F: FnMut(AnyNotification) + 'static + Send,
@@ -378,7 +378,7 @@ impl LanguageServer {
             } else {
                 warn!(
                     "failed to deserialize LSP message:\n{}",
-                    std::str::from_utf8(&buffer)?
+                    str::from_utf8(&buffer)?
                 );
             }
 
@@ -393,7 +393,7 @@ impl LanguageServer {
         stderr: Stderr,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
         stderr_capture: Arc<Mutex<Option<String>>>,
-    ) -> anyhow::Result<()>
+    ) -> Result<()>
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
@@ -430,7 +430,7 @@ impl LanguageServer {
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
-    ) -> anyhow::Result<()>
+    ) -> Result<()>
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
     {
@@ -626,7 +626,7 @@ impl LanguageServer {
             let outbound_tx = self.outbound_tx.clone();
             let executor = self.executor.clone();
             let mut output_done = self.output_done_rx.lock().take().unwrap();
-            let shutdown_request = Self::request_internal::<request::Shutdown>(
+            let shutdown_request = Self::request_internal::<Shutdown>(
                 &next_id,
                 &response_handlers,
                 &outbound_tx,
@@ -856,7 +856,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl 'static + Future<Output = anyhow::Result<T::Result>>
+    ) -> impl 'static + Future<Output = Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
