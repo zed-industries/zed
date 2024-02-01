@@ -3,8 +3,9 @@ use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
     div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement, Render,
-    SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
+    EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, ParentElement,
+    Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -534,10 +535,18 @@ impl Dock {
             DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
         }
     }
+
+    fn dispatch_context() -> KeyContext {
+        let mut dispatch_context = KeyContext::default();
+        dispatch_context.add("Dock");
+
+        dispatch_context
+    }
 }
 
 impl Render for Dock {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
 
@@ -588,6 +597,7 @@ impl Render for Dock {
             }
 
             div()
+                .key_context(dispatch_context)
                 .track_focus(&self.focus_handle)
                 .flex()
                 .bg(cx.theme().colors().panel_background)
@@ -612,7 +622,9 @@ impl Render for Dock {
                 )
                 .child(handle)
         } else {
-            div().track_focus(&self.focus_handle)
+            div()
+                .key_context(dispatch_context)
+                .track_focus(&self.focus_handle)
         }
     }
 }

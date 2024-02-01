@@ -2075,30 +2075,93 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut WindowContext,
     ) {
-        if let Some(pane) = self.find_pane_in_direction(direction, cx) {
-            cx.focus_view(pane);
+        use ActivateInDirectionTarget as Target;
+        enum Origin {
+            LeftDock,
+            RightDock,
+            BottomDock,
+            Center,
         }
-    }
 
-    pub fn swap_pane_in_direction(
-        &mut self,
-        direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(to) = self
-            .find_pane_in_direction(direction, cx)
-            .map(|pane| pane.clone())
-        {
-            self.center.swap(&self.active_pane.clone(), &to);
-            cx.notify();
+        let origin: Origin = [
+            (&self.left_dock, Origin::LeftDock),
+            (&self.right_dock, Origin::RightDock),
+            (&self.bottom_dock, Origin::BottomDock),
+        ]
+        .into_iter()
+        .find_map(|(dock, origin)| {
+            if dock.focus_handle(cx).contains_focused(cx) && dock.read(cx).is_open() {
+                Some(origin)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(Origin::Center);
+
+        let get_last_active_pane = || {
+            self.last_active_center_pane.as_ref().and_then(|p| {
+                let p = p.upgrade()?;
+                (p.read(cx).items_len() != 0).then_some(p)
+            })
+        };
+
+        let try_dock =
+            |dock: &View<Dock>| dock.read(cx).is_open().then(|| Target::Dock(dock.clone()));
+
+        let target = match (origin, direction) {
+            // We're in the center, so we first try to go to a different pane,
+            // otherwise try to go to a dock.
+            (Origin::Center, direction) => {
+                if let Some(pane) = self.find_pane_in_direction(direction, cx) {
+                    Some(Target::Pane(pane))
+                } else {
+                    match direction {
+                        SplitDirection::Up => None,
+                        SplitDirection::Down => try_dock(&self.bottom_dock),
+                        SplitDirection::Left => try_dock(&self.left_dock),
+                        SplitDirection::Right => try_dock(&self.right_dock),
+                    }
+                }
+            }
+
+            (Origin::LeftDock, SplitDirection::Right) => {
+                if let Some(last_active_pane) = get_last_active_pane() {
+                    Some(Target::Pane(last_active_pane))
+                } else {
+                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.right_dock))
+                }
+            }
+
+            (Origin::LeftDock, SplitDirection::Down)
+            | (Origin::RightDock, SplitDirection::Down) => try_dock(&self.bottom_dock),
+
+            (Origin::BottomDock, SplitDirection::Up) => get_last_active_pane().map(Target::Pane),
+            (Origin::BottomDock, SplitDirection::Left) => try_dock(&self.left_dock),
+            (Origin::BottomDock, SplitDirection::Right) => try_dock(&self.right_dock),
+
+            (Origin::RightDock, SplitDirection::Left) => {
+                if let Some(last_active_pane) = get_last_active_pane() {
+                    Some(Target::Pane(last_active_pane))
+                } else {
+                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock))
+                }
+            }
+
+            _ => None,
+        };
+
+        match target {
+            Some(ActivateInDirectionTarget::Pane(pane)) => cx.focus_view(&pane),
+            Some(ActivateInDirectionTarget::Dock(dock)) => cx.focus_view(&dock),
+            None => {}
         }
     }
 
     fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &AppContext,
-    ) -> Option<&View<Pane>> {
+        cx: &WindowContext,
+    ) -> Option<View<Pane>> {
         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
             return None;
         };
@@ -2124,7 +2187,21 @@ impl Workspace {
                 Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
             }
         };
-        self.center.pane_at_pixel_position(target)
+        self.center.pane_at_pixel_position(target).cloned()
+    }
+
+    pub fn swap_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(to) = self
+            .find_pane_in_direction(direction, cx)
+            .map(|pane| pane.clone())
+        {
+            self.center.swap(&self.active_pane.clone(), &to);
+            cx.notify();
+        }
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
@@ -3486,6 +3563,11 @@ fn open_items(
 
         Ok(opened_items)
     })
+}
+
+enum ActivateInDirectionTarget {
+    Pane(View<Pane>),
+    Dock(View<Dock>),
 }
 
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncAppContext) {
