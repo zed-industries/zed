@@ -781,7 +781,7 @@ impl AssistantPanel {
         });
     }
 
-    fn build_api_key_editor(&mut self, cx: &mut ViewContext<Self>) {
+    fn build_api_key_editor(&mut self, cx: &mut WindowContext<'_>) {
         self.api_key_editor = Some(build_api_key_editor(cx));
     }
 
@@ -1144,7 +1144,7 @@ impl AssistantPanel {
     }
 }
 
-fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
+fn build_api_key_editor(cx: &mut WindowContext) -> View<Editor> {
     cx.new_view(|cx| {
         let mut editor = Editor::single_line(cx);
         editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
@@ -1155,9 +1155,10 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
-            const INSTRUCTIONS: [&'static str; 5] = [
+            const INSTRUCTIONS: [&'static str; 6] = [
                 "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
                 " - You can create an API key at: platform.openai.com/api-keys",
+                " - Make sure your OpenAI account has credits",
                 " - Having a subscription for another service like GitHub Copilot won't work.",
                 " ",
                 "Paste your OpenAI API key and press Enter to use the assistant:"
