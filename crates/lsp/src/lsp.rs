@@ -456,8 +456,6 @@ impl LanguageServer {
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
         let root_uri = Url::from_file_path(&self.root_path).unwrap();
-        let name = release_channel::ReleaseChannel::global(cx).display_name();
-        let version = release_channel::AppVersion::global(cx);
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: None,
@@ -586,8 +584,10 @@ impl LanguageServer {
                 name: Default::default(),
             }]),
             client_info: Some(ClientInfo {
-                name: name.to_string(),
-                version: Some(version.to_string()),
+                name: release_channel::ReleaseChannel::global(cx)
+                    .display_name()
+                    .to_string(),
+                version: Some(release_channel::AppVersion::global(cx).to_string()),
             }),
             locale: None,
         };
@@ -1224,6 +1224,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init("0.0.0", cx);
+        });
         let (server, mut fake) =
             FakeLanguageServer::new("the-lsp".to_string(), Default::default(), cx.to_async());
 
