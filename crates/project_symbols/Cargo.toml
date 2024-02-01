@@ -33,6 +33,7 @@ gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+release_channel = { path = "../release_channel" }
 settings = { path = "../settings", features = ["test-support"] }
 theme = { path = "../theme", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

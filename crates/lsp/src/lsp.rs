@@ -5,7 +5,7 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
-use gpui::{AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -450,7 +450,11 @@ impl LanguageServer {
     /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
-    pub async fn initialize(mut self, options: Option<Value>) -> Result<Arc<Self>> {
+    pub fn initialize(
+        mut self,
+        options: Option<Value>,
+        cx: &AppContext,
+    ) -> Task<Result<Arc<Self>>> {
         let root_uri = Url::from_file_path(&self.root_path).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
@@ -579,18 +583,25 @@ impl LanguageServer {
                 uri: root_uri,
                 name: Default::default(),
             }]),
-            client_info: None,
+            client_info: Some(ClientInfo {
+                name: release_channel::ReleaseChannel::global(cx)
+                    .display_name()
+                    .to_string(),
+                version: Some(release_channel::AppVersion::global(cx).to_string()),
+            }),
             locale: None,
         };
 
-        let response = self.request::<request::Initialize>(params).await?;
-        if let Some(info) = response.server_info {
-            self.name = info.name;
-        }
-        self.capabilities = response.capabilities;
+        cx.spawn(|_| async move {
+            let response = self.request::<request::Initialize>(params).await?;
+            if let Some(info) = response.server_info {
+                self.name = info.name;
+            }
+            self.capabilities = response.capabilities;
 
-        self.notify::<notification::Initialized>(InitializedParams {})?;
-        Ok(Arc::new(self))
+            self.notify::<notification::Initialized>(InitializedParams {})?;
+            Ok(Arc::new(self))
+        })
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
@@ -1213,6 +1224,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init("0.0.0", cx);
+        });
         let (server, mut fake) =
             FakeLanguageServer::new("the-lsp".to_string(), Default::default(), cx.to_async());
 
@@ -1229,7 +1243,7 @@ mod tests {
             })
             .detach();
 
-        let server = server.initialize(None).await.unwrap();
+        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(

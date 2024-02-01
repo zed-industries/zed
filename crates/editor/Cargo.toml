@@ -79,6 +79,7 @@ language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 multi_buffer = { path = "../multi_buffer", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+release_channel = { path = "../release_channel" }
 rand.workspace = true
 settings = { path = "../settings", features = ["test-support"] }
 text = { path = "../text", features = ["test-support"] }

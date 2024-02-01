@@ -27,6 +27,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 util = { path = "../util" }
+release_channel = { path = "../release_channel" }
 
 [dev-dependencies]
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
