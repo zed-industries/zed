@@ -1,5 +1,5 @@
 name = "HCL"
-path_suffixes = ["hcl", "hcl2"]
+path_suffixes = ["hcl"]
 line_comments = ["# "]
 block_comments = [{ start = "/*", end = "*/" }]
 autoclose_before = ",}])"
