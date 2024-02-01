@@ -1,7 +1,9 @@
 {
     "suffixes": {
+        "Emakefile": "erlang",
         "aac": "audio",
         "accdb": "storage",
+        "app.src": "erlang",
         "avif": "image",
         "bak": "backup",
         "bash": "terminal",
@@ -23,6 +25,8 @@
         "doc": "document",
         "docx": "document",
         "eex": "elixir",
+        "erl": "erlang",
+        "escript": "erlang",
         "eslintrc": "eslint",
         "eslintrc.js": "eslint",
         "eslintrc.json": "eslint",
@@ -37,17 +41,18 @@
         "gif": "image",
         "gitattributes": "vcs",
         "gitignore": "vcs",
-        "gitmodules": "vcs",
         "gitkeep": "vcs",
+        "gitmodules": "vcs",
         "go": "go",
         "h": "code",
         "handlebars": "code",
         "hbs": "template",
         "heex": "elixir",
         "heif": "image",
+        "hrl": "erlang",
+        "hs": "haskell",
         "htm": "template",
         "html": "template",
-        "hs": "haskell",
         "ib": "storage",
         "ico": "image",
         "ini": "settings",
@@ -85,6 +90,7 @@
         "psd": "image",
         "py": "python",
         "rb": "ruby",
+        "rebar.config": "erlang",
         "rkt": "code",
         "rs": "rust",
         "rtf": "document",
@@ -104,13 +110,15 @@
         "txt": "document",
         "vue": "vue",
         "wav": "audio",
-        "webp": "image",
         "webm": "video",
+        "webp": "image",
         "xls": "document",
         "xlsx": "document",
         "xml": "template",
+        "xrl": "erlang",
         "yaml": "yaml",
         "yml": "yaml",
+        "yrl": "erlang",
         "zlogin": "terminal",
         "zsh": "terminal",
         "zsh_aliases": "terminal",
@@ -133,7 +141,7 @@
             "icon": "icons/file_icons/folder.svg"
         },
         "css": {
-          "icon": "icons/file_icons/css.svg"
+            "icon": "icons/file_icons/css.svg"
         },
         "default": {
             "icon": "icons/file_icons/file.svg"
@@ -143,6 +151,9 @@
         },
         "elixir": {
             "icon": "icons/file_icons/elixir.svg"
+        },
+        "erlang": {
+            "icon": "icons/file_icons/erlang.svg"
         },
         "eslint": {
             "icon": "icons/file_icons/eslint.svg"
