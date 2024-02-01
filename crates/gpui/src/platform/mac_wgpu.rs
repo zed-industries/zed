@@ -9,6 +9,8 @@ mod metal_renderer;
 mod open_type;
 mod platform;
 mod text_system;
+mod wgpu_atlas;
+mod wgpu_renderer;
 mod window;
 mod window_appearance;
 

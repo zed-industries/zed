@@ -1,4 +1,6 @@
-use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, MetalRenderer, NSRange};
+use super::{
+    global_bounds_from_ns_rect, ns_string, wgpu_renderer::WgpuRenderer, MacDisplay, NSRange,
+};
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
     Bounds, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent,
@@ -321,7 +323,7 @@ struct MacWindowState {
     executor: ForegroundExecutor,
     native_window: id,
     native_view: NonNull<id>,
-    renderer: MetalRenderer,
+    renderer: Option<WgpuRenderer>,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
@@ -451,6 +453,7 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
+#[derive(Clone)]
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
@@ -529,7 +532,7 @@ impl MacWindow {
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view as *mut _),
-                renderer: MetalRenderer::new(true),
+                renderer: None,
                 kind: options.kind,
                 request_frame_callback: None,
                 event_callback: None,
@@ -554,6 +557,8 @@ impl MacWindow {
                 ime_text: None,
                 external_files_dragged: false,
             })));
+
+            window.0.lock().renderer = Some(WgpuRenderer::new(window.clone()));
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
@@ -1009,11 +1014,18 @@ impl PlatformWindow for MacWindow {
 
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
-        this.renderer.draw(scene);
+        todo!()
+        // this.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.0.lock().renderer.sprite_atlas().clone()
+        self.0
+            .lock()
+            .renderer
+            .as_ref()
+            .unwrap()
+            .sprite_atlas()
+            .clone()
     }
 }
 
@@ -1422,74 +1434,77 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
     let window_state = unsafe { get_window_state(this) };
     let window_state = window_state.as_ref().lock();
-    window_state.renderer.layer().as_ptr() as id
+    todo!()
+    // window_state.renderer.layer().as_ptr() as id
 }
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
+    return; //TODO
+            // let window_state = unsafe { get_window_state(this) };
+            // let mut lock = window_state.as_ref().lock();
 
-    unsafe {
-        let scale_factor = lock.scale_factor() as f64;
-        let size = lock.content_size();
-        let drawable_size: NSSize = NSSize {
-            width: f64::from(size.width) * scale_factor,
-            height: f64::from(size.height) * scale_factor,
-        };
+    // unsafe {
+    //     let scale_factor = lock.scale_factor() as f64;
+    //     let size = lock.content_size();
+    //     let drawable_size: NSSize = NSSize {
+    //         width: f64::from(size.width) * scale_factor,
+    //         height: f64::from(size.height) * scale_factor,
+    //     };
 
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setContentsScale: scale_factor
-        ];
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setDrawableSize: drawable_size
-        ];
-    }
+    //     let _: () = msg_send![
+    //         lock.renderer.layer(),
+    //         setContentsScale: scale_factor
+    //     ];
+    //     let _: () = msg_send![
+    //         lock.renderer.layer(),
+    //         setDrawableSize: drawable_size
+    //     ];
+    // }
 
-    if let Some(mut callback) = lock.resize_callback.take() {
-        let content_size = lock.content_size();
-        let scale_factor = lock.scale_factor();
-        drop(lock);
-        callback(content_size, scale_factor);
-        window_state.as_ref().lock().resize_callback = Some(callback);
-    };
+    // if let Some(mut callback) = lock.resize_callback.take() {
+    //     let content_size = lock.content_size();
+    //     let scale_factor = lock.scale_factor();
+    //     drop(lock);
+    //     callback(content_size, scale_factor);
+    //     window_state.as_ref().lock().resize_callback = Some(callback);
+    // };
 }
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
-    let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
+    return; // TODO
+            // let window_state = unsafe { get_window_state(this) };
+            // let lock = window_state.as_ref().lock();
 
-    if lock.content_size() == size.into() {
-        return;
-    }
+    // if lock.content_size() == size.into() {
+    //     return;
+    // }
 
-    unsafe {
-        let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
-    }
+    // unsafe {
+    //     let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
+    // }
 
-    let scale_factor = lock.scale_factor() as f64;
-    let drawable_size: NSSize = NSSize {
-        width: size.width * scale_factor,
-        height: size.height * scale_factor,
-    };
+    // let scale_factor = lock.scale_factor() as f64;
+    // let drawable_size: NSSize = NSSize {
+    //     width: size.width * scale_factor,
+    //     height: size.height * scale_factor,
+    // };
 
-    unsafe {
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setDrawableSize: drawable_size
-        ];
-    }
+    // unsafe {
+    //     let _: () = msg_send![
+    //         lock.renderer.layer(),
+    //         setDrawableSize: drawable_size
+    //     ];
+    // }
 
-    drop(lock);
-    let mut lock = window_state.lock();
-    if let Some(mut callback) = lock.resize_callback.take() {
-        let content_size = lock.content_size();
-        let scale_factor = lock.scale_factor();
-        drop(lock);
-        callback(content_size, scale_factor);
-        window_state.lock().resize_callback = Some(callback);
-    };
+    // drop(lock);
+    // let mut lock = window_state.lock();
+    // if let Some(mut callback) = lock.resize_callback.take() {
+    //     let content_size = lock.content_size();
+    //     let scale_factor = lock.scale_factor();
+    //     drop(lock);
+    //     callback(content_size, scale_factor);
+    //     window_state.lock().resize_callback = Some(callback);
+    // };
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {

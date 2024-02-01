@@ -20,7 +20,7 @@ ctrlc = "3.4"
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
 editor = { path = "../editor" }
 fuzzy = {  path = "../fuzzy" }
-gpui = { path = "../gpui" }
+gpui = { path = "../gpui", features = ["wgpu"] }
 indoc.workspace = true
 itertools = "0.11.0"
 language = { path = "../language" }
