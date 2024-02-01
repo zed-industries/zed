@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use std::{any::Any, path::PathBuf};
-use futures::{StreamExt};
 
 pub struct DartLanguageServer;
 
