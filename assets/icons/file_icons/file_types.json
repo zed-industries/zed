@@ -119,7 +119,7 @@
         "zsh_profile": "terminal",
         "zshenv": "terminal",
         "zshrc": "terminal"
-        },
+    },
     "types": {
         "audio": {
             "icon": "icons/file_icons/audio.svg"
@@ -217,5 +217,5 @@
         "vue": {
             "icon": "icons/file_icons/vue.svg"
         }
-     }
+    }
 }
