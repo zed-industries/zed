@@ -1,7 +1,7 @@
 name = "HCL"
 path_suffixes = ["hcl"]
 line_comments = ["# ", "// "]
-block_comments = [{ start = "/*", end = "*/" }]
+block_comment = ["/*", "*/"]
 autoclose_before = ",}])"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
