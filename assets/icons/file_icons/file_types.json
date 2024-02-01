@@ -26,6 +26,7 @@
         "eslintrc": "eslint",
         "eslintrc.js": "eslint",
         "eslintrc.json": "eslint",
+        "el": "emacs",
         "ex": "elixir",
         "exs": "elixir",
         "fish": "terminal",
@@ -140,6 +141,9 @@
         },
         "document": {
             "icon": "icons/file_icons/book.svg"
+        },
+        "emacs": {
+          "icon": "icons/file_icons/emacs.svg"
         },
         "elixir": {
             "icon": "icons/file_icons/elixir.svg"
