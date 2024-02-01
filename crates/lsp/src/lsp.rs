@@ -322,8 +322,15 @@ impl LanguageServer {
         let mut buffer = Vec::new();
         loop {
             buffer.clear();
-            stdout.read_until(b'\n', &mut buffer).await?;
-            stdout.read_until(b'\n', &mut buffer).await?;
+
+            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
+                break;
+            };
+
+            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
+                break;
+            };
+
             let header = std::str::from_utf8(&buffer)?;
             let message_len: usize = header
                 .strip_prefix(CONTENT_LEN_HEADER)
@@ -378,6 +385,8 @@ impl LanguageServer {
             // Don't starve the main thread when receiving lots of messages at once.
             smol::future::yield_now().await;
         }
+
+        Ok(())
     }
 
     async fn handle_stderr<Stderr>(
@@ -393,7 +402,12 @@ impl LanguageServer {
 
         loop {
             buffer.clear();
-            stderr.read_until(b'\n', &mut buffer).await?;
+
+            let bytes_read = stderr.read_until(b'\n', &mut buffer).await?;
+            if bytes_read == 0 {
+                return Ok(());
+            }
+
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming stderr message:{message}");
                 for handler in io_handlers.lock().values_mut() {
