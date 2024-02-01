@@ -122,7 +122,7 @@ impl Render for MarkdownPreviewView {
             .children(render_markdown(&self.contents, &self.languages, cx));
 
         div().flex_1().child(
-            // FIXME: This shouldn't be nescessary
+            // FIXME: This shouldn't be necessary
             // but the overflow_scroll above doesn't seem to work without it
             canvas(move |bounds, cx| {
                 rendered_markdown.into_any().draw(
