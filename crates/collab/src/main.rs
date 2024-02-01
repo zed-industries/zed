@@ -106,7 +106,7 @@ async fn run_migrations() -> Result<()> {
 }
 
 async fn handle_root() -> String {
-    format!("collab v{VERSION}")
+    format!("collab v{VERSION} ({REVISION})")
 }
 
 async fn handle_liveness_probe(Extension(state): Extension<Arc<AppState>>) -> Result<String> {
