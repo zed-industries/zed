@@ -70,6 +70,19 @@ pub struct FoldAt {
 pub struct UnfoldAt {
     pub buffer_row: u32,
 }
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct MoveUpByLines {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct MoveDownByLines {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
+
 impl_actions!(
     editor,
     [
@@ -84,7 +97,9 @@ impl_actions!(
         ConfirmCodeAction,
         ToggleComments,
         FoldAt,
-        UnfoldAt
+        UnfoldAt,
+        MoveUpByLines,
+        MoveDownByLines,
     ]
 );
 
