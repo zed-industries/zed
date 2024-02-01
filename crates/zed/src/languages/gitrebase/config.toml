@@ -1,0 +1,7 @@
+name = "Git Rebase"
+path_suffixes = [
+  # Refer to https://github.com/neovim/neovim/blob/master/runtime/lua/vim/filetype.lua#L1296
+  "git-rebase-todo"
+]
+line_comments = ["#"]
+brackets = []
