@@ -199,9 +199,13 @@ impl AssistantPanel {
             .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
         cx.notify();
         if self.focus_handle.is_focused(cx) {
-            if let Some(editor) = self.active_editor() {
-                cx.focus_view(editor);
-            } else if let Some(api_key_editor) = self.api_key_editor.as_ref() {
+            if self.has_credentials() {
+                if let Some(editor) = self.active_editor() {
+                    cx.focus_view(editor);
+                }
+            }
+
+            if let Some(api_key_editor) = self.api_key_editor.as_ref() {
                 cx.focus_view(api_key_editor);
             }
         }
@@ -777,6 +781,10 @@ impl AssistantPanel {
         });
     }
 
+    fn build_api_key_editor(&mut self, cx: &mut WindowContext<'_>) {
+        self.api_key_editor = Some(build_api_key_editor(cx));
+    }
+
     fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
@@ -870,7 +878,7 @@ impl AssistantPanel {
             cx.update(|cx| completion_provider.delete_credentials(cx))?
                 .await;
             this.update(&mut cx, |this, cx| {
-                this.api_key_editor = Some(build_api_key_editor(cx));
+                this.build_api_key_editor(cx);
                 this.focus_handle.focus(cx);
                 cx.notify();
             })
@@ -1135,7 +1143,7 @@ impl AssistantPanel {
     }
 }
 
-fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
+fn build_api_key_editor(cx: &mut WindowContext) -> View<Editor> {
     cx.new_view(|cx| {
         let mut editor = Editor::single_line(cx);
         editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
@@ -1146,9 +1154,10 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
-            const INSTRUCTIONS: [&'static str; 5] = [
+            const INSTRUCTIONS: [&'static str; 6] = [
                 "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
                 " - You can create an API key at: platform.openai.com/api-keys",
+                " - Make sure your OpenAI account has credits",
                 " - Having a subscription for another service like GitHub Copilot won't work.",
                 " ",
                 "Paste your OpenAI API key and press Enter to use the assistant:"
@@ -1341,7 +1350,9 @@ impl Panel for AssistantPanel {
             cx.spawn(|this, mut cx| async move {
                 load_credentials.await;
                 this.update(&mut cx, |this, cx| {
-                    if this.editors.is_empty() {
+                    if !this.has_credentials() {
+                        this.build_api_key_editor(cx);
+                    } else if this.editors.is_empty() {
                         this.new_conversation(cx);
                     }
                 })
