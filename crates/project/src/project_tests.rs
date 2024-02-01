@@ -197,6 +197,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             "test2.rs": "",
             "Cargo.toml": "a = 1",
             "package.json": "{\"a\": 1}",
+            "package-lock.json": "{\"b\": 2}",
         }),
     )
     .await;
@@ -218,6 +219,18 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
+
+    // Open a buffer that has an associated language server, but don't enable LSP for that buffer.
+    let json_buffer_without_lsp = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/the-root/package-lock.json", cx)
+        })
+        .await
+        .unwrap();
+    project.update(cx, |project, cx| {
+        project.allow_buffer_to_start_language_servers(&toml_buffer, cx);
+        project.allow_buffer_to_start_language_servers(&rust_buffer, cx);
+    });
     rust_buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.language().map(|l| l.name()), None);
     });
@@ -234,7 +247,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     });
 
     // A server is started up, and it is notified about Rust files.
-    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    let mut fake_rust_server = fake_rust_servers.try_next().unwrap().unwrap();
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -247,6 +260,8 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             language_id: Default::default()
         }
     );
+
+    assert!(fake_json_servers.try_next().is_err());
 
     // The buffer is configured based on the language server's capabilities.
     rust_buffer.update(cx, |buffer, _| {
@@ -280,8 +295,13 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
+    project.update(cx, |project, cx| {
+        project.allow_buffer_to_start_language_servers(&json_buffer, cx);
+    });
+    cx.executor().run_until_parked();
+
     // A json language server is started up and is only notified about the json buffer.
-    let mut fake_json_server = fake_json_servers.next().await.unwrap();
+    let mut fake_json_server = fake_json_servers.try_next().unwrap().unwrap();
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -291,6 +311,18 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
             version: 0,
             text: "{\"a\": 1}".to_string(),
+            language_id: Default::default()
+        }
+    );
+    assert_eq!(
+        fake_json_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Url::from_file_path("/the-root/package-lock.json").unwrap(),
+            version: 0,
+            text: "{\"b\": 2}".to_string(),
             language_id: Default::default()
         }
     );

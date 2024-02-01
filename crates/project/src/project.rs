@@ -185,7 +185,12 @@ enum LocalProjectUpdate {
     },
 }
 
-enum OpenBuffer {
+struct OpenBuffer {
+    handle: BufferHandle,
+    can_start_language_servers: bool,
+}
+
+enum BufferHandle {
     Strong(Model<Buffer>),
     Weak(WeakModel<Buffer>),
     Operations(Vec<Operation>),
@@ -846,7 +851,7 @@ impl Project {
         let mut language_servers_to_start = Vec::new();
         let mut language_formatters_to_check = Vec::new();
         for buffer in self.opened_buffers.values() {
-            if let Some(buffer) = buffer.upgrade() {
+            if let Some(buffer) = buffer.handle.upgrade() {
                 let buffer = buffer.read(cx);
                 let buffer_file = File::from_dyn(buffer.file());
                 let buffer_language = buffer.language();
@@ -943,7 +948,7 @@ impl Project {
         if self.copilot_lsp_subscription.is_none() {
             if let Some(copilot) = Copilot::global(cx) {
                 for buffer in self.opened_buffers.values() {
-                    if let Some(buffer) = buffer.upgrade() {
+                    if let Some(buffer) = buffer.handle.upgrade() {
                         self.register_buffer_with_copilot(&buffer, cx);
                     }
                 }
@@ -957,7 +962,7 @@ impl Project {
     pub fn buffer_for_id(&self, remote_id: BufferId) -> Option<Model<Buffer>> {
         self.opened_buffers
             .get(&remote_id)
-            .and_then(|buffer| buffer.upgrade())
+            .and_then(|buffer| buffer.handle.upgrade())
     }
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
@@ -975,7 +980,7 @@ impl Project {
     pub fn opened_buffers(&self) -> Vec<Model<Buffer>> {
         self.opened_buffers
             .values()
-            .filter_map(|b| b.upgrade())
+            .filter_map(|b| b.handle.upgrade())
             .collect()
     }
 
@@ -984,7 +989,7 @@ impl Project {
         let path = path.into();
         if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
             self.opened_buffers.iter().any(|(_, buffer)| {
-                if let Some(buffer) = buffer.upgrade() {
+                if let Some(buffer) = buffer.handle.upgrade() {
                     if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
                         if file.worktree == worktree && file.path() == &path.path {
                             return true;
@@ -1318,14 +1323,14 @@ impl Project {
         );
 
         for open_buffer in self.opened_buffers.values_mut() {
-            match open_buffer {
-                OpenBuffer::Strong(_) => {}
-                OpenBuffer::Weak(buffer) => {
+            match &open_buffer.handle {
+                BufferHandle::Strong(_) => {}
+                BufferHandle::Weak(buffer) => {
                     if let Some(buffer) = buffer.upgrade() {
-                        *open_buffer = OpenBuffer::Strong(buffer);
+                        open_buffer.handle = BufferHandle::Strong(buffer);
                     }
                 }
-                OpenBuffer::Operations(_) => unreachable!(),
+                BufferHandle::Operations(_) => unreachable!(),
             }
         }
 
@@ -1398,11 +1403,11 @@ impl Project {
                         }
                         LocalProjectUpdate::CreateBufferForPeer { peer_id, buffer_id } => {
                             let buffer = this.update(&mut cx, |this, _| {
-                                let buffer = this.opened_buffers.get(&buffer_id).unwrap();
+                                let buffer = &this.opened_buffers.get(&buffer_id).unwrap().handle;
                                 let shared_buffers =
                                     this.shared_buffers.entry(peer_id).or_default();
                                 if shared_buffers.insert(buffer_id) {
-                                    if let OpenBuffer::Strong(buffer) = buffer {
+                                    if let BufferHandle::Strong(buffer) = buffer {
                                         Some(buffer.clone())
                                     } else {
                                         None
@@ -1544,12 +1549,12 @@ impl Project {
 
             for open_buffer in self.opened_buffers.values_mut() {
                 // Wake up any tasks waiting for peers' edits to this buffer.
-                if let Some(buffer) = open_buffer.upgrade() {
+                if let Some(buffer) = open_buffer.handle.upgrade() {
                     buffer.update(cx, |buffer, _| buffer.give_up_waiting());
                 }
 
-                if let OpenBuffer::Strong(buffer) = open_buffer {
-                    *open_buffer = OpenBuffer::Weak(buffer.downgrade());
+                if let BufferHandle::Strong(buffer) = &open_buffer.handle {
+                    open_buffer.handle = BufferHandle::Weak(buffer.downgrade());
                 }
             }
 
@@ -1610,12 +1615,12 @@ impl Project {
 
             for open_buffer in self.opened_buffers.values_mut() {
                 // Wake up any tasks waiting for peers' edits to this buffer.
-                if let Some(buffer) = open_buffer.upgrade() {
+                if let Some(buffer) = open_buffer.handle.upgrade() {
                     buffer.update(cx, |buffer, _| buffer.give_up_waiting());
                 }
 
-                if let OpenBuffer::Strong(buffer) = open_buffer {
-                    *open_buffer = OpenBuffer::Weak(buffer.downgrade());
+                if let BufferHandle::Strong(buffer) = &open_buffer.handle {
+                    open_buffer.handle = BufferHandle::Weak(buffer.downgrade());
                 }
             }
 
@@ -1949,7 +1954,7 @@ impl Project {
     ) -> Option<Model<Buffer>> {
         let worktree = self.worktree_for_id(path.worktree_id, cx)?;
         self.opened_buffers.values().find_map(|buffer| {
-            let buffer = buffer.upgrade()?;
+            let buffer = buffer.handle.upgrade()?;
             let file = File::from_dyn(buffer.read(cx).file())?;
             if file.worktree == worktree && file.path() == &path.path {
                 Some(buffer)
@@ -1971,10 +1976,14 @@ impl Project {
 
         let remote_id = buffer.read(cx).remote_id();
         let is_remote = self.is_remote();
-        let open_buffer = if is_remote || self.is_shared() {
-            OpenBuffer::Strong(buffer.clone())
+        let handle = if is_remote || self.is_shared() {
+            BufferHandle::Strong(buffer.clone())
         } else {
-            OpenBuffer::Weak(buffer.downgrade())
+            BufferHandle::Weak(buffer.downgrade())
+        };
+        let open_buffer = OpenBuffer {
+            handle,
+            can_start_language_servers: false,
         };
 
         match self.opened_buffers.entry(remote_id) {
@@ -1982,9 +1991,9 @@ impl Project {
                 entry.insert(open_buffer);
             }
             hash_map::Entry::Occupied(mut entry) => {
-                if let OpenBuffer::Operations(operations) = entry.get_mut() {
+                if let BufferHandle::Operations(operations) = &mut entry.get_mut().handle {
                     buffer.update(cx, |b, cx| b.apply_ops(operations.drain(..), cx))?;
-                } else if entry.get().upgrade().is_some() {
+                } else if entry.get().handle.upgrade().is_some() {
                     if is_remote {
                         return Ok(());
                     } else {
@@ -2602,7 +2611,7 @@ impl Project {
                                 let buffers = this
                                     .opened_buffers
                                     .values()
-                                    .filter_map(|b| b.upgrade())
+                                    .filter_map(|b| b.handle.upgrade())
                                     .collect::<Vec<_>>();
                                 for buffer in buffers {
                                     if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned()
@@ -2623,7 +2632,7 @@ impl Project {
                             let mut plain_text_buffers = Vec::new();
                             let mut buffers_with_unknown_injections = Vec::new();
                             for buffer in project.opened_buffers.values() {
-                                if let Some(handle) = buffer.upgrade() {
+                                if let Some(handle) = buffer.handle.upgrade() {
                                     let buffer = &handle.read(cx);
                                     if buffer.language().is_none()
                                         || buffer.language() == Some(&*language::PLAIN_TEXT)
@@ -2720,20 +2729,32 @@ impl Project {
                 buffer.set_language(Some(new_language.clone()), cx);
             }
         });
+    }
 
+    pub fn allow_buffer_to_start_language_servers(
+        &mut self,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let buffer_file = buffer.read(cx).file().cloned();
-        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+        let Some(language) = buffer.read(cx).language().cloned() else {
+            return;
+        };
+
+        let settings = language_settings(Some(&language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
+
         if let Some(prettier_plugins) =
-            prettier_support::prettier_plugins_for_language(&new_language, &settings)
+            prettier_support::prettier_plugins_for_language(&language, &settings)
         {
             self.install_default_prettier(worktree, prettier_plugins, cx);
         };
+
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
             if worktree.read(cx).is_local() {
-                self.start_language_servers(&worktree, new_language, cx);
+                self.start_language_servers(&worktree, language, cx);
             }
         }
     }
@@ -3202,7 +3223,7 @@ impl Project {
 
         // Tell the language server about every open buffer in the worktree that matches the language.
         for buffer in self.opened_buffers.values() {
-            if let Some(buffer_handle) = buffer.upgrade() {
+            if let Some(buffer_handle) = buffer.handle.upgrade() {
                 let buffer = buffer_handle.read(cx);
                 let file = match File::from_dyn(buffer.file()) {
                     Some(file) => file,
@@ -3296,7 +3317,7 @@ impl Project {
             }
 
             for buffer in self.opened_buffers.values() {
-                if let Some(buffer) = buffer.upgrade() {
+                if let Some(buffer) = buffer.handle.upgrade() {
                     buffer.update(cx, |buffer, cx| {
                         buffer.update_diagnostics(server_id, Default::default(), cx);
                     });
@@ -5717,7 +5738,7 @@ impl Project {
             .opened_buffers
             .iter()
             .filter_map(|(_, b)| {
-                let buffer = b.upgrade()?;
+                let buffer = b.handle.upgrade()?;
                 let (is_ignored, snapshot) = buffer.update(cx, |buffer, cx| {
                     let is_ignored = buffer
                         .project_path(cx)
@@ -6447,14 +6468,15 @@ impl Project {
             };
 
             let open_buffer = self.opened_buffers.get(&buffer_id);
-            let buffer = if let Some(buffer) = open_buffer.and_then(|buffer| buffer.upgrade()) {
-                buffer
-            } else {
-                self.opened_buffers.remove(&buffer_id);
-                self.local_buffer_ids_by_path.remove(&project_path);
-                self.local_buffer_ids_by_entry_id.remove(entry_id);
-                continue;
-            };
+            let buffer =
+                if let Some(buffer) = open_buffer.and_then(|buffer| buffer.handle.upgrade()) {
+                    buffer
+                } else {
+                    self.opened_buffers.remove(&buffer_id);
+                    self.local_buffer_ids_by_path.remove(&project_path);
+                    self.local_buffer_ids_by_entry_id.remove(entry_id);
+                    continue;
+                };
 
             buffer.update(cx, |buffer, cx| {
                 if let Some(old_file) = File::from_dyn(buffer.file()) {
@@ -6640,7 +6662,7 @@ impl Project {
             .opened_buffers
             .values()
             .filter_map(|buffer| {
-                let buffer = buffer.upgrade()?;
+                let buffer = buffer.handle.upgrade()?;
                 let file = File::from_dyn(buffer.read(cx).file())?;
                 if file.worktree != worktree_handle {
                     return None;
@@ -6968,7 +6990,7 @@ impl Project {
 
             if is_host {
                 this.opened_buffers
-                    .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
+                    .retain(|_, buffer| !matches!(buffer.handle, BufferHandle::Operations(_)));
                 this.buffer_ordered_messages_tx
                     .unbounded_send(BufferOrderedMessage::Resync)
                     .unwrap();
@@ -7000,7 +7022,7 @@ impl Project {
                 .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
                 .replica_id;
             for buffer in this.opened_buffers.values() {
-                if let Some(buffer) = buffer.upgrade() {
+                if let Some(buffer) = buffer.handle.upgrade() {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
             }
@@ -7329,12 +7351,12 @@ impl Project {
                 .collect::<Result<Vec<_>, _>>()?;
             let is_remote = this.is_remote();
             match this.opened_buffers.entry(buffer_id) {
-                hash_map::Entry::Occupied(mut e) => match e.get_mut() {
-                    OpenBuffer::Strong(buffer) => {
+                hash_map::Entry::Occupied(mut e) => match &mut e.get_mut().handle {
+                    BufferHandle::Strong(buffer) => {
                         buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
                     }
-                    OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
-                    OpenBuffer::Weak(_) => {}
+                    BufferHandle::Operations(operations) => operations.extend_from_slice(&ops),
+                    BufferHandle::Weak(_) => {}
                 },
                 hash_map::Entry::Vacant(e) => {
                     assert!(
@@ -7342,7 +7364,10 @@ impl Project {
                         "received buffer update from {:?}",
                         envelope.original_sender_id
                     );
-                    e.insert(OpenBuffer::Operations(ops));
+                    e.insert(OpenBuffer {
+                        handle: BufferHandle::Operations(ops),
+                        can_start_language_servers: false,
+                    });
                 }
             }
             Ok(proto::Ack {})
@@ -7424,7 +7449,7 @@ impl Project {
             if let Some(buffer) = this
                 .opened_buffers
                 .get_mut(&buffer_id)
-                .and_then(|b| b.upgrade())
+                .and_then(|b| b.handle.upgrade())
                 .or_else(|| {
                     this.incomplete_remote_buffers
                         .get(&buffer_id)
@@ -7452,7 +7477,7 @@ impl Project {
             if let Some(buffer) = this
                 .opened_buffers
                 .get(&buffer_id)
-                .and_then(|b| b.upgrade())
+                .and_then(|b| b.handle.upgrade())
                 .or_else(|| {
                     this.incomplete_remote_buffers
                         .get(&buffer_id)
@@ -7486,7 +7511,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
             anyhow::Ok((project_id, buffer))
         })??;
@@ -7522,7 +7547,7 @@ impl Project {
                 buffers.insert(
                     this.opened_buffers
                         .get(&buffer_id)
-                        .and_then(|buffer| buffer.upgrade())
+                        .and_then(|buffer| buffer.handle.upgrade())
                         .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?,
                 );
             }
@@ -7646,7 +7671,7 @@ impl Project {
                 buffers.insert(
                     this.opened_buffers
                         .get(&buffer_id)
-                        .and_then(|buffer| buffer.upgrade())
+                        .and_then(|buffer| buffer.handle.upgrade())
                         .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?,
                 );
             }
@@ -7674,7 +7699,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
             let language = buffer.read(cx).language();
             let completion = language::proto::deserialize_completion(
@@ -7753,7 +7778,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
             Ok::<_, anyhow::Error>(this.apply_code_action(buffer, action, false, cx))
         })??;
@@ -7778,7 +7803,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
             let position = envelope
                 .payload
@@ -7811,7 +7836,7 @@ impl Project {
         let buffer = this.update(&mut cx, |this, _| {
             this.opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })??;
         let buffer_version = deserialize_version(&envelope.payload.version);
@@ -7867,7 +7892,7 @@ impl Project {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             this.opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
         })??;
         let response_hint = this
@@ -7913,7 +7938,7 @@ impl Project {
         let buffer_handle = this.update(&mut cx, |this, _cx| {
             this.opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
         })??;
         let request = T::from_proto(
@@ -8186,7 +8211,7 @@ impl Project {
                 let buffer = this.update(&mut cx, |this, _cx| {
                     this.opened_buffers
                         .get(&id)
-                        .and_then(|buffer| buffer.upgrade())
+                        .and_then(|buffer| buffer.handle.upgrade())
                 })?;
 
                 if let Some(buffer) = buffer {
@@ -8239,7 +8264,7 @@ impl Project {
                     .opened_buffers
                     .iter()
                     .filter_map(|(id, buffer)| {
-                        let buffer = buffer.upgrade()?;
+                        let buffer = buffer.handle.upgrade()?;
                         Some(proto::BufferVersion {
                             id: (*id).into(),
                             version: language::proto::serialize_version(&buffer.read(cx).version),
@@ -8457,7 +8482,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .or_else(|| {
                     this.incomplete_remote_buffers
                         .get(&buffer_id)
@@ -8494,7 +8519,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&buffer_id)
-                .and_then(|buffer| buffer.upgrade())
+                .and_then(|buffer| buffer.handle.upgrade())
                 .or_else(|| {
                     this.incomplete_remote_buffers
                         .get(&buffer_id)
@@ -8803,12 +8828,12 @@ impl WorktreeHandle {
     }
 }
 
-impl OpenBuffer {
+impl BufferHandle {
     pub fn upgrade(&self) -> Option<Model<Buffer>> {
         match self {
-            OpenBuffer::Strong(handle) => Some(handle.clone()),
-            OpenBuffer::Weak(handle) => handle.upgrade(),
-            OpenBuffer::Operations(_) => None,
+            BufferHandle::Strong(handle) => Some(handle.clone()),
+            BufferHandle::Weak(handle) => handle.upgrade(),
+            BufferHandle::Operations(_) => None,
         }
     }
 }
