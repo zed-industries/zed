@@ -2075,24 +2075,85 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut WindowContext,
     ) {
-        if let Some(pane) = self.find_pane_in_direction(direction, cx) {
-            cx.focus_view(&pane);
-        } else if let Some(dock) = self.find_dock_in_direction(direction, cx) {
-            cx.focus_view(&dock);
+        use ActivateInDirectionTarget as Target;
+        enum Origin {
+            LeftDock,
+            RightDock,
+            BottomDock,
+            Center,
         }
-    }
 
-    pub fn swap_pane_in_direction(
-        &mut self,
-        direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(to) = self
-            .find_pane_in_direction(direction, cx)
-            .map(|pane| pane.clone())
-        {
-            self.center.swap(&self.active_pane.clone(), &to);
-            cx.notify();
+        let origin: Origin = [
+            (&self.left_dock, Origin::LeftDock),
+            (&self.right_dock, Origin::RightDock),
+            (&self.bottom_dock, Origin::BottomDock),
+        ]
+        .into_iter()
+        .find_map(|(dock, origin)| {
+            if dock.focus_handle(cx).contains_focused(cx) && dock.read(cx).is_open() {
+                Some(origin)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(Origin::Center);
+
+        let get_last_active_pane = || {
+            self.last_active_center_pane.as_ref().and_then(|p| {
+                let p = p.upgrade()?;
+                (p.read(cx).items_len() != 0).then_some(p)
+            })
+        };
+
+        let try_dock =
+            |dock: &View<Dock>| dock.read(cx).is_open().then(|| Target::Dock(dock.clone()));
+
+        let target = match (origin, direction) {
+            // We're in the center, so we first try to go to a different pane,
+            // otherwise try to go to a dock.
+            (Origin::Center, direction) => {
+                if let Some(pane) = self.find_pane_in_direction(direction, cx) {
+                    Some(Target::Pane(pane))
+                } else {
+                    match direction {
+                        SplitDirection::Up => None,
+                        SplitDirection::Down => try_dock(&self.bottom_dock),
+                        SplitDirection::Left => try_dock(&self.left_dock),
+                        SplitDirection::Right => try_dock(&self.right_dock),
+                    }
+                }
+            }
+
+            (Origin::LeftDock, SplitDirection::Right) => {
+                if let Some(last_active_pane) = get_last_active_pane() {
+                    Some(Target::Pane(last_active_pane))
+                } else {
+                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.right_dock))
+                }
+            }
+
+            (Origin::LeftDock, SplitDirection::Down)
+            | (Origin::RightDock, SplitDirection::Down) => try_dock(&self.bottom_dock),
+
+            (Origin::BottomDock, SplitDirection::Up) => get_last_active_pane().map(Target::Pane),
+            (Origin::BottomDock, SplitDirection::Left) => try_dock(&self.left_dock),
+            (Origin::BottomDock, SplitDirection::Right) => try_dock(&self.right_dock),
+
+            (Origin::RightDock, SplitDirection::Left) => {
+                if let Some(last_active_pane) = get_last_active_pane() {
+                    Some(Target::Pane(last_active_pane))
+                } else {
+                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock))
+                }
+            }
+
+            _ => None,
+        };
+
+        match target {
+            Some(ActivateInDirectionTarget::Pane(pane)) => cx.focus_view(&pane),
+            Some(ActivateInDirectionTarget::Dock(dock)) => cx.focus_view(&dock),
+            None => {}
         }
     }
 
@@ -2101,19 +2162,6 @@ impl Workspace {
         direction: SplitDirection,
         cx: &WindowContext,
     ) -> Option<View<Pane>> {
-        // Check whether we're in a dock and should focus the last active pane
-        if self.should_focus_last_active_pane(direction, cx) {
-            return self.last_active_center_pane.as_ref().and_then(|p| {
-                let p = p.upgrade()?;
-                (p.read(cx).items_len() != 0).then_some(p)
-            });
-        }
-
-        // Or whether we're in a dock, there is no active pane, and should focus another dock
-        if self.should_focus_dock(direction, cx) {
-            return None;
-        }
-
         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
             return None;
         };
@@ -2142,111 +2190,18 @@ impl Workspace {
         self.center.pane_at_pixel_position(target).cloned()
     }
 
-    fn should_focus_last_active_pane(
-        &self,
+    pub fn swap_pane_in_direction(
+        &mut self,
         direction: SplitDirection,
-        cx: &WindowContext<'_>,
-    ) -> bool {
-        for (possible_direction, dock) in [
-            (SplitDirection::Right, &self.left_dock),
-            (SplitDirection::Up, &self.bottom_dock),
-            (SplitDirection::Left, &self.right_dock),
-        ] {
-            if possible_direction != direction {
-                continue;
-            }
-            let dock = dock.read(cx);
-            if dock.is_open() && dock.focus_handle(cx).contains_focused(cx) {
-                return true;
-            }
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(to) = self
+            .find_pane_in_direction(direction, cx)
+            .map(|pane| pane.clone())
+        {
+            self.center.swap(&self.active_pane.clone(), &to);
+            cx.notify();
         }
-        return false;
-    }
-
-    fn should_focus_dock(&self, direction: SplitDirection, cx: &WindowContext<'_>) -> bool {
-        for (possible_direction, dock) in [
-            (SplitDirection::Right, &self.left_dock),
-            (SplitDirection::Up, &self.bottom_dock),
-            (SplitDirection::Left, &self.bottom_dock),
-            (SplitDirection::Right, &self.bottom_dock),
-            (SplitDirection::Left, &self.right_dock),
-        ] {
-            if possible_direction != direction {
-                continue;
-            }
-            let dock = dock.read(cx);
-            if dock.is_open() && dock.focus_handle(cx).contains_focused(cx) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn find_dock_in_direction(
-        &self,
-        direction: SplitDirection,
-        cx: &WindowContext<'_>,
-    ) -> Option<View<Dock>> {
-        #[derive(Debug)]
-        enum Origin {
-            LeftDock,
-            RightDock,
-            BottomDock,
-            Center,
-        }
-
-        let origin: Origin = [
-            (&self.left_dock, Origin::LeftDock),
-            (&self.right_dock, Origin::RightDock),
-            (&self.bottom_dock, Origin::BottomDock),
-        ]
-        .into_iter()
-        .find_map(|(dock, origin)| {
-            if dock.focus_handle(cx).contains_focused(cx) && dock.read(cx).is_open() {
-                Some(origin)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(Origin::Center);
-
-        let target = match (origin, direction) {
-            (Origin::LeftDock, SplitDirection::Right) => {
-                if self.bottom_dock.read(cx).is_open() {
-                    Some(self.bottom_dock.clone())
-                } else if self.right_dock.read(cx).is_open() {
-                    Some(self.right_dock.clone())
-                } else {
-                    None
-                }
-            }
-            (Origin::LeftDock, SplitDirection::Down) => Some(self.bottom_dock.clone()),
-
-            (Origin::Center, SplitDirection::Left) => Some(self.left_dock.clone()),
-            (Origin::Center, SplitDirection::Right) => Some(self.right_dock.clone()),
-            (Origin::Center, SplitDirection::Down) => Some(self.bottom_dock.clone()),
-
-            (Origin::RightDock, SplitDirection::Left) => {
-                if self.bottom_dock.read(cx).is_open() {
-                    Some(self.bottom_dock.clone())
-                } else if self.left_dock.read(cx).is_open() {
-                    Some(self.left_dock.clone())
-                } else {
-                    None
-                }
-            }
-            (Origin::RightDock, SplitDirection::Down) => Some(self.bottom_dock.clone()),
-
-            (Origin::BottomDock, SplitDirection::Up) => None,
-            (Origin::BottomDock, SplitDirection::Left) => Some(self.left_dock.clone()),
-            (Origin::BottomDock, SplitDirection::Right) => Some(self.right_dock.clone()),
-            _ => None,
-        }?;
-
-        if !target.read(cx).is_open() {
-            return None;
-        }
-        Some(target)
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
@@ -3606,6 +3561,11 @@ fn open_items(
 
         Ok(opened_items)
     })
+}
+
+enum ActivateInDirectionTarget {
+    Pane(View<Pane>),
+    Dock(View<Dock>),
 }
 
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncAppContext) {
