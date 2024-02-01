@@ -453,7 +453,7 @@ impl ChatPanel {
             })
             .collect::<Vec<_>>();
 
-        rich_text::render_markdown(message.body.clone(), &mentions, language_registry, None)
+        rich_text::render_rich_text(message.body.clone(), &mentions, language_registry, None)
     }
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {

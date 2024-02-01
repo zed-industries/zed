@@ -248,6 +248,7 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
+        markdown_preview::init(cx);
         welcome::init(cx);
 
         cx.set_menus(app_menus());

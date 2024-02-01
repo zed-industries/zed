@@ -65,6 +65,7 @@ lazy_static.workspace = true
 libc = "0.2"
 log.workspace = true
 lsp = { path = "../lsp" }
+markdown_preview = { path = "../markdown_preview" }
 menu = { path = "../menu" }
 mimalloc = "0.1"
 node_runtime = { path = "../node_runtime" }

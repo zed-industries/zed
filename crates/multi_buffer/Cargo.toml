@@ -39,7 +39,7 @@ lsp = { path = "../lsp" }
 ordered-float.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-pulldown-cmark = { version = "0.9.2", default-features = false }
+pulldown-cmark.workspace = true
 rand.workspace = true
 rich_text = { path = "../rich_text" }
 schemars.workspace = true

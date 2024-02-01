@@ -4318,6 +4318,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "markdown_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "language",
+ "lazy_static",
+ "log",
+ "menu",
+ "project",
+ "pulldown-cmark",
+ "rich_text",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "matchers"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10315,6 +10335,7 @@ dependencies = [
  "libc",
  "log",
  "lsp",
+ "markdown_preview",
  "menu",
  "mimalloc",
  "node_runtime",
