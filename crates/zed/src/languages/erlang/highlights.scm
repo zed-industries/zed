@@ -25,13 +25,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Primitive types
-(string) @string
-(char) @constant
-(integer) @number
-(var) @variable
-(atom) @string.special.symbol
-
 ;; Attributes
 
 ;; module attribute
@@ -79,9 +72,6 @@
 
 ;; callback
 (callback fun: (atom) @function)
-
-;; wild attribute
-(wild_attribute name: (attr_name name: (atom) @keyword))
 
 ;; fun decl
 
@@ -140,6 +130,7 @@
   "catch"
   "compile"
   "define"
+  "deprecated"
   "div"
   "elif"
   "else"
@@ -228,3 +219,13 @@
 
 (dotdotdot) @comment.discard
 (comment) @comment
+
+;; Primitive types
+(string) @string
+(char) @constant
+(integer) @number
+(var) @variable
+(atom) @string.special.symbol
+
+;; wild attribute (Should take precedence over atoms, otherwise they are highlighted as atoms)
+(wild_attribute name: (attr_name name: (_) @keyword))
