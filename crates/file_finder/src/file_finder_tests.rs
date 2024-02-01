@@ -1178,7 +1178,7 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 }
 
 #[gpui::test]
-async fn test_issue(cx: &mut TestAppContext) {
+async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     app_state
@@ -1205,16 +1205,20 @@ async fn test_issue(cx: &mut TestAppContext) {
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        assert_matches(finder, vec!["3.txt".into(), "2.txt".into(), "1.txt".into()]);
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "3.txt");
         assert_match_selection(finder, 1, "2.txt");
+        assert_match_at_position(finder, 2, "1.txt");
     });
 
     cx.dispatch_action(Confirm); // Open 2.txt
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        assert_matches(finder, vec!["2.txt".into(), "3.txt".into(), "1.txt".into()]);
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "2.txt");
         assert_match_selection(finder, 1, "3.txt");
+        assert_match_at_position(finder, 2, "1.txt");
     });
 
     cx.dispatch_action(SelectNext);
@@ -1222,8 +1226,10 @@ async fn test_issue(cx: &mut TestAppContext) {
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        assert_matches(finder, vec!["1.txt".into(), "2.txt".into(), "3.txt".into()]);
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "1.txt");
         assert_match_selection(finder, 1, "2.txt");
+        assert_match_at_position(finder, 2, "3.txt");
     });
 }
 
@@ -1528,23 +1534,5 @@ fn assert_match_at_position(
     }
     .unwrap()
     .to_string_lossy();
-    println!("{}: {}", match_index, match_file_name);
     assert_eq!(match_file_name, expected_file_name);
-}
-
-fn assert_matches(finder: &Picker<FileFinderDelegate>, expected_file_names: Vec<String>) {
-    let matches = collect_search_matches(finder);
-    assert_eq!(
-        matches.history.len() + matches.search.len(),
-        expected_file_names.len()
-    );
-    let mut idx = 0;
-    for match_item in matches.history {
-        assert_match_at_position(finder, idx, expected_file_names[idx].as_str());
-        idx += 1;
-    }
-    for match_item in matches.search {
-        assert_match_at_position(finder, idx, expected_file_names[idx].as_str());
-        idx += 1;
-    }
 }
