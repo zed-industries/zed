@@ -1,8 +1,8 @@
 use std::{ops::Range, sync::Arc};
 
 use gpui::{
-    div, px, rems, AnyElement, DefiniteLength, Div, ElementId, Hsla, ParentElement, SharedString,
-    Styled, StyledText, WindowContext,
+    div, px, rems, AnyElement, DefiniteLength, Div, Element, ElementId, Hsla, ParentElement,
+    SharedString, Styled, StyledText, WindowContext,
 };
 use language::LanguageRegistry;
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
@@ -174,7 +174,7 @@ where
                 }
 
                 let element = self.render_md_from_range(source_range.clone(), cx);
-                let paragraph = h_flex().mb_3().child(element);
+                let paragraph = div().mb_3().child(element);
 
                 self.finished.push(paragraph);
             }
