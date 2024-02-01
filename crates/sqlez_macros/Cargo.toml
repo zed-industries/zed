@@ -3,8 +3,7 @@ name = "sqlez_macros"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
-
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/sqlez_macros.rs"
@@ -12,9 +11,9 @@ proc-macro = true
 doctest = false
 
 [dependencies]
-syn = "1.0"
-quote = "1.0"
-proc-macro2 = "1.0"
 lazy_static.workspace = true
+proc-macro2 = "1.0"
+quote = "1.0"
 sqlez = { path = "../sqlez" }
 sqlformat = "0.2"
+syn = "1.0"

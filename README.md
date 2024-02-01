@@ -4,6 +4,21 @@
 
 Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
+## Installation
+
+You can [download](https://zed.dev/download) Zed today for macOS (v10.15+).
+
+Support for additional platforms is on our [roadmap](https://zed.dev/roadmap):
+
+- Linux ([tracking issue](https://github.com/zed-industries/zed/issues/5395))
+- Windows ([tracking issue](https://github.com/zed-industries/zed/issues/5394))
+- Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
+
+For macOS users, you can also install Zed from Homebrew:
+```sh
+brew install zed
+```
+
 ## Developing Zed
 
 - [Building Zed](./docs/src/developing_zed__building_zed.md)

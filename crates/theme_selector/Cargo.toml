@@ -3,8 +3,7 @@ name = "theme_selector"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
-
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/theme_selector.rs"
@@ -17,16 +16,16 @@ feature_flags = { path = "../feature_flags" }
 fs = { path = "../fs" }
 fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
+log.workspace = true
+parking_lot.workspace = true
 picker = { path = "../picker" }
+postage.workspace = true
 settings = { path = "../settings" }
+smol.workspace = true
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-log.workspace = true
-parking_lot.workspace = true
-postage.workspace = true
-smol.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

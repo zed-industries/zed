@@ -53,6 +53,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         " bandana ",
         " ndan ",
         " band ",
+        "a bandana",
     ] {
         picker
             .update(cx, |picker, cx| {

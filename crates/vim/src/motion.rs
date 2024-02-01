@@ -23,6 +23,7 @@ pub enum Motion {
     Down { display_lines: bool },
     Up { display_lines: bool },
     Right,
+    Space,
     NextWordStart { ignore_punctuation: bool },
     NextWordEnd { ignore_punctuation: bool },
     PreviousWordStart { ignore_punctuation: bool },
@@ -37,10 +38,15 @@ pub enum Motion {
     Matching,
     FindForward { before: bool, char: char },
     FindBackward { after: bool, char: char },
+    RepeatFind { last_find: Box<Motion> },
+    RepeatFindReversed { last_find: Box<Motion> },
     NextLineStart,
     StartOfLineDownward,
     EndOfLineDownward,
     GoToColumn,
+    WindowTop,
+    WindowMiddle,
+    WindowBottom,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -99,16 +105,9 @@ pub struct StartOfLine {
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
-struct RepeatFind {
-    #[serde(default)]
-    backwards: bool,
-}
-
 impl_actions!(
     vim,
     [
-        RepeatFind,
         StartOfLine,
         EndOfLine,
         FirstNonWhitespace,
@@ -126,6 +125,7 @@ actions!(
         Left,
         Backspace,
         Right,
+        Space,
         CurrentLine,
         StartOfParagraph,
         EndOfParagraph,
@@ -136,6 +136,11 @@ actions!(
         StartOfLineDownward,
         EndOfLineDownward,
         GoToColumn,
+        RepeatFind,
+        RepeatFindReversed,
+        WindowTop,
+        WindowMiddle,
+        WindowBottom,
     ]
 );
 
@@ -160,6 +165,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         )
     });
     workspace.register_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
+    workspace.register_action(|_: &mut Workspace, _: &Space, cx: _| motion(Motion::Space, cx));
     workspace.register_action(|_: &mut Workspace, action: &FirstNonWhitespace, cx: _| {
         motion(
             Motion::FirstNonWhitespace {
@@ -228,8 +234,34 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     });
     workspace
         .register_action(|_: &mut Workspace, &GoToColumn, cx: _| motion(Motion::GoToColumn, cx));
-    workspace.register_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
-        repeat_motion(action.backwards, cx)
+
+    workspace.register_action(|_: &mut Workspace, _: &RepeatFind, cx: _| {
+        if let Some(last_find) = Vim::read(cx)
+            .workspace_state
+            .last_find
+            .clone()
+            .map(Box::new)
+        {
+            motion(Motion::RepeatFind { last_find }, cx);
+        }
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &RepeatFindReversed, cx: _| {
+        if let Some(last_find) = Vim::read(cx)
+            .workspace_state
+            .last_find
+            .clone()
+            .map(Box::new)
+        {
+            motion(Motion::RepeatFindReversed { last_find }, cx);
+        }
+    });
+    workspace.register_action(|_: &mut Workspace, &WindowTop, cx: _| motion(Motion::WindowTop, cx));
+    workspace.register_action(|_: &mut Workspace, &WindowMiddle, cx: _| {
+        motion(Motion::WindowMiddle, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, &WindowBottom, cx: _| {
+        motion(Motion::WindowBottom, cx)
     });
 }
 
@@ -252,35 +284,6 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| vim.clear_operator(cx));
 }
 
-fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
-    let find = match Vim::read(cx).workspace_state.last_find.clone() {
-        Some(Motion::FindForward { before, char }) => {
-            if backwards {
-                Motion::FindBackward {
-                    after: before,
-                    char,
-                }
-            } else {
-                Motion::FindForward { before, char }
-            }
-        }
-
-        Some(Motion::FindBackward { after, char }) => {
-            if backwards {
-                Motion::FindForward {
-                    before: after,
-                    char,
-                }
-            } else {
-                Motion::FindBackward { after, char }
-            }
-        }
-        _ => return,
-    };
-
-    motion(find, cx)
-}
-
 // Motion handling is specified here:
 // https://github.com/vim/vim/blob/master/runtime/doc/motion.txt
 impl Motion {
@@ -295,6 +298,9 @@ impl Motion {
             | NextLineStart
             | StartOfLineDownward
             | StartOfParagraph
+            | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | EndOfParagraph => true,
             EndOfLine { .. }
             | NextWordEnd { .. }
@@ -303,13 +309,16 @@ impl Motion {
             | Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | EndOfLineDownward
             | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
-            | FindBackward { .. } => false,
+            | FindBackward { .. }
+            | RepeatFind { .. }
+            | RepeatFindReversed { .. } => false,
         }
     }
 
@@ -323,9 +332,11 @@ impl Motion {
             | NextWordEnd { .. }
             | Matching
             | FindForward { .. }
+            | RepeatFind { .. }
             | Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
@@ -336,6 +347,10 @@ impl Motion {
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | RepeatFindReversed { .. }
+            | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | NextLineStart => false,
         }
     }
@@ -353,10 +368,14 @@ impl Motion {
             | NextWordEnd { .. }
             | Matching
             | FindForward { .. }
+            | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | NextLineStart => true,
             Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | StartOfLineDownward
             | StartOfParagraph
@@ -366,6 +385,9 @@ impl Motion {
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. } => false,
+            RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
+                motion.inclusive()
+            }
         }
     }
 
@@ -396,6 +418,7 @@ impl Motion {
                 display_lines: true,
             } => up_display(map, point, goal, times, &text_layout_details),
             Right => (right(map, point, times), SelectionGoal::None),
+            Space => (space(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
                 next_word_start(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
@@ -434,18 +457,65 @@ impl Motion {
                 SelectionGoal::None,
             ),
             Matching => (matching(map, point), SelectionGoal::None),
-            FindForward { before, char } => (
-                find_forward(map, point, *before, *char, times),
-                SelectionGoal::None,
-            ),
+            // t f
+            FindForward { before, char } => {
+                return find_forward(map, point, *before, *char, times)
+                    .map(|new_point| (new_point, SelectionGoal::None))
+            }
+            // T F
             FindBackward { after, char } => (
                 find_backward(map, point, *after, *char, times),
                 SelectionGoal::None,
             ),
+            // ; -- repeat the last find done with t, f, T, F
+            RepeatFind { last_find } => match **last_find {
+                Motion::FindForward { before, char } => {
+                    let mut new_point = find_forward(map, point, before, char, times);
+                    if new_point == Some(point) {
+                        new_point = find_forward(map, point, before, char, times + 1);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::FindBackward { after, char } => {
+                    let mut new_point = find_backward(map, point, after, char, times);
+                    if new_point == point {
+                        new_point = find_backward(map, point, after, char, times + 1);
+                    }
+
+                    (new_point, SelectionGoal::None)
+                }
+                _ => return None,
+            },
+            // , -- repeat the last find done with t, f, T, F, in opposite direction
+            RepeatFindReversed { last_find } => match **last_find {
+                Motion::FindForward { before, char } => {
+                    let mut new_point = find_backward(map, point, before, char, times);
+                    if new_point == point {
+                        new_point = find_backward(map, point, before, char, times + 1);
+                    }
+
+                    (new_point, SelectionGoal::None)
+                }
+
+                Motion::FindBackward { after, char } => {
+                    let mut new_point = find_forward(map, point, after, char, times);
+                    if new_point == Some(point) {
+                        new_point = find_forward(map, point, after, char, times + 1);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+                _ => return None,
+            },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
+            WindowTop => window_top(map, point, &text_layout_details, times - 1),
+            WindowMiddle => window_middle(map, point, &text_layout_details),
+            WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -547,6 +617,24 @@ fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Display
 fn backspace(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
         point = movement::left(map, point);
+    }
+    point
+}
+
+fn space(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+    for _ in 0..times {
+        point = wrapping_right(map, point);
+    }
+    point
+}
+
+fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+    let max_column = map.line_len(point.row()).saturating_sub(1);
+    if point.column() < max_column {
+        *point.column_mut() += 1;
+    } else if point.row() < map.max_point().row() {
+        *point.row_mut() += 1;
+        *point.column_mut() = 0;
     }
     point
 }
@@ -882,7 +970,7 @@ fn find_forward(
     before: bool,
     target: char,
     times: usize,
-) -> DisplayPoint {
+) -> Option<DisplayPoint> {
     let mut to = from;
     let mut found = false;
 
@@ -897,12 +985,12 @@ fn find_forward(
     if found {
         if before && to.column() > 0 {
             *to.column_mut() -= 1;
-            map.clip_point(to, Bias::Left)
+            Some(map.clip_point(to, Bias::Left))
         } else {
-            to
+            Some(to)
         }
     } else {
-        from
+        None
     }
 }
 
@@ -950,6 +1038,70 @@ pub(crate) fn next_line_end(
         point = start_of_relative_buffer_row(map, point, times as isize - 1);
     }
     end_of_line(map, false, point)
+}
+
+fn window_top(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    text_layout_details: &TextLayoutDetails,
+    times: usize,
+) -> (DisplayPoint, SelectionGoal) {
+    let first_visible_line = text_layout_details.anchor.to_display_point(map);
+
+    if let Some(visible_rows) = text_layout_details.visible_rows {
+        let bottom_row = first_visible_line.row() + visible_rows as u32;
+        let new_row = (first_visible_line.row() + (times as u32)).min(bottom_row);
+        let new_col = point.column().min(map.line_len(first_visible_line.row()));
+
+        let new_point = DisplayPoint::new(new_row, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    } else {
+        let new_row = first_visible_line.row() + (times as u32);
+        let new_col = point.column().min(map.line_len(first_visible_line.row()));
+
+        let new_point = DisplayPoint::new(new_row, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    }
+}
+
+fn window_middle(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    if let Some(visible_rows) = text_layout_details.visible_rows {
+        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let max_rows = (visible_rows as u32).min(map.max_buffer_row());
+        let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
+        let new_col = point.column().min(map.line_len(new_row));
+        let new_point = DisplayPoint::new(new_row, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    } else {
+        (point, SelectionGoal::None)
+    }
+}
+
+fn window_bottom(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    text_layout_details: &TextLayoutDetails,
+    times: usize,
+) -> (DisplayPoint, SelectionGoal) {
+    if let Some(visible_rows) = text_layout_details.visible_rows {
+        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let bottom_row = first_visible_line.row() + (visible_rows) as u32;
+        let bottom_row_capped = bottom_row.min(map.max_buffer_row());
+        let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_line.row() {
+            first_visible_line.row()
+        } else {
+            bottom_row_capped.saturating_sub(times as u32)
+        };
+        let new_col = point.column().min(map.line_len(new_row));
+        let new_point = DisplayPoint::new(new_row, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    } else {
+        (point, SelectionGoal::None)
+    }
 }
 
 #[cfg(test)]
@@ -1082,6 +1234,7 @@ mod test {
     async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
+        // f and F
         cx.set_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes(["f", "o"]).await;
         cx.assert_shared_state("one twˇo three four").await;
@@ -1089,6 +1242,21 @@ mod test {
         cx.assert_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes(["2", ";"]).await;
         cx.assert_shared_state("one two three fˇour").await;
+        cx.simulate_shared_keystrokes(["shift-f", "e"]).await;
+        cx.assert_shared_state("one two threˇe four").await;
+        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.assert_shared_state("onˇe two three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("one two thrˇee four").await;
+
+        // t and T
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes(["t", "o"]).await;
+        cx.assert_shared_state("one tˇwo three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("oˇne two three four").await;
+        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.assert_shared_state("one two three ˇfour").await;
         cx.simulate_shared_keystrokes(["shift-t", "e"]).await;
         cx.assert_shared_state("one two threeˇ four").await;
         cx.simulate_shared_keystrokes(["3", ";"]).await;
@@ -1103,5 +1271,245 @@ mod test {
         cx.set_shared_state("ˇone\n  two\nthree").await;
         cx.simulate_shared_keystrokes(["enter"]).await;
         cx.assert_shared_state("one\n  ˇtwo\nthree").await;
+    }
+
+    #[gpui::test]
+    async fn test_window_top(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abc
+          def
+          paragraph
+          the second
+          third ˇand
+          final"};
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"abˇc
+          def
+          paragraph
+          the second
+          third and
+          final"})
+            .await;
+
+        // clip point
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 ˇ9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 ˇ3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          ˇ7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9"})
+            .await;
+        cx.simulate_shared_keystrokes(["9", "shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 ˇ9"})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_window_middle(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abˇc
+          def
+          paragraph
+          the second
+          third and
+          final"};
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+          def
+          paˇragraph
+          the second
+          third and
+          final"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 ˇ9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          ˇ7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_window_bottom(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abc
+          deˇf
+          paragraph
+          the second
+          third and
+          final"};
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+          def
+          paragraph
+          the second
+          third and
+          fiˇnal"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 ˇ3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["9", "shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 ˇ3
+          4 5 6
+          7 8 9
+          "})
+            .await;
     }
 }

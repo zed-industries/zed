@@ -3,8 +3,7 @@ name = "recent_projects"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
-
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/recent_projects.rs"
@@ -12,21 +11,20 @@ doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
+futures.workspace = true
 fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+ordered-float.workspace = true
 picker = { path = "../picker" }
+postage.workspace = true
 settings = { path = "../settings" }
+smol.workspace = true
 text = { path = "../text" }
-util = { path = "../util"}
 theme = { path = "../theme" }
 ui = { path = "../ui" }
+util = { path = "../util" }
 workspace = { path = "../workspace" }
-
-futures.workspace = true
-ordered-float.workspace = true
-postage.workspace = true
-smol.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

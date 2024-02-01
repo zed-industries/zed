@@ -3,8 +3,7 @@ name = "rich_text"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
-
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/rich_text.rs"
@@ -17,16 +16,16 @@ test-support = [
 ]
 
 [dependencies]
-collections = { path = "../collections" }
-gpui = { path = "../gpui" }
-sum_tree = { path = "../sum_tree" }
-theme = { path = "../theme" }
-language = { path = "../language" }
-util = { path = "../util" }
-ui = { path = "../ui" }
 anyhow.workspace = true
+collections = { path = "../collections" }
 futures.workspace = true
+gpui = { path = "../gpui" }
+language = { path = "../language" }
 lazy_static.workspace = true
 pulldown-cmark.workspace = true
 smallvec.workspace = true
 smol.workspace = true
+sum_tree = { path = "../sum_tree" }
+theme = { path = "../theme" }
+ui = { path = "../ui" }
+util = { path = "../util" }

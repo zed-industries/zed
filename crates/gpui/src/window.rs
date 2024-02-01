@@ -2,7 +2,7 @@ use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
     AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
+    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
     KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
@@ -708,7 +708,7 @@ impl<'a> WindowContext<'a> {
     /// access both to the global and the context.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static,
+        G: Global,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -859,15 +859,14 @@ impl<'a> WindowContext<'a> {
 
             // At this point, we've established that this opaque layer is on top of the queried layer
             // and contains the position:
-            // - If the opaque layer is an extension of the queried layer, we don't want
-            // to consider the opaque layer to be on top and so we ignore it.
-            // - Else, we will bail early and say that the queried layer wasn't the top one.
-            let opaque_layer_is_extension_of_queried_layer = opaque_layer.len() >= layer.len()
-                && opaque_layer
-                    .iter()
-                    .zip(layer.iter())
-                    .all(|(a, b)| a.z_index == b.z_index);
-            if !opaque_layer_is_extension_of_queried_layer {
+            // If neither the opaque layer or the queried layer is an extension of the other then
+            // we know they are on different stacking orders, and return false.
+            let is_on_same_layer = opaque_layer
+                .iter()
+                .zip(layer.iter())
+                .all(|(a, b)| a.z_index == b.z_index);
+
+            if !is_on_same_layer {
                 return false;
             }
         }
@@ -908,15 +907,14 @@ impl<'a> WindowContext<'a> {
 
             // At this point, we've established that this opaque layer is on top of the queried layer
             // and contains the position:
-            // - If the opaque layer is an extension of the queried layer, we don't want
-            // to consider the opaque layer to be on top and so we ignore it.
-            // - Else, we will bail early and say that the queried layer wasn't the top one.
-            let opaque_layer_is_extension_of_queried_layer = opaque_layer.len() >= layer.len()
-                && opaque_layer
-                    .iter()
-                    .zip(layer.iter())
-                    .all(|(a, b)| a.z_index == b.z_index);
-            if !opaque_layer_is_extension_of_queried_layer {
+            // If neither the opaque layer or the queried layer is an extension of the other then
+            // we know they are on different stacking orders, and return false.
+            let is_on_same_layer = opaque_layer
+                .iter()
+                .zip(layer.iter())
+                .all(|(a, b)| a.z_index == b.z_index);
+
+            if !is_on_same_layer {
                 return false;
             }
         }
@@ -1443,7 +1441,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register the given handler to be invoked whenever the global of the given type
     /// is updated.
-    pub fn observe_global<G: 'static>(
+    pub fn observe_global<G: Global>(
         &mut self,
         f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
@@ -2200,7 +2198,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Updates the global state of the given type.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static,
+        G: Global,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -2209,7 +2207,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a callback to be invoked when the given global state changes.
-    pub fn observe_global<G: 'static>(
+    pub fn observe_global<G: Global>(
         &mut self,
         mut f: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {

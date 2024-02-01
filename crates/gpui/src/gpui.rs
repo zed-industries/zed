@@ -83,7 +83,7 @@ mod platform;
 pub mod prelude;
 mod scene;
 mod shared_string;
-mod shared_url;
+mod shared_uri;
 mod style;
 mod styled;
 mod subscription;
@@ -133,7 +133,7 @@ pub use refineable::*;
 pub use scene::*;
 use seal::Sealed;
 pub use shared_string::*;
-pub use shared_url::*;
+pub use shared_uri::*;
 pub use smol::Timer;
 pub use style::*;
 pub use styled::*;
@@ -258,14 +258,14 @@ pub trait EventEmitter<E: Any>: 'static {}
 /// can be used interchangeably.
 pub trait BorrowAppContext {
     /// Set a global value on the context.
-    fn set_global<T: 'static>(&mut self, global: T);
+    fn set_global<T: Global>(&mut self, global: T);
 }
 
 impl<C> BorrowAppContext for C
 where
     C: BorrowMut<AppContext>,
 {
-    fn set_global<G: 'static>(&mut self, global: G) {
+    fn set_global<G: Global>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }
 }
@@ -287,3 +287,8 @@ impl<T> Flatten<T> for Result<T> {
         self
     }
 }
+
+/// A marker trait for types that can be stored in GPUI's global state.
+///
+/// Implement this on types you want to store in the context as a global.
+pub trait Global: 'static {}

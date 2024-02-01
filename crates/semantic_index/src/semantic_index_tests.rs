@@ -1546,7 +1546,7 @@ fn php_lang() -> Arc<Language> {
                 collapsed_placeholder: "/* ... */".into(),
                 ..Default::default()
             },
-            Some(tree_sitter_php::language()),
+            Some(tree_sitter_php::language_php()),
         )
         .with_embedding_query(
             r#"

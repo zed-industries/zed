@@ -4,7 +4,7 @@ set -eu
 source script/lib/deploy-helpers.sh
 
 if [[ $# < 2 ]]; then
-  echo "Usage: $0 <production|preview|nightly|staging> <tag-name>"
+  echo "Usage: $0 <production|staging> <tag-name>"
   exit 1
 fi
 environment=$1

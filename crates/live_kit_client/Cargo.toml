@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Bindings to LiveKit Swift client SDK"
 publish = false
-license = "GPL-3.0-only"
-
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/live_kit_client.rs"
@@ -24,43 +23,43 @@ test-support = [
 ]
 
 [dependencies]
-collections = { path = "../collections", optional = true }
-gpui = { path = "../gpui", optional = true }
-live_kit_server = { path = "../live_kit_server", optional = true }
-media = { path = "../media" }
-
 anyhow.workspace = true
 async-broadcast = "0.4"
-core-foundation = "0.9.3"
-core-graphics = "0.22.3"
+async-trait = { workspace = true, optional = true }
+collections = { path = "../collections", optional = true }
 futures.workspace = true
+gpui = { path = "../gpui", optional = true }
+live_kit_server = { path = "../live_kit_server", optional = true }
 log.workspace = true
+media = { path = "../media" }
+nanoid = { version ="0.4", optional = true}
 parking_lot.workspace = true
 postage.workspace = true
 
-async-trait = { workspace = true, optional = true }
-nanoid = { version ="0.4", optional = true}
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9.3"
 
-[dev-dependencies]
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+async-trait = { workspace = true }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 live_kit_server = { path = "../live_kit_server" }
-media = { path = "../media" }
-nanoid = "0.4"
 
+[dev-dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 block = "0.1"
-bytes = "1.2"
 byteorder = "1.4"
-cocoa = "0.25"
-core-foundation = "0.9.3"
-core-graphics = "0.22.3"
+bytes = "1.2"
+collections = { path = "../collections", features = ["test-support"] }
 foreign-types = "0.3"
 futures.workspace = true
+gpui = { path = "../gpui", features = ["test-support"] }
 hmac = "0.12"
 jwt = "0.16"
-objc = "0.2"
+live_kit_server = { path = "../live_kit_server" }
+media = { path = "../media" }
+nanoid = "0.4"
 parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

@@ -21,6 +21,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use text::BufferId;
 use util::{http::FakeHttpClient, test::temp_tree, ResultExt};
 
 #[gpui::test]
@@ -511,9 +512,11 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let buffer = tree
         .update(cx, |tree, cx| {
-            tree.as_local_mut()
-                .unwrap()
-                .load_buffer(0, "one/node_modules/b/b1.js".as_ref(), cx)
+            tree.as_local_mut().unwrap().load_buffer(
+                BufferId::new(1).unwrap(),
+                "one/node_modules/b/b1.js".as_ref(),
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -553,9 +556,11 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let buffer = tree
         .update(cx, |tree, cx| {
-            tree.as_local_mut()
-                .unwrap()
-                .load_buffer(0, "one/node_modules/a/a2.js".as_ref(), cx)
+            tree.as_local_mut().unwrap().load_buffer(
+                BufferId::new(1).unwrap(),
+                "one/node_modules/a/a2.js".as_ref(),
+                cx,
+            )
         })
         .await
         .unwrap();

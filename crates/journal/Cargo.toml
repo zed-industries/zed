@@ -3,26 +3,25 @@ name = "journal"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
-
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/journal.rs"
 doctest = false
 
 [dependencies]
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
-settings = { path = "../settings" }
 anyhow.workspace = true
 chrono = "0.4"
 dirs = "4.0"
-serde.workspace = true
-schemars.workspace = true
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
 log.workspace = true
+schemars.workspace = true
+serde.workspace = true
+settings = { path = "../settings" }
 shellexpand = "2.1.0"
+util = { path = "../util" }
+workspace = { path = "../workspace" }
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

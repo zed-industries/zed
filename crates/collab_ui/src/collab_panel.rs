@@ -2495,9 +2495,8 @@ impl CollabPanel {
                 h_flex()
                     .absolute()
                     .right(rems(0.))
+                    .z_index(1)
                     .h_full()
-                    // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
-                    .z_index(10)
                     .child(
                         h_flex()
                             .h_full()

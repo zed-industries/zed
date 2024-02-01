@@ -1,8 +1,8 @@
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter,
-    ForegroundExecutor, InputEvent, Keystroke, Model, ModelContext, Pixels, Platform, Point,
-    Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow, TextSystem, View,
+    ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext, Pixels, Platform,
+    Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow, TextSystem, View,
     ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
@@ -256,20 +256,20 @@ impl TestAppContext {
     }
 
     /// true if the given global is defined
-    pub fn has_global<G: 'static>(&self) -> bool {
+    pub fn has_global<G: Global>(&self) -> bool {
         let app = self.app.borrow();
         app.has_global::<G>()
     }
 
     /// runs the given closure with a reference to the global
     /// panics if `has_global` would return false.
-    pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> R {
+    pub fn read_global<G: Global, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> R {
         let app = self.app.borrow();
         read(app.global(), &app)
     }
 
     /// runs the given closure with a reference to the global (if set)
-    pub fn try_read_global<G: 'static, R>(
+    pub fn try_read_global<G: Global, R>(
         &self,
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
@@ -278,13 +278,13 @@ impl TestAppContext {
     }
 
     /// sets the global in this context.
-    pub fn set_global<G: 'static>(&mut self, global: G) {
+    pub fn set_global<G: Global>(&mut self, global: G) {
         let mut lock = self.app.borrow_mut();
         lock.set_global(global);
     }
 
     /// updates the global in this context. (panics if `has_global` would return false)
-    pub fn update_global<G: 'static, R>(
+    pub fn update_global<G: Global, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> R {

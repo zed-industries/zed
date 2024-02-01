@@ -10,8 +10,12 @@ use serde_json::json;
 use settings::Settings;
 use smol::{fs, fs::File};
 use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, github::latest_github_release};
-use util::{github::GitHubLspBinaryVersion, ResultExt};
+use util::{
+    async_maybe,
+    fs::remove_matching,
+    github::{latest_github_release, GitHubLspBinaryVersion},
+    ResultExt,
+};
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DenoSettings {
@@ -196,7 +200,7 @@ impl LspAdapter for DenoLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -217,7 +221,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         }
 
         Err(anyhow!("no cached binary"))
-    })()
+    })
     .await
     .log_err()
 }

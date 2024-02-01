@@ -1,26 +1,28 @@
 use anyhow::anyhow;
 use tiktoken_rs::CoreBPE;
-use util::ResultExt;
 
 use crate::models::{LanguageModel, TruncationDirection};
 
+use super::OPEN_AI_BPE_TOKENIZER;
+
 #[derive(Clone)]
-pub struct OpenAILanguageModel {
+pub struct OpenAiLanguageModel {
     name: String,
     bpe: Option<CoreBPE>,
 }
 
-impl OpenAILanguageModel {
+impl OpenAiLanguageModel {
     pub fn load(model_name: &str) -> Self {
-        let bpe = tiktoken_rs::get_bpe_from_model(model_name).log_err();
-        OpenAILanguageModel {
+        let bpe =
+            tiktoken_rs::get_bpe_from_model(model_name).unwrap_or(OPEN_AI_BPE_TOKENIZER.to_owned());
+        OpenAiLanguageModel {
             name: model_name.to_string(),
-            bpe,
+            bpe: Some(bpe),
         }
     }
 }
 
-impl LanguageModel for OpenAILanguageModel {
+impl LanguageModel for OpenAiLanguageModel {
     fn name(&self) -> String {
         self.name.clone()
     }

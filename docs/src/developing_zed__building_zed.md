@@ -15,21 +15,21 @@ git submodule update --init --recursive
 
 - Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
 
-    ```bash
-    xcode-select --install
-    ```
+  ```bash
+  xcode-select --install
+  ```
 
 - Ensure that the Xcode command line tools are using your newly installed copy of Xcode:
 
-    ```
-    sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-    ```
+  ```
+  sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+  ```
 
 * Install the Rust wasm toolchain:
 
-    ```bash
-    rustup target add wasm32-wasi
-    ```
+  ```bash
+  rustup target add wasm32-wasi
+  ```
 
 ## Backend Dependencies
 
@@ -38,9 +38,9 @@ If you are developing collaborative features of Zed, you'll need to install the 
 - Install [Postgres](https://postgresapp.com)
 - Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
 
-    ```bash
-    brew install livekit foreman
-    ```
+  ```bash
+  brew install livekit foreman
+  ```
 
 ## Building Zed from Source
 

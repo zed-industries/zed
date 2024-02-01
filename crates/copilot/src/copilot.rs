@@ -5,7 +5,7 @@ use async_tar::Archive;
 use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Model,
+    actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
     ModelContext, Task, WeakModel,
 };
 use language::{
@@ -28,9 +28,21 @@ use std::{
     sync::Arc,
 };
 use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
+    async_maybe, fs::remove_matching, github::latest_github_release, http::HttpClient, paths,
+    ResultExt,
 };
 
+// HACK: This type is only defined in `copilot` since it is the earliest ancestor
+// of the crates that use it.
+//
+// This is not great. Let's find a better place for it to live.
+#[derive(Default)]
+pub struct CommandPaletteFilter {
+    pub hidden_namespaces: HashSet<&'static str>,
+    pub hidden_action_types: HashSet<TypeId>,
+}
+
+impl Global for CommandPaletteFilter {}
 actions!(
     copilot,
     [
@@ -53,7 +65,7 @@ pub fn init(
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
-    cx.set_global(copilot.clone());
+    Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |handle, cx| {
         let copilot_action_types = [
             TypeId::of::<Suggest>(),
@@ -64,7 +76,7 @@ pub fn init(
         let copilot_auth_action_types = [TypeId::of::<SignOut>()];
         let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
-        let filter = cx.default_global::<collections::CommandPaletteFilter>();
+        let filter = cx.default_global::<CommandPaletteFilter>();
 
         match status {
             Status::Disabled => {
@@ -306,9 +318,18 @@ pub enum Event {
 
 impl EventEmitter<Event> for Copilot {}
 
+struct GlobalCopilot(Model<Copilot>);
+
+impl Global for GlobalCopilot {}
+
 impl Copilot {
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
-        cx.try_global::<Model<Self>>().map(|model| model.clone())
+        cx.try_global::<GlobalCopilot>()
+            .map(|model| model.0.clone())
+    }
+
+    pub fn set_global(copilot: Model<Self>, cx: &mut AppContext) {
+        cx.set_global(GlobalCopilot(copilot));
     }
 
     fn start(
@@ -963,7 +984,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         let server_path = version_dir.join(SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            // Copilot LSP looks for this dist dir specifcially, so lets add it in.
+            // Copilot LSP looks for this dist dir specifically, so lets add it in.
             let dist_dir = version_dir.join("dist");
             fs::create_dir_all(dist_dir.as_path()).await?;
 
@@ -992,7 +1013,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         e @ Err(..) => {
             e.log_err();
             // Fetch a cached binary, if it exists
-            (|| async move {
+            async_maybe!({
                 let mut last_version_dir = None;
                 let mut entries = fs::read_dir(paths::COPILOT_DIR.as_path()).await?;
                 while let Some(entry) = entries.next().await {
@@ -1012,7 +1033,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
                         last_version_dir
                     ))
                 }
-            })()
+            })
             .await
         }
     }
@@ -1022,12 +1043,15 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use language::BufferId;
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Hello"));
+        let buffer_1 = cx.new_model(|cx| {
+            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "Hello")
+        });
         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1045,7 +1069,13 @@ mod tests {
             }
         );
 
-        let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Goodbye"));
+        let buffer_2 = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                "Goodbye",
+            )
+        });
         let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1221,6 +1251,10 @@ mod tests {
         fn worktree_id(&self) -> usize {
             0
         }
+
+        fn is_private(&self) -> bool {
+            false
+        }
     }
 
     impl language::LocalFile for File {
@@ -1234,7 +1268,7 @@ mod tests {
 
         fn buffer_reloaded(
             &self,
-            _: u64,
+            _: BufferId,
             _: &clock::Global,
             _: language::RopeFingerprint,
             _: language::LineEnding,

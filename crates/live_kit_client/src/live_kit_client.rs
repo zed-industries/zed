@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
-#[cfg(not(any(test, feature = "test-support")))]
+#[cfg(all(target_os = "macos", not(any(test, feature = "test-support"))))]
 pub mod prod;
 
-#[cfg(not(any(test, feature = "test-support")))]
+#[cfg(all(target_os = "macos", not(any(test, feature = "test-support"))))]
 pub use prod::*;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", not(target_os = "macos")))]
 pub mod test;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", not(target_os = "macos")))]
 pub use test::*;
 
 pub type Sid = String;

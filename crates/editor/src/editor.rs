@@ -19,6 +19,7 @@ mod editor_settings;
 mod element;
 mod inlay_hint_cache;
 
+mod debounced_delay;
 mod git;
 mod highlight_matching_bracket;
 mod hover_popover;
@@ -45,6 +46,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use copilot::Copilot;
+use debounced_delay::DebouncedDelay;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
@@ -85,7 +87,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -104,12 +106,11 @@ use std::{
     ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
     path::Path,
     sync::Arc,
-    sync::Weak,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
-use text::{OffsetUtf16, Rope};
+use text::{BufferId, OffsetUtf16, Rope};
 use theme::{
     observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
     ThemeColors, ThemeSettings,
@@ -118,7 +119,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
     Tooltip,
 };
-use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -241,7 +242,7 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 
     cx.on_action(move |_: &workspace::NewFile, cx| {
-        let app_state = cx.global::<Weak<workspace::AppState>>();
+        let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
@@ -250,7 +251,7 @@ pub fn init(cx: &mut AppContext) {
         }
     });
     cx.on_action(move |_: &workspace::NewWindow, cx| {
-        let app_state = cx.global::<Weak<workspace::AppState>>();
+        let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
@@ -384,6 +385,7 @@ pub struct Editor {
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
+    completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
@@ -702,6 +704,7 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
+    selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
 }
 
 impl CompletionsMenu {
@@ -742,30 +745,31 @@ impl CompletionsMenu {
     }
 
     fn pre_resolve_completion_documentation(
-        &self,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        matches: Arc<[StringMatch]>,
         editor: &Editor,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<Task<()>> {
+    ) -> Task<()> {
         let settings = EditorSettings::get_global(cx);
         if !settings.show_completion_documentation {
-            return None;
+            return Task::ready(());
         }
 
         let Some(provider) = editor.completion_provider.as_ref() else {
-            return None;
+            return Task::ready(());
         };
 
         let resolve_task = provider.resolve_completions(
-            self.matches.iter().map(|m| m.candidate_id).collect(),
-            self.completions.clone(),
+            matches.iter().map(|m| m.candidate_id).collect(),
+            completions.clone(),
             cx,
         );
 
-        return Some(cx.spawn(move |this, mut cx| async move {
+        return cx.spawn(move |this, mut cx| async move {
             if let Some(true) = resolve_task.await.log_err() {
                 this.update(&mut cx, |_, cx| cx.notify()).ok();
             }
-        }));
+        });
     }
 
     fn attempt_resolve_selected_completion_documentation(
@@ -786,12 +790,20 @@ impl CompletionsMenu {
         let resolve_task = project.update(cx, |project, cx| {
             project.resolve_completions(vec![completion_index], self.completions.clone(), cx)
         });
-        cx.spawn(move |this, mut cx| async move {
-            if let Some(true) = resolve_task.await.log_err() {
-                this.update(&mut cx, |_, cx| cx.notify()).ok();
-            }
-        })
-        .detach();
+
+        let delay_ms =
+            EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
+        let delay = Duration::from_millis(delay_ms);
+
+        self.selected_completion_documentation_resolve_debounce
+            .lock()
+            .fire_new(delay, cx, |_, cx| {
+                cx.spawn(move |this, mut cx| async move {
+                    if let Some(true) = resolve_task.await.log_err() {
+                        this.update(&mut cx, |_, cx| cx.notify()).ok();
+                    }
+                })
+            });
     }
 
     fn visible(&self) -> bool {
@@ -1289,19 +1301,37 @@ impl InlayHintRefreshReason {
 
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                String::new(),
+            )
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, cx)
     }
 
     pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                String::new(),
+            )
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, cx)
     }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                String::new(),
+            )
+        });
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::AutoHeight { max_lines }, buffer, None, cx)
     }
@@ -1417,6 +1447,7 @@ impl Editor {
             mouse_context_menu: None,
             completion_tasks: Default::default(),
             next_completion_id: 0,
+            completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
             next_inlay_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
@@ -2279,7 +2310,7 @@ impl Editor {
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
                 if !text.is_empty() {
-                    // `text` can be empty when an user is using IME (e.g. Chinese Wubi Simplified)
+                    // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
                         if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
@@ -3034,6 +3065,8 @@ impl Editor {
             text_system: cx.text_system().clone(),
             editor_style: self.style.clone().unwrap(),
             rem_size: cx.rem_size(),
+            anchor: self.scroll_manager.anchor().anchor,
+            visible_rows: self.visible_line_count(),
         }
     }
 
@@ -3124,7 +3157,7 @@ impl Editor {
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let completions = completions.await.log_err();
-                let (menu, pre_resolve_task) = if let Some(completions) = completions {
+                let menu = if let Some(completions) = completions {
                     let mut menu = CompletionsMenu {
                         id,
                         initial_position: position,
@@ -3144,23 +3177,40 @@ impl Editor {
                         matches: Vec::new().into(),
                         selected_item: 0,
                         scroll_handle: UniformListScrollHandle::new(),
+                        selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
+                            DebouncedDelay::new(),
+                        )),
                     };
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
                     if menu.matches.is_empty() {
-                        (None, None)
+                        None
                     } else {
-                        let pre_resolve_task = this
-                            .update(&mut cx, |editor, cx| {
-                                menu.pre_resolve_completion_documentation(editor, cx)
-                            })
-                            .ok()
-                            .flatten();
-                        (Some(menu), pre_resolve_task)
+                        this.update(&mut cx, |editor, cx| {
+                            let completions = menu.completions.clone();
+                            let matches = menu.matches.clone();
+
+                            let delay_ms = EditorSettings::get_global(cx)
+                                .completion_documentation_secondary_query_debounce;
+                            let delay = Duration::from_millis(delay_ms);
+
+                            editor
+                                .completion_documentation_pre_resolve_debounce
+                                .fire_new(delay, cx, |editor, cx| {
+                                    CompletionsMenu::pre_resolve_completion_documentation(
+                                        completions,
+                                        matches,
+                                        editor,
+                                        cx,
+                                    )
+                                });
+                        })
+                        .ok();
+                        Some(menu)
                     }
                 } else {
-                    (None, None)
+                    None
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -3195,10 +3245,6 @@ impl Editor {
                         }
                     }
                 })?;
-
-                if let Some(pre_resolve_task) = pre_resolve_task {
-                    pre_resolve_task.await;
-                }
 
                 Ok::<_, anyhow::Error>(())
             }
@@ -8196,6 +8242,43 @@ impl Editor {
         }
     }
 
+    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+        use git::permalink::{build_permalink, BuildPermalinkParams};
+
+        let permalink = maybe!({
+            let project = self.project.clone()?;
+            let project = project.read(cx);
+
+            let worktree = project.visible_worktrees(cx).next()?;
+
+            let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+            cwd.push(".git");
+
+            let repo = project.fs().open_repo(&cwd)?;
+            let origin_url = repo.lock().remote_url("origin")?;
+            let sha = repo.lock().head_sha()?;
+
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+            let path = file.path().to_str().map(|path| path.to_string())?;
+
+            let selections = self.selections.all::<Point>(cx);
+            let selection = selections.iter().peekable().next();
+
+            build_permalink(BuildPermalinkParams {
+                remote_url: &origin_url,
+                sha: &sha,
+                path: &path,
+                selection: selection.map(|selection| selection.range()),
+            })
+            .log_err()
+        });
+
+        if let Some(permalink) = permalink {
+            cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+        }
+    }
+
     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
         self.highlighted_rows = rows;
     }
@@ -8408,6 +8491,31 @@ impl Editor {
         // We might still have a hunk that was not rendered (if there was a search hit on the last line)
         push_region(start_row, end_row);
         results
+    }
+
+    /// Get the text ranges corresponding to the redaction query
+    pub fn redacted_ranges(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Range<DisplayPoint>> {
+        display_snapshot
+            .buffer_snapshot
+            .redacted_ranges(search_range, |file| {
+                if let Some(file) = file {
+                    file.is_private()
+                        && EditorSettings::get(Some((file.worktree_id(), file.path())), cx)
+                            .redact_private_values
+                } else {
+                    false
+                }
+            })
+            .map(|range| {
+                range.start.to_display_point(display_snapshot)
+                    ..range.end.to_display_point(display_snapshot)
+            })
+            .collect()
     }
 
     pub fn highlight_text<T: 'static>(
