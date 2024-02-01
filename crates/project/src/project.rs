@@ -3,6 +3,7 @@ pub mod lsp_command;
 pub mod lsp_ext_command;
 mod prettier_support;
 pub mod project_settings;
+mod runnable_inventory;
 pub mod search;
 pub mod terminals;
 pub mod worktree;
