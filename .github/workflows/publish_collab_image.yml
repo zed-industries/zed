@@ -71,7 +71,7 @@ jobs:
           submodules: "recursive"
 
       - name: Build docker image
-        run: docker build . --tag registry.digitalocean.com/zed/collab:${GITHUB_SHA}
+        run: docker build . --build-arg GITHUB_SHA=$GITHUB_SHA --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA
 
       - name: Publish docker image
         run: docker push registry.digitalocean.com/zed/collab:${GITHUB_SHA}
@@ -92,16 +92,16 @@ jobs:
         run: |
           set -eu
           if [[ $GITHUB_REF_NAME = "collab-production" ]]; then
-            echo "Deploying collab:${GITHUB_SHA} to production"
+            echo "Deploying collab:$GITHUB_SHA to production"
             echo "KUBE_NAMESPACE=production" >> $GITHUB_ENV
           elif [[ $GITHUB_REF_NAME = "collab-staging" ]]; then
-            echo "Deploying collab:${GITHUB_SHA} to staging"
+            echo "Deploying collab:$GITHUB_SHA to staging"
             echo "KUBE_NAMESPACE=staging" >> $GITHUB_ENV
           elif [[ $GITHUB_REF_NAME = "test-collab-deploy" ]]; then
-            echo "Deploying collab:${GITHUB_SHA} to staging"
+            echo "Deploying collab:$GITHUB_SHA to staging"
             echo "KUBE_NAMESPACE=staging" >> $GITHUB_ENV
           else
-            echo "release tag ${GITHUB_REF_NAME} does not match version ${version}"
+            echo "cowardly refusing to deploy from an unknown branch"
             exit 1
           fi
 
