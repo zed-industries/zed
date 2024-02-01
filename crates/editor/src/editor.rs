@@ -5420,6 +5420,24 @@ impl Editor {
         })
     }
 
+    pub fn select_down_by_lines(&mut self, action: &SelectDownByLines, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::down_by_rows(map, head, action.lines, goal, false, &text_layout_details)
+            })
+        })
+    }
+
+    pub fn select_up_by_lines(&mut self, action: &SelectUpByLines, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::up_by_rows(map, head, action.lines, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;

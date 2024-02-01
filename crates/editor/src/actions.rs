@@ -82,6 +82,17 @@ pub struct MoveDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct SelectUpByLines {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct SelectDownByLines {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
 
 impl_actions!(
     editor,
@@ -100,6 +111,8 @@ impl_actions!(
         UnfoldAt,
         MoveUpByLines,
         MoveDownByLines,
+        SelectUpByLines,
+        SelectDownByLines,
     ]
 );
 
