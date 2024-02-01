@@ -12,21 +12,20 @@ path = "src/markdown_preview.rs"
 test-support = []
 
 [dependencies]
+anyhow.workspace = true
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+lazy_static.workspace = true
+log.workspace = true
 menu = { path = "../menu" }
 project = { path = "../project" }
+pulldown-cmark.workspace = true
+rich_text = { path = "../rich_text" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-rich_text = { path = "../rich_text" }
-
-anyhow.workspace = true
-lazy_static.workspace = true
-log.workspace = true
-pulldown-cmark.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
