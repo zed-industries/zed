@@ -1,12 +1,13 @@
 use super::BladeRenderer;
 use crate::{
-    AnyWindowHandle, BladeAtlas, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
+    BladeAtlas, Bounds, GlobalPixels, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
     PlatformWindow, Point, Size, WindowAppearance, WindowBounds, WindowOptions, XcbAtoms,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
 use std::{
     ffi::c_void,
+    mem,
     rc::Rc,
     sync::{self, Arc},
 };
@@ -15,24 +16,52 @@ use xcb::{x, Xid as _};
 #[derive(Default)]
 struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
+    input: Option<Box<dyn FnMut(crate::PlatformInput) -> bool>>,
+    active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    fullscreen: Option<Box<dyn FnMut(bool)>>,
     moved: Option<Box<dyn FnMut()>>,
+    should_close: Option<Box<dyn FnMut() -> bool>>,
+    close: Option<Box<dyn FnOnce()>>,
+    appearance_changed: Option<Box<dyn FnMut()>>,
+}
+
+struct LinuxWindowInner {
+    bounds: Bounds<i32>,
+    title_height: i32,
+    border_width: i32,
+    scale_factor: f32,
+    renderer: BladeRenderer,
+}
+
+impl LinuxWindowInner {
+    fn render_extent(&self) -> gpu::Extent {
+        gpu::Extent {
+            width: (self.bounds.size.width - 2 * self.border_width) as u32,
+            height: (self.bounds.size.height - 2 * self.border_width - self.title_height) as u32,
+            depth: 1,
+        }
+    }
+    fn content_size(&self) -> Size<Pixels> {
+        let extent = self.render_extent();
+        Size {
+            width: extent.width.into(),
+            height: extent.height.into(),
+        }
+    }
 }
 
 pub(crate) struct LinuxWindowState {
+    xcb_connection: Arc<xcb::Connection>,
     display: Rc<dyn PlatformDisplay>,
     x_window: x::Window,
-    window_bounds: WindowBounds,
-    content_size: Size<Pixels>,
+    callbacks: Mutex<Callbacks>,
+    inner: Mutex<LinuxWindowInner>,
     sprite_atlas: Arc<BladeAtlas>,
-    renderer: BladeRenderer,
-    //TODO: move out into a separate struct
-    callbacks: Callbacks,
 }
 
-pub(crate) type LinuxWindowStatePtr = Arc<Mutex<LinuxWindowState>>;
 #[derive(Clone)]
-pub(crate) struct LinuxWindow(pub(crate) LinuxWindowStatePtr);
+pub(crate) struct LinuxWindow(pub(crate) Arc<LinuxWindowState>);
 
 struct RawWindow {
     connection: *mut c_void,
@@ -58,13 +87,13 @@ unsafe impl raw_window_handle::HasRawDisplayHandle for RawWindow {
 }
 
 impl LinuxWindowState {
-    pub fn new_ptr(
+    pub fn new(
         options: WindowOptions,
-        xcb_connection: &xcb::Connection,
+        xcb_connection: &Arc<xcb::Connection>,
         x_main_screen_index: i32,
         x_window: x::Window,
         atoms: &XcbAtoms,
-    ) -> LinuxWindowStatePtr {
+    ) -> Self {
         let x_screen_index = options
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as i32);
@@ -81,27 +110,27 @@ impl LinuxWindowState {
             ),
         ];
 
-        let (bound_x, bound_y, bound_width, bound_height) = match options.bounds {
-            WindowBounds::Fullscreen | WindowBounds::Maximized => {
-                (0, 0, screen.width_in_pixels(), screen.height_in_pixels())
-            }
-            WindowBounds::Fixed(bounds) => (
-                bounds.origin.x.0 as i16,
-                bounds.origin.y.0 as i16,
-                bounds.size.width.0 as u16,
-                bounds.size.height.0 as u16,
-            ),
+        let bounds = match options.bounds {
+            WindowBounds::Fullscreen | WindowBounds::Maximized => Bounds {
+                origin: Point::default(),
+                size: Size {
+                    width: screen.width_in_pixels() as i32,
+                    height: screen.height_in_pixels() as i32,
+                },
+            },
+            WindowBounds::Fixed(bounds) => bounds.map(|p| p.0 as i32),
         };
+        let border_width = 0i32;
 
         xcb_connection.send_request(&x::CreateWindow {
             depth: x::COPY_FROM_PARENT as u8,
             wid: x_window,
             parent: screen.root(),
-            x: bound_x,
-            y: bound_y,
-            width: bound_width,
-            height: bound_height,
-            border_width: 0,
+            x: bounds.origin.x as i16,
+            y: bounds.origin.y as i16,
+            width: bounds.size.width as u16,
+            height: bounds.size.height as u16,
+            border_width: border_width as u16,
             class: x::WindowClass::InputOutput,
             visual: screen.root_visual(),
             value_list: &xcb_values,
@@ -151,76 +180,93 @@ impl LinuxWindowState {
             }
             .unwrap(),
         );
+
         let gpu_extent = gpu::Extent {
-            width: bound_width as u32,
-            height: bound_height as u32,
+            width: bounds.size.width as u32,
+            height: bounds.size.height as u32,
             depth: 1,
         };
+        let sprite_atlas = Arc::new(BladeAtlas::new(&gpu));
 
-        Arc::new(Mutex::new(Self {
+        Self {
+            xcb_connection: Arc::clone(xcb_connection),
             display: Rc::new(LinuxDisplay::new(xcb_connection, x_screen_index)),
             x_window,
-            window_bounds: options.bounds,
-            content_size: Size {
-                width: Pixels(bound_width as f32),
-                height: Pixels(bound_height as f32),
-            },
-            sprite_atlas: Arc::new(BladeAtlas::new(&gpu)),
-            renderer: BladeRenderer::new(gpu, gpu_extent),
-            callbacks: Callbacks::default(),
-        }))
+            callbacks: Mutex::new(Callbacks::default()),
+            inner: Mutex::new(LinuxWindowInner {
+                bounds,
+                title_height: 0, //TODO
+                border_width,
+                scale_factor: 1.0,
+                renderer: BladeRenderer::new(gpu, gpu_extent),
+            }),
+            sprite_atlas,
+        }
     }
 
-    pub fn destroy(&mut self) {
+    pub fn destroy(&self) {
         self.sprite_atlas.destroy();
-        self.renderer.destroy();
-    }
-
-    pub fn resize(self_ptr: &LinuxWindowStatePtr, width: u16, height: u16) {
-        let content_size = Size {
-            width: Pixels(width as f32),
-            height: Pixels(height as f32),
-        };
-
-        let mut fun = match self_ptr.lock().callbacks.resize.take() {
-            Some(fun) => fun,
-            None => return,
-        };
-        fun(content_size, 1.0);
-
-        let mut this = self_ptr.lock();
-        this.callbacks.resize = Some(fun);
-        this.content_size = content_size;
-        this.renderer.resize(gpu::Extent {
-            width: width as u32,
-            height: height as u32,
-            depth: 1,
+        {
+            let mut inner = self.inner.lock();
+            inner.renderer.destroy();
+        }
+        self.xcb_connection.send_request(&x::UnmapWindow {
+            window: self.x_window,
         });
+        self.xcb_connection.send_request(&x::DestroyWindow {
+            window: self.x_window,
+        });
+        if let Some(fun) = self.callbacks.lock().close.take() {
+            fun();
+        }
     }
 
-    pub fn request_frame(self_ptr: &LinuxWindowStatePtr) {
-        let mut fun = match self_ptr.lock().callbacks.request_frame.take() {
-            Some(fun) => fun,
-            None => return,
-        };
-        fun();
+    pub fn expose(&self) {
+        let mut cb = self.callbacks.lock();
+        if let Some(ref mut fun) = cb.request_frame {
+            fun();
+        }
+    }
 
-        self_ptr.lock().callbacks.request_frame = Some(fun);
+    pub fn configure(&self, bounds: Bounds<i32>) {
+        let mut resize_args = None;
+        let mut do_move = false;
+        {
+            let mut inner = self.inner.lock();
+            let old_bounds = mem::replace(&mut inner.bounds, bounds);
+            do_move = old_bounds.origin != bounds.origin;
+            if old_bounds.size != bounds.size {
+                let extent = inner.render_extent();
+                inner.renderer.resize(extent);
+                resize_args = Some((inner.content_size(), inner.scale_factor));
+            }
+        }
+
+        let mut callbacks = self.callbacks.lock();
+        if let Some((content_size, scale_factor)) = resize_args {
+            if let Some(ref mut fun) = callbacks.resize {
+                fun(content_size, scale_factor)
+            }
+        }
+        if do_move {
+            if let Some(ref mut fun) = callbacks.moved {
+                fun()
+            }
+        }
     }
 }
 
 impl PlatformWindow for LinuxWindow {
     fn bounds(&self) -> WindowBounds {
-        //TODO: update when window moves
-        self.0.lock().window_bounds
+        WindowBounds::Fixed(self.0.inner.lock().bounds.map(|v| GlobalPixels(v as f32)))
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.0.lock().content_size
+        self.0.inner.lock().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
-        1.0
+        self.0.inner.lock().scale_factor
     }
 
     fn titlebar_height(&self) -> Pixels {
@@ -232,7 +278,7 @@ impl PlatformWindow for LinuxWindow {
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::clone(&self.0.lock().display)
+        Rc::clone(&self.0.display)
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -286,28 +332,40 @@ impl PlatformWindow for LinuxWindow {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().callbacks.request_frame = Some(callback);
+        self.0.callbacks.lock().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> bool>) {}
+    fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> bool>) {
+        self.0.callbacks.lock().input = Some(callback);
+    }
 
-    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {}
+    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.lock().active_status_change = Some(callback);
+    }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.0.lock().callbacks.resize = Some(callback);
+        self.0.callbacks.lock().resize = Some(callback);
     }
 
-    fn on_fullscreen(&self, _callback: Box<dyn FnMut(bool)>) {}
+    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.lock().fullscreen = Some(callback);
+    }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().callbacks.moved = Some(callback);
+        self.0.callbacks.lock().moved = Some(callback);
     }
 
-    fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
+    fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.callbacks.lock().should_close = Some(callback);
+    }
 
-    fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
+    fn on_close(&self, callback: Box<dyn FnOnce()>) {
+        self.0.callbacks.lock().close = Some(callback);
+    }
 
-    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.lock().appearance_changed = Some(callback);
+    }
 
     fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
         unimplemented!()
@@ -316,10 +374,11 @@ impl PlatformWindow for LinuxWindow {
     fn invalidate(&self) {}
 
     fn draw(&self, scene: &crate::Scene) {
-        self.0.lock().renderer.draw(scene);
+        let mut inner = self.0.inner.lock();
+        inner.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
-        self.0.lock().sprite_atlas.clone()
+        self.0.sprite_atlas.clone()
     }
 }

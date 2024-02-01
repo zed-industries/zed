@@ -1,11 +1,10 @@
 #![allow(unused)]
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    Action, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, LinuxDisplay, LinuxTextSystem, LinuxWindow,
-    LinuxWindowState, LinuxWindowStatePtr, Menu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    WindowOptions,
+    LinuxWindowState, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
+    PlatformTextSystem, PlatformWindow, Point, Result, SemanticVersion, Size, Task, WindowOptions,
 };
 
 use collections::{HashMap, HashSet};
@@ -35,12 +34,12 @@ xcb::atoms_struct! {
 pub(crate) struct LinuxPlatform(Mutex<LinuxPlatformState>);
 
 pub(crate) struct LinuxPlatformState {
-    xcb_connection: xcb::Connection,
+    xcb_connection: Arc<xcb::Connection>,
     x_root_index: i32,
     atoms: XcbAtoms,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    windows: HashMap<x::Window, LinuxWindowStatePtr>,
+    windows: HashMap<x::Window, Arc<LinuxWindowState>>,
     text_system: Arc<LinuxTextSystem>,
 }
 
@@ -58,7 +57,7 @@ impl LinuxPlatform {
         let dispatcher = Arc::new(LinuxDispatcher::new());
 
         Self(Mutex::new(LinuxPlatformState {
-            xcb_connection,
+            xcb_connection: Arc::new(xcb_connection),
             x_root_index,
             atoms,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
@@ -87,43 +86,37 @@ impl Platform for LinuxPlatform {
 
         while !self.0.lock().windows.is_empty() {
             let event = self.0.lock().xcb_connection.wait_for_event().unwrap();
-            let mut repaint_x_window = None;
             match event {
                 xcb::Event::X(x::Event::ClientMessage(ev)) => {
                     if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
                         let mut this = self.0.lock();
                         if atom == this.atoms.wm_del_window.resource_id() {
                             // window "x" button clicked by user, we gracefully exit
-                            {
-                                let mut window = this.windows[&ev.window()].lock();
-                                window.destroy();
-                            }
-                            this.xcb_connection.send_request(&x::UnmapWindow {
-                                window: ev.window(),
-                            });
-                            this.xcb_connection.send_request(&x::DestroyWindow {
-                                window: ev.window(),
-                            });
-                            this.windows.remove(&ev.window());
+                            let window = this.windows.remove(&ev.window()).unwrap();
+                            window.destroy();
                             break;
                         }
                     }
                 }
                 xcb::Event::X(x::Event::Expose(ev)) => {
-                    repaint_x_window = Some(ev.window());
+                    let this = self.0.lock();
+                    this.windows[&ev.window()].expose();
                 }
                 xcb::Event::X(x::Event::ConfigureNotify(ev)) => {
+                    let bounds = Bounds {
+                        origin: Point {
+                            x: ev.x().into(),
+                            y: ev.y().into(),
+                        },
+                        size: Size {
+                            width: ev.width().into(),
+                            height: ev.height().into(),
+                        },
+                    };
                     let this = self.0.lock();
-                    LinuxWindowState::resize(&this.windows[&ev.window()], ev.width(), ev.height());
-                    this.xcb_connection.flush();
+                    this.windows[&ev.window()].configure(bounds);
                 }
                 _ => {}
-            }
-
-            if let Some(x_window) = repaint_x_window {
-                let this = self.0.lock();
-                LinuxWindowState::request_frame(&this.windows[&x_window]);
-                this.xcb_connection.flush();
             }
         }
     }
@@ -173,14 +166,14 @@ impl Platform for LinuxPlatform {
         let mut this = self.0.lock();
         let x_window = this.xcb_connection.generate_id();
 
-        let window_ptr = LinuxWindowState::new_ptr(
+        let window_ptr = Arc::new(LinuxWindowState::new(
             options,
             &this.xcb_connection,
             this.x_root_index,
             x_window,
             &this.atoms,
-        );
-        this.windows.insert(x_window, window_ptr.clone());
+        ));
+        this.windows.insert(x_window, Arc::clone(&window_ptr));
         Box::new(LinuxWindow(window_ptr))
     }
 
