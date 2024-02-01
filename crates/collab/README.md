@@ -22,7 +22,7 @@ Deployment is triggered by pushing to the `collab-staging` (or `collab-productio
 * `./script/deploy-collab staging`
 * `./script/deploy-collab production`
 
-You can tell what is currrently deployed with `./script/what-is-deployed`.
+You can tell what is currently deployed with `./script/what-is-deployed`.
 
 # Database Migrations
 
