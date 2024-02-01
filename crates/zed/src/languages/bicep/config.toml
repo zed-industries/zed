@@ -1,0 +1,10 @@
+name = "Bicep"
+path_suffixes = ["bicep"]
+line_comments = ["// "]
+autoclose_before = "',)]}"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+]
+

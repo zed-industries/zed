@@ -8748,6 +8748,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-bicep"
+version = "1.0.1"
+source = "git+https://github.com/amaanq/tree-sitter-bicep.git?rev=48a00c254671b5e847e615442678f4f3f5aa1e43#48a00c254671b5e847e615442678f4f3f5aa1e43"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-c"
 version = "0.20.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10395,6 +10404,7 @@ dependencies = [
  "toml",
  "tree-sitter",
  "tree-sitter-bash",
+ "tree-sitter-bicep",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
  "tree-sitter-cpp",
