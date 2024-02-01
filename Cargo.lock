@@ -8759,6 +8759,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-elisp"
+version = "1.4.0"
+source = "git+https://github.com/Wilfred/tree-sitter-elisp#e5524fdccf8c22fc726474a910e4ade976dfc7bb"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-elixir"
 version = "0.1.0"
 source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=a2861e88a730287a60c11ea9299c033c7d076e30#a2861e88a730287a60c11ea9299c033c7d076e30"
@@ -10361,6 +10370,7 @@ dependencies = [
  "tree-sitter-c-sharp",
  "tree-sitter-cpp",
  "tree-sitter-css",
+ "tree-sitter-elisp",
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",

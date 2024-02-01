@@ -285,6 +285,10 @@ pub fn init(
         tree_sitter_elm::language(),
         vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))],
     );
+
+    // TODO: impl lsp-support
+    language("elisp", tree_sitter_elisp::language(), vec![]);
+
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);
     language(

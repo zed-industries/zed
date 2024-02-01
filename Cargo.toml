@@ -139,6 +139,7 @@ tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev=
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
+tree-sitter-elisp = { git = "https://github.com/Wilfred/tree-sitter-elisp" }
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-gitcommit = { git = "https://github.com/gbprod/tree-sitter-gitcommit" }
 tree-sitter-gleam = { git = "https://github.com/gleam-lang/tree-sitter-gleam", rev = "58b7cac8fc14c92b0677c542610d8738c373fa81" }
