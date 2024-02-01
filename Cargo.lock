@@ -2661,6 +2661,7 @@ dependencies = [
  "env_logger",
  "fuzzy",
  "gpui",
+ "itertools 0.11.0",
  "language",
  "menu",
  "picker",
