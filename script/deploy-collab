@@ -16,6 +16,6 @@ if [ "$branch" != "main" ]; then
   exit 1
 fi
 
-echo git pull --ff-only origin main
-echo git tag -f $tag
-echo git push -f origin $tag
+git pull --ff-only origin main
+git tag -f $tag
+git push -f origin $tag
