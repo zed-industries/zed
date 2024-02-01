@@ -62,6 +62,7 @@ pub struct ChatPanel {
     markdown_data: HashMap<ChannelMessageId, RichText>,
     focus_handle: FocusHandle,
     open_context_menu: Option<(u64, Subscription)>,
+    reply_to_message_id: Option<ChannelMessageId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -124,6 +125,7 @@ impl ChatPanel {
                 markdown_data: Default::default(),
                 focus_handle: cx.focus_handle(),
                 open_context_menu: None,
+                reply_to_message_id: None,
             };
 
             if let Some(channel_id) = ActiveCall::global(cx)
@@ -630,6 +632,43 @@ impl Render for ChatPanel {
                     )
                 }
             }))
+            .when(self.reply_to_message_id.is_some(), |el| {
+                el.child(div().py_1()
+                    .px_2()
+                    .bg(cx.theme().colors().background)
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .text_ui_xs()
+                                    .child("Reply to:")
+                                    .child(
+                                        Avatar::new(
+                                            "https://avatars.githubusercontent.com/u/62463826?v=4",
+                                        )
+                                        .size(rems(0.8)),
+                                    )
+                                    .child(Label::new("RemcoSmitsDev").size(LabelSize::XSmall)),
+                            )
+                            .gap_1()
+                            .child(
+                                IconButton::new("remove-reply", IconName::Close)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .on_click(cx.listener(move |this, _, _| {
+                                        this.reply_to_message_id = None;
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .rounded_md()
+                            .text_ui_sm()
+                            .bg(cx.theme().colors().background)
+                            .child("jkasldf jaksldfj lkasjdf;l kasjdklf;asld f;asdfj"),
+                    ))
+            })
             .child(
                 h_flex()
                     .when(!self.is_scrolled_to_bottom, |el| {
