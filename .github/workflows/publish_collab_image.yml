@@ -41,6 +41,7 @@ jobs:
         with:
           clean: false
           submodules: "recursive"
+          fetch-depth: 0
 
       - name: Run tests
         uses: ./.github/actions/run_test
