@@ -74,7 +74,7 @@ use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CodeAction,
     CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
-    Language, LanguageServerName, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
@@ -7289,9 +7289,7 @@ impl Editor {
                         editor.buffer.read(cx).as_singleton().and_then(|buffer| {
                             project
                                 .language_server_for_buffer(buffer.read(cx), server_id, cx)
-                                .map(|(_, lsp_adapter)| {
-                                    LanguageServerName(Arc::from(lsp_adapter.name()))
-                                })
+                                .map(|(lsp_adapter, _)| lsp_adapter.name.clone())
                         });
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
