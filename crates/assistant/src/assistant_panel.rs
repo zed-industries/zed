@@ -199,9 +199,13 @@ impl AssistantPanel {
             .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
         cx.notify();
         if self.focus_handle.is_focused(cx) {
-            if let Some(editor) = self.active_editor() {
-                cx.focus_view(editor);
-            } else if let Some(api_key_editor) = self.api_key_editor.as_ref() {
+            if self.has_credentials() {
+                if let Some(editor) = self.active_editor() {
+                    cx.focus_view(editor);
+                }
+            }
+
+            if let Some(api_key_editor) = self.api_key_editor.as_ref() {
                 cx.focus_view(api_key_editor);
             }
         }
@@ -777,6 +781,10 @@ impl AssistantPanel {
         });
     }
 
+    fn build_api_key_editor(&mut self, cx: &mut ViewContext<Self>) {
+        self.api_key_editor = Some(build_api_key_editor(cx));
+    }
+
     fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
@@ -870,7 +878,7 @@ impl AssistantPanel {
             cx.update(|cx| completion_provider.delete_credentials(cx))?
                 .await;
             this.update(&mut cx, |this, cx| {
-                this.api_key_editor = Some(build_api_key_editor(cx));
+                this.build_api_key_editor(cx);
                 this.focus_handle.focus(cx);
                 cx.notify();
             })
@@ -1342,7 +1350,9 @@ impl Panel for AssistantPanel {
             cx.spawn(|this, mut cx| async move {
                 load_credentials.await;
                 this.update(&mut cx, |this, cx| {
-                    if this.editors.is_empty() {
+                    if !this.has_credentials() {
+                        this.build_api_key_editor(cx);
+                    } else if this.editors.is_empty() {
                         this.new_conversation(cx);
                     }
                 })
