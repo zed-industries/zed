@@ -21,8 +21,10 @@ deployed_image_id=$(
     -o 'jsonpath={.spec.template.spec.containers[0].image}' \
     | cut -d: -f2
 )
-git fetch >/dev/null
 
 echo "Deployed image version: $deployed_image_id"
-echo "Version from the web: $(curl -sS $url)"
-echo "Currently tagged version: $(git rev-parse tags/$tag)"
+
+git fetch >/dev/null
+if [[ "$(git rev-parse tags/$tag)" != $deployed_image_id ]]; then
+    echo "NOTE: tags/$tag $(git rev-parse tags/$tag) is not yet deployed"
+fi;
