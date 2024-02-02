@@ -129,15 +129,6 @@ pub struct ThemeSettingsContent {
 }
 
 impl ThemeSettingsContent {
-    /// Returns whether the current theme setting requires to use the dark theme.
-    pub(crate) fn is_dark_mode(&self, window_appearance: WindowAppearance) -> bool {
-        if let Some(themes) = &self.themes {
-            return matches!(themes.appearance(window_appearance), Appearance::Dark);
-        }
-
-        false
-    }
-
     pub(crate) fn theme_to_use(&self, appearance: Appearance) -> Option<&str> {
         let appearance_aware_theme = self.themes.as_ref().and_then(|themes| match appearance {
             Appearance::Light => themes.light.as_deref(),
