@@ -34,7 +34,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::{measure, ResultExt};
 
@@ -271,8 +271,9 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
-    active: Rc<Cell<bool>>,
+    active: bool,
     pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
@@ -342,17 +343,15 @@ impl Window {
         let bounds = platform_window.bounds();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
-        let active = Rc::new(Cell::new(false));
         let dirty = Rc::new(Cell::new(false));
+        let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
-            let active = active.clone();
             let dirty = dirty.clone();
-            let mut idle_frames = 0;
+            let last_input_timestamp = last_input_timestamp.clone();
             move || {
                 if dirty.get() {
-                    idle_frames = 0;
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, cx| {
@@ -361,14 +360,10 @@ impl Window {
                             })
                             .log_err();
                     })
-                } else if active.get() {
-                    // Keep presenting the current scene to prevent the display from underclocking the refresh rate.
-                    // We present the last scene 2 more times so that we maintain 120fps if possible for longer than 10ms, we consider a reasonable key repeat rate.
-                    // We do this only if the window is active to avoid draining the battery unnecessarily for windows that the user is not interacting with.
-                    if idle_frames < 2 {
-                        idle_frames += 1;
-                        handle.update(&mut cx, |_, cx| cx.present()).log_err();
-                    }
+                } else if last_input_timestamp.get().elapsed() < Duration::from_secs(2) {
+                    // Keep presenting the current scene for 2 extra seconds since the
+                    // last input to prevent the display from underclocking the refresh rate.
+                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
             }
         }));
@@ -401,7 +396,7 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, cx| {
-                        cx.window.active.set(active);
+                        cx.window.active = active;
                         cx.window
                             .activation_observers
                             .clone()
@@ -447,8 +442,9 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
-            active,
+            active: false,
             dirty,
+            last_input_timestamp,
             refreshing: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
@@ -797,7 +793,7 @@ impl<'a> WindowContext<'a> {
 
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
-        self.window.active.get()
+        self.window.active
     }
 
     /// Toggle zoom on the window.
@@ -1058,7 +1054,7 @@ impl<'a> WindowContext<'a> {
                 self.window.focus,
             );
         self.window.next_frame.focus = self.window.focus;
-        self.window.next_frame.window_active = self.window.active.get();
+        self.window.next_frame.window_active = self.window.active;
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
@@ -1139,6 +1135,7 @@ impl<'a> WindowContext<'a> {
 
     /// Dispatch a mouse or keyboard event on the window.
     pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
+        self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
         self.app.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
@@ -2562,7 +2559,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
         cx.windows
             .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active.get()))
+            .and_then(|window| window.as_ref().map(|window| window.active))
     }
 }
 
