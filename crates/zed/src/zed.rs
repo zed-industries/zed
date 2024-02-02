@@ -53,6 +53,7 @@ actions!(
         OpenDefaultKeymap,
         OpenDefaultSettings,
         OpenKeymap,
+        OpenRunnables,
         OpenLicenses,
         OpenLocalSettings,
         OpenLog,
@@ -252,6 +253,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         || settings::initial_user_settings_content().as_ref().into(),
                         cx,
                     );
+                },
+            )
+            .register_action(
+                move |_: &mut Workspace, _: &OpenRunnables, cx: &mut ViewContext<Workspace>| {
+                    open_settings_file(&paths::RUNNABLES, || "".into(), cx);
                 },
             )
             .register_action(open_local_settings_file)

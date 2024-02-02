@@ -1,8 +1,9 @@
+//! Contains definitions for runnables that can be deserialized from e.g. JSON.
 use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Runnables {
     pub version: String,
     pub tasks: Vec<Definition>,

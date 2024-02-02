@@ -20,6 +20,7 @@ lazy_static::lazy_static! {
     pub static ref CRASHES_RETIRED_DIR: PathBuf = HOME.join("Library/Logs/DiagnosticReports/Retired");
     pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
     pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
+    pub static ref RUNNABLES: PathBuf = CONFIG_DIR.join("runnables.json");
     pub static ref LAST_USERNAME: PathBuf = CONFIG_DIR.join("last-username.txt");
     pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");

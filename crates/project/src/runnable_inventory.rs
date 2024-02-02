@@ -6,21 +6,22 @@ use runnable::{ExecutionResult, Runnable, RunnableId, RunnablePebble, Source, Ta
 
 /// Inventory tracks available runnables for a given project.
 #[derive(Default)]
-pub(crate) struct Inventory {
+pub struct Inventory {
     sources: Vec<Model<Box<dyn Source>>>,
 }
 
 impl Inventory {
-    pub(crate) fn add_source(&mut self, source: Model<Box<dyn Source>>) {
+    pub fn add_source(&mut self, source: Model<Box<dyn Source>>) {
         self.sources.push(source);
     }
-    pub(crate) fn list_runnables<'a>(
+
+    pub fn list_runnables<'a>(
         &'a self,
         path: &'a Path,
-        cx: &'a AppContext,
+        cx: &'a mut AppContext,
     ) -> impl Iterator<Item = RunnablePebble> + 'a {
         self.sources
             .iter()
-            .flat_map(|source| source.read(cx).runnables_for_path(path))
+            .flat_map(|source| source.read(cx).runnables_for_path(path, cx))
     }
 }

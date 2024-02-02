@@ -1074,6 +1074,12 @@ impl Project {
         cx.notify();
     }
 
+    pub fn runnable_inventory_mut(&mut self) -> &mut Inventory {
+        &mut self.runnables
+    }
+    pub fn runnable_inventory(&self) -> &Inventory {
+        &self.runnables
+    }
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
         &self.collaborators
     }

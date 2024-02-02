@@ -1,7 +1,8 @@
 //! Defines baseline interface of Runnables in Zed.
 // #![deny(missing_docs)]
-mod static_runnable;
+mod static_runnable_file;
 mod static_runner;
+mod static_source;
 
 use anyhow::{bail, Result};
 use core::future::Future;
@@ -11,7 +12,9 @@ use futures::stream::{AbortHandle, Abortable};
 use futures::FutureExt;
 use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use static_runner::StaticRunner;
+use std::num::NonZeroU64;
 use std::path::Path;
+use std::sync::atomic::{self, AtomicU64, AtomicUsize};
 
 pub struct TaskHandle {
     fut: Task<Result<ExecutionResult, TaskTerminated>>,
@@ -76,7 +79,8 @@ pub trait Runnable {
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
-struct SourceId(u64);
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceId(u64);
 
 impl std::fmt::Display for SourceId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -89,9 +93,19 @@ impl std::fmt::Display for SourceId {
 // runnables_for_path(..) -> [("a"), ("b")]
 //
 // trait Source: EventEmitter<SourceEvent> {
+static SOURCE_ID: AtomicU64 = AtomicU64::new(0);
+
+pub fn next_source_id() -> SourceId {
+    SourceId(SOURCE_ID.fetch_add(1, atomic::Ordering::Relaxed))
+}
+
 pub trait Source {
     fn id(&self) -> SourceId;
-    fn runnables_for_path(&self, path: &Path) -> Box<dyn Iterator<Item = RunnablePebble>>;
+    fn runnables_for_path<'a>(
+        &'a self,
+        path: &'a Path,
+        cx: &'a mut AppContext,
+    ) -> anyhow::Result<Box<dyn Iterator<Item = RunnablePebble>> + 'a>;
 }
 
 /// Uniquely represents a runnable in an inventory.
@@ -104,7 +118,7 @@ pub struct RunnableLens {
 }
 
 pub struct RunnablePebble {
-    lens: RunnableLens,
+    metadata: RunnableLens,
     state: Model<RunState>,
 }
 
@@ -124,8 +138,8 @@ impl RunnablePebble {
             RunState::AlreadyUnderway(_) | RunState::Done(_) => {
                 bail!(
                     "A runnable {} from source {} cannot be scheduled.",
-                    self.lens.runnable_id,
-                    self.lens.source_id.0
+                    self.metadata.runnable_id,
+                    self.metadata.source_id.0
                 );
             }
         })
