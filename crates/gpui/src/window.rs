@@ -779,14 +779,6 @@ impl<'a> WindowContext<'a> {
         self.window.active
     }
 
-    /// Returns whether this window is in dark mode.
-    pub fn is_dark_mode(&self) -> bool {
-        match self.window.appearance {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => true,
-            WindowAppearance::Light | WindowAppearance::VibrantLight => false,
-        }
-    }
-
     /// Toggle zoom on the window.
     pub fn zoom_window(&self) {
         self.window.platform_window.zoom();

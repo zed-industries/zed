@@ -3,7 +3,7 @@ use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext, WindowContext,
+    ViewContext, WindowAppearance, WindowContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -35,14 +35,13 @@ pub struct ThemeSettings {
 
 impl ThemeSettings {
     pub fn reload_theme(cx: &mut WindowContext) {
-        let system_is_dark = cx.is_dark_mode();
         if cx.has_global::<SettingsStore>() {
             cx.update_global(|settings: &mut SettingsStore, cx| {
                 let mut theme_settings = settings.get::<ThemeSettings>(None).clone();
                 if let Some(features) = &theme_settings.themes {
                     let themes = ThemeRegistry::default_global(cx);
 
-                    match features.appearance(system_is_dark) {
+                    match features.appearance(cx.appearance()) {
                         Appearance::Dark => {
                             if let Some(theme) = features
                                 .dark
@@ -131,52 +130,39 @@ pub struct ThemeSettingsContent {
 
 impl ThemeSettingsContent {
     /// Returns whether the current theme setting requires to use the dark theme.
-    pub(crate) fn is_dark_mode(&self, system_is_dark: bool) -> bool {
+    pub(crate) fn is_dark_mode(&self, window_appearance: WindowAppearance) -> bool {
         if let Some(themes) = &self.themes {
-            return matches!(themes.appearance(system_is_dark), Appearance::Dark);
+            return matches!(themes.appearance(window_appearance), Appearance::Dark);
         }
 
         false
     }
 
-    pub(crate) fn theme_to_use(&self, system_is_dark: bool) -> Option<&str> {
-        if let Some(themes) = &self.themes {
-            if self.is_dark_mode(system_is_dark) {
-                if let Some(theme) = &themes.dark {
-                    return Some(theme.as_str());
-                }
-            } else {
-                if let Some(theme) = &themes.light {
-                    return Some(theme.as_str());
-                }
-            }
-        }
+    pub(crate) fn theme_to_use(&self, appearance: Appearance) -> Option<&str> {
+        let appearance_aware_theme = self.themes.as_ref().and_then(|themes| match appearance {
+            Appearance::Light => themes.light.as_deref(),
+            Appearance::Dark => themes.dark.as_deref(),
+        });
 
-        self.theme.as_deref()
+        appearance_aware_theme.or(self.theme.as_deref())
     }
 }
 
 impl ThemeFeatures {
-    pub fn appearance(&self, system_is_dark: bool) -> Appearance {
+    pub fn appearance(&self, window_appearance: WindowAppearance) -> Appearance {
         match self.mode {
-            Some(ThemeMode::Auto) => {
-                if system_is_dark {
-                    Appearance::Dark
-                } else {
-                    Appearance::Light
-                }
-            }
+            Some(ThemeMode::Auto) => window_appearance.into(),
             Some(ThemeMode::Dark) => Appearance::Dark,
             Some(ThemeMode::Light) | None => Appearance::Light,
         }
     }
 
-    pub fn update_theme(&mut self, theme_name: String, system_is_dark: bool) {
-        match (self.mode.as_ref(), system_is_dark) {
-            (Some(ThemeMode::Dark), _) | (Some(ThemeMode::Auto), true) => {
+    pub fn update_theme(&mut self, theme_name: String, system_appearance: Appearance) {
+        match (self.mode.as_ref(), system_appearance) {
+            (Some(ThemeMode::Dark), _) | (Some(ThemeMode::Auto), Appearance::Dark) => {
                 self.dark = Some(theme_name)
             }
-            (Some(ThemeMode::Light), _) | (Some(ThemeMode::Auto), false) => {
+            (Some(ThemeMode::Light), _) | (Some(ThemeMode::Auto), Appearance::Light) => {
                 self.light = Some(theme_name)
             }
             _ => {}
@@ -302,22 +288,15 @@ struct SystemAppearance(Appearance);
 
 impl Global for SystemAppearance {}
 
-pub fn get_system_is_dark_mode(cx: &AppContext) -> bool {
-    matches!(
-        cx.try_global::<SystemAppearance>()
-            .map(|r| r.0)
-            .unwrap_or(Appearance::Light),
-        Appearance::Dark
-    )
+pub fn get_system_appearance(cx: &AppContext) -> Appearance {
+    cx.try_global::<SystemAppearance>()
+        .map(|appearance| appearance.0)
+        .unwrap_or(Appearance::Light)
 }
 
-pub fn set_system_is_dark_mode<V>(cx: &mut ViewContext<V>) {
-    let is_dark_mode = cx.is_dark_mode();
-    cx.set_global(SystemAppearance(if is_dark_mode {
-        Appearance::Dark
-    } else {
-        Appearance::Light
-    }));
+pub fn set_system_appearance<V>(cx: &mut ViewContext<V>) {
+    let window_appearance = cx.appearance();
+    cx.set_global(SystemAppearance(window_appearance.into()));
     ThemeSettings::reload_theme(cx);
 }
 
@@ -331,7 +310,7 @@ impl settings::Settings for ThemeSettings {
         user_values: &[&Self::FileContent],
         cx: &mut AppContext,
     ) -> Result<Self> {
-        let is_system_in_dark_mode = get_system_is_dark_mode(cx);
+        let system_appearance = get_system_appearance(cx);
 
         let themes = ThemeRegistry::default_global(cx);
 
@@ -353,7 +332,7 @@ impl settings::Settings for ThemeSettings {
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             requested_theme: defaults.theme.clone(),
             active_theme: themes
-                .get(defaults.theme_to_use(true).unwrap())
+                .get(defaults.theme_to_use(Appearance::Dark).unwrap())
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
@@ -361,10 +340,7 @@ impl settings::Settings for ThemeSettings {
         };
 
         for value in user_values.into_iter().copied().cloned() {
-            if let Some(value) = value
-                .theme_to_use(is_system_in_dark_mode)
-                .map(str::to_string)
-            {
+            if let Some(value) = value.theme_to_use(system_appearance).map(str::to_string) {
                 if let Some(theme) = themes.get(&value).log_err() {
                     this.active_theme = theme;
                 }
