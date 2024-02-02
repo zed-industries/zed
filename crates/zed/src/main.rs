@@ -892,27 +892,37 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             if let Some(theme_registry) =
                 cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
             {
-                if let Some(()) = theme_registry
-                    .load_user_themes(&paths::THEMES_DIR.clone(), fs)
+                let themes_dir = paths::THEMES_DIR.as_ref();
+                match fs
+                    .metadata(themes_dir)
                     .await
-                    .log_err()
+                    .ok()
+                    .flatten()
+                    .map(|m| m.is_dir)
                 {
-                    cx.update(|cx| {
-                        let mut theme_settings = ThemeSettings::get_global(cx).clone();
-
-                        if let Some(requested_theme) = theme_settings.requested_theme.clone() {
-                            if let Some(_theme) = theme_settings.switch_theme(&requested_theme, cx)
-                            {
-                                ThemeSettings::override_global(theme_settings, cx);
-                            }
-                        }
-                    })
-                    .log_err();
+                    Some(is_dir) => {
+                        anyhow::ensure!(is_dir, "Themes dir path {themes_dir:?} is not a directory")
+                    }
+                    None => {
+                        fs.create_dir(themes_dir).await.with_context(|| {
+                            format!("Failed to create themes dir at path {themes_dir:?}")
+                        })?;
+                    }
                 }
+                theme_registry.load_user_themes(themes_dir, fs).await?;
+                cx.update(|cx| {
+                    let mut theme_settings = ThemeSettings::get_global(cx).clone();
+                    if let Some(requested_theme) = theme_settings.requested_theme.clone() {
+                        if let Some(_theme) = theme_settings.switch_theme(&requested_theme, cx) {
+                            ThemeSettings::override_global(theme_settings, cx);
+                        }
+                    }
+                })?;
             }
+            anyhow::Ok(())
         }
     })
-    .detach();
+    .detach_and_log_err(cx);
 }
 
 /// Spawns a background task to watch the themes directory for changes.
