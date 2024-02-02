@@ -322,6 +322,7 @@ impl ChatPanel {
         });
 
         let belongs_to_user = Some(message.sender.id) == self.client.user_id();
+        let can_delete_message = belongs_to_user || is_admin;
 
         let saved_message_id = if let (ChannelMessageId::Saved(id), true) =
             (message.id, belongs_to_user || is_admin)
@@ -337,18 +338,40 @@ impl ChatPanel {
         };
         let this = cx.view().clone();
 
-        // TODO: get it from the message
-        let reply_to: RichText = RichText {
-            text: SharedString::from("Some that that i replayed to, lorem ipsum dolor sit amet, consectetur adipiscing elit."),
-            highlights: vec![],
-            link_ranges: vec![],
-            link_urls: Arc::new([]),
-        };
-
         let mentioning_you = message
             .mentions
             .iter()
             .any(|m| Some(m.1) == self.client.user_id());
+
+        let reply_to_message = message
+            .reply_to_message_id
+            .map(|id| match id {
+                ChannelMessageId::Saved(id) => id,
+                ChannelMessageId::Pending(id) => id as u64,
+            })
+            .map(|id| active_chat.read(cx).find_loaded_message(id))
+            .flatten()
+            .cloned();
+
+        let reply_to_message_info = if let Some(reply_to_message) = &reply_to_message {
+            Some((
+                reply_to_message,
+                Self::render_markdown_with_mentions(
+                    // TODO: ALLOW to cache
+                    &self.languages,
+                    self.client.id(),
+                    reply_to_message,
+                ),
+            ))
+        } else {
+            None
+        };
+
+        let saved_message_id = if let (ChannelMessageId::Saved(id), true) = (message.id) {
+            Some(id)
+        } else {
+            None
+        };
 
         v_flex().w_full().relative().child(
             div()
@@ -386,7 +409,9 @@ impl ChatPanel {
                             ),
                     )
                 })
-                .when(message.reply_to_message_id.is_some(), |this| {
+                .when_some(reply_to_message_info, |this, reply_to_message_info| {
+                    let (reply_to_message, reply_to_message_body) = reply_to_message_info;
+
                     this.mt_2().pl_1().child(
                         v_flex()
                             .text_ui_xs()
@@ -399,11 +424,11 @@ impl ChatPanel {
                                     .whitespace_nowrap()
                                     .child("Replied to:")
                                     .child(
-                                        Avatar::new(message.sender.avatar_uri.clone())
+                                        Avatar::new(reply_to_message.sender.avatar_uri.clone())
                                             .size(rems(0.8)),
                                     )
                                     .child(
-                                        Label::new(message.sender.github_login.clone())
+                                        Label::new(reply_to_message.sender.github_login.clone())
                                             .size(LabelSize::XSmall),
                                     ),
                             )
@@ -415,7 +440,7 @@ impl ChatPanel {
                                     .px_1()
                                     .py_0p5()
                                     .mb_1()
-                                    .child(reply_to.element("replay".into(), cx)),
+                                    .child(reply_to_message_body.element("replay".into(), cx)),
                             ),
                     )
                 })
@@ -437,7 +462,7 @@ impl ChatPanel {
                                 .when(!self.has_open_menu(saved_message_id), |el| {
                                     el.visible_on_hover("")
                                 })
-                                .when_some(saved_message_id, |el, message_id| {
+                                .when_some(message.id, |el, message_id| {
                                     el.child(
                                         popover_menu(("menu", message_id))
                                             .trigger(IconButton::new(
@@ -448,7 +473,7 @@ impl ChatPanel {
                                                 Some(Self::render_message_menu(
                                                     &this,
                                                     message_id,
-                                                    belongs_to_user,
+                                                    can_delete_message,
                                                     cx,
                                                 ))
                                             }),
@@ -469,7 +494,7 @@ impl ChatPanel {
     fn render_message_menu(
         this: &View<Self>,
         message_id: u64,
-        belongs_to_user: bool,
+        can_delete_message: bool,
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
         let menu = {
@@ -482,7 +507,7 @@ impl ChatPanel {
                             .update(cx, |editor, _| editor.set_reply_to_message_id(message_id))
                     })
                 })
-                .when(belongs_to_user, move |menu| {
+                .when(can_delete_message, move |menu| {
                     menu.entry("Delete message", None, move |cx| {
                         this.update(cx, |this, cx| this.remove_message(message_id, cx))
                     })

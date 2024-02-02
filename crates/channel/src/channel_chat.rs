@@ -146,8 +146,6 @@ impl ChannelChat {
         message: MessageParams,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<u64>>> {
-        dbg!(&message);
-
         if message.text.trim().is_empty() {
             Err(anyhow!("message body can't be empty"))?;
         }
