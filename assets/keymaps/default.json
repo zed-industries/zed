@@ -150,19 +150,7 @@
           "center_cursor": true
         }
       ],
-      "ctrl-cmd-space": "editor::ShowCharacterPalette",
-      "alt-shift-up": [
-        "editor::SelectUpByLines",
-        {
-          "lines": 3
-        }
-      ],
-      "alt-shift-down": [
-        "editor::SelectDownByLines",
-        {
-          "lines": 3
-        }
-      ]
+      "ctrl-cmd-space": "editor::ShowCharacterPalette"
     }
   },
   {
