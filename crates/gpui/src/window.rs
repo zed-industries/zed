@@ -7,7 +7,7 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
     Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds,
-    WindowOptions,
+    WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -251,6 +251,7 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    text_system: Arc<WindowTextSystem>,
     pub(crate) rem_size: Pixels,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
@@ -407,6 +408,7 @@ impl Window {
             platform_window,
             display_id,
             sprite_atlas,
+            text_system,
             rem_size: px(16.),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
@@ -534,6 +536,11 @@ impl<'a> WindowContext<'a> {
     pub fn disable_focus(&mut self) {
         self.blur();
         self.window.focus_enabled = false;
+    }
+
+    /// Accessor for the text system.
+    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+        &self.window.text_system
     }
 
     /// Dispatch the given action on the currently focused element.
