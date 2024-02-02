@@ -40,13 +40,13 @@ pub(crate) struct MetalRenderer {
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
-    instance_buffers: Arc<Mutex<Vec<metal::Buffer>>>,
+    instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CVMetalTextureCache,
 }
 
 impl MetalRenderer {
-    pub fn new(is_opaque: bool) -> Self {
+    pub fn new(instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>) -> Self {
         let device: metal::Device = if let Some(device) = metal::Device::system_default() {
             device
         } else {
@@ -58,7 +58,7 @@ impl MetalRenderer {
         layer.set_device(&device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
         layer.set_presents_with_transaction(true);
-        layer.set_opaque(is_opaque);
+        layer.set_opaque(true);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
@@ -181,7 +181,7 @@ impl MetalRenderer {
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
             unit_vertices,
-            instance_buffers: Arc::default(),
+            instance_buffer_pool,
             sprite_atlas,
             core_video_texture_cache,
         }
@@ -211,7 +211,7 @@ impl MetalRenderer {
             );
             return;
         };
-        let mut instance_buffer = self.instance_buffers.lock().pop().unwrap_or_else(|| {
+        let mut instance_buffer = self.instance_buffer_pool.lock().pop().unwrap_or_else(|| {
             self.device.new_buffer(
                 INSTANCE_BUFFER_SIZE as u64,
                 MTLResourceOptions::StorageModeManaged,
@@ -335,11 +335,11 @@ impl MetalRenderer {
             length: instance_offset as NSUInteger,
         });
 
-        let instance_buffers = self.instance_buffers.clone();
+        let instance_buffer_pool = self.instance_buffer_pool.clone();
         let instance_buffer = Cell::new(Some(instance_buffer));
         let block = ConcreteBlock::new(move |_| {
             if let Some(instance_buffer) = instance_buffer.take() {
-                instance_buffers.lock().push(instance_buffer);
+                instance_buffer_pool.lock().push(instance_buffer);
             }
         });
         let block = block.copy();
