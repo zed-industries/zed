@@ -857,9 +857,15 @@ impl CompletionsMenu {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
-                Some(Documentation::MultiLineMarkdown(parsed)) => Some(div().child(
-                    render_parsed_markdown("completions_markdown", parsed, &style, workspace, cx),
-                )),
+                Some(Documentation::MultiLineMarkdown(parsed)) if !parsed.text.is_empty() => {
+                    Some(div().child(render_parsed_markdown(
+                        "completions_markdown",
+                        parsed,
+                        &style,
+                        workspace,
+                        cx,
+                    )))
+                }
                 _ => None,
             };
             multiline_docs.map(|div| {
@@ -5370,6 +5376,86 @@ impl Editor {
                 );
                 selection.collapse_to(cursor, goal);
             });
+        })
+    }
+
+    pub fn move_up_by_lines(&mut self, action: &MoveUpByLines, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::up_by_rows(
+                    map,
+                    selection.start,
+                    action.lines,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        })
+    }
+
+    pub fn move_down_by_lines(&mut self, action: &MoveDownByLines, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::down_by_rows(
+                    map,
+                    selection.start,
+                    action.lines,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        })
+    }
+
+    pub fn select_down_by_lines(&mut self, action: &SelectDownByLines, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::down_by_rows(map, head, action.lines, goal, false, &text_layout_details)
+            })
+        })
+    }
+
+    pub fn select_up_by_lines(&mut self, action: &SelectUpByLines, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::up_by_rows(map, head, action.lines, goal, false, &text_layout_details)
+            })
         })
     }
 

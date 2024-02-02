@@ -69,6 +69,8 @@
         "mdb": "storage",
         "mdf": "storage",
         "mdx": "document",
+        "ml": "ocaml",
+        "mli": "ocaml",
         "mp3": "audio",
         "mp4": "video",
         "myd": "storage",
@@ -178,6 +180,9 @@
         },
         "log": {
             "icon": "icons/file_icons/info.svg"
+        },
+        "ocaml": {
+          "icon": "icons/file_icons/ocaml.svg"
         },
         "phoenix": {
             "icon": "icons/file_icons/phoenix.svg"

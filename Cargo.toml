@@ -100,11 +100,14 @@ ctor = "0.2.6"
 derive_more = "0.99.17"
 env_logger = "0.9"
 futures = "0.3"
-git2 = { version = "0.15", default-features = false}
+git2 = { version = "0.15", default-features = false }
 globset = "0.4"
 indoc = "1"
 # We explicitly disable a http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
+isahc = { version = "1.7.2", default-features = false, features = [
+    "static-curl",
+    "text-decoding",
+] }
 lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = "2.1.1"
@@ -122,7 +125,10 @@ schemars = "0.8"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-serde_json_lenient = { version = "0.1", features = ["preserve_order", "raw_value"] }
+serde_json_lenient = { version = "0.1", features = [
+    "preserve_order",
+    "raw_value",
+] }
 serde_repr = "0.1"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
@@ -137,7 +143,7 @@ tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
 tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-sharp", rev = "dd5e59721a5f8dae34604060833902b882023aaf" }
-tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev="f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
+tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
@@ -157,8 +163,9 @@ tree-sitter-lua = "0.0.14"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "26bbaecda0039df4067861ab38ea8ea169f7f5aa" }
+tree-sitter-ocaml = { git = "https://github.com/tree-sitter/tree-sitter-ocaml", rev = "4abfdc1c7af2c6c77a370aee974627be1c285b3b" }
 tree-sitter-php = "0.21.1"
-tree-sitter-proto = {git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
+tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
 tree-sitter-purescript = { git = "https://github.com/ivanmoreau/tree-sitter-purescript", rev = "a37140f0c7034977b90faa73c94fcb8a5e45ed08" }
 tree-sitter-python = "0.20.2"
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }

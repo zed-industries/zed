@@ -147,7 +147,11 @@ impl EditorElement {
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
+        register_action(view, cx, Editor::move_down_by_lines);
+        register_action(view, cx, Editor::select_down_by_lines);
         register_action(view, cx, Editor::move_up);
+        register_action(view, cx, Editor::move_up_by_lines);
+        register_action(view, cx, Editor::select_up_by_lines);
         register_action(view, cx, Editor::cancel);
         register_action(view, cx, Editor::newline);
         register_action(view, cx, Editor::newline_above);
