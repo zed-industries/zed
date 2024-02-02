@@ -19,6 +19,9 @@
 (method_declaration
   name: (field_identifier) @function.method)
 
+(parameter_declaration
+  (identifier) @variable.parameter)
+
 [
   "("
   ")"
