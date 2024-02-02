@@ -1040,7 +1040,7 @@ impl Client {
                     rpc_url.set_scheme("wss").unwrap();
                     let request = request.uri(rpc_url.as_str()).body(())?;
                     let (stream, _) =
-                        async_tungstenite::async_tls::client_async_tls(request, stream).await?;
+                        async_tungstenite::async_std::client_async_tls(request, stream).await?;
                     Ok(Connection::new(
                         stream
                             .map_err(|error| anyhow!(error))
