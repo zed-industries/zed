@@ -76,6 +76,7 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
     }
 
     ThemeSettings::register(cx);
+
     let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     cx.observe_global::<SettingsStore>(move |cx| {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
