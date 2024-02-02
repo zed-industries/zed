@@ -1,9 +1,10 @@
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter,
-    ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext, Pixels, Platform,
-    Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow, TextSystem, View,
-    ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -623,6 +624,36 @@ impl<'a> VisualTestContext {
     /// Automatically runs until parked.
     pub fn simulate_input(&mut self, input: &str) {
         self.cx.simulate_input(self.window, input)
+    }
+
+    /// Simulate a mouse move event to the given point
+    pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, modifiers: Option<Modifiers>) {
+        self.simulate_event(MouseMoveEvent {
+            position,
+            modifiers: modifiers.unwrap_or_default(),
+            pressed_button: None,
+        })
+    }
+
+    /// Simulate a primary mouse click at the given point
+    pub fn simulate_click(&mut self, position: Point<Pixels>, modifiers: Option<Modifiers>) {
+        self.simulate_event(MouseDownEvent {
+            position,
+            modifiers: modifiers.unwrap_or_default(),
+            button: MouseButton::Left,
+            click_count: 1,
+        });
+        self.simulate_event(MouseUpEvent {
+            position,
+            modifiers: modifiers.unwrap_or_default(),
+            button: MouseButton::Left,
+            click_count: 1,
+        });
+    }
+
+    /// Simulate a modifiers changed event
+    pub fn simulate_modifiers_change(&mut self, modifiers: Modifiers) {
+        self.simulate_event(ModifiersChangedEvent { modifiers })
     }
 
     /// Simulates the user resizing the window to the new size.

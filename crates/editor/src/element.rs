@@ -11,8 +11,7 @@ use crate::{
     items::BufferSearchHighlights,
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, hide_link_definition,
-        show_link_definition, update_go_to_definition_link, update_inlay_link_and_hover_points,
-        GoToDefinitionTrigger, HoveredLinkState,
+        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
     },
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
@@ -366,7 +365,7 @@ impl EditorElement {
         });
     }
 
-    pub(crate) fn modifiers_changed(
+    fn modifiers_changed(
         editor: &mut Editor,
         event: &ModifiersChangedEvent,
         position_map: &PositionMap,
