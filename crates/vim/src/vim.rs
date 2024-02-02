@@ -204,7 +204,8 @@ impl Vim {
                 let editor = editor.read(cx);
                 if editor.leader_peer_id().is_none() {
                     let newest = editor.selections.newest::<usize>(cx);
-                    local_selections_changed(newest, cx);
+                    let is_multicursor = editor.selections.count() > 1;
+                    local_selections_changed(newest, is_multicursor, cx);
                 }
             }
             EditorEvent::InputIgnored { text } => {
@@ -626,7 +627,11 @@ impl Settings for VimModeSetting {
     }
 }
 
-fn local_selections_changed(newest: Selection<usize>, cx: &mut WindowContext) {
+fn local_selections_changed(
+    newest: Selection<usize>,
+    is_multicursor: bool,
+    cx: &mut WindowContext,
+) {
     Vim::update(cx, |vim, cx| {
         if vim.enabled {
             if vim.state().mode == Mode::Normal && !newest.is_empty() {
@@ -636,6 +641,7 @@ fn local_selections_changed(newest: Selection<usize>, cx: &mut WindowContext) {
                     vim.switch_mode(Mode::Visual, false, cx)
                 }
             } else if newest.is_empty()
+                && !is_multicursor
                 && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&vim.state().mode)
             {
                 vim.switch_mode(Mode::Normal, true, cx)
