@@ -314,7 +314,10 @@ fn main() {
                 })
                 .detach_and_log_err(cx);
             }
-            Ok(Some(OpenRequest::OpenChannelNotes { channel_id })) => {
+            Ok(Some(OpenRequest::OpenChannelNotes {
+                channel_id,
+                heading,
+            })) => {
                 triggered_authentication = true;
                 let app_state = app_state.clone();
                 let client = client.clone();
@@ -323,11 +326,11 @@ fn main() {
                     let _ = authenticate(client, &cx).await;
                     let workspace_window =
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                    let _ = workspace_window
-                        .update(&mut cx, |_, cx| {
-                            ChannelView::open(channel_id, cx.view().clone(), cx)
-                        })?
-                        .await?;
+                    let workspace = workspace_window.root_view(&cx)?;
+                    cx.update_window(workspace_window.into(), |_, cx| {
+                        ChannelView::open(channel_id, heading, workspace, cx)
+                    })?
+                    .await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -369,16 +372,19 @@ fn main() {
                         })
                         .log_err();
                     }
-                    OpenRequest::OpenChannelNotes { channel_id } => {
+                    OpenRequest::OpenChannelNotes {
+                        channel_id,
+                        heading,
+                    } => {
                         let app_state = app_state.clone();
                         let open_notes_task = cx.spawn(|mut cx| async move {
                             let workspace_window =
                                 workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                            let _ = workspace_window
-                                .update(&mut cx, |_, cx| {
-                                    ChannelView::open(channel_id, cx.view().clone(), cx)
-                                })?
-                                .await?;
+                            let workspace = workspace_window.root_view(&cx)?;
+                            cx.update_window(workspace_window.into(), |_, cx| {
+                                ChannelView::open(channel_id, heading, workspace, cx)
+                            })?
+                            .await?;
                             anyhow::Ok(())
                         });
                         cx.update(|cx| open_notes_task.detach_and_log_err(cx))
