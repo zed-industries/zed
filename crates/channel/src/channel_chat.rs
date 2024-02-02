@@ -48,7 +48,7 @@ pub struct ChannelMessage {
     pub sender: Arc<User>,
     pub nonce: u128,
     pub mentions: Vec<(Range<usize>, UserId)>,
-    pub reply_to_message_id: Option<ChannelMessageId>,
+    pub reply_to_message_id: Option<u64>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -168,9 +168,7 @@ impl ChannelChat {
                     timestamp: OffsetDateTime::now_utc(),
                     mentions: message.mentions.clone(),
                     nonce,
-                    reply_to_message_id: message
-                        .reply_to_message_id
-                        .map(|id| ChannelMessageId::Saved(id)),
+                    reply_to_message_id: message.reply_to_message_id,
                 },
                 &(),
             ),
@@ -356,13 +354,7 @@ impl ChannelChat {
                         body: pending_message.body,
                         mentions: mentions_to_proto(&pending_message.mentions),
                         nonce: Some(pending_message.nonce.into()),
-                        reply_to_message_id: match pending_message.reply_to_message_id {
-                            Some(reply_to_message_id) => Some(match reply_to_message_id {
-                                ChannelMessageId::Saved(id) => id,
-                                ChannelMessageId::Pending(id) => id as u64,
-                            }),
-                            None => None,
-                        },
+                        reply_to_message_id: pending_message.reply_to_message_id,
                     });
                     let response = request.await?;
                     let message = ChannelMessage::from_proto(
@@ -574,9 +566,7 @@ impl ChannelMessage {
                 .nonce
                 .ok_or_else(|| anyhow!("nonce is required"))?
                 .into(),
-            reply_to_message_id: message
-                .reply_to_message_id
-                .map(|reply_to_message_id| ChannelMessageId::Saved(reply_to_message_id)),
+            reply_to_message_id: message.reply_to_message_id,
         })
     }
 

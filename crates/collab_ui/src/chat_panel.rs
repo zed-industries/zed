@@ -324,14 +324,6 @@ impl ChatPanel {
         let belongs_to_user = Some(message.sender.id) == self.client.user_id();
         let can_delete_message = belongs_to_user || is_admin;
 
-        let saved_message_id = if let (ChannelMessageId::Saved(id), true) =
-            (message.id, belongs_to_user || is_admin)
-        {
-            Some(id)
-        } else {
-            None
-        };
-
         let element_id: ElementId = match message.id {
             ChannelMessageId::Saved(id) => ("saved-message", id).into(),
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
@@ -343,12 +335,13 @@ impl ChatPanel {
             .iter()
             .any(|m| Some(m.1) == self.client.user_id());
 
+        let message_id = match message.id {
+            ChannelMessageId::Saved(id) => Some(id),
+            ChannelMessageId::Pending(_) => None,
+        };
+
         let reply_to_message = message
             .reply_to_message_id
-            .map(|id| match id {
-                ChannelMessageId::Saved(id) => id,
-                ChannelMessageId::Pending(id) => id as u64,
-            })
             .map(|id| active_chat.read(cx).find_loaded_message(id))
             .flatten()
             .cloned();
@@ -363,12 +356,6 @@ impl ChatPanel {
                     reply_to_message,
                 ),
             ))
-        } else {
-            None
-        };
-
-        let saved_message_id = if let (ChannelMessageId::Saved(id), true) = (message.id) {
-            Some(id)
         } else {
             None
         };
@@ -411,6 +398,10 @@ impl ChatPanel {
                 })
                 .when_some(reply_to_message_info, |this, reply_to_message_info| {
                     let (reply_to_message, reply_to_message_body) = reply_to_message_info;
+                    let body_element_id: ElementId = match message.id {
+                        ChannelMessageId::Saved(id) => ("reply-to-saved-message", id).into(),
+                        ChannelMessageId::Pending(id) => ("reply-to-pending-message", id).into(), // This should never happen
+                    };
 
                     this.mt_2().pl_1().child(
                         v_flex()
@@ -440,7 +431,7 @@ impl ChatPanel {
                                     .px_1()
                                     .py_0p5()
                                     .mb_1()
-                                    .child(reply_to_message_body.element("replay".into(), cx)),
+                                    .child(reply_to_message_body.element(body_element_id, cx)),
                             ),
                     )
                 })
@@ -459,10 +450,10 @@ impl ChatPanel {
                                 .right_0()
                                 .w_6()
                                 .bg(cx.theme().colors().panel_background)
-                                .when(!self.has_open_menu(saved_message_id), |el| {
+                                .when(!self.has_open_menu(message_id), |el| {
                                     el.visible_on_hover("")
                                 })
-                                .when_some(message.id, |el, message_id| {
+                                .when_some(message_id, |el, message_id| {
                                     el.child(
                                         popover_menu(("menu", message_id))
                                             .trigger(IconButton::new(
@@ -499,7 +490,7 @@ impl ChatPanel {
     ) -> View<ContextMenu> {
         let menu = {
             let this = this.clone();
-            let this2 = this.clone(); //FIXME later
+            let this2 = this.clone(); //TODO: fixme later
             ContextMenu::build(cx, move |menu, _| {
                 menu.entry("Reply to message", None, move |cx| {
                     this2.update(cx, |this, cx| {
@@ -679,7 +670,7 @@ impl Render for ChatPanel {
                     // we should find the message
                     // TODO: this is a hack, we should not be using the message list to find the message
                     let active_chat = self.active_chat().unwrap();
-                    let message = active_chat
+                    let reply_message = active_chat
                         .read(cx)
                         .messages()
                         .iter()
@@ -692,13 +683,16 @@ impl Render for ChatPanel {
                         })
                         .unwrap();
 
-                    let text = self.markdown_data.entry(message.id).or_insert_with(|| {
-                        Self::render_markdown_with_mentions(
-                            &self.languages,
-                            self.client.id(),
-                            &message,
-                        )
-                    });
+                    let reply_text =
+                        self.markdown_data
+                            .entry(reply_message.id)
+                            .or_insert_with(|| {
+                                Self::render_markdown_with_mentions(
+                                    &self.languages,
+                                    self.client.id(),
+                                    &reply_message,
+                                )
+                            });
 
                     el.child(
                         div()
@@ -714,12 +708,16 @@ impl Render for ChatPanel {
                                             .text_ui_xs()
                                             .child("Reply to:")
                                             .child(
-                                                Avatar::new(message.sender.avatar_uri.clone())
-                                                    .size(rems(0.8)),
+                                                Avatar::new(
+                                                    reply_message.sender.avatar_uri.clone(),
+                                                )
+                                                .size(rems(0.8)),
                                             )
                                             .child(
-                                                Label::new(message.sender.github_login.clone())
-                                                    .size(LabelSize::XSmall),
+                                                Label::new(
+                                                    reply_message.sender.github_login.clone(),
+                                                )
+                                                .size(LabelSize::XSmall),
                                             ),
                                     )
                                     .gap_1()
@@ -738,7 +736,7 @@ impl Render for ChatPanel {
                                     .rounded_md()
                                     .text_ui_sm()
                                     .bg(cx.theme().colors().background)
-                                    .child(text.element("reply-body".into(), cx)),
+                                    .child(reply_text.element("reply-body".into(), cx)),
                             ),
                     )
                 },
