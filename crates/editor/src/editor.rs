@@ -4115,7 +4115,9 @@ impl Editor {
             let snapshot = self.buffer.read(cx).snapshot(cx);
             let selection = self.selections.first::<Point>(cx);
             let start_column = snapshot.indent_size_for_line(selection.start.row).len;
-            let scope = snapshot.language_scope_at(Point::new(selection.start.row, start_column)).unwrap();
+            let scope = snapshot
+                .language_scope_at(Point::new(selection.start.row, start_column))
+                .unwrap();
             let mut bracket_pair = None;
             for (pair, enabled) in scope.brackets() {
                 if enabled && pair.close && snippet.text.ends_with(pair.end.as_str()) {
@@ -4127,8 +4129,10 @@ impl Editor {
             // If it ends with an available surround, insert the auto close region
             if self.autoclose_regions.is_empty() {
                 if let Some(pair) = bracket_pair {
-                    let start = snapshot.anchor_after(Point::new(selection.start.row, selection.start.column));
-                    let end = snapshot.anchor_after(Point::new(selection.end.row, selection.end.column));
+                    let start = snapshot
+                        .anchor_after(Point::new(selection.start.row, selection.start.column));
+                    let end =
+                        snapshot.anchor_after(Point::new(selection.end.row, selection.end.column));
                     self.autoclose_regions.insert(
                         0,
                         AutocloseRegion {
@@ -4140,7 +4144,6 @@ impl Editor {
                 }
             }
         }
-
 
         Ok(())
     }
