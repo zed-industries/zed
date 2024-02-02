@@ -1486,27 +1486,25 @@ impl EditorElement {
                     .buffer_snapshot
                     .max_point();
 
-                let mut entries = layout
+                let diagnostics = layout
                     .position_map
                     .snapshot
                     .buffer_snapshot
                     .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
-                    .collect::<Vec<_>>();
+                    // We want to sort by severity, in order to paint the most severe diagnostics last.
+                    .sorted_by_key(|diagnostic| std::cmp::Reverse(diagnostic.diagnostic.severity));
 
-                // We want to sort by severity, in order to paint the most severe diagnostics last.
-                entries.sort_by_key(|entry| std::cmp::Reverse(entry.diagnostic.severity));
-
-                for entry in entries {
-                    let start_display = entry
+                for diagnostic in diagnostics {
+                    let start_display = diagnostic
                         .range
                         .start
                         .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let end_display = entry
+                    let end_display = diagnostic
                         .range
                         .end
                         .to_display_point(&layout.position_map.snapshot.display_snapshot);
                     let start_y = y_for_row(start_display.row() as f32);
-                    let mut end_y = if entry.range.start == entry.range.end {
+                    let mut end_y = if diagnostic.range.start == diagnostic.range.end {
                         y_for_row((end_display.row() + 1) as f32)
                     } else {
                         y_for_row((end_display.row()) as f32)
@@ -1517,7 +1515,7 @@ impl EditorElement {
                     }
                     let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
 
-                    let color = match entry.diagnostic.severity {
+                    let color = match diagnostic.diagnostic.severity {
                         DiagnosticSeverity::ERROR => cx.theme().status().error,
                         DiagnosticSeverity::WARNING => cx.theme().status().warning,
                         DiagnosticSeverity::INFORMATION => cx.theme().status().info,

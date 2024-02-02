@@ -3053,12 +3053,9 @@ impl MultiBufferSnapshot {
     }
 
     pub fn has_diagnostics(&self) -> bool {
-        for excerpt in self.excerpts.iter() {
-            if excerpt.buffer.has_diagnostics() {
-                return true;
-            }
-        }
-        false
+        self.excerpts
+            .iter()
+            .any(|excerpt| excerpt.buffer.has_diagnostics())
     }
 
     pub fn diagnostic_group<'a, O>(
