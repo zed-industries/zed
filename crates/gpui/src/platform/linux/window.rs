@@ -5,6 +5,7 @@ use crate::{
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
+use raw_window_handle as rwh;
 use std::{
     ffi::c_void,
     mem,
@@ -51,9 +52,17 @@ impl LinuxWindowInner {
     }
 }
 
+struct RawWindow {
+    connection: *mut c_void,
+    screen_id: i32,
+    window_id: u32,
+    visual_id: u32,
+}
+
 pub(crate) struct LinuxWindowState {
     xcb_connection: Arc<xcb::Connection>,
     display: Rc<dyn PlatformDisplay>,
+    raw: RawWindow,
     x_window: x::Window,
     callbacks: Mutex<Callbacks>,
     inner: Mutex<LinuxWindowInner>,
@@ -62,26 +71,37 @@ pub(crate) struct LinuxWindowState {
 #[derive(Clone)]
 pub(crate) struct LinuxWindow(pub(crate) Arc<LinuxWindowState>);
 
-struct RawWindow {
-    connection: *mut c_void,
-    screen_id: i32,
-    window_id: u32,
-    visual_id: u32,
-}
-unsafe impl raw_window_handle::HasRawWindowHandle for RawWindow {
-    fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
-        let mut wh = raw_window_handle::XcbWindowHandle::empty();
+unsafe impl rwh::HasRawWindowHandle for RawWindow {
+    fn raw_window_handle(&self) -> rwh::RawWindowHandle {
+        let mut wh = rwh::XcbWindowHandle::empty();
         wh.window = self.window_id;
         wh.visual_id = self.visual_id;
         wh.into()
     }
 }
-unsafe impl raw_window_handle::HasRawDisplayHandle for RawWindow {
-    fn raw_display_handle(&self) -> raw_window_handle::RawDisplayHandle {
-        let mut dh = raw_window_handle::XcbDisplayHandle::empty();
+unsafe impl rwh::HasRawDisplayHandle for RawWindow {
+    fn raw_display_handle(&self) -> rwh::RawDisplayHandle {
+        let mut dh = rwh::XcbDisplayHandle::empty();
         dh.connection = self.connection;
         dh.screen = self.screen_id;
         dh.into()
+    }
+}
+
+impl rwh::HasWindowHandle for LinuxWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+        Ok(unsafe {
+            let raw_handle = rwh::HasRawWindowHandle::raw_window_handle(&self.0.raw);
+            rwh::WindowHandle::borrow_raw(raw_handle, rwh::ActiveHandle::new())
+        })
+    }
+}
+impl rwh::HasDisplayHandle for LinuxWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+        Ok(unsafe {
+            let raw_handle = rwh::HasRawDisplayHandle::raw_display_handle(&self.0.raw);
+            rwh::DisplayHandle::borrow_raw(raw_handle)
+        })
     }
 }
 
@@ -159,7 +179,7 @@ impl LinuxWindowState {
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
 
-        let raw_window = RawWindow {
+        let raw = RawWindow {
             connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                 xcb_connection,
             ) as *mut _,
@@ -170,7 +190,7 @@ impl LinuxWindowState {
         let gpu = Arc::new(
             unsafe {
                 gpu::Context::init_windowed(
-                    &raw_window,
+                    &raw,
                     gpu::ContextDesc {
                         validation: cfg!(debug_assertions),
                         capture: false,
@@ -189,6 +209,7 @@ impl LinuxWindowState {
         Self {
             xcb_connection: Arc::clone(xcb_connection),
             display: Rc::new(LinuxDisplay::new(xcb_connection, x_screen_index)),
+            raw,
             x_window,
             callbacks: Mutex::new(Callbacks::default()),
             inner: Mutex::new(LinuxWindowInner {
