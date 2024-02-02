@@ -3,7 +3,7 @@ use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext,
+    ViewContext, WindowContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -40,7 +40,7 @@ impl ThemeSettings {
             cx.update_global(|settings: &mut SettingsStore, cx| {
                 let mut theme_settings = settings.get::<ThemeSettings>(None).clone();
                 if let Some(features) = &theme_settings.themes {
-                    let themes = cx.default_global::<ThemeRegistry>();
+                    let themes = ThemeRegistry::default_global(cx);
 
                     match features.appearance(system_is_dark) {
                         Appearance::Dark => {
@@ -299,6 +299,8 @@ pub fn reset_font_size(cx: &mut AppContext) {
 }
 
 struct SystemAppearance(Appearance);
+
+impl Global for SystemAppearance {}
 
 pub fn get_system_is_dark_mode(cx: &AppContext) -> bool {
     matches!(

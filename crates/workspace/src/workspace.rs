@@ -702,7 +702,7 @@ impl Workspace {
                     store.workspaces.remove(&window);
                 })
             }),
-            cx.observe_appearance_change(|_this, cx| {
+            cx.observe_window_appearance(|_this, cx| {
                 set_system_is_dark_mode(cx);
             }),
         ];
