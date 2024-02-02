@@ -580,10 +580,10 @@ fn possible_open_targets(
         }
     } else {
         // First check cwd and then workspace
-        let mut potentional_cwd_and_workspace_paths = Vec::new();
+        let mut potential_cwd_and_workspace_paths = Vec::new();
 
         if let Some(cwd) = cwd {
-            potentional_cwd_and_workspace_paths.push(Path::join(cwd, maybe_path.clone()));
+            potential_cwd_and_workspace_paths.push(Path::join(cwd, maybe_path.clone()));
         }
 
         if let Some(workspace) = workspace.upgrade() {
@@ -593,10 +593,10 @@ fn possible_open_targets(
                     .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
                     .collect()
             });
-            potentional_cwd_and_workspace_paths.push(workspace_path);
+            potential_cwd_and_workspace_paths.push(workspace_path);
         }
 
-        potentional_cwd_and_workspace_paths
+        potential_cwd_and_workspace_paths
     };
 
     potential_abs_paths
