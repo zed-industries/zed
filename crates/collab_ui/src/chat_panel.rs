@@ -667,78 +667,78 @@ impl Render for ChatPanel {
             .when_some(
                 self.message_editor.read(cx).reply_to_message_id(),
                 |el, reply_to_message_id| {
-                    // we should find the message
-                    // TODO: this is a hack, we should not be using the message list to find the message
-                    let active_chat = self.active_chat().unwrap();
-                    let reply_message = active_chat
-                        .read(cx)
-                        .messages()
-                        .iter()
-                        .find_map(|m| {
-                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                Some(m)
-                            } else {
-                                None
-                            }
+                    let reply_message = self
+                        .active_chat()
+                        .map(|active_chat| {
+                            active_chat.read(cx).messages().iter().find_map(|m| {
+                                if m.id == ChannelMessageId::Saved(reply_to_message_id) {
+                                    Some(m)
+                                } else {
+                                    None
+                                }
+                            })
                         })
-                        .unwrap();
+                        .flatten()
+                        .cloned();
 
-                    let reply_text =
-                        self.markdown_data
-                            .entry(reply_message.id)
-                            .or_insert_with(|| {
-                                Self::render_markdown_with_mentions(
-                                    &self.languages,
-                                    self.client.id(),
-                                    &reply_message,
-                                )
-                            });
-
-                    el.child(
-                        div()
-                            .py_1()
-                            .px_2()
-                            .bg(cx.theme().colors().background)
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .text_ui_xs()
-                                            .child("Reply to:")
-                                            .child(
-                                                Avatar::new(
-                                                    reply_message.sender.avatar_uri.clone(),
-                                                )
-                                                .size(rems(0.8)),
-                                            )
-                                            .child(
-                                                Label::new(
-                                                    reply_message.sender.github_login.clone(),
-                                                )
-                                                .size(LabelSize::XSmall),
-                                            ),
+                    el.when_some(reply_message, |el, reply_message| {
+                        let reply_text =
+                            self.markdown_data
+                                .entry(reply_message.id)
+                                .or_insert_with(|| {
+                                    Self::render_markdown_with_mentions(
+                                        &self.languages,
+                                        self.client.id(),
+                                        &reply_message,
                                     )
-                                    .gap_1()
-                                    .child(
-                                        IconButton::new("remove-reply", IconName::Close)
-                                            .shape(ui::IconButtonShape::Square)
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                this.message_editor.update(cx, |editor, _| {
-                                                    editor.clear_reply_to_message_id()
-                                                });
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .rounded_md()
-                                    .text_ui_sm()
-                                    .bg(cx.theme().colors().background)
-                                    .child(reply_text.element("reply-body".into(), cx)),
-                            ),
-                    )
+                                });
+
+                        el.child(
+                            div()
+                                .py_1()
+                                .px_2()
+                                .bg(cx.theme().colors().background)
+                                .child(
+                                    h_flex()
+                                        .justify_between()
+                                        .child(
+                                            h_flex()
+                                                .gap_1()
+                                                .text_ui_xs()
+                                                .child("Reply to:")
+                                                .child(
+                                                    Avatar::new(
+                                                        reply_message.sender.avatar_uri.clone(),
+                                                    )
+                                                    .size(rems(0.8)),
+                                                )
+                                                .child(
+                                                    Label::new(
+                                                        reply_message.sender.github_login.clone(),
+                                                    )
+                                                    .size(LabelSize::XSmall),
+                                                ),
+                                        )
+                                        .gap_1()
+                                        .child(
+                                            IconButton::new("remove-reply", IconName::Close)
+                                                .shape(ui::IconButtonShape::Square)
+                                                .on_click(cx.listener(move |this, _, cx| {
+                                                    this.message_editor.update(cx, |editor, _| {
+                                                        editor.clear_reply_to_message_id()
+                                                    });
+                                                })),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .rounded_md()
+                                        .text_ui_sm()
+                                        .bg(cx.theme().colors().background)
+                                        .child(reply_text.element("reply-body".into(), cx)),
+                                ),
+                        )
+                    })
                 },
             )
             .child(
