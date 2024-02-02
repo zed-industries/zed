@@ -35,6 +35,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
+use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -1477,6 +1478,64 @@ impl EditorElement {
                 }
             }
 
+            if layout.is_singleton && scrollbar_settings.diagnostics {
+                let max_point = layout
+                    .position_map
+                    .snapshot
+                    .display_snapshot
+                    .buffer_snapshot
+                    .max_point();
+
+                let diagnostics = layout
+                    .position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
+                    // We want to sort by severity, in order to paint the most severe diagnostics last.
+                    .sorted_by_key(|diagnostic| std::cmp::Reverse(diagnostic.diagnostic.severity));
+
+                for diagnostic in diagnostics {
+                    let start_display = diagnostic
+                        .range
+                        .start
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = diagnostic
+                        .range
+                        .end
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if diagnostic.range.start == diagnostic.range.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
+
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+
+                    let color = match diagnostic.diagnostic.severity {
+                        DiagnosticSeverity::ERROR => cx.theme().status().error,
+                        DiagnosticSeverity::WARNING => cx.theme().status().warning,
+                        DiagnosticSeverity::INFORMATION => cx.theme().status().info,
+                        _ => cx.theme().status().hint,
+                    };
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        color,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
             cx.paint_quad(quad(
                 thumb_bounds,
                 Corners::default(),
@@ -2105,6 +2164,9 @@ impl EditorElement {
                     ||
                     // Symbols Selections
                     (is_singleton && scrollbar_settings.symbols_selections && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                    ||
+                    // Diagnostics
+                    (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
                     ||
                     // Scrollmanager
                     editor.scroll_manager.scrollbars_visible()
