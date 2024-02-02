@@ -287,6 +287,8 @@ pub fn init(
     language("proto", vec![]);
     language("terraform", vec![]);
     language("hcl", vec![]);
+    language("prisma", tree_sitter_prisma_io::language(), vec![]);
+
 }
 
 #[cfg(any(test, feature = "test-support"))]
