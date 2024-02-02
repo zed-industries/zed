@@ -56,49 +56,47 @@ impl RichText {
             id,
             StyledText::new(self.text.clone()).with_highlights(
                 &cx.text_style(),
-                self.highlights.iter().map(
-                    |(range, highlight)| -> (Range<usize>, HighlightStyle) {
-                        (
-                            range.clone(),
-                            match highlight {
-                                Highlight::Code => HighlightStyle {
-                                    background_color: Some(code_background),
-                                    ..Default::default()
-                                },
-                                Highlight::Id(id) => HighlightStyle {
-                                    background_color: Some(code_background),
-                                    ..id.style(theme.syntax()).unwrap_or_default()
-                                },
-                                Highlight::InlineCode(link) => {
-                                    if !*link {
-                                        HighlightStyle {
-                                            background_color: Some(code_background),
+                self.highlights.iter().map(|(range, highlight)| {
+                    (
+                        range.clone(),
+                        match highlight {
+                            Highlight::Code => HighlightStyle {
+                                background_color: Some(code_background),
+                                ..Default::default()
+                            },
+                            Highlight::Id(id) => HighlightStyle {
+                                background_color: Some(code_background),
+                                ..id.style(theme.syntax()).unwrap_or_default()
+                            },
+                            Highlight::InlineCode(link) => {
+                                if !*link {
+                                    HighlightStyle {
+                                        background_color: Some(code_background),
+                                        ..Default::default()
+                                    }
+                                } else {
+                                    HighlightStyle {
+                                        background_color: Some(code_background),
+                                        underline: Some(UnderlineStyle {
+                                            thickness: 1.0.into(),
                                             ..Default::default()
-                                        }
-                                    } else {
-                                        HighlightStyle {
-                                            background_color: Some(code_background),
-                                            underline: Some(UnderlineStyle {
-                                                thickness: 1.0.into(),
-                                                ..Default::default()
-                                            }),
-                                            ..Default::default()
-                                        }
+                                        }),
+                                        ..Default::default()
                                     }
                                 }
-                                Highlight::Highlight(highlight) => *highlight,
-                                Highlight::Mention => HighlightStyle {
-                                    font_weight: Some(FontWeight::BOLD),
-                                    ..Default::default()
-                                },
-                                Highlight::SelfMention => HighlightStyle {
-                                    font_weight: Some(FontWeight::BOLD),
-                                    ..Default::default()
-                                },
+                            }
+                            Highlight::Highlight(highlight) => *highlight,
+                            Highlight::Mention => HighlightStyle {
+                                font_weight: Some(FontWeight::BOLD),
+                                ..Default::default()
                             },
-                        )
-                    },
-                ),
+                            Highlight::SelfMention => HighlightStyle {
+                                font_weight: Some(FontWeight::BOLD),
+                                ..Default::default()
+                            },
+                        },
+                    )
+                }),
             ),
         )
         .on_click(self.link_ranges.clone(), {
