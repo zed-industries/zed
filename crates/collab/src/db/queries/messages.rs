@@ -161,10 +161,7 @@ impl Database {
                         upper_half: nonce.0,
                         lower_half: nonce.1,
                     }),
-                    reply_to_message_id: match row.reply_to_message_id {
-                        Some(reply_message_id) => Some(reply_message_id.to_proto()),
-                        None => None,
-                    },
+                    reply_to_message_id: row.reply_to_message_id.map(|id| id.to_proto()),
                 }
             })
             .collect::<Vec<_>>();

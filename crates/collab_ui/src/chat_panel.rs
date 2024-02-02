@@ -324,7 +324,8 @@ impl ChatPanel {
         });
 
         let belongs_to_user = Some(message.sender.id) == self.client.user_id();
-        let message_id_to_remove = if let (ChannelMessageId::Saved(id), true) =
+
+        let saved_message_id = if let (ChannelMessageId::Saved(id), true) =
             (message.id, belongs_to_user || is_admin)
         {
             Some(id)
@@ -435,19 +436,26 @@ impl ChatPanel {
                                 .right_0()
                                 .w_6()
                                 .bg(cx.theme().colors().panel_background)
-                                .when(!self.has_open_menu(message_id_to_remove), |el| {
+                                .when(!self.has_open_menu(saved_message_id), |el| {
                                     el.visible_on_hover("")
                                 })
-                                .children(message_id_to_remove.map(|message_id| {
-                                    popover_menu(("menu", message_id))
-                                        .trigger(IconButton::new(
-                                            ("trigger", message_id),
-                                            IconName::Ellipsis,
-                                        ))
-                                        .menu(move |cx| {
-                                            Some(Self::render_message_menu(&this, message_id, cx))
-                                        })
-                                })),
+                                .when_some(saved_message_id, |el, message_id| {
+                                    el.child(
+                                        popover_menu(("menu", message_id))
+                                            .trigger(IconButton::new(
+                                                ("trigger", message_id),
+                                                IconName::Ellipsis,
+                                            ))
+                                            .menu(move |cx| {
+                                                Some(Self::render_message_menu(
+                                                    &this,
+                                                    message_id,
+                                                    belongs_to_user,
+                                                    cx,
+                                                ))
+                                            }),
+                                    )
+                                }),
                         ),
                 ),
         )
@@ -463,13 +471,22 @@ impl ChatPanel {
     fn render_message_menu(
         this: &View<Self>,
         message_id: u64,
+        belongs_to_user: bool,
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
         let menu = {
             let this = this.clone();
+            let this2 = this.clone(); //FIXME later
             ContextMenu::build(cx, move |menu, _| {
-                menu.entry("Delete message", None, move |cx| {
-                    this.update(cx, |this, cx| this.remove_message(message_id, cx))
+                menu.entry("Reply to message", None, move |cx| {
+                    this2.update(cx, |this, _| {
+                        this.reply_to_message_id = Some(ChannelMessageId::Saved(message_id));
+                    })
+                })
+                .when(belongs_to_user, move |menu| {
+                    menu.entry("Delete message", None, move |cx| {
+                        this.update(cx, |this, cx| this.remove_message(message_id, cx))
+                    })
                 })
             })
         };
@@ -632,42 +649,66 @@ impl Render for ChatPanel {
                     )
                 }
             }))
-            .when(self.reply_to_message_id.is_some(), |el| {
-                el.child(div().py_1()
-                    .px_2()
-                    .bg(cx.theme().colors().background)
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .text_ui_xs()
-                                    .child("Reply to:")
-                                    .child(
-                                        Avatar::new(
-                                            "https://avatars.githubusercontent.com/u/62463826?v=4",
+            .when_some(self.reply_to_message_id, |el, reply_to_message_id| {
+                // we should find the message
+                // TODO: this is a hack, we should not be using the message list to find the message
+                let active_chat = self.active_chat().unwrap();
+                let message = active_chat
+                    .read(cx)
+                    .messages()
+                    .iter()
+                    .find_map(|m| {
+                        if m.id == reply_to_message_id {
+                            Some(m)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap();
+
+                let text = self.markdown_data.entry(message.id).or_insert_with(|| {
+                    Self::render_markdown_with_mentions(&self.languages, self.client.id(), &message)
+                });
+
+                el.child(
+                    div()
+                        .py_1()
+                        .px_2()
+                        .bg(cx.theme().colors().background)
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .text_ui_xs()
+                                        .child("Reply to:")
+                                        .child(
+                                            Avatar::new(message.sender.avatar_uri.clone())
+                                                .size(rems(0.8)),
                                         )
-                                        .size(rems(0.8)),
-                                    )
-                                    .child(Label::new("RemcoSmitsDev").size(LabelSize::XSmall)),
-                            )
-                            .gap_1()
-                            .child(
-                                IconButton::new("remove-reply", IconName::Close)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .on_click(cx.listener(move |this, _, _| {
-                                        this.reply_to_message_id = None;
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .rounded_md()
-                            .text_ui_sm()
-                            .bg(cx.theme().colors().background)
-                            .child("jkasldf jaksldfj lkasjdf;l kasjdklf;asld f;asdfj"),
-                    ))
+                                        .child(
+                                            Label::new(message.sender.github_login.clone())
+                                                .size(LabelSize::XSmall),
+                                        ),
+                                )
+                                .gap_1()
+                                .child(
+                                    IconButton::new("remove-reply", IconName::Close)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .on_click(cx.listener(move |this, _, _| {
+                                            this.reply_to_message_id = None;
+                                        })),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .rounded_md()
+                                .text_ui_sm()
+                                .bg(cx.theme().colors().background)
+                                .child(text.element("reply-body".into(), cx)),
+                        ),
+                )
             })
             .child(
                 h_flex()
