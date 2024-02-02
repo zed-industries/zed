@@ -252,6 +252,14 @@ impl ChannelChat {
         })
     }
 
+    /// Load a message by its id, if it's already stored locally.
+    pub fn find_loaded_message(&self, id: u64) -> Option<&ChannelMessage> {
+        self.messages.iter().find(|message| match message.id {
+            ChannelMessageId::Saved(message_id) => message_id == id,
+            ChannelMessageId::Pending(_) => false,
+        })
+    }
+
     /// Load all of the chat messages since a certain message id.
     ///
     /// For now, we always maintain a suffix of the channel's messages.
