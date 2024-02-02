@@ -27,7 +27,7 @@ pub use schema::*;
 pub use settings::*;
 pub use styles::*;
 
-use gpui::{AppContext, AssetSource, Hsla, SharedString};
+use gpui::{AppContext, AssetSource, Hsla, SharedString, WindowAppearance};
 use serde::Deserialize;
 
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
@@ -41,6 +41,15 @@ impl Appearance {
         match self {
             Self::Light => true,
             Self::Dark => false,
+        }
+    }
+}
+
+impl From<WindowAppearance> for Appearance {
+    fn from(value: WindowAppearance) -> Self {
+        match value {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::Dark,
+            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::Light,
         }
     }
 }
