@@ -13,7 +13,7 @@ pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::{
     cmp::Ordering,
     time::{Duration, Instant},
@@ -142,7 +142,7 @@ pub struct ScrollManager {
 impl ScrollManager {
     pub fn new(cx: &mut WindowContext) -> Self {
         ScrollManager {
-            vertical_scroll_margin: dbg!(EditorSettings::get_global(cx).scroll_offset),
+            vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
             autoscroll_request: None,

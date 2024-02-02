@@ -586,8 +586,9 @@ impl DisplaySnapshot {
             text_system,
             editor_style,
             rem_size,
-            anchor: _,
+            scroll_anchor: _,
             visible_rows: _,
+            vertical_scroll_margin: _,
         }: &TextLayoutDetails,
     ) -> Arc<LineLayout> {
         let mut runs = Vec::new();

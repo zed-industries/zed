@@ -1044,9 +1044,17 @@ fn window_top(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,
-    times: usize,
+    mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
-    let first_visible_line = text_layout_details.anchor.to_display_point(map);
+    let first_visible_line = text_layout_details
+        .scroll_anchor
+        .anchor
+        .to_display_point(map);
+
+    if first_visible_line.row() != 0 && text_layout_details.vertical_scroll_margin as usize > times
+    {
+        times = text_layout_details.vertical_scroll_margin.ceil() as usize;
+    }
 
     if let Some(visible_rows) = text_layout_details.visible_rows {
         let bottom_row = first_visible_line.row() + visible_rows as u32;
@@ -1070,7 +1078,10 @@ fn window_middle(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(map);
         let max_rows = (visible_rows as u32).min(map.max_buffer_row());
         let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
         let new_col = point.column().min(map.line_len(new_row));
@@ -1085,11 +1096,20 @@ fn window_bottom(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,
-    times: usize,
+    mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details.anchor.to_display_point(map);
-        let bottom_row = first_visible_line.row() + (visible_rows) as u32;
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(map);
+        let bottom_row = first_visible_line.row()
+            + (visible_rows + text_layout_details.scroll_anchor.offset.y - 1.).floor() as u32;
+        if bottom_row < map.max_buffer_row()
+            && text_layout_details.vertical_scroll_margin as usize > times
+        {
+            times = text_layout_details.vertical_scroll_margin.ceil() as usize;
+        }
         let bottom_row_capped = bottom_row.min(map.max_buffer_row());
         let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_line.row() {
             first_visible_line.row()

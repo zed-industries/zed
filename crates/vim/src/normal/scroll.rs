@@ -76,7 +76,7 @@ fn scroll_editor(
         };
 
         let top_anchor = editor.scroll_manager.anchor().anchor;
-        let vertical_scroll_margin = dbg!(EditorSettings::get_global(cx).scroll_offset);
+        let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
 
         editor.change_selections(None, cx, |s| {
             s.move_with(|map, selection| {
