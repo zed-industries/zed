@@ -1,70 +1,132 @@
+use std::sync::Arc;
+
+use futures::StreamExt;
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use settings::SettingsStore;
+use postage::watch;
+use serde::Deserialize;
+use util::ResultExt;
 
 use crate::{
-    next_source_id, static_runnable_file::RunnableProvider, RunState, Runnable, Source, SourceId,
-    StaticRunner,
+    next_source_id, static_runnable_file::RunnableProvider, RunState, Runnable, RunnablePebble,
+    Source, SourceId, StaticRunner,
 };
+use futures::channel::mpsc::UnboundedReceiver;
 
 pub struct StaticSource {
     id: SourceId,
-    definitions: Model<RunnableProvider>,
-    _settings_changed_subscription: Subscription,
+    definitions: Model<TrackedFile<RunnableProvider>>,
+    runnables: Vec<RunnablePebble>,
+    _subscription: Subscription,
+}
+
+pub struct TrackedFile<T> {
+    parsed_contents: T,
+}
+
+impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
+    pub fn new(
+        initial_contents: T,
+        mut tracker: UnboundedReceiver<String>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
+        cx.new_model(move |cx| {
+            cx.spawn(|this, mut cx| async move {
+                while let Some(new_contents) = tracker.next().await {
+                    let Some(new_contents) = serde_json::from_str(&new_contents).log_err() else {
+                        continue;
+                    };
+                    this.update(&mut cx, |this: &mut TrackedFile<T>, cx| {
+                        if this.parsed_contents != new_contents {
+                            this.parsed_contents = new_contents;
+                            cx.notify();
+                        };
+                    })?;
+                }
+                Result::<_, anyhow::Error>::Ok(())
+            })
+            .detach_and_log_err(cx);
+            Self {
+                parsed_contents: initial_contents,
+            }
+        })
+    }
+
+    fn get(&self) -> &T {
+        &self.parsed_contents
+    }
 }
 
 impl StaticSource {
-    pub fn new(contents: Model<RunnableProvider>, cx: &mut AppContext) -> Self {
-        let definitions = cx.new_model(|cx| RunnableProvider::default());
-
-        let _settings_changed_subscription = definitions.update(cx, |_, cx| {
-            cx.observe_global::<SettingsStore>(|runnables, cx| {
-                on_settings_changed(runnables, cx);
-            })
-        });
-        Self {
-            id: next_source_id(),
-            definitions, // TODO kb use Option instead?
-            _settings_changed_subscription,
-        }
-    }
-}
-
-fn on_settings_changed(runnables: &mut RunnableProvider, cx: &mut ModelContext<RunnableProvider>) {
-    // TODO kb change contents of the static runnable provider, if needed, blah.
-    // self.definitions.update(cx, |this, cx| {
-    //     update(this);
-    // });
-    // let new_settings = RunnableSettings::get_blobal(cx);
-    // if self.previous_runnables_config != new_settings { reinit_static_source() }
-    todo!()
-}
-
-impl Source for StaticSource {
-    fn id(&self) -> crate::SourceId {
-        self.id
-    }
-
-    fn runnables_for_path(
-        &self,
-        _: &std::path::Path,
+    pub fn new(
+        definitions: Model<TrackedFile<RunnableProvider>>,
         cx: &mut AppContext,
-    ) -> anyhow::Result<Box<dyn Iterator<Item = crate::RunnablePebble>>> {
-        Ok(Box::new(self.definitions.tasks.iter().cloned().map(
-            |def| {
-                let runner = StaticRunner::new(def);
-                let source_id = self.id;
-                let display_name = runner.name();
-                let runnable_id = runner.id();
-                let state = cx.new_model(|_| RunState::NotScheduled(Box::new(runner)));
-                crate::RunnablePebble {
-                    metadata: crate::RunnableLens {
-                        source_id,
-                        runnable_id,
-                        display_name,
-                    },
-                    state,
-                }
-            },
-        )))
+    ) -> Model<Self> {
+        cx.new_model(|cx| {
+            let _subscription = cx.observe(&definitions, |this: &mut Self, new_definitions, cx| {
+                let tasks = new_definitions.read(cx).get().tasks.clone();
+                let runnables = tasks
+                    .into_iter()
+                    .map(|task| {
+                        let source_id = this.id;
+                        let runner = StaticRunner::new(task.clone());
+                        let display_name = runner.name();
+                        let runnable_id = runner.id();
+                        let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
+                        crate::RunnablePebble {
+                            metadata: crate::RunnableLens {
+                                source_id,
+                                runnable_id,
+                                display_name,
+                            },
+                            state,
+                        }
+                    })
+                    .collect();
+                this.runnables = runnables;
+            });
+            Self {
+                id: next_source_id(),
+                definitions, // TODO kb use Option instead?
+                runnables: vec![],
+                _subscription,
+            }
+        })
+    }
+}
+
+impl Source for Model<StaticSource> {
+    fn id(&self, cx: &AppContext) -> crate::SourceId {
+        self.read(cx).id
+    }
+
+    fn runnables_for_path<'a>(
+        &'a self,
+        _: &std::path::Path,
+        cx: &'a AppContext,
+    ) -> anyhow::Result<Box<dyn Iterator<Item = crate::RunnablePebble> + 'a>> {
+        Ok(Box::new(self.read(cx).runnables.iter().cloned()))
+        // let tasks: Vec<_> = self
+        //     .definitions
+        //     .read(cx)
+        //     .get()
+        //     .tasks
+        //     .iter()
+        //     .cloned()
+        //     .collect();
+        // Ok(Box::new(tasks.into_iter().map(|def| {
+        //     let runner = StaticRunner::new(def);
+        //     let source_id = self.id;
+        //     let display_name = runner.name();
+        //     let runnable_id = runner.id();
+        //     let state = cx.new_model(|_| RunState::NotScheduled(Box::new(runner)));
+        //     crate::RunnablePebble {
+        //         metadata: crate::RunnableLens {
+        //             source_id,
+        //             runnable_id,
+        //             display_name,
+        //         },
+        //         state,
+        //     }
+        // })))
     }
 }

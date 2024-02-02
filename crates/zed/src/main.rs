@@ -19,6 +19,8 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
+use project::Project;
+use runnable::static_runnable_file::RunnableProvider;
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -259,6 +261,23 @@ fn main() {
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);
 
+        cx.observe_new_views(move |project: &mut Project, cx| {
+            if project.is_local() {
+                let runnables_file_rx = watch_config_file(
+                    &cx.background_executor(),
+                    fs.clone(),
+                    paths::RUNNABLES.clone(),
+                );
+                let tracked_file = runnable::static_source::TrackedFile::new(
+                    RunnableProvider::default(),
+                    runnables_file_rx,
+                    cx,
+                );
+                let source = runnable::static_source::StaticSource::new(tracked_file, cx);
+                project.runnable_inventory_mut().add_source(source);
+            }
+        })
+        .detach();
         if stdout_is_a_pty() {
             upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);

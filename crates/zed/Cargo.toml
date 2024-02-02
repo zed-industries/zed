@@ -16,9 +16,9 @@ name = "Zed"
 path = "src/main.rs"
 
 [dependencies]
-ai = { path = "../ai"}
+ai = { path = "../ai" }
 audio = { path = "../audio" }
-activity_indicator = { path = "../activity_indicator"}
+activity_indicator = { path = "../activity_indicator" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 call = { path = "../call" }
@@ -59,8 +59,9 @@ project_panel = { path = "../project_panel" }
 project_symbols = { path = "../project_symbols" }
 quick_action_bar = { path = "../quick_action_bar" }
 recent_projects = { path = "../recent_projects" }
-rope = { path = "../rope"}
+rope = { path = "../rope" }
 rpc = { path = "../rpc" }
+runnable = { path = "../runnable" }
 settings = { path = "../settings" }
 feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
@@ -74,8 +75,8 @@ semantic_index = { path = "../semantic_index" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }
-zed_actions = {path = "../zed_actions"}
-assets = {path = "../assets"}
+zed_actions = { path = "../zed_actions" }
+assets = { path = "../assets" }
 anyhow.workspace = true
 async-compression.workspace = true
 async-tar = "0.4.2"

@@ -6472,9 +6472,11 @@ dependencies = [
  "async-process 2.0.1",
  "futures 0.3.28",
  "gpui",
+ "postage",
  "serde",
  "serde_json",
  "settings",
+ "util",
 ]
 
 [[package]]
@@ -9920,6 +9922,7 @@ dependencies = [
  "rope",
  "rpc",
  "rsa 0.4.0",
+ "runnable",
  "rust-embed",
  "schemars",
  "search",

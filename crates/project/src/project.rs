@@ -636,9 +636,7 @@ impl Project {
                 .detach();
             let copilot_lsp_subscription =
                 Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
-            let mut runnables = Inventory::default();
-            let static_source = StaticSource::new();
-            runnables.add_source(Box::new(static_source));
+            let runnables = Inventory::default();
 
             Self {
                 worktrees: Vec::new(),

@@ -7,24 +7,29 @@ pub mod static_source;
 
 use anyhow::{bail, Result};
 use core::future::Future;
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, Shared};
 pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, Abortable};
 use futures::FutureExt;
 use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use static_runner::StaticRunner;
+use std::error::Error;
 use std::path::Path;
 use std::sync::atomic::{self, AtomicU64};
+use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct TaskHandle {
-    fut: Task<Result<ExecutionResult, TaskTerminated>>,
+    fut: Shared<Task<Result<ExecutionResult, TaskTerminated>>>,
     cancel_token: AbortHandle,
 }
 
 impl TaskHandle {
     pub fn new(fut: BoxFuture<'static, ExecutionResult>, cx: AsyncAppContext) -> Result<Self> {
         let (cancel_token, abort_registration) = AbortHandle::new_pair();
-        let fut = cx.spawn(move |_| Abortable::new(fut, abort_registration));
+        let fut = cx
+            .spawn(move |_| Abortable::new(fut, abort_registration))
+            .shared();
         Ok(Self { fut, cancel_token })
     }
 
@@ -46,12 +51,13 @@ impl Future for TaskHandle {
     }
 }
 
+#[derive(Clone)]
 /// Represents the result of a task.
 pub struct ExecutionResult {
     /// Status of the task. Should be Ok(()) if the task succeeded, Err(()) otherwise. Note that
     /// the task might not even start up (e.g. due to a process spawning failure) and the status
     /// will still be Err().
-    pub status: Result<()>,
+    pub status: Result<(), Arc<dyn Error>>,
     /// Contains user-facing details for inspection. It could be e.g. stdout/stderr of a task.
     pub details: String,
 }
@@ -75,7 +81,7 @@ impl From<RunnableId> for u64 {
 pub trait Runnable {
     fn id(&self) -> RunnableId;
     fn name(&self) -> String;
-    fn exec(&mut self, cx: gpui::AsyncAppContext) -> Result<TaskHandle>;
+    fn exec(&self, cx: gpui::AsyncAppContext) -> Result<TaskHandle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
@@ -100,30 +106,33 @@ pub fn next_source_id() -> SourceId {
 }
 
 pub trait Source {
-    fn id(&self) -> SourceId;
+    fn id(&self, cx: &AppContext) -> SourceId;
     fn runnables_for_path<'a>(
         &'a self,
-        path: &'a Path,
-        cx: &'a mut AppContext,
+        path: &Path,
+        cx: &'a AppContext,
     ) -> anyhow::Result<Box<dyn Iterator<Item = RunnablePebble> + 'a>>;
 }
 
 /// Uniquely represents a runnable in an inventory.
 /// Two different instances of a runnable (e.g. two different runs of the same static task)
 /// must have a different RunnableLens
+#[derive(Clone)]
 pub struct RunnableLens {
     source_id: SourceId,
     runnable_id: RunnableId,
     display_name: String,
 }
 
+#[derive(Clone)]
 pub struct RunnablePebble {
     metadata: RunnableLens,
     state: Model<RunState>,
 }
 
+#[derive(Clone)]
 pub enum RunState {
-    NotScheduled(Box<dyn Runnable>),
+    NotScheduled(Arc<dyn Runnable>),
     AlreadyUnderway(TaskHandle),
     Done(ExecutionResult),
 }
