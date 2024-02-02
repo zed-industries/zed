@@ -93,7 +93,7 @@ pub enum MaybeNavigationTarget {
     Url(String),
     /// File system path, absolute or relative, existing or not.
     /// Might have line and column number(s) attached as `file.rs:1:23`
-    PathLike(String),
+    PathLike(String, Option<PathBuf>),
 }
 
 #[derive(Clone)]
@@ -626,6 +626,13 @@ impl Terminal {
         }
     }
 
+    fn get_cwd(&self) -> Option<PathBuf> {
+        if let Some(foreground_info) = &self.foreground_process_info {
+            return Some(foreground_info.cwd.clone());
+        }
+        None
+    }
+
     ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
@@ -800,7 +807,7 @@ impl Terminal {
                             let target = if is_url {
                                 MaybeNavigationTarget::Url(maybe_url_or_path)
                             } else {
-                                MaybeNavigationTarget::PathLike(maybe_url_or_path)
+                                MaybeNavigationTarget::PathLike(maybe_url_or_path, self.get_cwd())
                             };
                             cx.emit(Event::Open(target));
                         } else {
@@ -852,7 +859,7 @@ impl Terminal {
         let navigation_target = if is_url {
             MaybeNavigationTarget::Url(word)
         } else {
-            MaybeNavigationTarget::PathLike(word)
+            MaybeNavigationTarget::PathLike(word, self.get_cwd())
         };
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
     }
