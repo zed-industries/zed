@@ -145,6 +145,7 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
+    language("helm",tree_sitter_helm::language(),vec![]);
     language(
         "json",
         tree_sitter_json::language(),
