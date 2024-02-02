@@ -1178,6 +1178,62 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 }
 
 #[gpui::test]
+async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "test": {
+                    "1.txt": "// One",
+                    "2.txt": "// Two",
+                    "3.txt": "// Three",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
+    open_queried_buffer("2", 1, "2.txt", &workspace, cx).await;
+    open_queried_buffer("3", 1, "3.txt", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "3.txt");
+        assert_match_selection(finder, 1, "2.txt");
+        assert_match_at_position(finder, 2, "1.txt");
+    });
+
+    cx.dispatch_action(Confirm); // Open 2.txt
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "2.txt");
+        assert_match_selection(finder, 1, "3.txt");
+        assert_match_at_position(finder, 2, "1.txt");
+    });
+
+    cx.dispatch_action(SelectNext);
+    cx.dispatch_action(Confirm); // Open 1.txt
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "1.txt");
+        assert_match_selection(finder, 1, "2.txt");
+        assert_match_at_position(finder, 2, "3.txt");
+    });
+}
+
+#[gpui::test]
 async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 

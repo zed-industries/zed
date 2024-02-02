@@ -262,11 +262,14 @@ impl ProjectPanel {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                         if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
                             let file_path = entry.path.clone();
+                            let worktree_id = worktree.read(cx).id();
+                            let entry_id = entry.id;
+
                             workspace
                                 .open_path(
                                     ProjectPath {
-                                        worktree_id: worktree.read(cx).id(),
-                                        path: entry.path.clone(),
+                                        worktree_id,
+                                        path: file_path.clone(),
                                     },
                                     None,
                                     focus_opened_item,
@@ -281,8 +284,16 @@ impl ProjectPanel {
                                         _ => None,
                                     }
                                 });
-                            if !focus_opened_item {
-                                if let Some(project_panel) = project_panel.upgrade() {
+
+                            if let Some(project_panel) = project_panel.upgrade() {
+                                // Always select the entry, regardless of whether it is opened or not.
+                                project_panel.update(cx, |project_panel, _| {
+                                    project_panel.selection = Some(Selection {
+                                        worktree_id,
+                                        entry_id
+                                    });
+                                });
+                                if !focus_opened_item {
                                     let focus_handle = project_panel.read(cx).focus_handle.clone();
                                     cx.focus(&focus_handle);
                                 }

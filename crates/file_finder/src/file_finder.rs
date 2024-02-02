@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod file_finder_tests;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
@@ -222,9 +222,11 @@ impl Matches {
         query_matches: Option<&'a HashMap<Arc<Path>, ProjectPanelOrdMatch>>,
         history_items: impl IntoIterator<Item = &'a FoundPath> + 'a,
     ) {
-        let history_items_to_show = history_items
+        let mut processed_paths = HashSet::default();
+        self.history = history_items
             .into_iter()
             .chain(currently_opened)
+            .filter(|&path| processed_paths.insert(path))
             .filter_map(|history_item| match &query_matches {
                 Some(query_matches) => Some((
                     history_item.clone(),
@@ -232,31 +234,22 @@ impl Matches {
                 )),
                 None => Some((history_item.clone(), None)),
             })
-            .sorted_by(|(path_a, match_a), (path_b, match_b)| {
-                match (
+            .enumerate()
+            .sorted_by(
+                |(index_a, (path_a, match_a)), (index_b, (path_b, match_b))| match (
                     Some(path_a) == currently_opened,
                     Some(path_b) == currently_opened,
                 ) {
+                    // bubble currently opened files to the top
                     (true, false) => cmp::Ordering::Less,
                     (false, true) => cmp::Ordering::Greater,
-                    _ => match_b.cmp(match_a),
-                }
-            });
-
-        self.history.clear();
-        util::extend_sorted(
-            &mut self.history,
-            history_items_to_show.collect::<Vec<_>>(),
-            100,
-            |(path_a, match_a), (path_b, match_b)| match (
-                Some(path_a) == currently_opened,
-                Some(path_b) == currently_opened,
-            ) {
-                (true, false) => cmp::Ordering::Less,
-                (false, true) => cmp::Ordering::Greater,
-                _ => match_b.cmp(match_a).then(path_b.cmp(path_a)),
-            },
-        );
+                    // arrange the files by their score (best score on top) and by their occurrence in the history
+                    // (history items visited later are on the top)
+                    _ => match_b.cmp(match_a).then(index_a.cmp(index_b)),
+                },
+            )
+            .map(|(_, paths)| paths)
+            .collect();
     }
 }
 
@@ -319,7 +312,7 @@ fn matching_history_item_paths(
     matching_history_paths
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct FoundPath {
     project: ProjectPath,
     absolute: Option<PathBuf>,

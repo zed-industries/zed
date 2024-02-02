@@ -74,9 +74,17 @@ impl Channel {
     pub fn link(&self) -> String {
         RELEASE_CHANNEL.link_prefix().to_owned()
             + "channel/"
-            + &self.slug()
+            + &Self::slug(&self.name)
             + "-"
             + &self.id.to_string()
+    }
+
+    pub fn notes_link(&self, heading: Option<String>) -> String {
+        self.link()
+            + "/notes"
+            + &heading
+                .map(|h| format!("#{}", Self::slug(&h)))
+                .unwrap_or_default()
     }
 
     pub fn is_root_channel(&self) -> bool {
@@ -90,9 +98,8 @@ impl Channel {
             .unwrap_or(self.id)
     }
 
-    pub fn slug(&self) -> String {
-        let slug: String = self
-            .name
+    pub fn slug(str: &str) -> String {
+        let slug: String = str
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '-' })
             .collect();
