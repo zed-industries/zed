@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::hash_map::Entry,
     fmt::{Debug, Display},
     future::Future,
@@ -34,7 +34,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::{measure, ResultExt};
 
@@ -272,7 +272,8 @@ pub struct Window {
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
-    pub(crate) dirty: bool,
+    pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
@@ -342,13 +343,28 @@ impl Window {
         let bounds = platform_window.bounds();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        let dirty = Rc::new(Cell::new(false));
+        let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
+            let dirty = dirty.clone();
+            let last_input_timestamp = last_input_timestamp.clone();
             move || {
-                measure("frame duration", || {
-                    handle.update(&mut cx, |_, cx| cx.draw()).log_err();
-                })
+                if dirty.get() {
+                    measure("frame duration", || {
+                        handle
+                            .update(&mut cx, |_, cx| {
+                                cx.draw();
+                                cx.present();
+                            })
+                            .log_err();
+                    })
+                } else if last_input_timestamp.get().elapsed() < Duration::from_secs(2) {
+                    // Keep presenting the current scene for 2 extra seconds since the
+                    // last input to prevent the display from underclocking the refresh rate.
+                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
+                }
             }
         }));
         platform_window.on_resize(Box::new({
@@ -427,7 +443,8 @@ impl Window {
             appearance,
             appearance_observers: SubscriberSet::new(),
             active: false,
-            dirty: false,
+            dirty,
+            last_input_timestamp,
             refreshing: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
@@ -488,7 +505,7 @@ impl<'a> WindowContext<'a> {
     pub fn refresh(&mut self) {
         if !self.window.drawing {
             self.window.refreshing = true;
-            self.window.dirty = true;
+            self.window.dirty.set(true);
         }
     }
 
@@ -962,9 +979,10 @@ impl<'a> WindowContext<'a> {
         &self.window.next_frame.z_index_stack
     }
 
-    /// Draw pixels to the display for this window based on the contents of its scene.
+    /// Produces a new frame and assigns it to `rendered_frame`. To actually show
+    /// the contents of the new [Scene], use [present].
     pub(crate) fn draw(&mut self) {
-        self.window.dirty = false;
+        self.window.dirty.set(false);
         self.window.drawing = true;
 
         #[cfg(any(test, feature = "test-support"))]
@@ -1105,16 +1123,19 @@ impl<'a> WindowContext<'a> {
                 .clone()
                 .retain(&(), |listener| listener(&event, self));
         }
-
-        self.window
-            .platform_window
-            .draw(&self.window.rendered_frame.scene);
         self.window.refreshing = false;
         self.window.drawing = false;
     }
 
+    fn present(&self) {
+        self.window
+            .platform_window
+            .draw(&self.window.rendered_frame.scene);
+    }
+
     /// Dispatch a mouse or keyboard event on the window.
     pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
+        self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
         self.app.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
@@ -2058,7 +2079,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
 
         if !self.window.drawing {
-            self.window_cx.window.dirty = true;
+            self.window_cx.window.dirty.set(true);
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,
             });

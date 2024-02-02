@@ -175,7 +175,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
-    fn invalidate(&self);
     fn draw(&self, scene: &Scene);
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
