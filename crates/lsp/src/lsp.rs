@@ -336,38 +336,40 @@ impl LanguageServer {
 
             let message_len: usize = segments
                 .next()
-                .context("unable to find the first line of the LSP message header")?
+                .with_context(|| {
+                    format!("unable to find the first line of the LSP message header `{header}`")
+                })?
                 .strip_prefix(CONTENT_LEN_HEADER)
-                .context("invalid LSP message header")?
+                .with_context(|| format!("invalid LSP message header `{header}`"))?
                 .parse()
                 .with_context(|| {
-                    format!(
-                        "failed to parse Content-Length of LSP message header: {}",
-                        header
-                    )
+                    format!("failed to parse Content-Length of LSP message header: `{header}`")
                 })?;
 
             if let Some(second_segment) = segments.next() {
                 match second_segment {
                     "" => (), // Header end
-                    header_field if header_field.starts_with("Content-Type:") => {
-                        stdout.read_until(b'\n', &mut buffer).await?;
-                    }
-                    _ => {
-                        anyhow::bail!(
-                            "expected a Content-Type header field or a header ending CRLF, got {second_segment:?}"
-                        );
+                    header_field => {
+                        if header_field.starts_with("Content-Type:") {
+                            stdout.read_until(b'\n', &mut buffer).await?;
+                        } else {
+                            anyhow::bail!(
+                                "inside `{header}`, expected a Content-Type header field or a header ending CRLF, got `{second_segment:?}`"
+                            )
+                        }
                     }
                 }
             } else {
-                anyhow::bail!("unable to find the second line of the LSP message header");
+                anyhow::bail!(
+                    "unable to find the second line of the LSP message header `{header}`"
+                );
             }
 
             buffer.resize(message_len, 0);
             stdout.read_exact(&mut buffer).await?;
 
             if let Ok(message) = str::from_utf8(&buffer) {
-                log::trace!("incoming message: {}", message);
+                log::trace!("incoming message: {message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdOut, message);
                 }
