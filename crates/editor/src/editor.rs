@@ -77,7 +77,7 @@ use language::{
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
-use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
+use link_go_to_definition::{GoToDefinitionLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
@@ -402,7 +402,7 @@ pub struct Editor {
     remote_id: Option<ViewId>,
     hover_state: HoverState,
     gutter_hovered: bool,
-    link_go_to_definition_state: LinkGoToDefinitionState,
+    hovered_link_state: Option<HoveredLinkState>,
     copilot_state: CopilotState,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
@@ -1477,7 +1477,7 @@ impl Editor {
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
-            link_go_to_definition_state: Default::default(),
+            hovered_link_state: Default::default(),
             copilot_state: Default::default(),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,

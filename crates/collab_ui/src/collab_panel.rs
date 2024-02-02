@@ -78,7 +78,7 @@ pub fn init(cx: &mut AppContext) {
             if let Some(channel_id) = channel_id {
                 let workspace = cx.view().clone();
                 cx.window_context().defer(move |cx| {
-                    ChannelView::open(channel_id, workspace, cx).detach_and_log_err(cx)
+                    ChannelView::open(channel_id, None, workspace, cx).detach_and_log_err(cx)
                 });
             }
         });

@@ -10,9 +10,9 @@ use crate::{
     },
     items::BufferSearchHighlights,
     link_go_to_definition::{
-        go_to_fetched_definition, go_to_fetched_type_definition, show_link_definition,
-        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
-        LinkGoToDefinitionState,
+        go_to_fetched_definition, go_to_fetched_type_definition, hide_link_definition,
+        show_link_definition, update_go_to_definition_link, update_inlay_link_and_hover_points,
+        GoToDefinitionTrigger, HoveredLinkState,
     },
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
@@ -337,7 +337,14 @@ impl EditorElement {
         register_action(view, cx, Editor::display_cursor_names);
     }
 
-    fn register_key_listeners(&self, cx: &mut ElementContext) {
+    fn register_key_listeners(
+        &self,
+        cx: &mut ElementContext,
+        text_bounds: Bounds<Pixels>,
+        layout: &LayoutState,
+    ) {
+        let position_map = layout.position_map.clone();
+        let stacking_order = cx.stacking_order().clone();
         cx.on_key_event({
             let editor = self.editor.clone();
             move |event: &ModifiersChangedEvent, phase, cx| {
@@ -345,9 +352,16 @@ impl EditorElement {
                     return;
                 }
 
-                if editor.update(cx, |editor, cx| Self::modifiers_changed(editor, event, cx)) {
-                    cx.stop_propagation();
-                }
+                editor.update(cx, |editor, cx| {
+                    Self::modifiers_changed(
+                        editor,
+                        event,
+                        &position_map,
+                        text_bounds,
+                        &stacking_order,
+                        cx,
+                    )
+                })
             }
         });
     }
@@ -355,36 +369,44 @@ impl EditorElement {
     pub(crate) fn modifiers_changed(
         editor: &mut Editor,
         event: &ModifiersChangedEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    ) {
         let pending_selection = editor.has_pending_selection();
+        let mouse_position = cx.mouse_position();
+        let was_top = cx.was_top_layer(&mouse_position, stacking_order);
 
-        if let Some(point) = &editor.link_go_to_definition_state.last_trigger_point {
-            if event.command && !pending_selection {
-                let point = point.clone();
-                let snapshot = editor.snapshot(cx);
-                let kind = point.definition_kind(event.shift);
+        if event.command && !pending_selection && text_bounds.contains(&mouse_position) && was_top {
+            let point_for_position = position_map.point_for_position(text_bounds, mouse_position);
 
-                show_link_definition(kind, editor, point, snapshot, cx);
-                return false;
+            match point_for_position.as_valid() {
+                Some(point) => {
+                    update_go_to_definition_link(
+                        editor,
+                        Some(GoToDefinitionTrigger::Text(point)),
+                        event.modifiers.command,
+                        event.modifiers.shift,
+                        cx,
+                    );
+                    hover_at(editor, Some(point), cx);
+                    Self::update_visible_cursor(editor, point, position_map, cx);
+                }
+                None => {
+                    update_inlay_link_and_hover_points(
+                        &position_map.snapshot,
+                        point_for_position,
+                        editor,
+                        event.modifiers.command,
+                        event.modifiers.shift,
+                        cx,
+                    );
+                }
             }
+        } else {
+            hide_link_definition(editor, cx)
         }
-
-        {
-            if editor.link_go_to_definition_state.symbol_range.is_some()
-                || !editor.link_go_to_definition_state.definitions.is_empty()
-            {
-                editor.link_go_to_definition_state.symbol_range.take();
-                editor.link_go_to_definition_state.definitions.clear();
-                cx.notify();
-            }
-
-            editor.link_go_to_definition_state.task = None;
-
-            editor.clear_highlights::<LinkGoToDefinitionState>(cx);
-        }
-
-        false
     }
 
     fn mouse_left_down(
@@ -588,7 +610,7 @@ impl EditorElement {
                 }
             }
         } else {
-            update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
+            hide_link_definition(editor, cx);
             hover_at(editor, None, cx);
             if gutter_hovered && was_top {
                 cx.stop_propagation();
@@ -930,13 +952,15 @@ impl EditorElement {
                     if self
                         .editor
                         .read(cx)
-                        .link_go_to_definition_state
-                        .definitions
-                        .is_empty()
+                        .hovered_link_state
+                        .as_ref()
+                        .is_some_and(|hovered_link_state| {
+                            !hovered_link_state.definitions.is_empty()
+                        })
                     {
-                        cx.set_cursor_style(CursorStyle::IBeam);
-                    } else {
                         cx.set_cursor_style(CursorStyle::PointingHand);
+                    } else {
+                        cx.set_cursor_style(CursorStyle::IBeam);
                     }
                 }
 
@@ -3105,9 +3129,9 @@ impl Element for EditorElement {
                     let key_context = self.editor.read(cx).key_context(cx);
                     cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
                         self.register_actions(cx);
-                        self.register_key_listeners(cx);
 
                         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                            self.register_key_listeners(cx, text_bounds, &layout);
                             cx.handle_input(
                                 &focus_handle,
                                 ElementInputHandler::new(bounds, self.editor.clone()),
