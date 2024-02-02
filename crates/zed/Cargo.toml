@@ -57,6 +57,7 @@ image = "0.23"
 indexmap = "1.6.2"
 install_cli = { path = "../install_cli" }
 isahc.workspace = true
+itertools = "0.11"
 journal = { path = "../journal" }
 language = { path = "../language" }
 language_selector = { path = "../language_selector" }

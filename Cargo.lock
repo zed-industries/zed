@@ -10344,6 +10344,7 @@ dependencies = [
  "indexmap 1.9.3",
  "install_cli",
  "isahc",
+ "itertools 0.11.0",
  "journal",
  "language",
  "language_selector",

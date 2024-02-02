@@ -413,6 +413,12 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
+    custom_context_menu: Option<
+        Box<
+            dyn 'static
+                + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
+        >,
+    >,
 }
 
 pub struct EditorSnapshot {
@@ -1476,6 +1482,7 @@ impl Editor {
             hovered_cursors: Default::default(),
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
+            custom_context_menu: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1663,6 +1670,14 @@ impl Editor {
 
     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
         self.collaboration_hub = Some(hub);
+    }
+
+    pub fn set_custom_context_menu(
+        &mut self,
+        f: impl 'static
+            + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
+    ) {
+        self.custom_context_menu = Some(Box::new(f))
     }
 
     pub fn set_completion_provider(&mut self, hub: Box<dyn CompletionProvider>) {
