@@ -279,8 +279,6 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-    appearance: WindowAppearance,
-    appearance_observers: SubscriberSet<(), AnyObserver>,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) focus_invalidated: bool,
@@ -439,9 +437,6 @@ impl Window {
 
             #[cfg(any(test, feature = "test-support"))]
             focus_invalidated: false,
-
-            appearance,
-            appearance_observers: SubscriberSet::new(),
         }
     }
 }
@@ -751,15 +746,6 @@ impl<'a> WindowContext<'a> {
 
         self.window
             .bounds_observers
-            .clone()
-            .retain(&(), |callback| callback(self));
-    }
-
-    fn appearance_changed(&mut self) {
-        self.window.appearance = self.window.platform_window.appearance();
-
-        self.window
-            .appearance_observers
             .clone()
             .retain(&(), |callback| callback(self));
     }
