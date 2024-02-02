@@ -214,7 +214,7 @@ impl ChannelView {
                 .find(|item| &Channel::slug(&item.text).to_lowercase() == &position)
             {
                 self.editor.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
                         s.replace_cursors_with(|map| vec![item.range.start.to_display_point(&map)])
                     })
                 });
