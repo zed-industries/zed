@@ -320,20 +320,25 @@ impl LanguageServer {
             }
         });
         let mut buffer = Vec::new();
-        loop {
+        'outer: loop {
             buffer.clear();
 
-            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
-                break;
-            };
-
-            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
-                break;
-            };
+            while let Ok(bytes_read) = stdout.read_until(b'\n', &mut buffer).await {
+                if bytes_read == 0 {
+                    break 'outer;
+                }
+                if buffer.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
 
             let header = std::str::from_utf8(&buffer)?;
             let message_len: usize = header
                 .strip_prefix(CONTENT_LEN_HEADER)
+                .ok_or_else(|| anyhow!("invalid LSP message header {header:?}"))?
+                .split_whitespace()
+                .collect::<Vec<&str>>()
+                .get_mut(0)
                 .ok_or_else(|| anyhow!("invalid LSP message header {header:?}"))?
                 .trim_end()
                 .parse()?;
