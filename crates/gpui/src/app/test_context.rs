@@ -237,6 +237,11 @@ impl TestAppContext {
         self.test_platform.has_pending_prompt()
     }
 
+    /// All the urls that have been opened with cx.open_url() during this test.
+    pub fn opened_url(&self) -> Option<String> {
+        self.test_platform.opened_url.borrow().clone()
+    }
+
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
@@ -627,25 +632,25 @@ impl<'a> VisualTestContext {
     }
 
     /// Simulate a mouse move event to the given point
-    pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, modifiers: Option<Modifiers>) {
+    pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
         self.simulate_event(MouseMoveEvent {
             position,
-            modifiers: modifiers.unwrap_or_default(),
+            modifiers,
             pressed_button: None,
         })
     }
 
     /// Simulate a primary mouse click at the given point
-    pub fn simulate_click(&mut self, position: Point<Pixels>, modifiers: Option<Modifiers>) {
+    pub fn simulate_click(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
         self.simulate_event(MouseDownEvent {
             position,
-            modifiers: modifiers.unwrap_or_default(),
+            modifiers,
             button: MouseButton::Left,
             click_count: 1,
         });
         self.simulate_event(MouseUpEvent {
             position,
-            modifiers: modifiers.unwrap_or_default(),
+            modifiers,
             button: MouseButton::Left,
             click_count: 1,
         });

@@ -7274,6 +7274,10 @@ impl Editor {
                 GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
                     self.compute_target_location(lsp_location, server_id, cx)
                 }
+                GoToDefinitionLink::Url(url) => {
+                    cx.open_url(&url);
+                    Task::ready(Ok(None))
+                }
             };
             cx.spawn(|editor, mut cx| async move {
                 let target = target_task.await.context("target resolution task")?;
@@ -7336,6 +7340,7 @@ impl Editor {
                                     })
                                 }
                                 GoToDefinitionLink::InlayHint(_, _) => None,
+                                GoToDefinitionLink::Url(_) => None,
                             })
                             .unwrap_or("Definitions".to_string());
                         let location_tasks = definitions
@@ -7347,6 +7352,7 @@ impl Editor {
                                 GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
                                     editor.compute_target_location(lsp_location, server_id, cx)
                                 }
+                                GoToDefinitionLink::Url(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
                         (title, location_tasks)
