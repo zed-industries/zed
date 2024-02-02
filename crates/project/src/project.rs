@@ -4414,13 +4414,13 @@ impl Project {
         }
     }
 
-    pub fn definition<T: ToPointUtf16>(
+    #[inline(never)]
+    fn definition_impl(
         &self,
         buffer: &Model<Buffer>,
-        position: T,
+        position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
@@ -4428,14 +4428,22 @@ impl Project {
             cx,
         )
     }
-
-    pub fn type_definition<T: ToPointUtf16>(
+    pub fn definition<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
+        self.definition_impl(buffer, position, cx)
+    }
+
+    fn type_definition_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
@@ -4443,7 +4451,30 @@ impl Project {
             cx,
         )
     }
+    pub fn type_definition<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
 
+        self.type_definition_impl(buffer, position, cx)
+    }
+
+    fn references_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Location>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetReferences { position },
+            cx,
+        )
+    }
     pub fn references<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
@@ -4451,10 +4482,19 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
+        self.references_impl(buffer, position, cx)
+    }
+
+    fn document_highlights_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<DocumentHighlight>>> {
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
-            GetReferences { position },
+            GetDocumentHighlights { position },
             cx,
         )
     }
@@ -4466,12 +4506,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::Primary,
-            GetDocumentHighlights { position },
-            cx,
-        )
+        self.document_highlights_impl(buffer, position, cx)
     }
 
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
@@ -4694,13 +4729,12 @@ impl Project {
         }
     }
 
-    pub fn hover<T: ToPointUtf16>(
+    fn hover_impl(
         &self,
         buffer: &Model<Buffer>,
-        position: T,
+        position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Hover>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
@@ -4708,14 +4742,23 @@ impl Project {
             cx,
         )
     }
-
-    pub fn completions<T: ToOffset + ToPointUtf16>(
+    pub fn hover<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
+        self.hover_impl(buffer, position, cx)
+    }
+
+    #[inline(never)]
+    fn completions_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion>>> {
         if self.is_local() {
             let snapshot = buffer.read(cx).snapshot();
             let offset = position.to_offset(&snapshot);
@@ -4761,6 +4804,15 @@ impl Project {
         } else {
             Task::ready(Ok(Default::default()))
         }
+    }
+    pub fn completions<T: ToOffset + ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.completions_impl(buffer, position, cx)
     }
 
     pub fn resolve_completions(
@@ -5038,6 +5090,20 @@ impl Project {
         }
     }
 
+    fn code_actions_impl(
+        &self,
+        buffer_handle: &Model<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        self.request_lsp(
+            buffer_handle.clone(),
+            LanguageServerToQuery::Primary,
+            GetCodeActions { range },
+            cx,
+        )
+    }
+
     pub fn code_actions<T: Clone + ToOffset>(
         &self,
         buffer_handle: &Model<Buffer>,
@@ -5046,12 +5112,7 @@ impl Project {
     ) -> Task<Result<Vec<CodeAction>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-        self.request_lsp(
-            buffer_handle.clone(),
-            LanguageServerToQuery::Primary,
-            GetCodeActions { range },
-            cx,
-        )
+        self.code_actions_impl(buffer_handle, range, cx)
     }
 
     pub fn apply_code_action(
@@ -5420,13 +5481,12 @@ impl Project {
         Ok(project_transaction)
     }
 
-    pub fn prepare_rename<T: ToPointUtf16>(
+    fn prepare_rename_impl(
         &self,
         buffer: Model<Buffer>,
-        position: T,
+        position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Range<Anchor>>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer,
             LanguageServerToQuery::Primary,
@@ -5434,11 +5494,20 @@ impl Project {
             cx,
         )
     }
-
-    pub fn perform_rename<T: ToPointUtf16>(
+    pub fn prepare_rename<T: ToPointUtf16>(
         &self,
         buffer: Model<Buffer>,
         position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Range<Anchor>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.prepare_rename_impl(buffer, position, cx)
+    }
+
+    fn perform_rename_impl(
+        &self,
+        buffer: Model<Buffer>,
+        position: PointUtf16,
         new_name: String,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
@@ -5455,22 +5524,28 @@ impl Project {
             cx,
         )
     }
-
-    pub fn on_type_format<T: ToPointUtf16>(
+    pub fn perform_rename<T: ToPointUtf16>(
         &self,
         buffer: Model<Buffer>,
         position: T,
+        new_name: String,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ProjectTransaction>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.perform_rename_impl(buffer, position, new_name, push_to_history, cx)
+    }
+
+    pub fn on_type_format_impl(
+        &self,
+        buffer: Model<Buffer>,
+        position: PointUtf16,
         trigger: String,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        let (position, tab_size) = buffer.update(cx, |buffer, cx| {
-            let position = position.to_point_utf16(buffer);
-            (
-                position,
-                language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx)
-                    .tab_size,
-            )
+        let tab_size = buffer.update(cx, |buffer, cx| {
+            language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx).tab_size
         });
         self.request_lsp(
             buffer.clone(),
@@ -5485,6 +5560,18 @@ impl Project {
         )
     }
 
+    pub fn on_type_format<T: ToPointUtf16>(
+        &self,
+        buffer: Model<Buffer>,
+        position: T,
+        trigger: String,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Transaction>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.on_type_format_impl(buffer, position, trigger, push_to_history, cx)
+    }
+
     pub fn inlay_hints<T: ToOffset>(
         &self,
         buffer_handle: Model<Buffer>,
@@ -5493,6 +5580,15 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
+        self.inlay_hints_impl(buffer_handle, range, cx)
+    }
+    fn inlay_hints_impl(
+        &self,
+        buffer_handle: Model<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
+        let buffer = buffer_handle.read(cx);
         let range_start = range.start;
         let range_end = range.end;
         let buffer_id = buffer.remote_id().into();
