@@ -21,7 +21,7 @@ use lsp::{
     OneOf, ServerCapabilities,
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
-use text::LineEnding;
+use text::{BufferId, LineEnding};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -84,7 +84,7 @@ pub trait LspCommand: 'static + Sized + Send {
         cx: AsyncAppContext,
     ) -> Result<Self::Response>;
 
-    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> u64;
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId>;
 }
 
 pub(crate) struct PrepareRename {
@@ -205,7 +205,7 @@ impl LspCommand for PrepareRename {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::PrepareRename {
         proto::PrepareRename {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -274,8 +274,8 @@ impl LspCommand for PrepareRename {
         }
     }
 
-    fn buffer_id_from_proto(message: &proto::PrepareRename) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::PrepareRename) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -332,7 +332,7 @@ impl LspCommand for PerformRename {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::PerformRename {
         proto::PerformRename {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -393,8 +393,8 @@ impl LspCommand for PerformRename {
             .await
     }
 
-    fn buffer_id_from_proto(message: &proto::PerformRename) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::PerformRename) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -437,7 +437,7 @@ impl LspCommand for GetDefinition {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDefinition {
         proto::GetDefinition {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -486,8 +486,8 @@ impl LspCommand for GetDefinition {
         location_links_from_proto(message.links, project, cx).await
     }
 
-    fn buffer_id_from_proto(message: &proto::GetDefinition) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::GetDefinition) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -538,7 +538,7 @@ impl LspCommand for GetTypeDefinition {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetTypeDefinition {
         proto::GetTypeDefinition {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -587,8 +587,8 @@ impl LspCommand for GetTypeDefinition {
         location_links_from_proto(message.links, project, cx).await
     }
 
-    fn buffer_id_from_proto(message: &proto::GetTypeDefinition) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::GetTypeDefinition) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -617,9 +617,10 @@ async fn location_links_from_proto(
     for link in proto_links {
         let origin = match link.origin {
             Some(origin) => {
+                let buffer_id = BufferId::new(origin.buffer_id)?;
                 let buffer = project
                     .update(&mut cx, |this, cx| {
-                        this.wait_for_remote_buffer(origin.buffer_id, cx)
+                        this.wait_for_remote_buffer(buffer_id, cx)
                     })?
                     .await?;
                 let start = origin
@@ -642,9 +643,10 @@ async fn location_links_from_proto(
         };
 
         let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
+        let buffer_id = BufferId::new(target.buffer_id)?;
         let buffer = project
             .update(&mut cx, |this, cx| {
-                this.wait_for_remote_buffer(target.buffer_id, cx)
+                this.wait_for_remote_buffer(buffer_id, cx)
             })?
             .await?;
         let start = target
@@ -761,7 +763,9 @@ fn location_links_to_proto(
         .into_iter()
         .map(|definition| {
             let origin = definition.origin.map(|origin| {
-                let buffer_id = project.create_buffer_for_peer(&origin.buffer, peer_id, cx);
+                let buffer_id = project
+                    .create_buffer_for_peer(&origin.buffer, peer_id, cx)
+                    .into();
                 proto::Location {
                     start: Some(serialize_anchor(&origin.range.start)),
                     end: Some(serialize_anchor(&origin.range.end)),
@@ -769,7 +773,9 @@ fn location_links_to_proto(
                 }
             });
 
-            let buffer_id = project.create_buffer_for_peer(&definition.target.buffer, peer_id, cx);
+            let buffer_id = project
+                .create_buffer_for_peer(&definition.target.buffer, peer_id, cx)
+                .into();
             let target = proto::Location {
                 start: Some(serialize_anchor(&definition.target.range.start)),
                 end: Some(serialize_anchor(&definition.target.range.end)),
@@ -859,7 +865,7 @@ impl LspCommand for GetReferences {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetReferences {
         proto::GetReferences {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -901,7 +907,7 @@ impl LspCommand for GetReferences {
                 proto::Location {
                     start: Some(serialize_anchor(&definition.range.start)),
                     end: Some(serialize_anchor(&definition.range.end)),
-                    buffer_id,
+                    buffer_id: buffer_id.into(),
                 }
             })
             .collect();
@@ -917,9 +923,10 @@ impl LspCommand for GetReferences {
     ) -> Result<Vec<Location>> {
         let mut locations = Vec::new();
         for location in message.locations {
+            let buffer_id = BufferId::new(location.buffer_id)?;
             let target_buffer = project
                 .update(&mut cx, |this, cx| {
-                    this.wait_for_remote_buffer(location.buffer_id, cx)
+                    this.wait_for_remote_buffer(buffer_id, cx)
                 })?
                 .await?;
             let start = location
@@ -941,8 +948,8 @@ impl LspCommand for GetReferences {
         Ok(locations)
     }
 
-    fn buffer_id_from_proto(message: &proto::GetReferences) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::GetReferences) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -1007,7 +1014,7 @@ impl LspCommand for GetDocumentHighlights {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDocumentHighlights {
         proto::GetDocumentHighlights {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -1092,8 +1099,8 @@ impl LspCommand for GetDocumentHighlights {
         Ok(highlights)
     }
 
-    fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -1195,7 +1202,7 @@ impl LspCommand for GetHover {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
         proto::GetHover {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -1308,8 +1315,8 @@ impl LspCommand for GetHover {
         }))
     }
 
-    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -1492,7 +1499,7 @@ impl LspCommand for GetCompletions {
         let anchor = buffer.anchor_after(self.position);
         proto::GetCompletions {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(&anchor)),
             version: serialize_version(&buffer.version()),
         }
@@ -1556,8 +1563,8 @@ impl LspCommand for GetCompletions {
         future::try_join_all(completions).await
     }
 
-    fn buffer_id_from_proto(message: &proto::GetCompletions) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::GetCompletions) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -1630,7 +1637,7 @@ impl LspCommand for GetCodeActions {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCodeActions {
         proto::GetCodeActions {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             start: Some(language::proto::serialize_anchor(&self.range.start)),
             end: Some(language::proto::serialize_anchor(&self.range.end)),
             version: serialize_version(&buffer.version()),
@@ -1695,8 +1702,8 @@ impl LspCommand for GetCodeActions {
             .collect()
     }
 
-    fn buffer_id_from_proto(message: &proto::GetCodeActions) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::GetCodeActions) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -1768,7 +1775,7 @@ impl LspCommand for OnTypeFormatting {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::OnTypeFormatting {
         proto::OnTypeFormatting {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -1831,8 +1838,8 @@ impl LspCommand for OnTypeFormatting {
         Ok(Some(language::proto::deserialize_transaction(transaction)?))
     }
 
-    fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
@@ -2291,7 +2298,7 @@ impl LspCommand for InlayHints {
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
         proto::InlayHints {
             project_id,
-            buffer_id: buffer.remote_id(),
+            buffer_id: buffer.remote_id().into(),
             start: Some(language::proto::serialize_anchor(&self.range.start)),
             end: Some(language::proto::serialize_anchor(&self.range.end)),
             version: serialize_version(&buffer.version()),
@@ -2358,7 +2365,7 @@ impl LspCommand for InlayHints {
         Ok(hints)
     }
 
-    fn buffer_id_from_proto(message: &proto::InlayHints) -> u64 {
-        message.buffer_id
+    fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }

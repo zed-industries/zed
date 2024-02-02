@@ -1,8 +1,13 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use gpui::{AssetSource, HighlightStyle, SharedString};
+use derive_more::{Deref, DerefMut};
+use fs::Fs;
+use futures::StreamExt;
+use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString};
+use parking_lot::RwLock;
 use refineable::Refineable;
 use util::ResultExt;
 
@@ -18,16 +23,50 @@ pub struct ThemeMeta {
     pub appearance: Appearance,
 }
 
-pub struct ThemeRegistry {
-    assets: Box<dyn AssetSource>,
+/// The global [`ThemeRegistry`].
+///
+/// This newtype exists for obtaining a unique [`TypeId`](std::any::TypeId) when
+/// inserting the [`ThemeRegistry`] into the context as a global.
+///
+/// This should not be exposed outside of this module.
+#[derive(Default, Deref, DerefMut)]
+struct GlobalThemeRegistry(Arc<ThemeRegistry>);
+
+impl Global for GlobalThemeRegistry {}
+
+struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
 }
 
+pub struct ThemeRegistry {
+    state: RwLock<ThemeRegistryState>,
+    assets: Box<dyn AssetSource>,
+}
+
 impl ThemeRegistry {
+    /// Returns the global [`ThemeRegistry`].
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        cx.global::<GlobalThemeRegistry>().0.clone()
+    }
+
+    /// Returns the global [`ThemeRegistry`].
+    ///
+    /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
+    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+        cx.default_global::<GlobalThemeRegistry>().0.clone()
+    }
+
+    /// Sets the global [`ThemeRegistry`].
+    pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
+        cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
+    }
+
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
-        let mut registry = Self {
+        let registry = Self {
+            state: RwLock::new(ThemeRegistryState {
+                themes: HashMap::new(),
+            }),
             assets,
-            themes: HashMap::new(),
         };
 
         // We're loading our new versions of the One themes by default, as
@@ -40,30 +79,27 @@ impl ThemeRegistry {
         registry
     }
 
-    fn insert_theme_families(&mut self, families: impl IntoIterator<Item = ThemeFamily>) {
+    fn insert_theme_families(&self, families: impl IntoIterator<Item = ThemeFamily>) {
         for family in families.into_iter() {
             self.insert_themes(family.themes);
         }
     }
 
-    fn insert_themes(&mut self, themes: impl IntoIterator<Item = Theme>) {
+    fn insert_themes(&self, themes: impl IntoIterator<Item = Theme>) {
+        let mut state = self.state.write();
         for theme in themes.into_iter() {
-            self.themes.insert(theme.name.clone(), Arc::new(theme));
+            state.themes.insert(theme.name.clone(), Arc::new(theme));
         }
     }
 
     #[allow(unused)]
-    fn insert_user_theme_families(
-        &mut self,
-        families: impl IntoIterator<Item = ThemeFamilyContent>,
-    ) {
+    fn insert_user_theme_families(&self, families: impl IntoIterator<Item = ThemeFamilyContent>) {
         for family in families.into_iter() {
             self.insert_user_themes(family.themes);
         }
     }
 
-    #[allow(unused)]
-    fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = ThemeContent>) {
+    pub fn insert_user_themes(&self, themes: impl IntoIterator<Item = ThemeContent>) {
         self.insert_themes(themes.into_iter().map(|user_theme| {
             let mut theme_colors = match user_theme.appearance {
                 AppearanceContent::Light => ThemeColors::light(),
@@ -154,28 +190,36 @@ impl ThemeRegistry {
     }
 
     pub fn clear(&mut self) {
-        self.themes.clear();
+        self.state.write().themes.clear();
     }
 
-    pub fn list_names(&self, _staff: bool) -> impl Iterator<Item = SharedString> + '_ {
-        self.themes.keys().cloned()
+    pub fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+        self.state.read().themes.keys().cloned().collect()
     }
 
-    pub fn list(&self, _staff: bool) -> impl Iterator<Item = ThemeMeta> + '_ {
-        self.themes.values().map(|theme| ThemeMeta {
-            name: theme.name.clone(),
-            appearance: theme.appearance(),
-        })
+    pub fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+        self.state
+            .read()
+            .themes
+            .values()
+            .map(|theme| ThemeMeta {
+                name: theme.name.clone(),
+                appearance: theme.appearance(),
+            })
+            .collect()
     }
 
     pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
-        self.themes
+        self.state
+            .read()
+            .themes
             .get(name)
             .ok_or_else(|| anyhow!("theme not found: {}", name))
             .cloned()
     }
 
-    pub fn load_user_themes(&mut self) {
+    /// Loads the themes bundled with the Zed binary and adds them to the registry.
+    pub fn load_bundled_themes(&self) {
         let theme_paths = self
             .assets
             .list("themes/")
@@ -197,6 +241,36 @@ impl ThemeRegistry {
 
             self.insert_user_theme_families([theme_family]);
         }
+    }
+
+    /// Loads the user themes from the specified directory and adds them to the registry.
+    pub async fn load_user_themes(&self, themes_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+        let mut theme_paths = fs
+            .read_dir(themes_path)
+            .await
+            .with_context(|| format!("reading themes from {themes_path:?}"))?;
+
+        while let Some(theme_path) = theme_paths.next().await {
+            let Some(theme_path) = theme_path.log_err() else {
+                continue;
+            };
+
+            self.load_user_theme(&theme_path, fs.clone())
+                .await
+                .log_err();
+        }
+
+        Ok(())
+    }
+
+    /// Loads the user theme from the specified path and adds it to the registry.
+    pub async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+        let reader = fs.open_sync(&theme_path).await?;
+        let theme = serde_json_lenient::from_reader(reader)?;
+
+        self.insert_user_theme_families([theme]);
+
+        Ok(())
     }
 }
 

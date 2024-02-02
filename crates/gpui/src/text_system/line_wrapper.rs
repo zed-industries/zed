@@ -143,7 +143,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, TestAppContext, TestDispatcher, TextRun, WrapBoundary};
+    use crate::{font, TestAppContext, TestDispatcher, TextRun, WindowTextSystem, WrapBoundary};
     use rand::prelude::*;
 
     #[test]
@@ -218,7 +218,7 @@ mod tests {
     #[crate::test]
     fn test_wrap_shaped_line(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            let text_system = cx.text_system().clone();
+            let text_system = WindowTextSystem::new(cx.text_system().clone());
 
             let normal = TextRun {
                 len: 0,

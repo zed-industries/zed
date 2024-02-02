@@ -1,9 +1,10 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
     point, size, Bounds, DevicePixels, Element, ElementContext, ImageData, InteractiveElement,
-    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedUrl, Size,
-    StyleRefinement, Styled,
+    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedUri, Size,
+    StyleRefinement, Styled, UriOrPath,
 };
 use futures::FutureExt;
 use media::core_video::CVImageBuffer;
@@ -13,7 +14,9 @@ use util::ResultExt;
 #[derive(Clone, Debug)]
 pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
-    Uri(SharedUrl),
+    Uri(SharedUri),
+    /// Image content will be loaded from the provided file at render time.
+    File(Arc<PathBuf>),
     /// Cached image data
     Data(Arc<ImageData>),
     // TODO: move surface definitions into mac platform module
@@ -21,8 +24,8 @@ pub enum ImageSource {
     Surface(CVImageBuffer),
 }
 
-impl From<SharedUrl> for ImageSource {
-    fn from(value: SharedUrl) -> Self {
+impl From<SharedUri> for ImageSource {
+    fn from(value: SharedUri) -> Self {
         Self::Uri(value)
     }
 }
@@ -36,6 +39,12 @@ impl From<&'static str> for ImageSource {
 impl From<String> for ImageSource {
     fn from(uri: String) -> Self {
         Self::Uri(uri.into())
+    }
+}
+
+impl From<Arc<PathBuf>> for ImageSource {
+    fn from(value: Arc<PathBuf>) -> Self {
+        Self::File(value)
     }
 }
 
@@ -103,8 +112,14 @@ impl Element for Img {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.with_z_index(1, |cx| {
                     match source {
-                        ImageSource::Uri(uri) => {
-                            let image_future = cx.image_cache.get(uri.clone(), cx);
+                        ImageSource::Uri(_) | ImageSource::File(_) => {
+                            let uri_or_path: UriOrPath = match source {
+                                ImageSource::Uri(uri) => uri.into(),
+                                ImageSource::File(path) => path.into(),
+                                _ => unreachable!(),
+                            };
+
+                            let image_future = cx.image_cache.get(uri_or_path.clone(), cx);
                             if let Some(data) = image_future
                                 .clone()
                                 .now_or_never()

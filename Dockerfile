@@ -6,6 +6,9 @@ COPY . .
 
 # Compile collab server
 ARG CARGO_PROFILE_RELEASE_PANIC=abort
+ARG GITHUB_SHA
+
+ENV GITHUB_SHA=$GITHUB_SHA
 RUN --mount=type=cache,target=./script/node_modules \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=./target \

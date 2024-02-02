@@ -5,10 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/feature_flags.rs"
 
 [dependencies]
-gpui = { path = "../gpui" }
 anyhow.workspace = true
+gpui = { path = "../gpui" }

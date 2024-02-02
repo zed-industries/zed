@@ -278,6 +278,7 @@ mod tests {
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
+    use text::BufferId;
 
     #[gpui::test]
     async fn test_c_autoindent(cx: &mut TestAppContext) {
@@ -295,8 +296,8 @@ mod tests {
         let language = crate::languages::language("c", tree_sitter_c::language(), None).await;
 
         cx.new_model(|cx| {
-            let mut buffer =
-                Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
+            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
+                .with_language(language, cx);
 
             // empty function
             buffer.edit([(0..0, "int main() {}")], None, cx);

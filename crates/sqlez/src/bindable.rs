@@ -1,11 +1,10 @@
 use std::{
-    ffi::OsStr,
-    os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use anyhow::{Context, Result};
+use util::paths::PathExt;
 
 use crate::statement::{SqlType, Statement};
 
@@ -299,7 +298,9 @@ impl<T: Bind, const COUNT: usize> Bind for [T; COUNT] {
 impl StaticColumnCount for &Path {}
 impl Bind for &Path {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        self.as_os_str().as_bytes().bind(statement, start_index)
+        self.as_os_str()
+            .as_encoded_bytes()
+            .bind(statement, start_index)
     }
 }
 
@@ -321,10 +322,7 @@ impl Column for PathBuf {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let blob = statement.column_blob(start_index)?;
 
-        Ok((
-            PathBuf::from(OsStr::from_bytes(blob).to_owned()),
-            start_index + 1,
-        ))
+        PathBuf::try_from_bytes(blob).map(|path| (path, start_index + 1))
     }
 }
 

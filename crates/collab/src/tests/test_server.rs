@@ -153,6 +153,8 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            release_channel::init("0.0.0", cx);
+            client::init_settings(cx);
         });
 
         let http = FakeHttpClient::with_404_response();

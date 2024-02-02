@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [features]
 default = []
 stories = ["dep:itertools", "dep:story"]
@@ -21,9 +20,13 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+color = { path = "../color" }
+derive_more.workspace = true
 fs = { path = "../fs" }
+futures.workspace = true
 gpui = { path = "../gpui" }
 indexmap = { version = "1.6.2", features = ["serde"] }
+itertools = { version = "0.11.0", optional = true }
 palette = { version = "0.7.3", default-features = false, features = ["std"] }
 parking_lot.workspace = true
 refineable.workspace = true
@@ -31,16 +34,15 @@ schemars = { workspace = true, features = ["indexmap"] }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+serde_json_lenient.workspace = true
 serde_repr.workspace = true
 settings = { path = "../settings" }
 story = { path = "../story", optional = true }
 toml.workspace = true
-uuid.workspace = true
 util = { path = "../util" }
-color = {path = "../color"}
-itertools = { version = "0.11.0", optional = true }
+uuid.workspace = true
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }

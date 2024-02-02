@@ -60,10 +60,10 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
         LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
         LoadThemes::All(assets) => (assets, true),
     };
-    cx.set_global(ThemeRegistry::new(assets));
+    ThemeRegistry::set_global(assets, cx);
 
     if load_user_themes {
-        cx.global_mut::<ThemeRegistry>().load_user_themes();
+        ThemeRegistry::global(cx).load_bundled_themes();
     }
 
     ThemeSettings::register(cx);

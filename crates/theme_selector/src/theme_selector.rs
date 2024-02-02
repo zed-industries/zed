@@ -36,24 +36,6 @@ pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Worksp
     });
 }
 
-#[cfg(debug_assertions)]
-pub fn reload(cx: &mut AppContext) {
-    let current_theme_name = cx.theme().name.clone();
-    let current_theme = cx.update_global(|registry: &mut ThemeRegistry, _cx| {
-        registry.clear();
-        registry.get(&current_theme_name)
-    });
-    match current_theme {
-        Ok(theme) => {
-            ThemeSelectorDelegate::set_theme(theme, cx);
-            log::info!("reloaded theme {}", current_theme_name);
-        }
-        Err(error) => {
-            log::error!("failed to load theme {}: {:?}", current_theme_name, error)
-        }
-    }
-}
-
 impl ModalView for ThemeSelector {}
 
 pub struct ThemeSelector {
@@ -102,8 +84,8 @@ impl ThemeSelectorDelegate {
         let original_theme = cx.theme().clone();
 
         let staff_mode = cx.is_staff();
-        let registry = cx.global::<ThemeRegistry>();
-        let mut themes = registry.list(staff_mode).collect::<Vec<_>>();
+        let registry = ThemeRegistry::global(cx);
+        let mut themes = registry.list(staff_mode);
         themes.sort_unstable_by(|a, b| {
             a.appearance
                 .is_light()
@@ -135,7 +117,7 @@ impl ThemeSelectorDelegate {
 
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let registry = cx.global::<ThemeRegistry>();
+            let registry = ThemeRegistry::global(cx);
             match registry.get(&mat.string) {
                 Ok(theme) => {
                     Self::set_theme(theme, cx);

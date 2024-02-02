@@ -5,13 +5,13 @@ use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
 use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SharedString, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, SharedString,
+    Task, WeakModel,
 };
 use language::Capability;
+use release_channel::RELEASE_CHANNEL;
 use rpc::{
     proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
@@ -22,7 +22,7 @@ use util::{async_maybe, maybe, ResultExt};
 pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let channel_store =
         cx.new_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
-    cx.set_global(channel_store);
+    cx.set_global(GlobalChannelStore(channel_store));
 }
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -74,9 +74,17 @@ impl Channel {
     pub fn link(&self) -> String {
         RELEASE_CHANNEL.link_prefix().to_owned()
             + "channel/"
-            + &self.slug()
+            + &Self::slug(&self.name)
             + "-"
             + &self.id.to_string()
+    }
+
+    pub fn notes_link(&self, heading: Option<String>) -> String {
+        self.link()
+            + "/notes"
+            + &heading
+                .map(|h| format!("#{}", Self::slug(&h)))
+                .unwrap_or_default()
     }
 
     pub fn is_root_channel(&self) -> bool {
@@ -90,9 +98,8 @@ impl Channel {
             .unwrap_or(self.id)
     }
 
-    pub fn slug(&self) -> String {
-        let slug: String = self
-            .name
+    pub fn slug(str: &str) -> String {
+        let slug: String = str
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '-' })
             .collect();
@@ -143,9 +150,13 @@ enum OpenedModelHandle<E> {
     Loading(Shared<Task<Result<Model<E>, Arc<anyhow::Error>>>>),
 }
 
+struct GlobalChannelStore(Model<ChannelStore>);
+
+impl Global for GlobalChannelStore {}
+
 impl ChannelStore {
     pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<Model<Self>>().clone()
+        cx.global::<GlobalChannelStore>().0.clone()
     }
 
     pub fn new(

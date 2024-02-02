@@ -1,16 +1,16 @@
 Zed can be configured via a simple JSON file located at `~/.config/zed/keymap.json`.
 
-### Predefined keymaps
+## Predefined keymaps
 
 We have a growing collection of pre-defined keymaps in [zed repository's keymaps folder](https://github.com/zed-industries/zed/tree/main/assets/keymaps).
 
-### Custom key bindings
+## Custom key bindings
 
-#### Accessing custom key bindings
+### Accessing custom key bindings
 
 You can open `keymap.json` via `⌘` + `K`, `⌘` + `S`, the command palette, or the `Zed > Settings > Open Key Bindings` application menu item.
 
-#### Adding a custom key binding
+### Adding a custom key binding
 
 To customize key bindings, specify a context and the list of bindings to set. Re-mapping an existing binding will clobber the existing binding in favor of the custom one.
 
@@ -33,9 +33,9 @@ You can see more examples in Zed's [`default.json`](https://zed.dev/ref/default.
 
 _There are some key bindings that can't be overridden; we are working on an issue surrounding this._
 
-### All key bindings
+## All key bindings
 
-#### Global
+### Global
 
 | **Command**                      | **Target**     | **Default Shortcut**          |
 | -------------------------------- | -------------- | ----------------------------- |
@@ -97,7 +97,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Reset buffer font size           | Zed            | `⌘` + `0`                     |
 | Toggle full screen               | Zed            | `Control` + `⌘` + `F`         |
 
-#### Editor
+### Editor
 
 | **Command**                      | **Target** | **Default Shortcut**                  |
 | -------------------------------- | ---------- | ------------------------------------- |
@@ -240,7 +240,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Undo selection                   | Editor     | `⌘` + `U`                             |
 | Unfold lines                     | Editor     | `Alt` + `⌘` + `]`                     |
 
-#### Editor (Full Only)
+### Editor (Full Only)
 
 | **Command**         | **Target**    | **Default Shortcut**    |
 | ------------------- | ------------- | ----------------------- |
@@ -258,14 +258,14 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Toggle              | Go To Line    | `Control` + `G`         |
 | Toggle              | Outline       | `⌘` + `Shift` + `O`     |
 
-#### Editor (Auto Height Only)
+### Editor (Auto Height Only)
 
 | **Command**   | **Target** | **Default Shortcut**          |
 | ------------- | ---------- | ----------------------------- |
 | Newline       | Editor     | `Control` + `Enter`           |
 | Newline below | Editor     | `Control` + `Shift` + `Enter` |
 
-#### Pane
+### Pane
 
 | **Command**            | **Target**     | **Default Shortcut** |
 | ---------------------- | -------------- | -------------------- |
@@ -300,7 +300,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Toggle replace         | Search         | `⌘` + `Shift` + `H`  |
 | Toggle whole word      | Search         | `Alt` + `⌘` + `W`    |
 
-#### Buffer Search Bar
+### Buffer Search Bar
 
 | **Command**            | **Target**    | **Default Shortcut** |
 | ---------------------- | ------------- | -------------------- |
@@ -315,7 +315,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Select next match      | Search        | `Enter`              |
 | Select prev match      | Search        | `Shift` + `Enter`    |
 
-#### Workspace
+### Workspace
 
 | **Command**        | **Target**        | **Default Shortcut** |
 | ------------------ | ----------------- | -------------------- |
@@ -344,7 +344,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Toggle right dock  | Workspace         | `⌘` + `R`            |
 | Open keymap        | Zed               | `⌘` + `K`, `⌘` + `S` |
 
-#### Project Panel
+### Project Panel
 
 | **Command**             | **Target**    | **Default Shortcut**        |
 | ----------------------- | ------------- | --------------------------- |
@@ -364,7 +364,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Rename                  | Project Panel | `F2`                        |
 | Reveal in finder        | Project Panel | `Alt` + `⌘` + `R`           |
 
-#### Project Search Bar
+### Project Search Bar
 
 | **Command**            | **Target**     | **Default Shortcut** |
 | ---------------------- | -------------- | -------------------- |
@@ -380,7 +380,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Replace next           | Search         | `Enter`              |
 | Toggle replace         | Search         | `⌘` + `Shift` + `H`  |
 
-#### Terminal
+### Terminal
 
 | **Command**                 | **Target** | **Default Shortcut**      |
 | --------------------------- | ---------- | ------------------------- |
@@ -394,7 +394,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Paste                       | Terminal   | `⌘` + `V`                 |
 | Show character palette      | Terminal   | `Control` + `⌘` + `Space` |
 
-#### Assistant Editor
+### Assistant Editor
 
 | **Command**        | **Target** | **Default Shortcut** |
 | ------------------ | ---------- | -------------------- |

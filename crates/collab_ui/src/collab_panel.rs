@@ -40,7 +40,7 @@ use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
-    Workspace,
+    OpenChannelNotes, Workspace,
 };
 
 actions!(
@@ -68,6 +68,19 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(cx);
+        });
+        workspace.register_action(|_, _: &OpenChannelNotes, cx| {
+            let channel_id = ActiveCall::global(cx)
+                .read(cx)
+                .room()
+                .and_then(|room| room.read(cx).channel_id());
+
+            if let Some(channel_id) = channel_id {
+                let workspace = cx.view().clone();
+                cx.window_context().defer(move |cx| {
+                    ChannelView::open(channel_id, None, workspace, cx).detach_and_log_err(cx)
+                });
+            }
         });
     })
     .detach();
@@ -957,7 +970,7 @@ impl CollabPanel {
                     .child(render_tree_branch(false, true, cx))
                     .child(IconButton::new(0, IconName::File)),
             )
-            .child(div().h_7().w_full().child(Label::new("notes")))
+            .child(Label::new("notes"))
             .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
     }
 
@@ -1678,7 +1691,7 @@ impl CollabPanel {
 
     fn open_channel_notes(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
-            ChannelView::open(channel_id, workspace, cx).detach();
+            ChannelView::open(channel_id, None, workspace, cx).detach();
         }
     }
 
@@ -2495,9 +2508,8 @@ impl CollabPanel {
                 h_flex()
                     .absolute()
                     .right(rems(0.))
+                    .z_index(1)
                     .h_full()
-                    // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
-                    .z_index(10)
                     .child(
                         h_flex()
                             .h_full()

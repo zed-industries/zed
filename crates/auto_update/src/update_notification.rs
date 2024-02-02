@@ -3,7 +3,7 @@ use gpui::{
     SemanticVersion, StatefulInteractiveElement, Styled, ViewContext,
 };
 use menu::Cancel;
-use util::channel::ReleaseChannel;
+use release_channel::ReleaseChannel;
 use workspace::ui::{h_flex, v_flex, Icon, IconName, Label, StyledExt};
 
 pub struct UpdateNotification {
@@ -14,7 +14,7 @@ impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        let app_name = cx.global::<ReleaseChannel>().display_name();
+        let app_name = ReleaseChannel::global(cx).display_name();
 
         v_flex()
             .on_action(cx.listener(UpdateNotification::dismiss))
@@ -40,10 +40,11 @@ impl Render for UpdateNotification {
                     .id("notes")
                     .child(Label::new("View the release notes"))
                     .cursor_pointer()
-                    .on_click(|_, cx| {
+                    .on_click(cx.listener(|this, _, cx| {
                         crate::view_release_notes(&Default::default(), cx);
-                    }),
-            )
+                        this.dismiss(&menu::Cancel, cx)
+                    })),
+            );
     }
 }
 

@@ -1,7 +1,16 @@
 pub mod repository;
 
 use anyhow::{anyhow, Result};
+#[cfg(target_os = "macos")]
+pub use fsevent::Event;
+#[cfg(target_os = "macos")]
 use fsevent::EventStream;
+
+#[cfg(not(target_os = "macos"))]
+pub use notify::Event;
+#[cfg(not(target_os = "macos"))]
+use notify::{Config, Watcher};
+
 use futures::{future::BoxFuture, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
@@ -48,11 +57,13 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>>;
+
     async fn watch(
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>>;
+
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>>;
     fn is_fake(&self) -> bool;
     #[cfg(any(test, feature = "test-support"))]
@@ -251,11 +262,12 @@ impl Fs for RealFs {
         Ok(Box::pin(result))
     }
 
+    #[cfg(target_os = "macos")]
     async fn watch(
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
         let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
         std::thread::spawn(move || {
@@ -265,6 +277,35 @@ impl Fs for RealFs {
             drop(handle);
             vec![]
         })))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    async fn watch(
+        &self,
+        path: &Path,
+        latency: Duration,
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
+        let (tx, rx) = smol::channel::unbounded();
+
+        let mut watcher = notify::recommended_watcher(move |res| match res {
+            Ok(event) => {
+                let _ = tx.try_send(vec![event]);
+            }
+            Err(err) => {
+                eprintln!("watch error: {:?}", err);
+            }
+        })
+        .unwrap();
+
+        watcher
+            .configure(Config::default().with_poll_interval(latency))
+            .unwrap();
+
+        watcher
+            .watch(path, notify::RecursiveMode::Recursive)
+            .unwrap();
+
+        Box::pin(rx)
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
@@ -282,6 +323,20 @@ impl Fs for RealFs {
     fn as_fake(&self) -> &FakeFs {
         panic!("called `RealFs::as_fake`")
     }
+}
+
+#[cfg(target_os = "macos")]
+pub fn fs_events_paths(events: Vec<Event>) -> Vec<PathBuf> {
+    events.into_iter().map(|event| event.path).collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn fs_events_paths(events: Vec<Event>) -> Vec<PathBuf> {
+    events
+        .into_iter()
+        .map(|event| event.paths.into_iter())
+        .flatten()
+        .collect()
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -2,23 +2,23 @@ use derive_more::{Deref, DerefMut};
 
 use crate::SharedString;
 
-/// A [`SharedString`] containing a URL.
+/// A [`SharedString`] containing a URI.
 #[derive(Deref, DerefMut, Default, PartialEq, Eq, Hash, Clone)]
-pub struct SharedUrl(SharedString);
+pub struct SharedUri(SharedString);
 
-impl std::fmt::Debug for SharedUrl {
+impl std::fmt::Debug for SharedUri {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
     }
 }
 
-impl std::fmt::Display for SharedUrl {
+impl std::fmt::Display for SharedUri {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0.as_ref())
     }
 }
 
-impl<T: Into<SharedString>> From<T> for SharedUrl {
+impl<T: Into<SharedString>> From<T> for SharedUri {
     fn from(value: T) -> Self {
         Self(value.into())
     }

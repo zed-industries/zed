@@ -16,10 +16,10 @@ pub struct OpenBrowser {
 }
 
 #[derive(Clone, PartialEq, Deserialize)]
-pub struct OpenZedURL {
+pub struct OpenZedUrl {
     pub url: String,
 }
 
-impl_actions!(zed, [OpenBrowser, OpenZedURL]);
+impl_actions!(zed, [OpenBrowser, OpenZedUrl]);
 
 actions!(zed, [OpenSettings, Quit]);

@@ -4,7 +4,7 @@ use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, Future, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, SharedString, SharedUrl, Task,
+    AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, SharedString, SharedUri, Task,
     WeakModel,
 };
 use postage::{sink::Sink, watch};
@@ -22,7 +22,7 @@ pub struct ParticipantIndex(pub u32);
 pub struct User {
     pub id: UserId,
     pub github_login: String,
-    pub avatar_uri: SharedUrl,
+    pub avatar_uri: SharedUri,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

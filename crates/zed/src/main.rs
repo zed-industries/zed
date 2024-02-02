@@ -9,7 +9,9 @@ use client::{Client, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
+use env_logger::Builder;
 use fs::RealFs;
+use fsevent::StreamFlags;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
@@ -17,8 +19,10 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
+use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
+use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -34,16 +38,16 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, Weak,
+        Arc,
     },
     thread,
+    time::Duration,
 };
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
-    channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
-    http::{self, HttpClient},
-    paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
+    http::{self, HttpClient, ZedHttpClient},
+    paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR, PLUGINS_DIR},
     ResultExt,
 };
 use uuid::Uuid;
@@ -55,11 +59,13 @@ use zed::{
     OpenRequest,
 };
 
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 fn main() {
     menu::init();
     zed_actions::init();
 
-    let http = http::client();
     init_paths();
     init_logger();
 
@@ -103,8 +109,7 @@ fn main() {
     let open_listener = listener.clone();
     app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
     app.on_reopen(move |cx| {
-        if let Some(app_state) = cx
-            .try_global::<Weak<AppState>>()
+        if let Some(app_state) = AppState::try_global(cx)
             .map(|app_state| app_state.upgrade())
             .flatten()
         {
@@ -116,12 +121,12 @@ fn main() {
     });
 
     app.run(move |cx| {
-        cx.set_global(*RELEASE_CHANNEL);
+        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
-            cx.set_global(AppCommitSha(build_sha.into()))
+            AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
 
-        cx.set_global(listener.clone());
+        OpenListener::set_global(listener.clone(), cx);
 
         load_embedded_fonts(cx);
 
@@ -132,6 +137,9 @@ fn main() {
         cx.set_global(store);
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
+        client::init_settings(cx);
+
+        let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
@@ -146,7 +154,7 @@ fn main() {
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
-        cx.set_global(client.clone());
+        Client::set_global(client.clone(), cx);
 
         zed::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
@@ -164,6 +172,9 @@ fn main() {
         );
         assistant::init(cx);
 
+        load_user_themes_in_background(fs.clone(), cx);
+        watch_themes(fs.clone(), cx);
+
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
         watch_file_types(fs.clone(), cx);
@@ -171,7 +182,20 @@ fn main() {
         languages.set_theme(cx.theme().clone());
         cx.observe_global::<SettingsStore>({
             let languages = languages.clone();
-            move |cx| languages.set_theme(cx.theme().clone())
+            let http = http.clone();
+            let client = client.clone();
+
+            move |cx| {
+                languages.set_theme(cx.theme().clone());
+                let new_host = &client::ClientSettings::get_global(cx).server_url;
+                let mut host = http.zed_host.lock();
+                if &*host != new_host {
+                    *host = new_host.clone();
+                    if client.status().borrow().is_connected() {
+                        client.reconnect(&cx.to_async());
+                    }
+                }
+            }
         })
         .detach();
 
@@ -197,10 +221,10 @@ fn main() {
             workspace_store,
             node_runtime,
         });
-        cx.set_global(Arc::downgrade(&app_state));
+        AppState::set_global(Arc::downgrade(&app_state), cx);
 
         audio::init(Assets, cx);
-        auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
+        auto_update::init(http.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
         recent_projects::init(cx);
@@ -224,6 +248,7 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
+        markdown_preview::init(cx);
         welcome::init(cx);
 
         cx.set_menus(app_menus());
@@ -289,7 +314,10 @@ fn main() {
                 })
                 .detach_and_log_err(cx);
             }
-            Ok(Some(OpenRequest::OpenChannelNotes { channel_id })) => {
+            Ok(Some(OpenRequest::OpenChannelNotes {
+                channel_id,
+                heading,
+            })) => {
                 triggered_authentication = true;
                 let app_state = app_state.clone();
                 let client = client.clone();
@@ -298,11 +326,11 @@ fn main() {
                     let _ = authenticate(client, &cx).await;
                     let workspace_window =
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                    let _ = workspace_window
-                        .update(&mut cx, |_, cx| {
-                            ChannelView::open(channel_id, cx.view().clone(), cx)
-                        })?
-                        .await?;
+                    let workspace = workspace_window.root_view(&cx)?;
+                    cx.update_window(workspace_window.into(), |_, cx| {
+                        ChannelView::open(channel_id, heading, workspace, cx)
+                    })?
+                    .await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -344,16 +372,19 @@ fn main() {
                         })
                         .log_err();
                     }
-                    OpenRequest::OpenChannelNotes { channel_id } => {
+                    OpenRequest::OpenChannelNotes {
+                        channel_id,
+                        heading,
+                    } => {
                         let app_state = app_state.clone();
                         let open_notes_task = cx.spawn(|mut cx| async move {
                             let workspace_window =
                                 workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                            let _ = workspace_window
-                                .update(&mut cx, |_, cx| {
-                                    ChannelView::open(channel_id, cx.view().clone(), cx)
-                                })?
-                                .await?;
+                            let workspace = workspace_window.root_view(&cx)?;
+                            cx.update_window(workspace_window.into(), |_, cx| {
+                                ChannelView::open(channel_id, heading, workspace, cx)
+                            })?
+                            .await?;
                             anyhow::Ok(())
                         });
                         cx.update(|cx| open_notes_task.detach_and_log_err(cx))
@@ -439,7 +470,29 @@ fn init_paths() {
 
 fn init_logger() {
     if stdout_is_a_pty() {
-        env_logger::init();
+        Builder::new()
+            .format(|buf, record| {
+                use env_logger::fmt::Color;
+
+                let subtle = buf
+                    .style()
+                    .set_color(Color::Black)
+                    .set_intense(true)
+                    .clone();
+                write!(buf, "{}", subtle.value("["))?;
+                write!(
+                    buf,
+                    "{} ",
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
+                )?;
+                write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
+                if let Some(path) = record.module_path() {
+                    write!(buf, " {}", path)?;
+                }
+                write!(buf, "{}", subtle.value("]"))?;
+                writeln!(buf, " {}", record.args())
+            })
+            .init();
     } else {
         let level = LevelFilter::Info;
 
@@ -459,7 +512,8 @@ fn init_logger() {
             .expect("could not open logfile");
 
         let config = ConfigBuilder::new()
-            .set_time_format_str("%Y-%m-%dT%T") //All timestamps are UTC
+            .set_time_format_str("%Y-%m-%dT%T%:z")
+            .set_time_to_local(true)
             .build();
 
         simplelog::WriteLogger::init(level, config, log_file).expect("could not initialize logger");
@@ -520,7 +574,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
             .unwrap_or_else(|| "Box<Any>".to_string());
 
-        if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
+        if *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
             let location = info.location().unwrap();
             let backtrace = Backtrace::new();
             eprintln!(
@@ -535,9 +589,13 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             std::process::exit(-1);
         }
 
-        let app_version = client::ZED_APP_VERSION
-            .or(app_metadata.app_version)
-            .map_or("dev".to_string(), |v| v.to_string());
+        let app_version = if let Some(version) = app_metadata.app_version {
+            version.to_string()
+        } else {
+            option_env!("CARGO_PKG_VERSION")
+                .unwrap_or("dev")
+                .to_string()
+        };
 
         let backtrace = Backtrace::new();
         let mut backtrace = backtrace
@@ -566,7 +624,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: app_version.clone(),
+            app_version: app_version.to_string(),
             release_channel: RELEASE_CHANNEL.display_name().into(),
             os_name: app_metadata.os_name.into(),
             os_version: app_metadata
@@ -604,7 +662,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
     }));
 }
 
-fn upload_panics_and_crashes(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
+fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
         .spawn(async move {
@@ -620,10 +678,10 @@ fn upload_panics_and_crashes(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
 
 /// upload panics to us (via zed.dev)
 async fn upload_previous_panics(
-    http: Arc<dyn HttpClient>,
+    http: Arc<ZedHttpClient>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
-    let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+    let panic_report_url = http.zed_url("/api/panic");
     let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
     while let Some(child) = children.next().await {
         let child = child?;
@@ -687,7 +745,7 @@ static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)
 async fn upload_previous_crashes(
-    http: Arc<dyn HttpClient>,
+    http: Arc<ZedHttpClient>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
     if !telemetry_settings.diagnostics {
@@ -698,7 +756,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = format!("{}/api/crash", &*client::ZED_SERVER_URL);
+    let crash_report_url = http.zed_url("/api/crash");
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
@@ -826,26 +884,113 @@ fn load_embedded_fonts(cx: &AppContext) {
         .unwrap();
 }
 
-#[cfg(debug_assertions)]
-async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) -> Option<()> {
-    use std::time::Duration;
+/// Spawns a background task to load the user themes from the themes directory.
+fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    cx.spawn({
+        let fs = fs.clone();
+        |cx| async move {
+            if let Some(theme_registry) =
+                cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+            {
+                let themes_dir = paths::THEMES_DIR.as_ref();
+                match fs
+                    .metadata(themes_dir)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|m| m.is_dir)
+                {
+                    Some(is_dir) => {
+                        anyhow::ensure!(is_dir, "Themes dir path {themes_dir:?} is not a directory")
+                    }
+                    None => {
+                        fs.create_dir(themes_dir).await.with_context(|| {
+                            format!("Failed to create themes dir at path {themes_dir:?}")
+                        })?;
+                    }
+                }
+                theme_registry.load_user_themes(themes_dir, fs).await?;
+                cx.update(|cx| {
+                    let mut theme_settings = ThemeSettings::get_global(cx).clone();
+                    if let Some(requested_theme) = theme_settings.requested_theme.clone() {
+                        if let Some(_theme) = theme_settings.switch_theme(&requested_theme, cx) {
+                            ThemeSettings::override_global(theme_settings, cx);
+                        }
+                    }
+                })?;
+            }
+            anyhow::Ok(())
+        }
+    })
+    .detach_and_log_err(cx);
+}
 
-    let mut events = fs
-        .watch(
-            "crates/zed/src/languages".as_ref(),
-            Duration::from_millis(100),
+/// Spawns a background task to watch the themes directory for changes.
+fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    cx.spawn(|cx| async move {
+        let mut events = fs
+            .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
+            .await;
+
+        while let Some(events) = events.next().await {
+            for event in events {
+                if event.flags.contains(StreamFlags::ITEM_REMOVED) {
+                    // Theme was removed, don't need to reload.
+                    // We may want to remove the theme from the registry, in this case.
+                } else {
+                    if let Some(theme_registry) =
+                        cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                    {
+                        if let Some(()) = theme_registry
+                            .load_user_theme(&event.path, fs.clone())
+                            .await
+                            .log_err()
+                        {
+                            cx.update(|cx| {
+                                let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+                                if let Some(requested_theme) =
+                                    theme_settings.requested_theme.clone()
+                                {
+                                    if let Some(_theme) =
+                                        theme_settings.switch_theme(&requested_theme, cx)
+                                    {
+                                        ThemeSettings::override_global(theme_settings, cx);
+                                    }
+                                }
+                            })
+                            .log_err();
+                        }
+                    }
+                }
+            }
+        }
+    })
+    .detach()
+}
+
+async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
+    let reload_debounce = Duration::from_millis(250);
+
+    let mut events = fs.watch(PLUGINS_DIR.as_ref(), reload_debounce).await;
+
+    #[cfg(debug_assertions)]
+    {
+        events = futures::stream::select(
+            events,
+            fs.watch("crates/zed/src/languages".as_ref(), reload_debounce)
+                .await,
         )
-        .await;
+        .boxed();
+    }
+
     while (events.next().await).is_some() {
         languages.reload();
     }
-    Some(())
 }
 
 #[cfg(debug_assertions)]
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
-    use std::time::Duration;
-
     cx.spawn(|cx| async move {
         let mut events = fs
             .watch(
@@ -863,11 +1008,6 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         }
     })
     .detach()
-}
-
-#[cfg(not(debug_assertions))]
-async fn watch_languages(_: Arc<dyn fs::Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
-    None
 }
 
 #[cfg(not(debug_assertions))]
