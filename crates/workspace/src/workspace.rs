@@ -624,7 +624,6 @@ impl Workspace {
         }
 
         set_system_is_dark_mode(cx);
-        ThemeSettings::reload_theme(cx.is_dark_mode(), cx);
 
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
@@ -670,8 +669,6 @@ impl Workspace {
             }),
             cx.observe_appearance_change(|_this, cx| {
                 set_system_is_dark_mode(cx);
-
-                ThemeSettings::reload_theme(cx.is_dark_mode(), cx)
             }),
         ];
 
