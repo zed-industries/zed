@@ -62,7 +62,6 @@ pub struct ChatPanel {
     markdown_data: HashMap<ChannelMessageId, RichText>,
     focus_handle: FocusHandle,
     open_context_menu: Option<(u64, Subscription)>,
-    reply_to_message_id: Option<ChannelMessageId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -125,7 +124,6 @@ impl ChatPanel {
                 markdown_data: Default::default(),
                 focus_handle: cx.focus_handle(),
                 open_context_menu: None,
-                reply_to_message_id: None,
             };
 
             if let Some(channel_id) = ActiveCall::global(cx)
@@ -479,8 +477,9 @@ impl ChatPanel {
             let this2 = this.clone(); //FIXME later
             ContextMenu::build(cx, move |menu, _| {
                 menu.entry("Reply to message", None, move |cx| {
-                    this2.update(cx, |this, _| {
-                        this.reply_to_message_id = Some(ChannelMessageId::Saved(message_id));
+                    this2.update(cx, |this, cx| {
+                        this.message_editor
+                            .update(cx, |editor, _| editor.set_reply_to_message_id(message_id))
                     })
                 })
                 .when(belongs_to_user, move |menu| {
@@ -649,67 +648,76 @@ impl Render for ChatPanel {
                     )
                 }
             }))
-            .when_some(self.reply_to_message_id, |el, reply_to_message_id| {
-                // we should find the message
-                // TODO: this is a hack, we should not be using the message list to find the message
-                let active_chat = self.active_chat().unwrap();
-                let message = active_chat
-                    .read(cx)
-                    .messages()
-                    .iter()
-                    .find_map(|m| {
-                        if m.id == reply_to_message_id {
-                            Some(m)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap();
+            .when_some(
+                self.message_editor.read(cx).reply_to_message_id(),
+                |el, reply_to_message_id| {
+                    // we should find the message
+                    // TODO: this is a hack, we should not be using the message list to find the message
+                    let active_chat = self.active_chat().unwrap();
+                    let message = active_chat
+                        .read(cx)
+                        .messages()
+                        .iter()
+                        .find_map(|m| {
+                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
+                                Some(m)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap();
 
-                let text = self.markdown_data.entry(message.id).or_insert_with(|| {
-                    Self::render_markdown_with_mentions(&self.languages, self.client.id(), &message)
-                });
-
-                el.child(
-                    div()
-                        .py_1()
-                        .px_2()
-                        .bg(cx.theme().colors().background)
-                        .child(
-                            h_flex()
-                                .justify_between()
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .text_ui_xs()
-                                        .child("Reply to:")
-                                        .child(
-                                            Avatar::new(message.sender.avatar_uri.clone())
-                                                .size(rems(0.8)),
-                                        )
-                                        .child(
-                                            Label::new(message.sender.github_login.clone())
-                                                .size(LabelSize::XSmall),
-                                        ),
-                                )
-                                .gap_1()
-                                .child(
-                                    IconButton::new("remove-reply", IconName::Close)
-                                        .shape(ui::IconButtonShape::Square)
-                                        .on_click(cx.listener(move |this, _, _| {
-                                            this.reply_to_message_id = None;
-                                        })),
-                                ),
+                    let text = self.markdown_data.entry(message.id).or_insert_with(|| {
+                        Self::render_markdown_with_mentions(
+                            &self.languages,
+                            self.client.id(),
+                            &message,
                         )
-                        .child(
-                            div()
-                                .rounded_md()
-                                .text_ui_sm()
-                                .bg(cx.theme().colors().background)
-                                .child(text.element("reply-body".into(), cx)),
-                        ),
-                )
-            })
+                    });
+
+                    el.child(
+                        div()
+                            .py_1()
+                            .px_2()
+                            .bg(cx.theme().colors().background)
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .text_ui_xs()
+                                            .child("Reply to:")
+                                            .child(
+                                                Avatar::new(message.sender.avatar_uri.clone())
+                                                    .size(rems(0.8)),
+                                            )
+                                            .child(
+                                                Label::new(message.sender.github_login.clone())
+                                                    .size(LabelSize::XSmall),
+                                            ),
+                                    )
+                                    .gap_1()
+                                    .child(
+                                        IconButton::new("remove-reply", IconName::Close)
+                                            .shape(ui::IconButtonShape::Square)
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                this.message_editor.update(cx, |editor, _| {
+                                                    editor.clear_reply_to_message_id()
+                                                });
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .rounded_md()
+                                    .text_ui_sm()
+                                    .bg(cx.theme().colors().background)
+                                    .child(text.element("reply-body".into(), cx)),
+                            ),
+                    )
+                },
+            )
             .child(
                 h_flex()
                     .when(!self.is_scrolled_to_bottom, |el| {

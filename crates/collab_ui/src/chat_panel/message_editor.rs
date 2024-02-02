@@ -1,5 +1,5 @@
 use anyhow::Result;
-use channel::{ChannelId, ChannelMembership, ChannelMessageId, ChannelStore, MessageParams};
+use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
 use client::UserId;
 use collections::{HashMap, HashSet};
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
@@ -34,6 +34,7 @@ pub struct MessageEditor {
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
     channel_id: Option<ChannelId>,
+    reply_to_message_id: Option<u64>,
 }
 
 struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
@@ -112,7 +113,20 @@ impl MessageEditor {
             channel_id: None,
             mentions: Vec::new(),
             mentions_task: None,
+            reply_to_message_id: None,
         }
+    }
+
+    pub fn reply_to_message_id(&self) -> Option<u64> {
+        self.reply_to_message_id
+    }
+
+    pub fn set_reply_to_message_id(&mut self, reply_to_message_id: u64) {
+        self.reply_to_message_id = Some(reply_to_message_id);
+    }
+
+    pub fn clear_reply_to_message_id(&mut self) {
+        self.reply_to_message_id = None;
     }
 
     pub fn set_channel(
@@ -172,11 +186,12 @@ impl MessageEditor {
 
             editor.clear(cx);
             self.mentions.clear();
+            let reply_to_message_id = std::mem::take(&mut self.reply_to_message_id);
 
             MessageParams {
                 text,
                 mentions,
-                reply_to_message_id: None,
+                reply_to_message_id,
             }
         })
     }

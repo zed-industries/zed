@@ -37,7 +37,7 @@ pub struct ChannelChat {
 pub struct MessageParams {
     pub text: String,
     pub mentions: Vec<(Range<usize>, UserId)>,
-    pub reply_to_message_id: Option<ChannelMessageId>,
+    pub reply_to_message_id: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -146,6 +146,8 @@ impl ChannelChat {
         message: MessageParams,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<u64>>> {
+        dbg!(&message);
+
         if message.text.trim().is_empty() {
             Err(anyhow!("message body can't be empty"))?;
         }
@@ -168,7 +170,9 @@ impl ChannelChat {
                     timestamp: OffsetDateTime::now_utc(),
                     mentions: message.mentions.clone(),
                     nonce,
-                    reply_to_message_id: message.reply_to_message_id,
+                    reply_to_message_id: message
+                        .reply_to_message_id
+                        .map(|id| ChannelMessageId::Saved(id)),
                 },
                 &(),
             ),
@@ -186,13 +190,7 @@ impl ChannelChat {
                 body: message.text,
                 nonce: Some(nonce.into()),
                 mentions: mentions_to_proto(&message.mentions),
-                reply_to_message_id: match message.reply_to_message_id {
-                    Some(reply_to_message_id) => Some(match reply_to_message_id {
-                        ChannelMessageId::Saved(id) => id,
-                        ChannelMessageId::Pending(id) => id as u64,
-                    }),
-                    None => None,
-                },
+                reply_to_message_id: message.reply_to_message_id,
             });
             let response = request.await?;
             drop(outgoing_message_guard);
@@ -570,10 +568,9 @@ impl ChannelMessage {
                 .nonce
                 .ok_or_else(|| anyhow!("nonce is required"))?
                 .into(),
-            reply_to_message_id: match message.reply_to_message_id {
-                Some(id) => Some(ChannelMessageId::Saved(id)),
-                None => None,
-            },
+            reply_to_message_id: message
+                .reply_to_message_id
+                .map(|reply_to_message_id| ChannelMessageId::Saved(reply_to_message_id)),
         })
     }
 
