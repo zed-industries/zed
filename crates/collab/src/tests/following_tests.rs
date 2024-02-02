@@ -1905,7 +1905,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
     // Client A opens the notes for channel 1.
     let channel_notes_1_a = cx_a
-        .update(|cx| ChannelView::open(channel_1_id, workspace_a.clone(), cx))
+        .update(|cx| ChannelView::open(channel_1_id, None, workspace_a.clone(), cx))
         .await
         .unwrap();
     channel_notes_1_a.update(cx_a, |notes, cx| {
@@ -1951,7 +1951,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
     //  Client A opens the notes for channel 2.
     let channel_notes_2_a = cx_a
-        .update(|cx| ChannelView::open(channel_2_id, workspace_a.clone(), cx))
+        .update(|cx| ChannelView::open(channel_2_id, None, workspace_a.clone(), cx))
         .await
         .unwrap();
     channel_notes_2_a.update(cx_a, |notes, cx| {

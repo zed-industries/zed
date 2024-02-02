@@ -6,8 +6,8 @@ use crate::{
     KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds,
-    WindowOptions,
+    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance,
+    WindowBounds, WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -251,6 +251,7 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    text_system: Arc<WindowTextSystem>,
     pub(crate) rem_size: Pixels,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
@@ -268,6 +269,8 @@ pub struct Window {
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
+    appearance: WindowAppearance,
+    appearance_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     pub(crate) dirty: bool,
     pub(crate) refreshing: bool,
@@ -337,6 +340,8 @@ impl Window {
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
+        let appearance = platform_window.appearance();
+        let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
@@ -359,6 +364,14 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .log_err();
+            }
+        }));
+        platform_window.on_appearance_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, cx| cx.appearance_changed())
                     .log_err();
             }
         }));
@@ -393,6 +406,7 @@ impl Window {
             platform_window,
             display_id,
             sprite_atlas,
+            text_system,
             rem_size: px(16.),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
@@ -410,6 +424,8 @@ impl Window {
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
+            appearance,
+            appearance_observers: SubscriberSet::new(),
             active: false,
             dirty: false,
             refreshing: false,
@@ -528,6 +544,11 @@ impl<'a> WindowContext<'a> {
     pub fn disable_focus(&mut self) {
         self.blur();
         self.window.focus_enabled = false;
+    }
+
+    /// Accessor for the text system.
+    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+        &self.window.text_system
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -732,6 +753,20 @@ impl<'a> WindowContext<'a> {
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.bounds
+    }
+
+    fn appearance_changed(&mut self) {
+        self.window.appearance = self.window.platform_window.appearance();
+
+        self.window
+            .appearance_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
+    }
+
+    /// Returns the appearance of the current window.
+    pub fn appearance(&self) -> WindowAppearance {
+        self.window.appearance
     }
 
     /// Returns the size of the drawable area within the window.
@@ -2051,6 +2086,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.activation_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback to be invoked when the window appearance changes.
+    pub fn observe_window_appearance(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.appearance_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
         );

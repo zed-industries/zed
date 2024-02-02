@@ -15,6 +15,7 @@ mod css;
 mod deno;
 mod elixir;
 mod elm;
+mod erlang;
 mod gleam;
 mod go;
 mod haskell;
@@ -24,6 +25,7 @@ mod json;
 mod language_plugin;
 mod lua;
 mod nu;
+mod ocaml;
 mod php;
 mod purescript;
 mod python;
@@ -112,6 +114,12 @@ pub fn init(
             })],
         ),
     }
+    language("gitcommit", tree_sitter_gitcommit::language(), vec![]);
+    language(
+        "erlang",
+        tree_sitter_erlang::language(),
+        vec![Arc::new(erlang::ErlangLspAdapter)],
+    );
 
     language(
         "gleam",
@@ -124,6 +132,7 @@ pub fn init(
         vec![Arc::new(go::GoLspAdapter)],
     );
     language("gomod", tree_sitter_gomod::language(), vec![]);
+    language("gowork", tree_sitter_gowork::language(), vec![]);
     language(
         "zig",
         tree_sitter_zig::language(),
@@ -292,6 +301,16 @@ pub fn init(
         vec![Arc::new(nu::NuLanguageServer {})],
     );
     language(
+        "ocaml",
+        tree_sitter_ocaml::language_ocaml(),
+        vec![Arc::new(ocaml::OCamlLspAdapter)],
+    );
+    language(
+        "ocaml-interface",
+        tree_sitter_ocaml::language_ocaml_interface(),
+        vec![Arc::new(ocaml::OCamlLspAdapter)],
+    );
+    language(
         "vue",
         tree_sitter_vue::language(),
         vec![Arc::new(vue::VueLspAdapter::new(node_runtime))],
@@ -356,6 +375,7 @@ const QUERY_FILENAME_PREFIXES: &[(
     ("embedding", |q| &mut q.embedding),
     ("injections", |q| &mut q.injections),
     ("overrides", |q| &mut q.overrides),
+    ("redactions", |q| &mut q.redactions),
 ];
 
 fn load_queries(name: &str) -> LanguageQueries {

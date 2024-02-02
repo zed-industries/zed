@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.121.0"
+version = "0.122.0"
 publish = false
 license = "GPL-3.0-or-later"
 
@@ -57,6 +57,7 @@ image = "0.23"
 indexmap = "1.6.2"
 install_cli = { path = "../install_cli" }
 isahc.workspace = true
+itertools = "0.11"
 journal = { path = "../journal" }
 language = { path = "../language" }
 language_selector = { path = "../language_selector" }
@@ -65,7 +66,9 @@ lazy_static.workspace = true
 libc = "0.2"
 log.workspace = true
 lsp = { path = "../lsp" }
+markdown_preview = { path = "../markdown_preview" }
 menu = { path = "../menu" }
+mimalloc = "0.1"
 node_runtime = { path = "../node_runtime" }
 notifications = { path = "../notifications" }
 num_cpus = "1.13.0"
@@ -112,10 +115,13 @@ tree-sitter-css.workspace = true
 tree-sitter-elixir.workspace = true
 tree-sitter-elm.workspace = true
 tree-sitter-embedded-template.workspace = true
+tree-sitter-erlang.workspace = true
+tree-sitter-gitcommit.workspace = true
 tree-sitter-gleam.workspace = true
 tree-sitter-glsl.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-gomod.workspace = true
+tree-sitter-gowork.workspace = true
 tree-sitter-haskell.workspace = true
 tree-sitter-heex.workspace = true
 tree-sitter-html.workspace = true
@@ -124,6 +130,7 @@ tree-sitter-lua.workspace = true
 tree-sitter-markdown.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
+tree-sitter-ocaml.workspace = true
 tree-sitter-php.workspace = true
 tree-sitter-proto.workspace = true
 tree-sitter-purescript.workspace = true

@@ -1,9 +1,9 @@
-use gpui::{AppContext, Global};
+use gpui::{AppContext, Global, SemanticVersion};
 use once_cell::sync::Lazy;
 use std::env;
 
 #[doc(hidden)]
-pub static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
+static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
     Lazy::new(|| {
         env::var("ZED_RELEASE_CHANNEL")
             .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
@@ -11,6 +11,7 @@ pub static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
 } else {
     Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
 };
+
 #[doc(hidden)]
 pub static RELEASE_CHANNEL: Lazy<ReleaseChannel> =
     Lazy::new(|| match RELEASE_CHANNEL_NAME.as_str() {
@@ -39,6 +40,29 @@ impl AppCommitSha {
     }
 }
 
+struct GlobalAppVersion(SemanticVersion);
+
+impl Global for GlobalAppVersion {}
+
+pub struct AppVersion;
+
+impl AppVersion {
+    pub fn init(pkg_version: &str, cx: &mut AppContext) {
+        let version = if let Some(from_env) = env::var("ZED_APP_VERSION").ok() {
+            from_env.parse().expect("invalid ZED_APP_VERSION")
+        } else {
+            cx.app_metadata()
+                .app_version
+                .unwrap_or_else(|| pkg_version.parse().expect("invalid version in Cargo.toml"))
+        };
+        cx.set_global(GlobalAppVersion(version))
+    }
+
+    pub fn global(cx: &AppContext) -> SemanticVersion {
+        cx.global::<GlobalAppVersion>().0
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum ReleaseChannel {
     #[default]
@@ -52,11 +76,12 @@ struct GlobalReleaseChannel(ReleaseChannel);
 
 impl Global for GlobalReleaseChannel {}
 
-impl ReleaseChannel {
-    pub fn init(cx: &mut AppContext) {
-        cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
-    }
+pub fn init(pkg_version: &str, cx: &mut AppContext) {
+    AppVersion::init(pkg_version, cx);
+    cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
+}
 
+impl ReleaseChannel {
     pub fn global(cx: &AppContext) -> Self {
         cx.global::<GlobalReleaseChannel>().0
     }

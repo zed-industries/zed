@@ -11,6 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
+use fsevent::StreamFlags;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
@@ -18,6 +19,7 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
+use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
@@ -56,6 +58,9 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
     OpenRequest,
 };
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() {
     menu::init();
@@ -116,7 +121,7 @@ fn main() {
     });
 
     app.run(move |cx| {
-        ReleaseChannel::init(cx);
+        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
@@ -167,35 +172,8 @@ fn main() {
         );
         assistant::init(cx);
 
-        // TODO: Should we be loading the themes in a different spot?
-        cx.spawn({
-            let fs = fs.clone();
-            |cx| async move {
-                if let Some(theme_registry) =
-                    cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
-                {
-                    if let Some(()) = theme_registry
-                        .load_user_themes(&paths::THEMES_DIR.clone(), fs)
-                        .await
-                        .log_err()
-                    {
-                        cx.update(|cx| {
-                            let mut theme_settings = ThemeSettings::get_global(cx).clone();
-
-                            if let Some(requested_theme) = theme_settings.requested_theme.clone() {
-                                if let Some(_theme) =
-                                    theme_settings.switch_theme(&requested_theme, cx)
-                                {
-                                    ThemeSettings::override_global(theme_settings, cx);
-                                }
-                            }
-                        })
-                        .log_err();
-                    }
-                }
-            }
-        })
-        .detach();
+        load_user_themes_in_background(fs.clone(), cx);
+        watch_themes(fs.clone(), cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
@@ -270,6 +248,7 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
+        markdown_preview::init(cx);
         welcome::init(cx);
 
         cx.set_menus(app_menus());
@@ -335,7 +314,10 @@ fn main() {
                 })
                 .detach_and_log_err(cx);
             }
-            Ok(Some(OpenRequest::OpenChannelNotes { channel_id })) => {
+            Ok(Some(OpenRequest::OpenChannelNotes {
+                channel_id,
+                heading,
+            })) => {
                 triggered_authentication = true;
                 let app_state = app_state.clone();
                 let client = client.clone();
@@ -344,11 +326,11 @@ fn main() {
                     let _ = authenticate(client, &cx).await;
                     let workspace_window =
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                    let _ = workspace_window
-                        .update(&mut cx, |_, cx| {
-                            ChannelView::open(channel_id, cx.view().clone(), cx)
-                        })?
-                        .await?;
+                    let workspace = workspace_window.root_view(&cx)?;
+                    cx.update_window(workspace_window.into(), |_, cx| {
+                        ChannelView::open(channel_id, heading, workspace, cx)
+                    })?
+                    .await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -390,16 +372,19 @@ fn main() {
                         })
                         .log_err();
                     }
-                    OpenRequest::OpenChannelNotes { channel_id } => {
+                    OpenRequest::OpenChannelNotes {
+                        channel_id,
+                        heading,
+                    } => {
                         let app_state = app_state.clone();
                         let open_notes_task = cx.spawn(|mut cx| async move {
                             let workspace_window =
                                 workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                            let _ = workspace_window
-                                .update(&mut cx, |_, cx| {
-                                    ChannelView::open(channel_id, cx.view().clone(), cx)
-                                })?
-                                .await?;
+                            let workspace = workspace_window.root_view(&cx)?;
+                            cx.update_window(workspace_window.into(), |_, cx| {
+                                ChannelView::open(channel_id, heading, workspace, cx)
+                            })?
+                            .await?;
                             anyhow::Ok(())
                         });
                         cx.update(|cx| open_notes_task.detach_and_log_err(cx))
@@ -604,9 +589,13 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             std::process::exit(-1);
         }
 
-        let app_version = client::ZED_APP_VERSION
-            .or(app_metadata.app_version)
-            .map_or("dev".to_string(), |v| v.to_string());
+        let app_version = if let Some(version) = app_metadata.app_version {
+            version.to_string()
+        } else {
+            option_env!("CARGO_PKG_VERSION")
+                .unwrap_or("dev")
+                .to_string()
+        };
 
         let backtrace = Backtrace::new();
         let mut backtrace = backtrace
@@ -635,7 +624,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: app_version.clone(),
+            app_version: app_version.to_string(),
             release_channel: RELEASE_CHANNEL.display_name().into(),
             os_name: app_metadata.os_name.into(),
             os_version: app_metadata
@@ -893,6 +882,91 @@ fn load_embedded_fonts(cx: &AppContext) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())
         .unwrap();
+}
+
+/// Spawns a background task to load the user themes from the themes directory.
+fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    cx.spawn({
+        let fs = fs.clone();
+        |cx| async move {
+            if let Some(theme_registry) =
+                cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+            {
+                let themes_dir = paths::THEMES_DIR.as_ref();
+                match fs
+                    .metadata(themes_dir)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|m| m.is_dir)
+                {
+                    Some(is_dir) => {
+                        anyhow::ensure!(is_dir, "Themes dir path {themes_dir:?} is not a directory")
+                    }
+                    None => {
+                        fs.create_dir(themes_dir).await.with_context(|| {
+                            format!("Failed to create themes dir at path {themes_dir:?}")
+                        })?;
+                    }
+                }
+                theme_registry.load_user_themes(themes_dir, fs).await?;
+                cx.update(|cx| {
+                    let mut theme_settings = ThemeSettings::get_global(cx).clone();
+                    if let Some(requested_theme) = theme_settings.requested_theme.clone() {
+                        if let Some(_theme) = theme_settings.switch_theme(&requested_theme, cx) {
+                            ThemeSettings::override_global(theme_settings, cx);
+                        }
+                    }
+                })?;
+            }
+            anyhow::Ok(())
+        }
+    })
+    .detach_and_log_err(cx);
+}
+
+/// Spawns a background task to watch the themes directory for changes.
+fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    cx.spawn(|cx| async move {
+        let mut events = fs
+            .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
+            .await;
+
+        while let Some(events) = events.next().await {
+            for event in events {
+                if event.flags.contains(StreamFlags::ITEM_REMOVED) {
+                    // Theme was removed, don't need to reload.
+                    // We may want to remove the theme from the registry, in this case.
+                } else {
+                    if let Some(theme_registry) =
+                        cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                    {
+                        if let Some(()) = theme_registry
+                            .load_user_theme(&event.path, fs.clone())
+                            .await
+                            .log_err()
+                        {
+                            cx.update(|cx| {
+                                let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+                                if let Some(requested_theme) =
+                                    theme_settings.requested_theme.clone()
+                                {
+                                    if let Some(_theme) =
+                                        theme_settings.switch_theme(&requested_theme, cx)
+                                    {
+                                        ThemeSettings::override_global(theme_settings, cx);
+                                    }
+                                }
+                            })
+                            .log_err();
+                        }
+                    }
+                }
+            }
+        }
+    })
+    .detach()
 }
 
 async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {

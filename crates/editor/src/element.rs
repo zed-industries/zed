@@ -35,6 +35,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
+use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -146,7 +147,11 @@ impl EditorElement {
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
+        register_action(view, cx, Editor::move_down_by_lines);
+        register_action(view, cx, Editor::select_down_by_lines);
         register_action(view, cx, Editor::move_up);
+        register_action(view, cx, Editor::move_up_by_lines);
+        register_action(view, cx, Editor::select_up_by_lines);
         register_action(view, cx, Editor::cancel);
         register_action(view, cx, Editor::newline);
         register_action(view, cx, Editor::newline_above);
@@ -1153,13 +1158,41 @@ impl EditorElement {
                     )
                 }
 
-                cx.with_z_index(0, |cx| {
+                cx.with_z_index(0, |cx| self.paint_redactions(text_bounds, &layout, cx));
+
+                cx.with_z_index(1, |cx| {
                     for cursor in cursors {
                         cursor.paint(content_origin, cx);
                     }
                 });
             },
         )
+    }
+
+    fn paint_redactions(
+        &mut self,
+        text_bounds: Bounds<Pixels>,
+        layout: &LayoutState,
+        cx: &mut ElementContext,
+    ) {
+        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let line_end_overshoot = layout.line_end_overshoot();
+
+        // A softer than perfect black
+        let redaction_color = gpui::rgb(0x0e1111);
+
+        for range in layout.redacted_ranges.iter() {
+            self.paint_highlighted_range(
+                range.clone(),
+                redaction_color.into(),
+                Pixels::ZERO,
+                line_end_overshoot,
+                layout,
+                content_origin,
+                text_bounds,
+                cx,
+            );
+        }
     }
 
     fn paint_overlays(
@@ -1433,6 +1466,64 @@ impl EditorElement {
                         DiffHunkStatus::Added => cx.theme().status().created,
                         DiffHunkStatus::Modified => cx.theme().status().modified,
                         DiffHunkStatus::Removed => cx.theme().status().deleted,
+                    };
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        color,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
+            if layout.is_singleton && scrollbar_settings.diagnostics {
+                let max_point = layout
+                    .position_map
+                    .snapshot
+                    .display_snapshot
+                    .buffer_snapshot
+                    .max_point();
+
+                let diagnostics = layout
+                    .position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
+                    // We want to sort by severity, in order to paint the most severe diagnostics last.
+                    .sorted_by_key(|diagnostic| std::cmp::Reverse(diagnostic.diagnostic.severity));
+
+                for diagnostic in diagnostics {
+                    let start_display = diagnostic
+                        .range
+                        .start
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = diagnostic
+                        .range
+                        .end
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if diagnostic.range.start == diagnostic.range.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
+
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+
+                    let color = match diagnostic.diagnostic.severity {
+                        DiagnosticSeverity::ERROR => cx.theme().status().error,
+                        DiagnosticSeverity::WARNING => cx.theme().status().warning,
+                        DiagnosticSeverity::INFORMATION => cx.theme().status().info,
+                        _ => cx.theme().status().hint,
                     };
                     cx.paint_quad(quad(
                         bounds,
@@ -1957,6 +2048,8 @@ impl EditorElement {
                 cx.theme().colors(),
             );
 
+            let redacted_ranges = editor.redacted_ranges(start_anchor..end_anchor, &snapshot.display_snapshot, cx);
+
             let mut newest_selection_head = None;
 
             if editor.show_local_selections {
@@ -2075,6 +2168,9 @@ impl EditorElement {
                     ||
                     // Symbols Selections
                     (is_singleton && scrollbar_settings.symbols_selections && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                    ||
+                    // Diagnostics
+                    (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
                     ||
                     // Scrollmanager
                     editor.scroll_manager.scrollbars_visible()
@@ -2298,6 +2394,7 @@ impl EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
+                redacted_ranges,
                 line_numbers,
                 display_hunks,
                 blocks,
@@ -3082,6 +3179,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    redacted_ranges: Vec<Range<DisplayPoint>>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
@@ -3093,6 +3191,12 @@ pub struct LayoutState {
     fold_indicators: Vec<Option<IconButton>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
+}
+
+impl LayoutState {
+    fn line_end_overshoot(&self) -> Pixels {
+        0.15 * self.position_map.line_height
+    }
 }
 
 struct CodeActionsIndicator {

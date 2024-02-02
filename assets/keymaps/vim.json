@@ -96,6 +96,8 @@
           }
         }
       ],
+      ";": "vim::RepeatFind",
+      ",": "vim::RepeatFindReversed",
       "ctrl-o": "pane::GoBack",
       "ctrl-i": "pane::GoForward",
       "ctrl-]": "editor::GoToDefinition",
@@ -207,6 +209,9 @@
           "displayLines": true
         }
       ],
+      "shift-h": "vim::WindowTop",
+      "shift-m": "vim::WindowMiddle",
+      "shift-l": "vim::WindowBottom",
       // z commands
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
@@ -330,16 +335,11 @@
       ],
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
-      ";": "vim::RepeatFind",
-      ",": "vim::RepeatFindReversed",
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
       "> >": "editor::Indent",
       "< <": "editor::Outdent",
-      "shift-h": "vim::WindowTop",
-      "shift-m": "vim::WindowMiddle",
-      "shift-l": "vim::WindowBottom",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem"
     }
@@ -501,6 +501,19 @@
     "bindings": {
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
+    }
+  },
+  {
+    "context": "Dock",
+    "bindings": {
+      "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
+      "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
+      "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
+      "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"],
+      "ctrl-w ctrl-h": ["workspace::ActivatePaneInDirection", "Left"],
+      "ctrl-w ctrl-l": ["workspace::ActivatePaneInDirection", "Right"],
+      "ctrl-w ctrl-k": ["workspace::ActivatePaneInDirection", "Up"],
+      "ctrl-w ctrl-j": ["workspace::ActivatePaneInDirection", "Down"]
     }
   }
 ]

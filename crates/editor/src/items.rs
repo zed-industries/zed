@@ -73,18 +73,16 @@ impl FollowableItem for Editor {
             .iter()
             .map(|excerpt| excerpt.buffer_id)
             .collect::<HashSet<_>>();
-        let buffers = project
-            .update(cx, |project, cx| {
-                buffer_ids
-                    .iter()
-                    .map(|id| BufferId::new(*id).map(|id| project.open_buffer_by_id(id, cx)))
-                    .collect::<Result<Vec<_>>>()
-            })
-            .ok()?;
+        let buffers = project.update(cx, |project, cx| {
+            buffer_ids
+                .iter()
+                .map(|id| BufferId::new(*id).map(|id| project.open_buffer_by_id(id, cx)))
+                .collect::<Result<Vec<_>>>()
+        });
 
         let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
-            let mut buffers = futures::future::try_join_all(buffers)
+            let mut buffers = futures::future::try_join_all(buffers?)
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
             let editor = pane.update(&mut cx, |pane, cx| {
@@ -187,6 +185,14 @@ impl FollowableItem for Editor {
 
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
+        if buffer
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+            .map_or(false, |file| file.is_private())
+        {
+            return None;
+        }
+
         let scroll_anchor = self.scroll_manager.anchor();
         let excerpts = buffer
             .read(cx)
@@ -1365,6 +1371,10 @@ mod tests {
 
         fn to_proto(&self) -> rpc::proto::File {
             unimplemented!()
+        }
+
+        fn is_private(&self) -> bool {
+            false
         }
     }
 }

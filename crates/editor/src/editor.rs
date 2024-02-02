@@ -74,7 +74,7 @@ use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CodeAction,
     CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
-    Language, LanguageServerName, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
@@ -413,6 +413,12 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
+    custom_context_menu: Option<
+        Box<
+            dyn 'static
+                + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
+        >,
+    >,
 }
 
 pub struct EditorSnapshot {
@@ -851,9 +857,15 @@ impl CompletionsMenu {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
-                Some(Documentation::MultiLineMarkdown(parsed)) => Some(div().child(
-                    render_parsed_markdown("completions_markdown", parsed, &style, workspace, cx),
-                )),
+                Some(Documentation::MultiLineMarkdown(parsed)) if !parsed.text.is_empty() => {
+                    Some(div().child(render_parsed_markdown(
+                        "completions_markdown",
+                        parsed,
+                        &style,
+                        workspace,
+                        cx,
+                    )))
+                }
                 _ => None,
             };
             multiline_docs.map(|div| {
@@ -1476,6 +1488,7 @@ impl Editor {
             hovered_cursors: Default::default(),
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
+            custom_context_menu: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1663,6 +1676,14 @@ impl Editor {
 
     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
         self.collaboration_hub = Some(hub);
+    }
+
+    pub fn set_custom_context_menu(
+        &mut self,
+        f: impl 'static
+            + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
+    ) {
+        self.custom_context_menu = Some(Box::new(f))
     }
 
     pub fn set_completion_provider(&mut self, hub: Box<dyn CompletionProvider>) {
@@ -2310,7 +2331,7 @@ impl Editor {
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
                 if !text.is_empty() {
-                    // `text` can be empty when an user is using IME (e.g. Chinese Wubi Simplified)
+                    // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
                         if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
@@ -5358,6 +5379,86 @@ impl Editor {
         })
     }
 
+    pub fn move_up_by_lines(&mut self, action: &MoveUpByLines, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::up_by_rows(
+                    map,
+                    selection.start,
+                    action.lines,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        })
+    }
+
+    pub fn move_down_by_lines(&mut self, action: &MoveDownByLines, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::down_by_rows(
+                    map,
+                    selection.start,
+                    action.lines,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        })
+    }
+
+    pub fn select_down_by_lines(&mut self, action: &SelectDownByLines, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::down_by_rows(map, head, action.lines, goal, false, &text_layout_details)
+            })
+        })
+    }
+
+    pub fn select_up_by_lines(&mut self, action: &SelectUpByLines, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::up_by_rows(map, head, action.lines, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -7289,9 +7390,7 @@ impl Editor {
                         editor.buffer.read(cx).as_singleton().and_then(|buffer| {
                             project
                                 .language_server_for_buffer(buffer.read(cx), server_id, cx)
-                                .map(|(_, lsp_adapter)| {
-                                    LanguageServerName(Arc::from(lsp_adapter.name()))
-                                })
+                                .map(|(lsp_adapter, _)| lsp_adapter.name.clone())
                         });
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
@@ -8491,6 +8590,31 @@ impl Editor {
         // We might still have a hunk that was not rendered (if there was a search hit on the last line)
         push_region(start_row, end_row);
         results
+    }
+
+    /// Get the text ranges corresponding to the redaction query
+    pub fn redacted_ranges(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Range<DisplayPoint>> {
+        display_snapshot
+            .buffer_snapshot
+            .redacted_ranges(search_range, |file| {
+                if let Some(file) = file {
+                    file.is_private()
+                        && EditorSettings::get(Some((file.worktree_id(), file.path())), cx)
+                            .redact_private_values
+                } else {
+                    false
+                }
+            })
+            .map(|range| {
+                range.start.to_display_point(display_snapshot)
+                    ..range.end.to_display_point(display_snapshot)
+            })
+            .collect()
     }
 
     pub fn highlight_text<T: 'static>(

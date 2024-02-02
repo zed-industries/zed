@@ -13,6 +13,7 @@ pub struct EditorSettings {
     pub scrollbar: Scrollbar,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub redact_private_values: bool,
 }
 
 /// When to populate a new search's query based on the text under the cursor.
@@ -33,6 +34,7 @@ pub struct Scrollbar {
     pub git_diff: bool,
     pub selections: bool,
     pub symbols_selections: bool,
+    pub diagnostics: bool,
 }
 
 /// When to show the scrollbar in the editor.
@@ -93,6 +95,13 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
+
+    /// Hide the values of variables in `private` files, as defined by the
+    /// private_files setting. This only changes the visual representation,
+    /// the values are still present in the file and can be selected / copied / pasted
+    ///
+    /// Default: false
+    pub redact_private_values: Option<bool>,
 }
 
 /// Scrollbar related settings
@@ -114,6 +123,10 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub symbols_selections: Option<bool>,
+    /// Whether to show diagnostic indicators in the scrollbar.
+    ///
+    /// Default: true
+    pub diagnostics: Option<bool>,
 }
 
 impl Settings for EditorSettings {

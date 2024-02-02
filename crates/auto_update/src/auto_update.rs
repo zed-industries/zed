@@ -1,7 +1,7 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{Client, TelemetrySettings, ZED_APP_PATH, ZED_APP_VERSION};
+use client::{Client, TelemetrySettings, ZED_APP_PATH};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
@@ -108,29 +108,28 @@ pub fn init(http_client: Arc<ZedHttpClient>, cx: &mut AppContext) {
     })
     .detach();
 
-    if let Some(version) = ZED_APP_VERSION.or_else(|| cx.app_metadata().app_version) {
-        let auto_updater = cx.new_model(|cx| {
-            let updater = AutoUpdater::new(version, http_client);
+    let version = release_channel::AppVersion::global(cx);
+    let auto_updater = cx.new_model(|cx| {
+        let updater = AutoUpdater::new(version, http_client);
 
-            let mut update_subscription = AutoUpdateSetting::get_global(cx)
-                .0
-                .then(|| updater.start_polling(cx));
+        let mut update_subscription = AutoUpdateSetting::get_global(cx)
+            .0
+            .then(|| updater.start_polling(cx));
 
-            cx.observe_global::<SettingsStore>(move |updater, cx| {
-                if AutoUpdateSetting::get_global(cx).0 {
-                    if update_subscription.is_none() {
-                        update_subscription = Some(updater.start_polling(cx))
-                    }
-                } else {
-                    update_subscription.take();
+        cx.observe_global::<SettingsStore>(move |updater, cx| {
+            if AutoUpdateSetting::get_global(cx).0 {
+                if update_subscription.is_none() {
+                    update_subscription = Some(updater.start_polling(cx))
                 }
-            })
-            .detach();
+            } else {
+                update_subscription.take();
+            }
+        })
+        .detach();
 
-            updater
-        });
-        cx.set_global(GlobalAutoUpdate(Some(auto_updater)));
-    }
+        updater
+    });
+    cx.set_global(GlobalAutoUpdate(Some(auto_updater)));
 }
 
 pub fn check(_: &Check, cx: &mut WindowContext) {

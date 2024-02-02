@@ -56,6 +56,7 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
+use rpc::{ErrorCode, ErrorExt};
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
@@ -1760,7 +1761,7 @@ impl Project {
         cx.background_executor().spawn(async move {
             wait_for_loading_buffer(loading_watch)
                 .await
-                .map_err(|error| anyhow!("{project_path:?} opening failure: {error:#}"))
+                .map_err(|e| e.cloned())
         })
     }
 
@@ -3129,7 +3130,9 @@ impl Project {
             (None, override_options) => initialization_options = override_options,
             _ => {}
         }
-        let language_server = language_server.initialize(initialization_options).await?;
+        let language_server = cx
+            .update(|cx| language_server.initialize(initialization_options, cx))?
+            .await?;
 
         language_server
             .notify::<lsp::notification::DidChangeConfiguration>(
@@ -4411,13 +4414,13 @@ impl Project {
         }
     }
 
-    pub fn definition<T: ToPointUtf16>(
+    #[inline(never)]
+    fn definition_impl(
         &self,
         buffer: &Model<Buffer>,
-        position: T,
+        position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
@@ -4425,14 +4428,22 @@ impl Project {
             cx,
         )
     }
-
-    pub fn type_definition<T: ToPointUtf16>(
+    pub fn definition<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
+        self.definition_impl(buffer, position, cx)
+    }
+
+    fn type_definition_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
@@ -4440,7 +4451,30 @@ impl Project {
             cx,
         )
     }
+    pub fn type_definition<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
 
+        self.type_definition_impl(buffer, position, cx)
+    }
+
+    fn references_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Location>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetReferences { position },
+            cx,
+        )
+    }
     pub fn references<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
@@ -4448,10 +4482,19 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
+        self.references_impl(buffer, position, cx)
+    }
+
+    fn document_highlights_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<DocumentHighlight>>> {
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
-            GetReferences { position },
+            GetDocumentHighlights { position },
             cx,
         )
     }
@@ -4463,12 +4506,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::Primary,
-            GetDocumentHighlights { position },
-            cx,
-        )
+        self.document_highlights_impl(buffer, position, cx)
     }
 
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
@@ -4691,13 +4729,12 @@ impl Project {
         }
     }
 
-    pub fn hover<T: ToPointUtf16>(
+    fn hover_impl(
         &self,
         buffer: &Model<Buffer>,
-        position: T,
+        position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Hover>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
@@ -4705,14 +4742,23 @@ impl Project {
             cx,
         )
     }
-
-    pub fn completions<T: ToOffset + ToPointUtf16>(
+    pub fn hover<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
+        self.hover_impl(buffer, position, cx)
+    }
+
+    #[inline(never)]
+    fn completions_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion>>> {
         if self.is_local() {
             let snapshot = buffer.read(cx).snapshot();
             let offset = position.to_offset(&snapshot);
@@ -4758,6 +4804,15 @@ impl Project {
         } else {
             Task::ready(Ok(Default::default()))
         }
+    }
+    pub fn completions<T: ToOffset + ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.completions_impl(buffer, position, cx)
     }
 
     pub fn resolve_completions(
@@ -5035,6 +5090,20 @@ impl Project {
         }
     }
 
+    fn code_actions_impl(
+        &self,
+        buffer_handle: &Model<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        self.request_lsp(
+            buffer_handle.clone(),
+            LanguageServerToQuery::Primary,
+            GetCodeActions { range },
+            cx,
+        )
+    }
+
     pub fn code_actions<T: Clone + ToOffset>(
         &self,
         buffer_handle: &Model<Buffer>,
@@ -5043,12 +5112,7 @@ impl Project {
     ) -> Task<Result<Vec<CodeAction>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-        self.request_lsp(
-            buffer_handle.clone(),
-            LanguageServerToQuery::Primary,
-            GetCodeActions { range },
-            cx,
-        )
+        self.code_actions_impl(buffer_handle, range, cx)
     }
 
     pub fn apply_code_action(
@@ -5417,13 +5481,12 @@ impl Project {
         Ok(project_transaction)
     }
 
-    pub fn prepare_rename<T: ToPointUtf16>(
+    fn prepare_rename_impl(
         &self,
         buffer: Model<Buffer>,
-        position: T,
+        position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Range<Anchor>>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer,
             LanguageServerToQuery::Primary,
@@ -5431,11 +5494,20 @@ impl Project {
             cx,
         )
     }
-
-    pub fn perform_rename<T: ToPointUtf16>(
+    pub fn prepare_rename<T: ToPointUtf16>(
         &self,
         buffer: Model<Buffer>,
         position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Range<Anchor>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.prepare_rename_impl(buffer, position, cx)
+    }
+
+    fn perform_rename_impl(
+        &self,
+        buffer: Model<Buffer>,
+        position: PointUtf16,
         new_name: String,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
@@ -5452,22 +5524,28 @@ impl Project {
             cx,
         )
     }
-
-    pub fn on_type_format<T: ToPointUtf16>(
+    pub fn perform_rename<T: ToPointUtf16>(
         &self,
         buffer: Model<Buffer>,
         position: T,
+        new_name: String,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ProjectTransaction>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.perform_rename_impl(buffer, position, new_name, push_to_history, cx)
+    }
+
+    pub fn on_type_format_impl(
+        &self,
+        buffer: Model<Buffer>,
+        position: PointUtf16,
         trigger: String,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        let (position, tab_size) = buffer.update(cx, |buffer, cx| {
-            let position = position.to_point_utf16(buffer);
-            (
-                position,
-                language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx)
-                    .tab_size,
-            )
+        let tab_size = buffer.update(cx, |buffer, cx| {
+            language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx).tab_size
         });
         self.request_lsp(
             buffer.clone(),
@@ -5482,6 +5560,18 @@ impl Project {
         )
     }
 
+    pub fn on_type_format<T: ToPointUtf16>(
+        &self,
+        buffer: Model<Buffer>,
+        position: T,
+        trigger: String,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Transaction>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.on_type_format_impl(buffer, position, trigger, push_to_history, cx)
+    }
+
     pub fn inlay_hints<T: ToOffset>(
         &self,
         buffer_handle: Model<Buffer>,
@@ -5490,6 +5580,15 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
+        self.inlay_hints_impl(buffer_handle, range, cx)
+    }
+    fn inlay_hints_impl(
+        &self,
+        buffer_handle: Model<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
+        let buffer = buffer_handle.read(cx);
         let range_start = range.start;
         let range_end = range.end;
         let buffer_id = buffer.remote_id().into();
@@ -6470,6 +6569,7 @@ impl Project {
                             path: entry.path.clone(),
                             worktree: worktree_handle.clone(),
                             is_deleted: false,
+                            is_private: entry.is_private,
                         }
                     } else if let Some(entry) = snapshot.entry_for_path(old_file.path().as_ref()) {
                         File {
@@ -6479,6 +6579,7 @@ impl Project {
                             path: entry.path.clone(),
                             worktree: worktree_handle.clone(),
                             is_deleted: false,
+                            is_private: entry.is_private,
                         }
                     } else {
                         File {
@@ -6488,6 +6589,7 @@ impl Project {
                             mtime: old_file.mtime(),
                             worktree: worktree_handle.clone(),
                             is_deleted: true,
+                            is_private: old_file.is_private,
                         }
                     };
 
@@ -8008,11 +8110,20 @@ impl Project {
             .update(&mut cx, |this, cx| this.open_buffer_for_symbol(&symbol, cx))?
             .await?;
 
-        Ok(proto::OpenBufferForSymbolResponse {
-            buffer_id: this.update(&mut cx, |this, cx| {
-                this.create_buffer_for_peer(&buffer, peer_id, cx).into()
-            })?,
-        })
+        this.update(&mut cx, |this, cx| {
+            let is_private = buffer
+                .read(cx)
+                .file()
+                .map(|f| f.is_private())
+                .unwrap_or_default();
+            if is_private {
+                Err(anyhow!(ErrorCode::UnsharedItem))
+            } else {
+                Ok(proto::OpenBufferForSymbolResponse {
+                    buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
+                })
+            }
+        })?
     }
 
     fn symbol_signature(&self, project_path: &ProjectPath) -> [u8; 32] {
@@ -8034,11 +8145,7 @@ impl Project {
         let buffer = this
             .update(&mut cx, |this, cx| this.open_buffer_by_id(buffer_id, cx))?
             .await?;
-        this.update(&mut cx, |this, cx| {
-            Ok(proto::OpenBufferResponse {
-                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
-            })
-        })?
+        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
     }
 
     async fn handle_open_buffer_by_path(
@@ -8060,10 +8167,28 @@ impl Project {
         })?;
 
         let buffer = open_buffer.await?;
-        this.update(&mut cx, |this, cx| {
-            Ok(proto::OpenBufferResponse {
-                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
-            })
+        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+    }
+
+    fn respond_to_open_buffer_request(
+        this: Model<Self>,
+        buffer: Model<Buffer>,
+        peer_id: proto::PeerId,
+        cx: &mut AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        this.update(cx, |this, cx| {
+            let is_private = buffer
+                .read(cx)
+                .file()
+                .map(|f| f.is_private())
+                .unwrap_or_default();
+            if is_private {
+                Err(anyhow!(ErrorCode::UnsharedItem))
+            } else {
+                Ok(proto::OpenBufferResponse {
+                    buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
+                })
+            }
         })?
     }
 

@@ -7,6 +7,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global};
+use itertools::Itertools;
 use language::{Bias, Point};
 use release_channel::parse_zed_link;
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ pub enum OpenRequest {
     },
     OpenChannelNotes {
         channel_id: u64,
+        heading: Option<String>,
     },
 }
 
@@ -100,10 +102,20 @@ impl OpenListener {
             if let Some(slug) = parts.next() {
                 if let Some(id_str) = slug.split("-").last() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
-                        if Some("notes") == parts.next() {
-                            return Some(OpenRequest::OpenChannelNotes { channel_id });
-                        } else {
+                        let Some(next) = parts.next() else {
                             return Some(OpenRequest::JoinChannel { channel_id });
+                        };
+
+                        if let Some(heading) = next.strip_prefix("notes#") {
+                            return Some(OpenRequest::OpenChannelNotes {
+                                channel_id,
+                                heading: Some([heading].into_iter().chain(parts).join("/")),
+                            });
+                        } else if next == "notes" {
+                            return Some(OpenRequest::OpenChannelNotes {
+                                channel_id,
+                                heading: None,
+                            });
                         }
                     }
                 }

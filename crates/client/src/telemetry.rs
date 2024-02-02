@@ -4,16 +4,19 @@ use crate::TelemetrySettings;
 use chrono::{DateTime, Utc};
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
-use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
+use sha2::{Digest, Sha256};
+use std::io::Write;
+use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{
     CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt,
 };
 use tempfile::NamedTempFile;
-use util::http::{HttpClient, ZedHttpClient};
+use util::http::{self, HttpClient, Method, ZedHttpClient};
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
@@ -141,6 +144,13 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
+
+static ZED_CLIENT_CHECKSUM_SEED: Lazy<Vec<u8>> = Lazy::new(|| {
+    option_env!("ZED_CLIENT_CHECKSUM_SEED")
+        .unwrap_or("development-checksum-seed")
+        .as_bytes()
+        .into()
+});
 
 impl Telemetry {
     pub fn new(client: Arc<ZedHttpClient>, cx: &mut AppContext) -> Arc<Self> {
@@ -540,9 +550,27 @@ impl Telemetry {
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
 
-                    this.http_client
-                        .post_json(&this.http_client.zed_url("/api/events"), json_bytes.into())
-                        .await?;
+                    let mut summer = Sha256::new();
+                    summer.update(&*ZED_CLIENT_CHECKSUM_SEED);
+                    summer.update(&json_bytes);
+                    summer.update(&*ZED_CLIENT_CHECKSUM_SEED);
+                    let mut checksum = String::new();
+                    for byte in summer.finalize().as_slice() {
+                        use std::fmt::Write;
+                        write!(&mut checksum, "{:02x}", byte).unwrap();
+                    }
+
+                    let request = http::Request::builder()
+                        .method(Method::POST)
+                        .uri(&this.http_client.zed_url("/api/events"))
+                        .header("Content-Type", "text/plain")
+                        .header("x-zed-checksum", checksum)
+                        .body(json_bytes.into());
+
+                    let response = this.http_client.send(request?).await?;
+                    if response.status() != 200 {
+                        log::error!("Failed to send events: HTTP {:?}", response.status());
+                    }
                     anyhow::Ok(())
                 }
                 .log_err(),

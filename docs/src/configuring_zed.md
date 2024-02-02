@@ -2,7 +2,7 @@
 
 ## Folder-specific settings
 
-Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel.  To get started, create a `.zed` subdirectory and add a `settings.json` within it.  It should be noted that folder-specific settings don't need to live only a project's root, but can be defined at multiple levels in the project hierarchy.  In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it.  In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case.  Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel.  If it does not exist, it will create it.
+Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel. To get started, create a `.zed` subdirectory and add a `settings.json` within it. It should be noted that folder-specific settings don't need to live only a project's root, but can be defined at multiple levels in the project hierarchy. In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it. In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case. Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel. If it does not exist, it will create it.
 
 The following global settings can be overridden with a folder-specific configuration:
 
@@ -20,7 +20,7 @@ The following global settings can be overridden with a folder-specific configura
 - `show_copilot_suggestions`
 - `show_whitespaces`
 
-*See the Global settings section for details about these settings*
+_See the Global settings section for details about these settings_
 
 ## Global settings
 
@@ -110,7 +110,7 @@ The name of any font family installed on the user's system
 
 **Options**
 
-Zed supports a subset of OpenType features that can be enabled or disabled for a given buffer or terminal font.  The following [OpenType features](https://en.wikipedia.org/wiki/List_of_typographic_features) can be enabled or disabled too: `calt`, `case`, `cpsp`, `frac`, `liga`, `onum`, `ordn`, `pnum`, `ss01`, `ss02`, `ss03`, `ss04`, `ss05`, `ss06`, `ss07`, `ss08`, `ss09`, `ss10`, `ss11`, `ss12`, `ss13`, `ss14`, `ss15`, `ss16`, `ss17`, `ss18`, `ss19`, `ss20`, `subs`, `sups`, `swsh`, `titl`, `tnum`, `zero`.
+Zed supports a subset of OpenType features that can be enabled or disabled for a given buffer or terminal font. The following [OpenType features](https://en.wikipedia.org/wiki/List_of_typographic_features) can be enabled or disabled too: `calt`, `case`, `cpsp`, `frac`, `liga`, `onum`, `ordn`, `pnum`, `ss01`, `ss02`, `ss03`, `ss04`, `ss05`, `ss06`, `ss07`, `ss08`, `ss09`, `ss10`, `ss11`, `ss12`, `ss13`, `ss14`, `ss15`, `ss16`, `ss17`, `ss18`, `ss19`, `ss20`, `subs`, `sups`, `swsh`, `titl`, `tnum`, `zero`.
 
 For example, to disable ligatures for a given font you can add the following to your settings:
 
@@ -1005,6 +1005,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```
 
 ### Default Width
+
 - Description: Customise default width taken by project panel
 - Setting: `default_width`
 - Default: N/A width in pixels (eg: 420)

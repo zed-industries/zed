@@ -255,16 +255,20 @@ impl ThemeRegistry {
                 continue;
             };
 
-            let Some(reader) = fs.open_sync(&theme_path).await.log_err() else {
-                continue;
-            };
-
-            let Some(theme) = serde_json_lenient::from_reader(reader).log_err() else {
-                continue;
-            };
-
-            self.insert_user_theme_families([theme]);
+            self.load_user_theme(&theme_path, fs.clone())
+                .await
+                .log_err();
         }
+
+        Ok(())
+    }
+
+    /// Loads the user theme from the specified path and adds it to the registry.
+    pub async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+        let reader = fs.open_sync(&theme_path).await?;
+        let theme = serde_json_lenient::from_reader(reader)?;
+
+        self.insert_user_theme_families([theme]);
 
         Ok(())
     }
