@@ -3,14 +3,15 @@
 mod static_runnable;
 mod static_runner;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use core::future::Future;
 use futures::future::BoxFuture;
 pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, Abortable};
 use futures::FutureExt;
-use gpui::{AsyncWindowContext, Task};
+use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use static_runner::StaticRunner;
+use std::path::Path;
 
 pub struct TaskHandle {
     fut: Task<Result<ExecutionResult, TaskTerminated>>,
@@ -18,7 +19,7 @@ pub struct TaskHandle {
 }
 
 impl TaskHandle {
-    pub fn new(fut: BoxFuture<'static, ExecutionResult>, cx: AsyncWindowContext) -> Result<Self> {
+    pub fn new(fut: BoxFuture<'static, ExecutionResult>, cx: AsyncAppContext) -> Result<Self> {
         let (cancel_token, abort_registration) = AbortHandle::new_pair();
         let fut = cx.spawn(move |_| Abortable::new(fut, abort_registration));
         Ok(Self { fut, cancel_token })
@@ -51,9 +52,14 @@ pub struct ExecutionResult {
     /// Contains user-facing details for inspection. It could be e.g. stdout/stderr of a task.
     pub details: String,
 }
-
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RunnableId(u64);
+
+impl std::fmt::Display for RunnableId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl From<RunnableId> for u64 {
     fn from(value: RunnableId) -> Self {
@@ -66,6 +72,62 @@ impl From<RunnableId> for u64 {
 pub trait Runnable {
     fn id(&self) -> RunnableId;
     fn name(&self) -> String;
-    fn exec(self, cx: gpui::AsyncWindowContext) -> Result<TaskHandle>;
+    fn exec(&mut self, cx: gpui::AsyncAppContext) -> Result<TaskHandle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
+}
+
+struct SourceId(u64);
+
+impl std::fmt::Display for SourceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// runnables_for_path(..) -> [("a"), ("b")]
+// schedule("a")
+// runnables_for_path(..) -> [("a"), ("b")]
+//
+// trait Source: EventEmitter<SourceEvent> {
+pub trait Source {
+    fn id(&self) -> SourceId;
+    fn runnables_for_path(&self, path: &Path) -> Box<dyn Iterator<Item = RunnablePebble>>;
+}
+
+/// Uniquely represents a runnable in an inventory.
+/// Two different instances of a runnable (e.g. two different runs of the same static task)
+/// must have a different RunnableLens
+pub struct RunnableLens {
+    source_id: SourceId,
+    runnable_id: RunnableId,
+    display_name: String,
+}
+
+pub struct RunnablePebble {
+    lens: RunnableLens,
+    state: Model<RunState>,
+}
+
+pub enum RunState {
+    NotScheduled(Box<dyn Runnable>),
+    AlreadyUnderway(TaskHandle),
+    Done(ExecutionResult),
+}
+impl RunnablePebble {
+    fn schedule(&self, cx: &mut AppContext) -> Result<()> {
+        self.state.update(cx, |this, cx| match this {
+            RunState::NotScheduled(runnable) => {
+                *this = RunState::AlreadyUnderway(runnable.exec(cx.to_async())?);
+
+                Ok(())
+            }
+            RunState::AlreadyUnderway(_) | RunState::Done(_) => {
+                bail!(
+                    "A runnable {} from source {} cannot be scheduled.",
+                    self.lens.runnable_id,
+                    self.lens.source_id.0
+                );
+            }
+        })
+    }
 }

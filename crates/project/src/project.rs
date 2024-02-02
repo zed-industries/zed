@@ -58,6 +58,7 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
+use runnable_inventory::Inventory;
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
@@ -153,6 +154,7 @@ pub struct Project {
     default_prettier: DefaultPrettier,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
+    runnables: runnable_inventory::Inventory,
 }
 
 struct DelayedDebounced {
@@ -683,6 +685,7 @@ impl Project {
                 default_prettier: DefaultPrettier::default(),
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
+                runnables: Inventory::default(),
             }
         })
     }
@@ -788,6 +791,7 @@ impl Project {
                 default_prettier: DefaultPrettier::default(),
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
+                runnables: Inventory::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {

@@ -25,10 +25,10 @@ impl Runnable for StaticRunner {
         Box::new(self.clone())
     }
 
-    fn exec(self, cx: gpui::AsyncWindowContext) -> anyhow::Result<crate::TaskHandle> {
+    fn exec(&mut self, cx: gpui::AsyncAppContext) -> anyhow::Result<crate::TaskHandle> {
         TaskHandle::new(
-            Command::new(self.runnable.command)
-                .args(self.runnable.args)
+            Command::new(self.runnable.command.clone())
+                .args(self.runnable.args.clone())
                 .output()
                 .map(|output| {
                     let (status, details) = match output {
