@@ -15,9 +15,14 @@ use foreign_types::ForeignType;
 use media::core_video::CVMetalTextureCache;
 use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
-use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    ffi::c_void,
+    mem, ptr,
+    rc::Rc,
+    sync::Arc,
+};
 
 #[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
@@ -39,7 +44,7 @@ pub(crate) struct MetalRenderer {
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
-    instance_buffers: Arc<Mutex<Vec<metal::Buffer>>>,
+    instance_buffers: Rc<RefCell<Vec<metal::Buffer>>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CVMetalTextureCache,
 }
@@ -180,7 +185,7 @@ impl MetalRenderer {
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
             unit_vertices,
-            instance_buffers: Arc::new(Mutex::new(Vec::new())),
+            instance_buffers: Rc::default(),
             sprite_atlas,
             core_video_texture_cache,
         }
@@ -210,7 +215,7 @@ impl MetalRenderer {
             );
             return;
         };
-        let mut instance_buffer = self.instance_buffers.lock().pop().unwrap_or_else(|| {
+        let mut instance_buffer = self.instance_buffers.borrow_mut().pop().unwrap_or_else(|| {
             self.device.new_buffer(
                 INSTANCE_BUFFER_SIZE as u64,
                 MTLResourceOptions::StorageModeManaged,
@@ -336,7 +341,7 @@ impl MetalRenderer {
         let instance_buffer = Cell::new(Some(instance_buffer));
         let block = ConcreteBlock::new(move |_| {
             if let Some(instance_buffer) = instance_buffer.take() {
-                instance_buffers.lock().push(instance_buffer);
+                instance_buffers.borrow_mut().push(instance_buffer);
             }
         });
         let block = block.copy();
