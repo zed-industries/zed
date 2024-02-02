@@ -349,8 +349,10 @@ impl Window {
             let mut cx = cx.to_async();
             let active = active.clone();
             let dirty = dirty.clone();
+            let mut idle_frames = 0;
             move || {
                 if dirty.get() {
+                    idle_frames = 0;
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, cx| {
@@ -360,11 +362,13 @@ impl Window {
                             .log_err();
                     })
                 } else if active.get() {
-                    // Keep presenting the current scene to prevent the display
-                    // from underclocking the refresh rate. We do this only if
-                    // the window is active to avoid draining the battery unnecessarily
-                    // for windows that the user is not interacting with.
-                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
+                    // Keep presenting the current scene to prevent the display from underclocking the refresh rate.
+                    // We present the last scene 2 more times so that we maintain 120fps if possible for longer than 10ms, we consider a reasonable key repeat rate.
+                    // We do this only if the window is active to avoid draining the battery unnecessarily for windows that the user is not interacting with.
+                    if idle_frames < 2 {
+                        idle_frames += 1;
+                        handle.update(&mut cx, |_, cx| cx.present()).log_err();
+                    }
                 }
             }
         }));
