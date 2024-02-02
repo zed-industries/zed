@@ -21,8 +21,11 @@ use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use rope::Rope;
+use runnable::static_runnable_file::RunnableProvider;
 use search::project_search::ProjectSearchBar;
-use settings::{initial_local_settings_content, KeymapFile, Settings, SettingsStore};
+use settings::{
+    initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
+};
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
@@ -151,6 +154,24 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 .unwrap_or(true)
         });
 
+        let project = workspace.project().clone();
+        if project.read(cx).is_local() {
+            dbg!("Adding new stuff");
+            let runnables_file_rx = watch_config_file(
+                &cx.background_executor(),
+                app_state.fs.clone(),
+                paths::RUNNABLES.clone(),
+            );
+            let tracked_file = runnable::static_source::TrackedFile::new(
+                RunnableProvider::default(),
+                runnables_file_rx,
+                cx,
+            );
+            let source = runnable::static_source::StaticSource::new(tracked_file, cx);
+            project.update(cx, |project, _| {
+                project.runnable_inventory_mut().add_source(source)
+            });
+        }
         cx.spawn(|workspace_handle, mut cx| async move {
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());

@@ -32,6 +32,7 @@ impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
         cx.new_model(move |cx| {
             cx.spawn(|this, mut cx| async move {
                 while let Some(new_contents) = tracker.next().await {
+                    dbg!("Yo");
                     let Some(new_contents) = serde_json::from_str(&new_contents).log_err() else {
                         continue;
                     };
