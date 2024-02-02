@@ -344,6 +344,7 @@ impl PlatformAtlas for TestAtlas {
                     kind: crate::AtlasTextureKind::Path,
                 },
                 tile_id: TileId(tile_id),
+                padding: 0,
                 bounds: crate::Bounds {
                     origin: Point::default(),
                     size,

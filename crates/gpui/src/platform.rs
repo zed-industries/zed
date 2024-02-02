@@ -304,6 +304,7 @@ pub(crate) trait PlatformAtlas: Send + Sync {
 pub(crate) struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
     pub(crate) tile_id: TileId,
+    pub(crate) padding: u32,
     pub(crate) bounds: Bounds<DevicePixels>,
 }
 

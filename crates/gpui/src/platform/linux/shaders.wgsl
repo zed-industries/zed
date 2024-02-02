@@ -4,6 +4,8 @@ struct Globals {
 }
 
 var<uniform> globals: Globals;
+var t_tile: texture_2d<f32>;
+var s_tile: sampler;
 
 const M_PI_F: f32 = 3.1415926;
 
@@ -35,6 +37,18 @@ struct Hsla {
     a: f32,
 }
 
+struct AtlasTextureId {
+    index: u32,
+    kind: u32,
+}
+
+struct AtlasTile {
+    texture_id: AtlasTextureId,
+    tile_id: u32,
+    padding: u32,
+    bounds: Bounds,
+}
+
 fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
     let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
     return vec4<f32>(device_position, 0.0, 1.0);
@@ -43,6 +57,11 @@ fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
 fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
     let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
     return to_device_position_impl(position);
+}
+
+fn to_tile_position(unit_vertex: vec2<f32>, tile: AtlasTile) -> vec2<f32> {
+  let atlas_size = vec2<f32>(textureDimensions(t_tile, 0));
+  return (tile.bounds.origin + unit_vertex * tile.bounds.size) / atlas_size;
 }
 
 fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {
@@ -325,14 +344,49 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
 
 @fragment
 fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) f32 {
-	let dx = dpdx(input.st_position);
-	let dy = dpdy(input.st_position);
+    let dx = dpdx(input.st_position);
+    let dy = dpdy(input.st_position);
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return 0.0;
     }
 
-	let gradient = 2.0 * input.st_position * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
-	let f = input.st_position.x * input.st_position.x - input.st_position.y;
-	let distance = f / length(gradient);
-	return saturate(0.5 - distance);
+    let gradient = 2.0 * input.st_position * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
+    let f = input.st_position.x * input.st_position.x - input.st_position.y;
+    let distance = f / length(gradient);
+    return saturate(0.5 - distance);
+}
+
+// --- paths --- //
+
+struct PathSprite {
+    bounds: Bounds,
+    color: Hsla,
+    tile: AtlasTile,
+}
+var<storage, read> b_path_sprites: array<PathSprite>;
+
+struct PathVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) tile_position: vec2<f32>,
+    @location(1) color: vec4<f32>,
+}
+
+@vertex
+fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PathVarying {
+	let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let sprite = b_path_sprites[instance_id];
+    // Don't apply content mask because it was already accounted for when rasterizing the path.
+
+    var out = PathVarying();
+    out.position = to_device_position(unit_vertex, sprite.bounds);
+    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    out.color = hsla_to_rgba(sprite.color);
+    return out;
+}
+
+@fragment
+fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
+	let sample = textureSample(t_tile, s_tile, input.tile_position).r;
+	let mask = 1.0 - abs(1.0 - sample % 2.0);
+	return input.color * mask;
 }

@@ -3,8 +3,8 @@
 
 use super::{BladeBelt, BladeBeltDescriptor};
 use crate::{
-    AtlasTextureKind, AtlasTile, BladeAtlas, ContentMask, Path, PathId, PathVertex, PrimitiveBatch,
-    Quad, ScaledPixels, Scene, Shadow, PATH_TEXTURE_FORMAT,
+    AtlasTextureKind, AtlasTile, BladeAtlas, Bounds, ContentMask, Hsla, Path, PathId, PathVertex,
+    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, PATH_TEXTURE_FORMAT,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
@@ -40,10 +40,27 @@ struct ShaderPathRasterizationData {
     b_path_vertices: gpu::BufferPiece,
 }
 
+#[derive(blade_macros::ShaderData)]
+struct ShaderPathsData {
+    globals: GlobalParams,
+    t_tile: gpu::TextureView,
+    s_tile: gpu::Sampler,
+    b_path_sprites: gpu::BufferPiece,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[repr(C)]
+struct PathSprite {
+    bounds: Bounds<ScaledPixels>,
+    color: Hsla,
+    tile: AtlasTile,
+}
+
 struct BladePipelines {
     quads: gpu::RenderPipeline,
     shadows: gpu::RenderPipeline,
     path_rasterization: gpu::RenderPipeline,
+    paths: gpu::RenderPipeline,
 }
 
 impl BladePipelines {
@@ -57,9 +74,12 @@ impl BladePipelines {
             mem::size_of::<PathVertex<ScaledPixels>>(),
             shader.get_struct_size("PathVertex") as usize,
         );
+        shader.check_struct_size::<PathSprite>();
+
         let quads_layout = <ShaderQuadsData as gpu::ShaderData>::layout();
         let shadows_layout = <ShaderShadowsData as gpu::ShaderData>::layout();
         let path_rasterization_layout = <ShaderPathRasterizationData as gpu::ShaderData>::layout();
+        let paths_layout = <ShaderPathsData as gpu::ShaderData>::layout();
 
         Self {
             quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
@@ -110,6 +130,22 @@ impl BladePipelines {
                     write_mask: gpu::ColorWrites::default(),
                 }],
             }),
+            paths: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "paths",
+                data_layouts: &[&paths_layout],
+                vertex: shader.at("vs_path"),
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: shader.at("fs_path"),
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
+            }),
         }
     }
 }
@@ -123,6 +159,7 @@ pub struct BladeRenderer {
     viewport_size: gpu::Extent,
     path_tiles: HashMap<PathId, AtlasTile>,
     atlas: Arc<BladeAtlas>,
+    atlas_sampler: gpu::Sampler,
 }
 
 impl BladeRenderer {
@@ -142,6 +179,12 @@ impl BladeRenderer {
             min_chunk_size: 0x1000,
         });
         let atlas = Arc::new(BladeAtlas::new(&gpu));
+        let atlas_sampler = gpu.create_sampler(gpu::SamplerDesc {
+            name: "atlas",
+            mag_filter: gpu::FilterMode::Linear,
+            min_filter: gpu::FilterMode::Linear,
+            ..Default::default()
+        });
 
         Self {
             gpu,
@@ -152,6 +195,7 @@ impl BladeRenderer {
             viewport_size: size,
             path_tiles: HashMap::default(),
             atlas,
+            atlas_sampler,
         }
     }
 
@@ -285,7 +329,35 @@ impl BladeRenderer {
                         );
                         encoder.draw(0, 4, 0, shadows.len() as u32);
                     }
-                    PrimitiveBatch::Paths(paths) => {}
+                    PrimitiveBatch::Paths(paths) => {
+                        let mut encoder = pass.with(&self.pipelines.paths);
+                        //TODO: group by texture ID
+                        for path in paths {
+                            let tile = &self.path_tiles[&path.id];
+                            let tex_info = self.atlas.get_texture_info(tile.texture_id);
+                            let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
+                            let sprites = [PathSprite {
+                                bounds: Bounds {
+                                    origin: origin.map(|p| p.floor()),
+                                    size: tile.bounds.size.map(Into::into),
+                                },
+                                color: path.color,
+                                tile: (*tile).clone(),
+                            }];
+
+                            let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
+                            encoder.bind(
+                                0,
+                                &ShaderPathsData {
+                                    globals,
+                                    t_tile: tex_info.raw_view.unwrap(),
+                                    s_tile: self.atlas_sampler,
+                                    b_path_sprites: instance_buf,
+                                },
+                            );
+                            encoder.draw(0, 4, 0, sprites.len() as u32);
+                        }
+                    }
                     _ => continue,
                 }
             }

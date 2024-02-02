@@ -276,6 +276,7 @@ impl BladeAtlasTexture {
         let tile = AtlasTile {
             texture_id: self.id,
             tile_id: allocation.id.into(),
+            padding: 0,
             bounds: Bounds {
                 origin: allocation.rectangle.min.into(),
                 size,
