@@ -857,9 +857,15 @@ impl CompletionsMenu {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
-                Some(Documentation::MultiLineMarkdown(parsed)) => Some(div().child(
-                    render_parsed_markdown("completions_markdown", parsed, &style, workspace, cx),
-                )),
+                Some(Documentation::MultiLineMarkdown(parsed)) if !parsed.text.is_empty() => {
+                    Some(div().child(render_parsed_markdown(
+                        "completions_markdown",
+                        parsed,
+                        &style,
+                        workspace,
+                        cx,
+                    )))
+                }
                 _ => None,
             };
             multiline_docs.map(|div| {
