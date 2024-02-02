@@ -58,6 +58,7 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
+use runnable::static_source::StaticSource;
 use runnable_inventory::Inventory;
 use search::SearchQuery;
 use serde::Serialize;
@@ -635,6 +636,10 @@ impl Project {
                 .detach();
             let copilot_lsp_subscription =
                 Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
+            let mut runnables = Inventory::default();
+            let static_source = StaticSource::new();
+            runnables.add_source(Box::new(static_source));
+
             Self {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
@@ -685,7 +690,7 @@ impl Project {
                 default_prettier: DefaultPrettier::default(),
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
-                runnables: Inventory::default(),
+                runnables,
             }
         })
     }

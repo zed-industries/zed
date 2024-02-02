@@ -6474,6 +6474,7 @@ dependencies = [
  "gpui",
  "serde",
  "serde_json",
+ "settings",
 ]
 
 [[package]]

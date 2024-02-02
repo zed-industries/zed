@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Runnables {
+pub struct RunnableProvider {
     pub version: String,
     pub tasks: Vec<Definition>,
 }

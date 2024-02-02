@@ -1,27 +1,42 @@
-use gpui::{AppContext, Context};
+use gpui::{AppContext, Context, Model, ModelContext, Subscription};
+use settings::SettingsStore;
 
 use crate::{
-    next_source_id, static_runnable_file::Runnables, RunState, Runnable, RunnablePebble, Source,
-    SourceId, StaticRunner,
+    next_source_id, static_runnable_file::RunnableProvider, RunState, Runnable, Source, SourceId,
+    StaticRunner,
 };
 
-struct StaticSource {
+pub struct StaticSource {
     id: SourceId,
-    definitions: Runnables,
+    definitions: Model<RunnableProvider>,
+    _settings_changed_subscription: Subscription,
 }
 
 impl StaticSource {
-    fn new() -> Self {
+    pub fn new(contents: Model<RunnableProvider>, cx: &mut AppContext) -> Self {
+        let definitions = cx.new_model(|cx| RunnableProvider::default());
+
+        let _settings_changed_subscription = definitions.update(cx, |_, cx| {
+            cx.observe_global::<SettingsStore>(|runnables, cx| {
+                on_settings_changed(runnables, cx);
+            })
+        });
         Self {
             id: next_source_id(),
-            definitions: Runnables::default(), // TODO kb use Option instead?
+            definitions, // TODO kb use Option instead?
+            _settings_changed_subscription,
         }
     }
+}
 
-    /// Replace current definitions with the newly parsed runnables from the file(s)
-    pub fn update_definitions(&mut self, runnables: Runnables) {
-        self.definitions = runnables
-    }
+fn on_settings_changed(runnables: &mut RunnableProvider, cx: &mut ModelContext<RunnableProvider>) {
+    // TODO kb change contents of the static runnable provider, if needed, blah.
+    // self.definitions.update(cx, |this, cx| {
+    //     update(this);
+    // });
+    // let new_settings = RunnableSettings::get_blobal(cx);
+    // if self.previous_runnables_config != new_settings { reinit_static_source() }
+    todo!()
 }
 
 impl Source for StaticSource {

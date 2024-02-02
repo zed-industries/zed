@@ -497,6 +497,44 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         .detach();
 }
 
+pub fn handle_runnable_file_changes(
+    mut runnables_file_contents: mpsc::UnboundedReceiver<String>,
+    cx: &mut AppContext,
+) {
+    let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
+    let mut old_base_keymap = *BaseKeymap::get_global(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let new_base_keymap = *BaseKeymap::get_global(cx);
+        if new_base_keymap != old_base_keymap {
+            old_base_keymap = new_base_keymap.clone();
+            base_keymap_tx.unbounded_send(()).unwrap();
+        }
+    })
+    .detach();
+
+    load_default_keymap(cx);
+
+    cx.spawn(move |cx| async move {
+        let mut user_keymap = KeymapFile::default();
+        loop {
+            select_biased! {
+                _ = base_keymap_rx.next() => {}
+                user_keymap_content = user_keymap_file_rx.next() => {
+                    if let Some(user_keymap_content) = user_keymap_content {
+                        if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
+                            user_keymap = keymap_content;
+                        } else {
+                            continue
+                        }
+                    }
+                }
+            }
+            cx.update(|cx| reload_keymaps(cx, &user_keymap)).ok();
+        }
+    })
+    .detach();
+}
+
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,

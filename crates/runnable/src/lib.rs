@@ -1,8 +1,9 @@
 //! Defines baseline interface of Runnables in Zed.
 // #![deny(missing_docs)]
-mod static_runnable_file;
-mod static_runner;
-mod static_source;
+// TODO kb revisit the visibility
+pub mod static_runnable_file;
+pub mod static_runner;
+pub mod static_source;
 
 use anyhow::{bail, Result};
 use core::future::Future;
@@ -12,9 +13,8 @@ use futures::stream::{AbortHandle, Abortable};
 use futures::FutureExt;
 use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use static_runner::StaticRunner;
-use std::num::NonZeroU64;
 use std::path::Path;
-use std::sync::atomic::{self, AtomicU64, AtomicUsize};
+use std::sync::atomic::{self, AtomicU64};
 
 pub struct TaskHandle {
     fut: Task<Result<ExecutionResult, TaskTerminated>>,
@@ -105,7 +105,7 @@ pub trait Source {
         &'a self,
         path: &'a Path,
         cx: &'a mut AppContext,
-    ) -> anyhow::Result<Box<dyn Iterator<Item = RunnablePebble>> + 'a>;
+    ) -> anyhow::Result<Box<dyn Iterator<Item = RunnablePebble> + 'a>>;
 }
 
 /// Uniquely represents a runnable in an inventory.

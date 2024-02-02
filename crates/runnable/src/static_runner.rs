@@ -59,8 +59,7 @@ impl Runnable for StaticRunner {
 mod tests {
     use std::time::Duration;
 
-    use crate::{static_runnable::Definition, Runnable};
-    use async_process::Command;
+    use crate::{static_runnable_file::Definition, Runnable};
     use gpui::TestAppContext;
 
     use crate::StaticRunner;
@@ -77,8 +76,7 @@ mod tests {
     #[gpui::test]
     async fn test_echo(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
-        let cx = cx.add_empty_window();
-        let runner = StaticRunner::new(Definition {
+        let mut runner = StaticRunner::new(Definition {
             command: "echo".into(),
             args: vec!["-n".into(), "Hello!".into()],
             ..definition_fill_in()
@@ -98,8 +96,7 @@ mod tests {
     #[gpui::test]
     async fn test_cancel(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
-        let cx = cx.add_empty_window();
-        let runner = StaticRunner::new(Definition {
+        let mut runner = StaticRunner::new(Definition {
             command: "sleep".into(),
             args: vec!["500".into()],
             ..definition_fill_in()
