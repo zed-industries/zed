@@ -5,9 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 gpui = { path = "../gpui" }
 serde.workspace = true

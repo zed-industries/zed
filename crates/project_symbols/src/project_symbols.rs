@@ -392,6 +392,7 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init("0.0.0", cx);
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);

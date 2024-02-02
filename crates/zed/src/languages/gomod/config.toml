@@ -1,0 +1,7 @@
+name = "Go Mod"
+path_suffixes = ["mod"]
+line_comments = ["//"]
+autoclose_before = ")"
+brackets = [
+    { start = "(", end = ")", close = true, newline = true}
+]

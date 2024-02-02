@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/outline.rs"
 doctest = false
@@ -14,18 +13,17 @@ doctest = false
 editor = { path = "../editor" }
 fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
-ui = { path = "../ui" }
 language = { path = "../language" }
+ordered-float.workspace = true
 picker = { path = "../picker" }
+postage.workspace = true
 settings = { path = "../settings" }
+smol.workspace = true
 text = { path = "../text" }
 theme = { path = "../theme" }
-workspace = { path = "../workspace" }
+ui = { path = "../ui" }
 util = { path = "../util" }
-
-ordered-float.workspace = true
-postage.workspace = true
-smol.workspace = true
+workspace = { path = "../workspace" }
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

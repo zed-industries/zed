@@ -11,3 +11,6 @@ echo "migrating database..."
 
 echo "seeding database..."
 script/seed-db
+
+echo "Linux dependencies..."
+script/linux

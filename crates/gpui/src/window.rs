@@ -2,12 +2,12 @@ use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
     AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
+    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
     KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
     Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance,
-    WindowBounds, WindowOptions,
+    WindowBounds, WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -251,6 +251,7 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    text_system: Arc<WindowTextSystem>,
     pub(crate) rem_size: Pixels,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
@@ -268,6 +269,8 @@ pub struct Window {
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
+    appearance: WindowAppearance,
+    appearance_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     pub(crate) dirty: bool,
     pub(crate) refreshing: bool,
@@ -340,6 +343,7 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
         let appearance = platform_window.appearance();
+        let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
@@ -362,6 +366,14 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .log_err();
+            }
+        }));
+        platform_window.on_appearance_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, cx| cx.appearance_changed())
                     .log_err();
             }
         }));
@@ -390,21 +402,13 @@ impl Window {
             })
         });
 
-        platform_window.on_appearance_changed({
-            let mut cx = cx.to_async();
-            Box::new(move || {
-                handle
-                    .update(&mut cx, |_, cx| cx.appearance_changed())
-                    .log_err();
-            })
-        });
-
         Window {
             handle,
             removed: false,
             platform_window,
             display_id,
             sprite_atlas,
+            text_system,
             rem_size: px(16.),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
@@ -422,6 +426,8 @@ impl Window {
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
+            appearance,
+            appearance_observers: SubscriberSet::new(),
             active: false,
             dirty: false,
             refreshing: false,
@@ -543,6 +549,11 @@ impl<'a> WindowContext<'a> {
     pub fn disable_focus(&mut self) {
         self.blur();
         self.window.focus_enabled = false;
+    }
+
+    /// Accessor for the text system.
+    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+        &self.window.text_system
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -723,7 +734,7 @@ impl<'a> WindowContext<'a> {
     /// access both to the global and the context.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static,
+        G: Global,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -756,6 +767,20 @@ impl<'a> WindowContext<'a> {
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.bounds
+    }
+
+    fn appearance_changed(&mut self) {
+        self.window.appearance = self.window.platform_window.appearance();
+
+        self.window
+            .appearance_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
+    }
+
+    /// Returns the appearance of the current window.
+    pub fn appearance(&self) -> WindowAppearance {
+        self.window.appearance
     }
 
     /// Returns the size of the drawable area within the window.
@@ -1473,7 +1498,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register the given handler to be invoked whenever the global of the given type
     /// is updated.
-    pub fn observe_global<G: 'static>(
+    pub fn observe_global<G: Global>(
         &mut self,
         f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
@@ -2090,8 +2115,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
-    /// Register a callback to be invoked when the window appearance changes.
-    pub fn observe_appearance_change(
+    /// Registers a callback to be invoked when the window appearance changes.
+    pub fn observe_window_appearance(
         &mut self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
@@ -2244,7 +2269,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Updates the global state of the given type.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
-        G: 'static,
+        G: Global,
     {
         let mut global = self.app.lease_global::<G>();
         let result = f(&mut global, self);
@@ -2253,7 +2278,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a callback to be invoked when the given global state changes.
-    pub fn observe_global<G: 'static>(
+    pub fn observe_global<G: Global>(
         &mut self,
         mut f: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {

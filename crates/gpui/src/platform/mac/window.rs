@@ -32,6 +32,10 @@ use objc::{
     sel, sel_impl,
 };
 use parking_lot::Mutex;
+use raw_window_handle::{
+    AppKitDisplayHandle, AppKitWindowHandle, DisplayHandle, HasDisplayHandle, HasWindowHandle,
+    RawWindowHandle, WindowHandle,
+};
 use smallvec::SmallVec;
 use std::{
     any::Any,
@@ -41,7 +45,7 @@ use std::{
     ops::Range,
     os::raw::c_char,
     path::PathBuf,
-    ptr,
+    ptr::{self, NonNull},
     rc::Rc,
     sync::{Arc, Weak},
     time::Duration,
@@ -316,6 +320,7 @@ struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
     native_window: id,
+    native_view: NonNull<id>,
     renderer: MetalRenderer,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
@@ -523,6 +528,7 @@ impl MacWindow {
                 handle,
                 executor,
                 native_window,
+                native_view: NonNull::new_unchecked(native_view as *mut _),
                 renderer: MetalRenderer::new(true),
                 kind: options.kind,
                 request_frame_callback: None,
@@ -1008,6 +1014,28 @@ impl PlatformWindow for MacWindow {
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
+    }
+}
+
+impl HasWindowHandle for MacWindow {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        // SAFETY: The AppKitWindowHandle is a wrapper around a pointer to an NSView
+        unsafe {
+            Ok(WindowHandle::borrow_raw(RawWindowHandle::AppKit(
+                AppKitWindowHandle::new(self.0.lock().native_view.cast()),
+            )))
+        }
+    }
+}
+
+impl HasDisplayHandle for MacWindow {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        // SAFETY: This is a no-op on macOS
+        unsafe { Ok(DisplayHandle::borrow_raw(AppKitDisplayHandle::new().into())) }
     }
 }
 

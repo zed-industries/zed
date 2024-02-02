@@ -5,12 +5,11 @@ edition = "2021"
 publish = false
 license = "Apache-2.0"
 
-
 [lib]
 path = "src/gpui_macros.rs"
 proc-macro = true
 
 [dependencies]
-syn = { version = "1.0.72", features = ["full"] }
-quote = "1.0.9"
 proc-macro2 = "1.0.66"
+quote = "1.0.9"
+syn = { version = "1.0.72", features = ["full"] }

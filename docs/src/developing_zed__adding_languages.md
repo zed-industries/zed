@@ -18,10 +18,10 @@ We use tree-sitter queries to match certain properties to highlight.
 
 ```ts
 const font: FontFamily = {
-    weight: "normal",
-    underline: false,
-    italic: false,
-}
+  weight: "normal",
+  underline: false,
+  italic: false,
+};
 ```
 
 Match a property identifier and highlight it using the identifier `@property`. In the above example, `weight`, `underline`, and `italic` would be highlighted.
@@ -40,7 +40,7 @@ Match a property identifier and highlight it using the identifier `@property`. I
 
 ```ts
 function buildDefaultSyntax(colorScheme: Theme): Partial<Syntax> {
-    // ...
+  // ...
 }
 ```
 

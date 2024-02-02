@@ -1,12 +1,12 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{Client, TelemetrySettings, ZED_APP_PATH, ZED_APP_VERSION};
+use client::{Client, TelemetrySettings, ZED_APP_PATH};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context as _, Model, ModelContext, SemanticVersion, Task,
-    ViewContext, VisualContext, WindowContext,
+    actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
+    SemanticVersion, Task, ViewContext, VisualContext, WindowContext,
 };
 use isahc::AsyncBody;
 
@@ -18,6 +18,7 @@ use smol::io::AsyncReadExt;
 use settings::{Settings, SettingsStore};
 use smol::{fs::File, process::Command};
 
+use release_channel::{AppCommitSha, ReleaseChannel};
 use std::{
     env::consts::{ARCH, OS},
     ffi::OsString,
@@ -25,8 +26,7 @@ use std::{
     time::Duration,
 };
 use update_notification::UpdateNotification;
-use util::channel::{AppCommitSha, ReleaseChannel};
-use util::http::HttpClient;
+use util::http::{HttpClient, ZedHttpClient};
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -54,9 +54,8 @@ pub enum AutoUpdateStatus {
 pub struct AutoUpdater {
     status: AutoUpdateStatus,
     current_version: SemanticVersion,
-    http_client: Arc<dyn HttpClient>,
+    http_client: Arc<ZedHttpClient>,
     pending_poll: Option<Task<Option<()>>>,
-    server_url: String,
 }
 
 #[derive(Deserialize)]
@@ -92,7 +91,12 @@ impl Settings for AutoUpdateSetting {
     }
 }
 
-pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
+#[derive(Default)]
+struct GlobalAutoUpdate(Option<Model<AutoUpdater>>);
+
+impl Global for GlobalAutoUpdate {}
+
+pub fn init(http_client: Arc<ZedHttpClient>, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
@@ -104,29 +108,28 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     })
     .detach();
 
-    if let Some(version) = ZED_APP_VERSION.or_else(|| cx.app_metadata().app_version) {
-        let auto_updater = cx.new_model(|cx| {
-            let updater = AutoUpdater::new(version, http_client, server_url);
+    let version = release_channel::AppVersion::global(cx);
+    let auto_updater = cx.new_model(|cx| {
+        let updater = AutoUpdater::new(version, http_client);
 
-            let mut update_subscription = AutoUpdateSetting::get_global(cx)
-                .0
-                .then(|| updater.start_polling(cx));
+        let mut update_subscription = AutoUpdateSetting::get_global(cx)
+            .0
+            .then(|| updater.start_polling(cx));
 
-            cx.observe_global::<SettingsStore>(move |updater, cx| {
-                if AutoUpdateSetting::get_global(cx).0 {
-                    if update_subscription.is_none() {
-                        update_subscription = Some(updater.start_polling(cx))
-                    }
-                } else {
-                    update_subscription.take();
+        cx.observe_global::<SettingsStore>(move |updater, cx| {
+            if AutoUpdateSetting::get_global(cx).0 {
+                if update_subscription.is_none() {
+                    update_subscription = Some(updater.start_polling(cx))
                 }
-            })
-            .detach();
+            } else {
+                update_subscription.take();
+            }
+        })
+        .detach();
 
-            updater
-        });
-        cx.set_global(Some(auto_updater));
-    }
+        updater
+    });
+    cx.set_global(GlobalAutoUpdate(Some(auto_updater)));
 }
 
 pub fn check(_: &Check, cx: &mut WindowContext) {
@@ -144,17 +147,18 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
 
 pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<()> {
     let auto_updater = AutoUpdater::get(cx)?;
-    let release_channel = cx.try_global::<ReleaseChannel>()?;
+    let release_channel = ReleaseChannel::try_global(cx)?;
 
     if matches!(
         release_channel,
         ReleaseChannel::Stable | ReleaseChannel::Preview
     ) {
         let auto_updater = auto_updater.read(cx);
-        let server_url = &auto_updater.server_url;
         let release_channel = release_channel.dev_name();
         let current_version = auto_updater.current_version;
-        let url = format!("{server_url}/releases/{release_channel}/{current_version}");
+        let url = &auto_updater
+            .http_client
+            .zed_url(&format!("/releases/{release_channel}/{current_version}"));
         cx.open_url(&url);
     }
 
@@ -188,19 +192,14 @@ pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
 
 impl AutoUpdater {
     pub fn get(cx: &mut AppContext) -> Option<Model<Self>> {
-        cx.default_global::<Option<Model<Self>>>().clone()
+        cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    fn new(
-        current_version: SemanticVersion,
-        http_client: Arc<dyn HttpClient>,
-        server_url: String,
-    ) -> Self {
+    fn new(current_version: SemanticVersion, http_client: Arc<ZedHttpClient>) -> Self {
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
             http_client,
-            server_url,
             pending_poll: None,
         }
     }
@@ -246,21 +245,16 @@ impl AutoUpdater {
     }
 
     async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
-        let (client, server_url, current_version) = this.read_with(&cx, |this, _| {
-            (
-                this.http_client.clone(),
-                this.server_url.clone(),
-                this.current_version,
-            )
+        let (client, current_version) = this.read_with(&cx, |this, _| {
+            (this.http_client.clone(), this.current_version)
         })?;
 
-        let mut url_string = format!(
-            "{server_url}/api/releases/latest?asset=Zed.dmg&os={}&arch={}",
+        let mut url_string = client.zed_url(&format!(
+            "/api/releases/latest?asset=Zed.dmg&os={}&arch={}",
             OS, ARCH
-        );
+        ));
         cx.update(|cx| {
-            if let Some(param) = cx
-                .try_global::<ReleaseChannel>()
+            if let Some(param) = ReleaseChannel::try_global(cx)
                 .map(|release_channel| release_channel.release_query_param())
                 .flatten()
             {
@@ -282,7 +276,9 @@ impl AutoUpdater {
 
         let should_download = match *RELEASE_CHANNEL {
             ReleaseChannel::Nightly => cx
-                .try_read_global::<AppCommitSha, _>(|sha, _| release.version != sha.0)
+                .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
+                .ok()
+                .flatten()
                 .unwrap_or(true),
             _ => release.version.parse::<SemanticVersion>()? > current_version,
         };
@@ -317,9 +313,8 @@ impl AutoUpdater {
         let mut dmg_file = File::create(&dmg_path).await?;
 
         let (installation_id, release_channel, telemetry) = cx.update(|cx| {
-            let installation_id = cx.global::<Arc<Client>>().telemetry().installation_id();
-            let release_channel = cx
-                .try_global::<ReleaseChannel>()
+            let installation_id = Client::global(cx).telemetry().installation_id();
+            let release_channel = ReleaseChannel::try_global(cx)
                 .map(|release_channel| release_channel.display_name());
             let telemetry = TelemetrySettings::get_global(cx).metrics;
 

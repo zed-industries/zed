@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/fs.rs"
 
@@ -19,7 +18,7 @@ sum_tree = { path = "../sum_tree" }
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
