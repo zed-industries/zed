@@ -8,7 +8,10 @@ use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt}
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{
+    de::{self, DeserializeOwned, Visitor},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
@@ -35,7 +38,7 @@ const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, &str, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -64,7 +67,7 @@ pub struct LanguageServer {
     capabilities: ServerCapabilities,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
-    response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
+    response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
     executor: BackgroundExecutor,
     #[allow(clippy::type_complexity)]
@@ -97,16 +100,72 @@ pub enum Subscription {
 #[derive(Serialize, Deserialize)]
 pub struct Request<'a, T> {
     jsonrpc: &'static str,
-    id: usize,
+    #[serde(deserialize_with = "deserialize_id", serialize_with = "serialize_id")]
+    id: RequestId,
     method: &'a str,
     params: T,
+}
+
+/// ID is either string or number
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum RequestId {
+    Int(usize),
+    Str(String),
+}
+
+// Custom deserializer for the `Id` enum
+fn deserialize_id<'de, D>(deserializer: D) -> Result<RequestId, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct IdVisitor;
+
+    impl<'de> Visitor<'de> for IdVisitor {
+        type Value = RequestId;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an integer or a string")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<RequestId, E>
+        where
+            E: de::Error,
+        {
+            Ok(RequestId::Str(value.to_owned()))
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<RequestId, E>
+        where
+            E: de::Error,
+        {
+            Ok(RequestId::Int(value as usize))
+        }
+
+        // Implement visitations for other numeric types as needed
+        // to fully support serde's numeric deserialization.
+    }
+
+    deserializer.deserialize_any(IdVisitor)
+}
+
+// Custom serializer for the `Id` enum
+fn serialize_id<S>(id: &RequestId, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match id {
+        RequestId::Int(i) => serializer.serialize_u64(*i as u64),
+        RequestId::Str(s) => serializer.serialize_str(s),
+    }
 }
 
 /// Language server protocol RPC request response message before it is deserialized into a concrete type.
 #[derive(Serialize, Deserialize)]
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
-    id: usize,
+    #[serde(deserialize_with = "deserialize_id", serialize_with = "serialize_id")]
+    id: RequestId,
     #[serde(default)]
     error: Option<Error>,
     #[serde(borrow)]
@@ -119,7 +178,8 @@ struct AnyResponse<'a> {
 #[derive(Serialize)]
 struct Response<T> {
     jsonrpc: &'static str,
-    id: usize,
+    #[serde(serialize_with = "serialize_id")]
+    id: RequestId,
     result: Option<T>,
     error: Option<Error>,
 }
@@ -138,12 +198,58 @@ struct Notification<'a, T> {
 /// Language server RPC notification message before it is deserialized into a concrete type.
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
-    #[serde(default)]
-    id: Option<usize>,
+    #[serde(default, deserialize_with = "deserialize_optional_id")]
+    id: Option<RequestId>,
     #[serde(borrow)]
     method: &'a str,
     #[serde(borrow, default)]
     params: Option<&'a RawValue>,
+}
+
+// Custom deserializer for the `Id` enum
+fn deserialize_optional_id<'de, D>(deserializer: D) -> Result<Option<RequestId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct IdVisitor;
+
+    impl<'de> Visitor<'de> for IdVisitor {
+        type Value = Option<RequestId>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("optional integer or a string")
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let deser = serde_json::Value::deserialize(deserializer)?;
+            Ok(Some(match deser {
+                serde_json::Value::String(s) => RequestId::Str(s),
+                serde_json::Value::Number(n) if n.is_u64() => {
+                    RequestId::Int(n.as_u64().unwrap() as usize)
+                }
+                _ => return Err(de::Error::custom("incorrect type for id")),
+            }))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_option(IdVisitor)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -304,7 +410,7 @@ impl LanguageServer {
         stdout: Stdout,
         mut on_unhandled_notification: F,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
-        response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
+        response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
         cx: AsyncAppContext,
     ) -> anyhow::Result<()>
@@ -455,7 +561,7 @@ impl LanguageServer {
         stdin: Stdin,
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
-        response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
+        response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
     ) -> anyhow::Result<()>
     where
@@ -882,7 +988,7 @@ impl LanguageServer {
 
     fn request_internal<T: request::Request>(
         next_id: &AtomicUsize,
-        response_handlers: &Mutex<Option<HashMap<usize, ResponseHandler>>>,
+        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
@@ -893,7 +999,7 @@ impl LanguageServer {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
             jsonrpc: JSON_RPC_VERSION,
-            id,
+            id: RequestId::Int(id),
             method: T::METHOD,
             params,
         })
@@ -907,7 +1013,7 @@ impl LanguageServer {
             .map(|handlers| {
                 let executor = executor.clone();
                 handlers.insert(
-                    id,
+                    RequestId::Int(id),
                     Box::new(move |result| {
                         executor
                             .spawn(async move {
@@ -1326,5 +1432,16 @@ mod tests {
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    fn test_deserialize_metals_workspace_configuration() {
+        let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
+        let notification = serde_json::from_str::<AnyNotification>(json);
+        assert!(
+            notification.is_ok(),
+            "Failed to deserialize: {:?}",
+            notification.err().unwrap()
+        );
     }
 }

@@ -31,6 +31,7 @@ mod purescript;
 mod python;
 mod ruby;
 mod rust;
+mod scala;
 mod svelte;
 mod tailwind;
 mod toml;
@@ -103,6 +104,7 @@ pub fn init(
         ("racket", tree_sitter_racket::language()),
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
+        ("scala", tree_sitter_scala::language()),
         ("scheme", tree_sitter_scheme::language()),
         ("svelte", tree_sitter_svelte::language()),
         ("toml", tree_sitter_toml::language()),
@@ -287,6 +289,7 @@ pub fn init(
     language("proto", vec![]);
     language("terraform", vec![]);
     language("hcl", vec![]);
+    language("scala", vec![Arc::new(scala::MetalsLspAdapter {})]);
 }
 
 #[cfg(any(test, feature = "test-support"))]
