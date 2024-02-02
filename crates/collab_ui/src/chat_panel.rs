@@ -425,7 +425,7 @@ impl ChatPanel {
                             )
                             .child(
                                 div()
-                                    .border_l_3()
+                                    .border_l_2()
                                     .rounded_md()
                                     .border_color(cx.theme().colors().border)
                                     .px_1()
