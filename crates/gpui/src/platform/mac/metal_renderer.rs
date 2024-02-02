@@ -314,7 +314,7 @@ impl MetalRenderer {
         command_buffer.commit();
         self.sprite_atlas.clear_textures(AtlasTextureKind::Path);
 
-        command_buffer.wait_until_scheduled();
+        command_buffer.wait_until_completed();
         drawable.present();
     }
 
