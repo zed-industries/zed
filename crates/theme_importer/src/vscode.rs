@@ -1,7 +1,3 @@
-mod converter;
-mod syntax;
-mod theme;
-
-pub use converter::*;
-pub use syntax::*;
-pub use theme::*;
+pub mod converter;
+pub mod syntax;
+pub mod theme;

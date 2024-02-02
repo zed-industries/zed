@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use vscode_theme::Colors;
 
-use crate::vscode::VsCodeTokenColor;
+use crate::vscode::syntax::VsCodeTokenColor;
 
 #[derive(Deserialize, Debug)]
 pub struct VsCodeTheme {

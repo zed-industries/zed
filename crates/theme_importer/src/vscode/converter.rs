@@ -7,7 +7,7 @@ use theme::{
 };
 
 use crate::syntax::ZedSyntaxToken;
-use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
+use crate::vscode::{syntax::VsCodeTokenScope, theme::VsCodeTheme};
 use crate::ThemeMetadata;
 
 pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<FontWeightContent> {

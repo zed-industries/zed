@@ -1,4 +1,5 @@
 mod assets;
+mod base16;
 mod color;
 mod syntax;
 mod util;
@@ -17,8 +18,9 @@ use serde::Deserialize;
 use simplelog::{TermLogger, TerminalMode};
 use theme::{Appearance, AppearanceContent, ThemeFamilyContent};
 
-use crate::vscode::VsCodeTheme;
-use crate::vscode::VsCodeThemeConverter;
+use crate::base16::{Base16Theme, Base16ThemeConverter};
+use crate::vscode::converter::VsCodeThemeConverter;
+use crate::vscode::theme::VsCodeTheme;
 
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
@@ -72,6 +74,11 @@ pub struct ThemeMetadata {
 struct Args {
     /// The path to the theme to import.
     theme_path: PathBuf,
+
+    /// Whether to use the base16 color scheme instead
+    /// of the default VSCode importer.
+    #[arg(long)]
+    base16: bool,
 
     /// Whether to warn when values are missing from the theme.
     #[arg(long)]
@@ -134,22 +141,38 @@ fn main() -> Result<()> {
     };
 
     let theme_without_comments = StripComments::new(theme_file);
-    let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_without_comments)
-        .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
-    let theme_metadata = ThemeMetadata {
-        name: "".to_string(),
-        appearance: ThemeAppearanceJson::Dark,
-        file_name: "".to_string(),
-    };
+    if args.base16 {
+        let base16_theme: Base16Theme = serde_json::from_reader(theme_without_comments)
+            .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
-    let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::new());
+        let theme_metadata = ThemeMetadata {
+            name: "".to_string(),
+            appearance: ThemeAppearanceJson::Dark,
+            file_name: "".to_string(),
+        };
 
-    let theme = converter.convert()?;
+        let converter = Base16ThemeConverter::new(base16_theme, theme_metadata, IndexMap::new());
 
-    let theme_json = serde_json::to_string_pretty(&theme).unwrap();
+        let theme = converter.convert()?;
+        let theme_json = serde_json::to_string_pretty(&theme).unwrap();
+        println!("{}", theme_json);
+    } else {
+        let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_without_comments)
+            .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
-    println!("{}", theme_json);
+        let theme_metadata = ThemeMetadata {
+            name: "".to_string(),
+            appearance: ThemeAppearanceJson::Dark,
+            file_name: "".to_string(),
+        };
+
+        let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::new());
+
+        let theme = converter.convert()?;
+        let theme_json = serde_json::to_string_pretty(&theme).unwrap();
+        println!("{}", theme_json);
+    }
 
     log::info!("Done!");
 
