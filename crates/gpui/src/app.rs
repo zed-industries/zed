@@ -665,6 +665,7 @@ impl AppContext {
                     self.update_window(window, |_, cx| cx.draw()).unwrap();
                 }
 
+                #[allow(clippy::collapsible_else_if)]
                 if self.pending_effects.is_empty() {
                     break;
                 }
