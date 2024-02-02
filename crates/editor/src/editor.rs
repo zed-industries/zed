@@ -1430,7 +1430,7 @@ impl Editor {
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
-            scroll_manager: ScrollManager::new(),
+            scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
             add_selections_state: None,
             select_next_state: None,
@@ -8762,6 +8762,7 @@ impl Editor {
             )),
             cx,
         );
+        self.scroll_manager.vertical_scroll_margin = EditorSettings::get_global(cx).scroll_offset;
         cx.notify();
     }
 
