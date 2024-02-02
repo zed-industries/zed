@@ -24,7 +24,7 @@ const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shader
 #[cfg(feature = "runtime_shaders")]
 const SHADERS_SOURCE_FILE: &'static str =
     include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
-const INSTANCE_BUFFER_SIZE: usize = 32 * 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value (maybe even we could adjust dynamically...)
+const INSTANCE_BUFFER_SIZE: usize = 2 * 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value (maybe even we could adjust dynamically...)
 
 pub(crate) struct MetalRenderer {
     device: metal::Device,
@@ -227,7 +227,8 @@ impl MetalRenderer {
             &mut instance_offset,
             command_buffer,
         ) else {
-            panic!("failed to rasterize {} paths", scene.paths().len());
+            log::error!("failed to rasterize {} paths", scene.paths().len());
+            return;
         };
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
@@ -314,7 +315,7 @@ impl MetalRenderer {
             };
 
             if !ok {
-                panic!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
                     scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
@@ -322,7 +323,8 @@ impl MetalRenderer {
                     scene.monochrome_sprites.len(),
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),
-                )
+                );
+                break;
             }
         }
 
