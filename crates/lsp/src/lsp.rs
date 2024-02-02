@@ -336,11 +336,16 @@ impl LanguageServer {
 
             let message_len: usize = segments
                 .next()
-                .ok_or_else(|| anyhow!("unable to find the first line of the LSP message header"))? // Impossible, but just in case.
+                .context("unable to find the first line of the LSP message header")?
                 .strip_prefix(CONTENT_LEN_HEADER)
-                .ok_or_else(|| anyhow!("invalid LSP message header {header:?}"))?
+                .context("invalid LSP message header")?
                 .parse()
-                .context("failed to parse Content-Length of LSP message header")?;
+                .with_context(|| {
+                    format!(
+                        "failed to parse Content-Length of LSP message header: {}",
+                        header
+                    )
+                })?;
 
             if let Some(second_segment) = segments.next() {
                 match second_segment {
@@ -349,15 +354,13 @@ impl LanguageServer {
                         stdout.read_until(b'\n', &mut buffer).await?;
                     }
                     _ => {
-                        return Err(anyhow!(
-                            "expected a header field or nothing, got {second_segment:?}"
-                        ));
+                        anyhow::bail!(
+                            "expected a Content-Type header field or a header ending CRLF, got {second_segment:?}"
+                        );
                     }
                 }
             } else {
-                return Err(anyhow!(
-                    "unable to find the second line of the LSP message header"
-                ));
+                anyhow::bail!("unable to find the second line of the LSP message header");
             }
 
             buffer.resize(message_len, 0);

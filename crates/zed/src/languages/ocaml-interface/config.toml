@@ -2,11 +2,12 @@ name = "OCaml Interface"
 path_suffixes = ["mli"]
 block_comment = ["(* ", "*)"]
 autoclose_before = ";,=)}"
-brackets = [ 
+brackets = [
   { start = "{", end = "}", close = true, newline = true },
   { start = "<", end = ">", close = true, newline = true },
   { start = "[", end = "]", close = true, newline = true },
   { start = "(", end = ")", close = true, newline = true },
-  { start = "sig", end = "end", close = true, newline = true },
-  { start = "object", end = "end", close = true, newline = true }
+  { start = "sig", end = " end", close = true, newline = true },
+  # HACK: For some reason `object` alone does not work  
+  { start = "object ", end = "end", close = true, newline = true },
 ]
