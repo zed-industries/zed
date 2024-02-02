@@ -25,6 +25,7 @@ mod json;
 mod language_plugin;
 mod lua;
 mod nu;
+mod ocaml;
 mod php;
 mod purescript;
 mod python;
@@ -298,6 +299,16 @@ pub fn init(
         "nu",
         tree_sitter_nu::language(),
         vec![Arc::new(nu::NuLanguageServer {})],
+    );
+    language(
+        "ocaml",
+        tree_sitter_ocaml::language_ocaml(),
+        vec![Arc::new(ocaml::OCamlLspAdapter)],
+    );
+    language(
+        "ocaml-interface",
+        tree_sitter_ocaml::language_ocaml_interface(),
+        vec![Arc::new(ocaml::OCamlLspAdapter)],
     );
     language(
         "vue",

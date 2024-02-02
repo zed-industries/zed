@@ -332,11 +332,36 @@ impl LanguageServer {
             };
 
             let header = std::str::from_utf8(&buffer)?;
-            let message_len: usize = header
+            let mut segments = header.lines();
+
+            let message_len: usize = segments
+                .next()
+                .context("unable to find the first line of the LSP message header")?
                 .strip_prefix(CONTENT_LEN_HEADER)
-                .ok_or_else(|| anyhow!("invalid LSP message header {header:?}"))?
-                .trim_end()
-                .parse()?;
+                .context("invalid LSP message header")?
+                .parse()
+                .with_context(|| {
+                    format!(
+                        "failed to parse Content-Length of LSP message header: {}",
+                        header
+                    )
+                })?;
+
+            if let Some(second_segment) = segments.next() {
+                match second_segment {
+                    "" => (), // Header end
+                    header_field if header_field.starts_with("Content-Type:") => {
+                        stdout.read_until(b'\n', &mut buffer).await?;
+                    }
+                    _ => {
+                        anyhow::bail!(
+                            "expected a Content-Type header field or a header ending CRLF, got {second_segment:?}"
+                        );
+                    }
+                }
+            } else {
+                anyhow::bail!("unable to find the second line of the LSP message header");
+            }
 
             buffer.resize(message_len, 0);
             stdout.read_exact(&mut buffer).await?;
