@@ -285,10 +285,10 @@ impl ScrollDelta {
             ScrollDelta::Lines(delta) => point(line_height * delta.x, line_height * delta.y),
         }
     }
+
     /// Combines two scroll deltas into one.
     pub fn coalesce(self, other: ScrollDelta) -> ScrollDelta {
         match (self, other) {
-            // second time
             (ScrollDelta::Pixels(px_a), ScrollDelta::Pixels(px_b)) => {
                 ScrollDelta::Pixels(px_a + px_b)
             }

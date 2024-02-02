@@ -981,7 +981,7 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
 
 extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
-        if let Some(event) = PlatformInput::from_native(native_event, None, None) {
+        if let Some(event) = PlatformInput::from_native(native_event, None) {
             let platform = get_mac_platform(this);
             let mut lock = platform.0.lock();
             if let Some(mut callback) = lock.event.take() {

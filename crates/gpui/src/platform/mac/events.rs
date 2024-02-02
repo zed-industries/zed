@@ -86,7 +86,6 @@ impl PlatformInput {
     pub(crate) unsafe fn from_native(
         native_event: id,
         window_height: Option<Pixels>,
-        scale_factor: Option<f32>,
     ) -> Option<Self> {
         let event_type = native_event.eventType();
 
@@ -175,7 +174,7 @@ impl PlatformInput {
                 );
 
                 let delta = if native_event.hasPreciseScrollingDeltas() == YES {
-                    ScrollDelta::Pixels(raw_data.map(|p| px(p * scale_factor.unwrap_or(2.))))
+                    ScrollDelta::Pixels(raw_data.map(px))
                 } else {
                     ScrollDelta::Lines(raw_data)
                 };
