@@ -957,7 +957,7 @@ impl CollabPanel {
                     .child(render_tree_branch(false, true, cx))
                     .child(IconButton::new(0, IconName::File)),
             )
-            .child(div().h_7().w_full().child(Label::new("notes")))
+            .child(Label::new("notes"))
             .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
     }
 
