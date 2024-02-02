@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::hash_map::Entry,
     fmt::{Debug, Display},
     future::Future,
@@ -271,8 +271,8 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
-    active: bool,
-    pub(crate) dirty: bool,
+    active: Rc<Cell<bool>>,
+    pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
@@ -342,13 +342,30 @@ impl Window {
         let bounds = platform_window.bounds();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        let active = Rc::new(Cell::new(false));
+        let dirty = Rc::new(Cell::new(false));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
+            let active = active.clone();
+            let dirty = dirty.clone();
             move || {
-                measure("frame duration", || {
-                    handle.update(&mut cx, |_, cx| cx.draw()).log_err();
-                })
+                if dirty.get() {
+                    measure("frame duration", || {
+                        handle
+                            .update(&mut cx, |_, cx| {
+                                cx.draw();
+                                cx.present();
+                            })
+                            .log_err();
+                    })
+                } else if active.get() {
+                    // Keep presenting the current scene to prevent the display
+                    // from underclocking the refresh rate. We do this only if
+                    // the window is active to avoid draining the battery unnecessarily
+                    // for windows that the user is not interacting with.
+                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
+                }
             }
         }));
         platform_window.on_resize(Box::new({
@@ -380,7 +397,7 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, cx| {
-                        cx.window.active = active;
+                        cx.window.active.set(active);
                         cx.window
                             .activation_observers
                             .clone()
@@ -426,8 +443,8 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
-            active: false,
-            dirty: false,
+            active,
+            dirty,
             refreshing: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
@@ -488,7 +505,7 @@ impl<'a> WindowContext<'a> {
     pub fn refresh(&mut self) {
         if !self.window.drawing {
             self.window.refreshing = true;
-            self.window.dirty = true;
+            self.window.dirty.set(true);
         }
     }
 
@@ -776,7 +793,7 @@ impl<'a> WindowContext<'a> {
 
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
-        self.window.active
+        self.window.active.get()
     }
 
     /// Toggle zoom on the window.
@@ -962,9 +979,10 @@ impl<'a> WindowContext<'a> {
         &self.window.next_frame.z_index_stack
     }
 
-    /// Draw pixels to the display for this window based on the contents of its scene.
+    /// Produces a new frame and assigns it to `rendered_frame`. To actually show
+    /// the contents of the new [Scene], use [present].
     pub(crate) fn draw(&mut self) {
-        self.window.dirty = false;
+        self.window.dirty.set(false);
         self.window.drawing = true;
 
         #[cfg(any(test, feature = "test-support"))]
@@ -1036,7 +1054,7 @@ impl<'a> WindowContext<'a> {
                 self.window.focus,
             );
         self.window.next_frame.focus = self.window.focus;
-        self.window.next_frame.window_active = self.window.active;
+        self.window.next_frame.window_active = self.window.active.get();
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
@@ -1105,12 +1123,14 @@ impl<'a> WindowContext<'a> {
                 .clone()
                 .retain(&(), |listener| listener(&event, self));
         }
+        self.window.refreshing = false;
+        self.window.drawing = false;
+    }
 
+    fn present(&self) {
         self.window
             .platform_window
             .draw(&self.window.rendered_frame.scene);
-        self.window.refreshing = false;
-        self.window.drawing = false;
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -2058,7 +2078,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
 
         if !self.window.drawing {
-            self.window_cx.window.dirty = true;
+            self.window_cx.window.dirty.set(true);
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,
             });
@@ -2538,7 +2558,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
         cx.windows
             .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active))
+            .and_then(|window| window.as_ref().map(|window| window.active.get()))
     }
 }
 
