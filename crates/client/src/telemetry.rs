@@ -145,11 +145,14 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 #[cfg(not(debug_assertions))]
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
-static ZED_CLIENT_CHECKSUM_SEED: Lazy<Vec<u8>> = Lazy::new(|| {
+static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
     option_env!("ZED_CLIENT_CHECKSUM_SEED")
-        .unwrap_or("development-checksum-seed")
-        .as_bytes()
-        .into()
+        .map(|s| s.as_bytes().into())
+        .or_else(|| {
+            env::var("ZED_CLIENT_CHECKSUM_SEED")
+                .ok()
+                .map(|s| s.as_bytes().into())
+        })
 });
 
 impl Telemetry {
@@ -510,6 +513,10 @@ impl Telemetry {
             return;
         }
 
+        let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+            return;
+        };
+
         let this = self.clone();
         self.executor
             .spawn(
@@ -551,9 +558,9 @@ impl Telemetry {
                     }
 
                     let mut summer = Sha256::new();
-                    summer.update(&*ZED_CLIENT_CHECKSUM_SEED);
+                    summer.update(checksum_seed);
                     summer.update(&json_bytes);
-                    summer.update(&*ZED_CLIENT_CHECKSUM_SEED);
+                    summer.update(checksum_seed);
                     let mut checksum = String::new();
                     for byte in summer.finalize().as_slice() {
                         use std::fmt::Write;
