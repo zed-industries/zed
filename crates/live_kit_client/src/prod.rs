@@ -223,7 +223,7 @@ impl Room {
         *self.connection.lock().0.borrow_mut() = ConnectionState::Disconnected;
     }
 
-    pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
+    pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<Box<dyn PlatformDisplayAbstractor>>> {
         extern "C" fn callback(tx: *mut c_void, sources: CFArrayRef, error: CFStringRef) {
             unsafe {
                 let tx = Box::from_raw(tx as *mut oneshot::Sender<Result<Vec<MacOSDisplay>>>);
@@ -692,7 +692,7 @@ impl Drop for RoomDelegate {
 pub struct LocalAudioTrack(swift::LocalAudioTrack);
 
 impl LocalAudioTrack {
-    pub fn create() -> Self {
+    pub fn create(_cx: &mut AppContext) -> Self {
         Self(unsafe { LKLocalAudioTrackCreateTrack() })
     }
 }
@@ -706,8 +706,8 @@ impl Drop for LocalAudioTrack {
 pub struct LocalVideoTrack(swift::LocalVideoTrack);
 
 impl LocalVideoTrack {
-    pub fn screen_share_for_display(display: &MacOSDisplay) -> Self {
-        Self(unsafe { LKCreateScreenShareTrackForDisplay(display.0) })
+    pub fn screen_share_for_display(display: &dyn PlatformDisplayAbstractor) -> Self {
+        Self(unsafe { LKCreateScreenShareTrackForDisplay(display.get_pointer()) })
     }
 }
 

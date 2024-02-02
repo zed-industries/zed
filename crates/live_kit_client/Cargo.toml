@@ -14,6 +14,7 @@ doctest = false
 name = "test_app"
 
 [features]
+default = [ "livekit-rust-sdk" ]
 test-support = [
     "async-trait",
     "collections/test-support",
@@ -21,20 +22,26 @@ test-support = [
     "live_kit_server",
     "nanoid",
 ]
+livekit-rust-sdk = [ "livekit", "tokio", "async-compat" ]
 
 [dependencies]
-anyhow.workspace = true
-async-broadcast = "0.4"
-async-trait = { workspace = true, optional = true }
-collections = { path = "../collections", optional = true }
-futures.workspace = true
-gpui = { path = "../gpui", optional = true }
-live_kit_server = { path = "../live_kit_server", optional = true }
-log.workspace = true
 media = { path = "../media" }
+gpui = { path = "../gpui" }
+live_kit_server = { path = "../live_kit_server", optional = true }
+collections = { path = "../collections", optional = true }
+async-broadcast = "0.4"
 nanoid = { version ="0.4", optional = true}
+# rust sdk
+livekit = { livekit = "0.3.0", optional = true }
+tokio = { version = "1", optional = true }
+async-compat = { version = "0.2.3", optional = true }
+# ---
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
+async-trait = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9.3"

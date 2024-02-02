@@ -1,3 +1,24 @@
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures
 rustflags = ["-C", "symbol-mangling-version=v0"]
+
+
+# Required by the livekit SDK
+# See this note in: https://github.com/livekit/rust-sdks?tab=readme-ov-file#crates
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-args=-ObjC"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-args=-ObjC"]
+
+[target.aarch64-apple-ios]
+rustflags = ["-C", "link-args=-ObjC"]
+
+[target.aarch64-apple-ios-sim]
+rustflags = ["-C", "link-args=-ObjC"]

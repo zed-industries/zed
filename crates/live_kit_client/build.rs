@@ -37,7 +37,11 @@ const MACOS_TARGET_VERSION: &str = "10.15.7";
 fn main() {
     if cfg!(all(
         target_os = "macos",
-        not(any(test, feature = "test-support"))
+        not(any(
+            test,
+            feature = "test-support",
+            feature = "livekit-rust-sdk"
+        ))
     )) {
         let swift_target = get_swift_target();
 
