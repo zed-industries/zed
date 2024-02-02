@@ -35,17 +35,25 @@ struct Hsla {
     a: f32,
 }
 
-fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
-    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
     let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
     return vec4<f32>(device_position, 0.0, 1.0);
 }
 
-fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {
+fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
     let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+    return to_device_position_impl(position);
+}
+
+fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {
     let tl = position - clip_bounds.origin;
     let br = clip_bounds.origin + clip_bounds.size - position;
     return vec4<f32>(tl.x, br.x, tl.y, br.y);
+}
+
+fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {
+    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+    return distance_from_clip_rect_impl(position, clip_bounds);
 }
 
 fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
@@ -289,3 +297,42 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
 }
 
 // --- path rasterization --- //
+
+struct PathVertex {
+    xy_position: vec2<f32>,
+    st_position: vec2<f32>,
+    content_mask: Bounds,
+}
+var<storage, read> b_path_vertices: array<PathVertex>;
+
+struct PathRasterizationVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) st_position: vec2<f32>,
+    //TODO: use `clip_distance` once Naga supports it
+    @location(3) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasterizationVarying {
+    let v = b_path_vertices[vertex_id];
+
+    var out = PathRasterizationVarying();
+    out.position = to_device_position_impl(v.xy_position);
+    out.st_position = v.st_position;
+    out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) f32 {
+	let dx = dpdx(input.st_position);
+	let dy = dpdy(input.st_position);
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return 0.0;
+    }
+
+	let gradient = 2.0 * input.st_position * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
+	let f = input.st_position.x * input.st_position.x - input.st_position.y;
+	let distance = f / length(gradient);
+	return saturate(0.5 - distance);
+}

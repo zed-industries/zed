@@ -10,7 +10,7 @@ use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 
 use blade_graphics as gpu;
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
 const SURFACE_FRAME_COUNT: u32 = 3;
 const MAX_FRAME_TIME_MS: u32 = 1000;
@@ -34,6 +34,12 @@ struct ShaderShadowsData {
     b_shadows: gpu::BufferPiece,
 }
 
+#[derive(blade_macros::ShaderData)]
+struct ShaderPathRasterizationData {
+    globals: GlobalParams,
+    b_path_vertices: gpu::BufferPiece,
+}
+
 struct BladePipelines {
     quads: gpu::RenderPipeline,
     shadows: gpu::RenderPipeline,
@@ -47,8 +53,14 @@ impl BladePipelines {
         });
         shader.check_struct_size::<Quad>();
         shader.check_struct_size::<Shadow>();
+        assert_eq!(
+            mem::size_of::<PathVertex<ScaledPixels>>(),
+            shader.get_struct_size("PathVertex") as usize,
+        );
         let quads_layout = <ShaderQuadsData as gpu::ShaderData>::layout();
         let shadows_layout = <ShaderShadowsData as gpu::ShaderData>::layout();
+        let path_rasterization_layout = <ShaderPathRasterizationData as gpu::ShaderData>::layout();
+
         Self {
             quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "quads",
@@ -84,7 +96,7 @@ impl BladePipelines {
             }),
             path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "path_rasterization",
-                data_layouts: &[&shadows_layout],
+                data_layouts: &[&path_rasterization_layout],
                 vertex: shader.at("vs_path_rasterization"),
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
@@ -196,10 +208,16 @@ impl BladeRenderer {
         }
 
         for (texture_id, vertices) in vertices_by_texture_id {
-            let instances = self.instance_belt.alloc_data(&vertices, &self.gpu);
+            let tex_info = self.atlas.get_texture_info(texture_id);
+            let globals = GlobalParams {
+                viewport_size: [tex_info.size.width as f32, tex_info.size.height as f32],
+                pad: [0; 2],
+            };
+
+            let vertex_buf = self.instance_belt.alloc_data(&vertices, &self.gpu);
             let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
-                    view: self.atlas.get_texture_view(texture_id),
+                    view: tex_info.raw_view.unwrap(),
                     init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
                     finish_op: gpu::FinishOp::Store,
                 }],
@@ -207,6 +225,13 @@ impl BladeRenderer {
             });
 
             let mut encoder = pass.with(&self.pipelines.path_rasterization);
+            encoder.bind(
+                0,
+                &ShaderPathRasterizationData {
+                    globals,
+                    b_path_vertices: vertex_buf,
+                },
+            );
             encoder.draw(0, vertices.len() as u32, 0, 1);
         }
     }
@@ -237,25 +262,25 @@ impl BladeRenderer {
             for batch in scene.batches() {
                 match batch {
                     PrimitiveBatch::Quads(quads) => {
-                        let instances = self.instance_belt.alloc_data(quads, &self.gpu);
+                        let instance_buf = self.instance_belt.alloc_data(quads, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.quads);
                         encoder.bind(
                             0,
                             &ShaderQuadsData {
                                 globals,
-                                b_quads: instances,
+                                b_quads: instance_buf,
                             },
                         );
                         encoder.draw(0, 4, 0, quads.len() as u32);
                     }
                     PrimitiveBatch::Shadows(shadows) => {
-                        let instances = self.instance_belt.alloc_data(shadows, &self.gpu);
+                        let instance_buf = self.instance_belt.alloc_data(shadows, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.shadows);
                         encoder.bind(
                             0,
                             &ShaderShadowsData {
                                 globals,
-                                b_shadows: instances,
+                                b_shadows: instance_buf,
                             },
                         );
                         encoder.draw(0, 4, 0, shadows.len() as u32);

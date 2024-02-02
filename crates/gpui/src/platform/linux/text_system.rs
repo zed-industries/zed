@@ -15,7 +15,7 @@ use font_kit::{
 };
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use std::{borrow::Cow};
+use std::borrow::Cow;
 
 pub(crate) struct LinuxTextSystem(RwLock<LinuxTextSystemState>);
 

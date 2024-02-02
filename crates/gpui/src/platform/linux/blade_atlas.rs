@@ -41,6 +41,11 @@ impl BladeAtlasState {
     }
 }
 
+pub struct BladeTextureInfo {
+    pub size: gpu::Extent,
+    pub raw_view: Option<gpu::TextureView>,
+}
+
 impl BladeAtlas {
     pub(crate) fn new(gpu: &Arc<gpu::Context>) -> Self {
         BladeAtlas(Mutex::new(BladeAtlasState {
@@ -94,14 +99,23 @@ impl BladeAtlas {
         sync_point
     }
 
-    pub fn get_texture_view(&self, id: AtlasTextureId) -> gpu::TextureView {
+    pub fn get_texture_info(&self, id: AtlasTextureId) -> BladeTextureInfo {
         let lock = self.0.lock();
         let textures = match id.kind {
             crate::AtlasTextureKind::Monochrome => &lock.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &lock.polychrome_textures,
             crate::AtlasTextureKind::Path => &lock.path_textures,
         };
-        textures[id.index as usize].raw_view.unwrap()
+        let texture = &textures[id.index as usize];
+        let size = texture.allocator.size();
+        BladeTextureInfo {
+            size: gpu::Extent {
+                width: size.width as u32,
+                height: size.height as u32,
+                depth: 1,
+            },
+            raw_view: texture.raw_view,
+        }
     }
 }
 
