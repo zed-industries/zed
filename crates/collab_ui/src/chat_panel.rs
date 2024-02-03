@@ -483,7 +483,12 @@ impl ChatPanel {
                                     .px_1()
                                     .py_0p5()
                                     .mb_1()
-                                    .child(reply_to_message_body.element(body_element_id, cx)),
+                                    .overflow_hidden()
+                                    .child(
+                                        div().max_h_12().child(
+                                            reply_to_message_body.element(body_element_id, cx),
+                                        ),
+                                    ),
                             ),
                     )
                 })
