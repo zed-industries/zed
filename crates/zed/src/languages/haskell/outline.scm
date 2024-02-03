@@ -17,6 +17,10 @@
   "class" @context
   (class_head) @name) @item
 
+(instance
+  "instance" @context
+  (instance_head) @name) @item
+
 (foreign_import
   "foreign" @context
   (impent) @name) @item
