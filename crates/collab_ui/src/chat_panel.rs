@@ -501,7 +501,7 @@ impl ChatPanel {
                 )
                 .when(can_delete_message, move |menu| {
                     menu.entry(
-                        "Delete messsage",
+                        "Delete message",
                         None,
                         cx.handler_for(&this, move |this, cx| this.remove_message(message_id, cx)),
                     )
