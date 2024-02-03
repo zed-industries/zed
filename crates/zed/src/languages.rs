@@ -19,6 +19,7 @@ mod erlang;
 mod gleam;
 mod go;
 mod haskell;
+mod helm;
 mod html;
 mod json;
 #[cfg(feature = "plugin_runtime")]
@@ -145,7 +146,11 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
-    language("helm",tree_sitter_helm::language(),vec![]);
+    language(
+        "helm",
+        tree_sitter_yaml::language(),
+        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
+    );
     language(
         "json",
         tree_sitter_json::language(),
