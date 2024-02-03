@@ -19,7 +19,6 @@ mod erlang;
 mod gleam;
 mod go;
 mod haskell;
-mod helm;
 mod html;
 mod json;
 #[cfg(feature = "plugin_runtime")]
