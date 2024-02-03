@@ -46,10 +46,13 @@ impl QuickActionBar {
     }
 
     fn apply_settings(&mut self, cx: &mut ViewContext<Self>) {
-        self.show = EditorSettings::get_global(cx).toolbar.quick_actions;
-        cx.emit(ToolbarItemEvent::ChangeLocation(
-            self.get_toolbar_item_location(),
-        ));
+        let new_show = EditorSettings::get_global(cx).toolbar.quick_actions;
+        if new_show != self.show {
+            self.show = new_show;
+            cx.emit(ToolbarItemEvent::ChangeLocation(
+                self.get_toolbar_item_location(),
+            ));
+        }
     }
 
     fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
