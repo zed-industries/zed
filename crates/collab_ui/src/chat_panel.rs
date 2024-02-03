@@ -739,7 +739,7 @@ impl Render for ChatPanel {
                                         .rounded_md()
                                         .text_ui_sm()
                                         .bg(cx.theme().colors().background)
-                                        .child(reply_text.element("reply-body".into(), cx)),
+                                        .child(reply_text.element("reply-preview-body".into(), cx)),
                                 ),
                         )
                     })
