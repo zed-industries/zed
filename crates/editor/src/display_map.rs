@@ -25,8 +25,8 @@ mod wrap_map;
 
 use crate::EditorStyle;
 use crate::{
-    link_go_to_definition::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt,
-    InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    hover_links::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt, InlayId,
+    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};

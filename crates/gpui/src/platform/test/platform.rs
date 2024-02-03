@@ -25,6 +25,7 @@ pub(crate) struct TestPlatform {
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     pub(crate) prompts: RefCell<TestPrompts>,
+    pub opened_url: RefCell<Option<String>>,
     weak: Weak<Self>,
 }
 
@@ -45,6 +46,7 @@ impl TestPlatform {
             active_window: Default::default(),
             current_clipboard_item: Mutex::new(None),
             weak: weak.clone(),
+            opened_url: Default::default(),
         })
     }
 
@@ -188,8 +190,8 @@ impl Platform for TestPlatform {
 
     fn stop_display_link(&self, _display_id: DisplayId) {}
 
-    fn open_url(&self, _url: &str) {
-        unimplemented!()
+    fn open_url(&self, url: &str) {
+        *self.opened_url.borrow_mut() = Some(url.to_string())
     }
 
     fn on_open_urls(&self, _callback: Box<dyn FnMut(Vec<String>)>) {

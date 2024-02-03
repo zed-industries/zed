@@ -22,9 +22,9 @@ mod inlay_hint_cache;
 mod debounced_delay;
 mod git;
 mod highlight_matching_bracket;
+mod hover_links;
 mod hover_popover;
 pub mod items;
-mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
@@ -77,7 +77,7 @@ use language::{
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
-use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
+use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
@@ -402,7 +402,7 @@ pub struct Editor {
     remote_id: Option<ViewId>,
     hover_state: HoverState,
     gutter_hovered: bool,
-    link_go_to_definition_state: LinkGoToDefinitionState,
+    hovered_link_state: Option<HoveredLinkState>,
     copilot_state: CopilotState,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
@@ -1477,7 +1477,7 @@ impl Editor {
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
-            link_go_to_definition_state: Default::default(),
+            hovered_link_state: Default::default(),
             copilot_state: Default::default(),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
@@ -7243,11 +7243,8 @@ impl Editor {
         cx.spawn(|editor, mut cx| async move {
             let definitions = definitions.await?;
             editor.update(&mut cx, |editor, cx| {
-                editor.navigate_to_definitions(
-                    definitions
-                        .into_iter()
-                        .map(GoToDefinitionLink::Text)
-                        .collect(),
+                editor.navigate_to_hover_links(
+                    definitions.into_iter().map(HoverLink::Text).collect(),
                     split,
                     cx,
                 );
@@ -7257,9 +7254,9 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    pub fn navigate_to_definitions(
+    pub fn navigate_to_hover_links(
         &mut self,
-        mut definitions: Vec<GoToDefinitionLink>,
+        mut definitions: Vec<HoverLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -7271,9 +7268,13 @@ impl Editor {
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
             let target_task = match definition {
-                GoToDefinitionLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
-                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                HoverLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                HoverLink::InlayHint(lsp_location, server_id) => {
                     self.compute_target_location(lsp_location, server_id, cx)
+                }
+                HoverLink::Url(url) => {
+                    cx.open_url(&url);
+                    Task::ready(Ok(None))
                 }
             };
             cx.spawn(|editor, mut cx| async move {
@@ -7325,29 +7326,27 @@ impl Editor {
                         let title = definitions
                             .iter()
                             .find_map(|definition| match definition {
-                                GoToDefinitionLink::Text(link) => {
-                                    link.origin.as_ref().map(|origin| {
-                                        let buffer = origin.buffer.read(cx);
-                                        format!(
-                                            "Definitions for {}",
-                                            buffer
-                                                .text_for_range(origin.range.clone())
-                                                .collect::<String>()
-                                        )
-                                    })
-                                }
-                                GoToDefinitionLink::InlayHint(_, _) => None,
+                                HoverLink::Text(link) => link.origin.as_ref().map(|origin| {
+                                    let buffer = origin.buffer.read(cx);
+                                    format!(
+                                        "Definitions for {}",
+                                        buffer
+                                            .text_for_range(origin.range.clone())
+                                            .collect::<String>()
+                                    )
+                                }),
+                                HoverLink::InlayHint(_, _) => None,
+                                HoverLink::Url(_) => None,
                             })
                             .unwrap_or("Definitions".to_string());
                         let location_tasks = definitions
                             .into_iter()
                             .map(|definition| match definition {
-                                GoToDefinitionLink::Text(link) => {
-                                    Task::Ready(Some(Ok(Some(link.target))))
-                                }
-                                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                                HoverLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                                HoverLink::InlayHint(lsp_location, server_id) => {
                                     editor.compute_target_location(lsp_location, server_id, cx)
                                 }
+                                HoverLink::Url(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
                         (title, location_tasks)

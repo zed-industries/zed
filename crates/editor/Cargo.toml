@@ -20,7 +20,7 @@ test-support = [
     "util/test-support",
     "workspace/test-support",
     "tree-sitter-rust",
-    "tree-sitter-typescript"
+    "tree-sitter-typescript",
 ]
 
 [dependencies]
@@ -33,13 +33,14 @@ convert_case = "0.6.0"
 copilot = { path = "../copilot" }
 db = { path = "../db" }
 futures.workspace = true
-fuzzy = {  path = "../fuzzy" }
+fuzzy = { path = "../fuzzy" }
 git = { path = "../git" }
 gpui = { path = "../gpui" }
 indoc = "1.0.4"
 itertools = "0.10"
 language = { path = "../language" }
 lazy_static.workspace = true
+linkify = "0.10.0"
 log.workspace = true
 lsp = { path = "../lsp" }
 multi_buffer = { path = "../multi_buffer" }
