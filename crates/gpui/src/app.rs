@@ -652,27 +652,20 @@ impl AppContext {
                     }
                 }
             } else {
-                for window in self.windows.values() {
-                    if let Some(window) = window.as_ref() {
-                        if window.dirty {
-                            window.platform_window.invalidate();
-                        }
-                    }
-                }
-
                 #[cfg(any(test, feature = "test-support"))]
                 for window in self
                     .windows
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        window.dirty.then_some(window.handle)
+                        window.dirty.get().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
                     self.update_window(window, |_, cx| cx.draw()).unwrap();
                 }
 
+                #[allow(clippy::collapsible_else_if)]
                 if self.pending_effects.is_empty() {
                     break;
                 }
@@ -749,7 +742,7 @@ impl AppContext {
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
-                window.dirty = true;
+                window.dirty.set(true);
             }
         }
     }
