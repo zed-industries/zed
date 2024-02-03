@@ -737,7 +737,7 @@ impl Render for ChatPanel {
                                         ),
                                 )
                                 .child(
-                                    h_flex().rounded_md().h_full().child(
+                                    h_flex().h_full().child(
                                         div()
                                             .id("reply-preview-body-container")
                                             .overflow_y_scroll()
