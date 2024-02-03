@@ -236,6 +236,7 @@ impl ChatPanel {
                 let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
                 self.message_editor.update(cx, |editor, cx| {
                     editor.set_channel(channel_id, channel_name, cx);
+                    editor.clear_reply_to_message_id();
                 });
             };
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
