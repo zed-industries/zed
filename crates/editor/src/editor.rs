@@ -374,6 +374,7 @@ pub struct Editor {
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
+    show_breadcrumbs: bool,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -1448,6 +1449,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
+            show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
@@ -8762,8 +8764,9 @@ impl Editor {
             )),
             cx,
         );
-        self.scroll_manager.vertical_scroll_margin =
-            EditorSettings::get_global(cx).vertical_scroll_margin;
+        let editor_settings = EditorSettings::get_global(cx);
+        self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
+        self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
         cx.notify();
     }
 
