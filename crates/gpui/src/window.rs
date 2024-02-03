@@ -276,9 +276,6 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) focus_invalidated: bool,
 }
 
 #[derive(Default, Debug)]
@@ -418,9 +415,6 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
-
-            #[cfg(any(test, feature = "test-support"))]
-            focus_invalidated: false,
         }
     }
 }
@@ -505,12 +499,6 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .clear_pending_keystrokes();
-
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.window.focus_invalidated = true;
-        }
-
         self.refresh();
     }
 
@@ -931,11 +919,6 @@ impl<'a> WindowContext<'a> {
     pub(crate) fn draw(&mut self) {
         self.window.dirty = false;
         self.window.drawing = true;
-
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.window.focus_invalidated = false;
-        }
 
         if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
         {
