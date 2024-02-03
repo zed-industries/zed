@@ -28,6 +28,7 @@ use futures::{
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 pub use highlight_map::HighlightMap;
+use language_settings::AllLanguageSettings;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};
@@ -35,6 +36,7 @@ use postage::watch;
 use regex::Regex;
 use serde::{de, Deserialize, Deserializer};
 use serde_json::Value;
+use settings::Settings;
 use std::{
     any::Any,
     borrow::Cow,
@@ -890,20 +892,28 @@ impl LanguageRegistry {
         })
     }
 
+    /// context_info is a (worktree ID, &AppContext),
+    /// which will be used to load user's custom file association settings.
     pub fn language_for_file(
         self: &Arc<Self>,
         path: impl AsRef<Path>,
+        context_info: Option<(usize, &AppContext)>,
         content: Option<&Rope>,
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
+        let associations = context_info.map(|(worktree_id, cx)| {
+            &AllLanguageSettings::get(Some((worktree_id, path)), cx).associations
+        });
         self.get_or_load_language(|config| {
-            let path_matches = config
-                .path_suffixes
-                .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+            // Give higher priority to user's custom settings
+            let path_matches = associations
+                .and_then(|associations| associations.get(&config.name))
+                .map_or(false, |custom_suffixes| {
+                    custom_suffixes.iter().any(|suffix| path_suffixes.contains(&Some(suffix)))
+                }) || config.path_suffixes.iter().any(|suffix| path_suffixes.contains(&Some(suffix)));
             let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
                 false,
                 |(content, pattern)| {
@@ -2044,16 +2054,16 @@ mod tests {
         );
 
         languages
-            .language_for_file("the/script", None)
+            .language_for_file("the/script", None, None)
             .await
             .unwrap_err();
         languages
-            .language_for_file("the/script", Some(&"nothing".into()))
+            .language_for_file("the/script", None, Some(&"nothing".into()))
             .await
             .unwrap_err();
         assert_eq!(
             languages
-                .language_for_file("the/script", Some(&"#!/bin/env node".into()))
+                .language_for_file("the/script", None, Some(&"#!/bin/env node".into()))
                 .await
                 .unwrap()
                 .name()

@@ -2696,11 +2696,13 @@ impl Project {
     ) -> Option<()> {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
-        let full_path = buffer.file()?.full_path(cx);
+        let file = buffer.file()?;
+        let worktree_id = file.worktree_id();
+        let full_path = file.full_path(cx);
         let content = buffer.as_rope();
         let new_language = self
             .languages
-            .language_for_file(&full_path, Some(content))
+            .language_for_file(&full_path, Some((worktree_id, cx)), Some(content),)
             .now_or_never()?
             .ok()?;
         self.set_language_for_buffer(buffer_handle, new_language, cx);
@@ -3355,10 +3357,11 @@ impl Project {
             .filter_map(|buffer| {
                 let buffer = buffer.read(cx);
                 let file = File::from_dyn(buffer.file())?;
+                let worktree_id = file.worktree_id(cx).to_usize();
                 let full_path = file.full_path(cx);
                 let language = self
                     .languages
-                    .language_for_file(&full_path, Some(buffer.as_rope()))
+                    .language_for_file(&full_path, Some((worktree_id, cx)), Some(buffer.as_rope()))
                     .now_or_never()?
                     .ok()?;
                 Some((file.worktree.clone(), language))
@@ -4612,7 +4615,7 @@ impl Project {
                                 let adapter_language = adapter_language.clone();
                                 let language = this
                                     .languages
-                                    .language_for_file(&project_path.path, None)
+                                    .language_for_file(&project_path.path, Some((worktree_id.to_usize(), cx)), None)
                                     .unwrap_or_else(move |_| adapter_language);
                                 let language_server_name = adapter.name.clone();
                                 Some(async move {
@@ -8107,7 +8110,7 @@ impl Project {
             }
         })??;
         let buffer = this
-            .update(&mut cx, |this, cx| this.open_buffer_for_symbol(&symbol, cx))?
+            .update(&mut cx, |this, cx| this.open_buffer_for_symbol(&symbol, cx.into()))?
             .await?;
 
         this.update(&mut cx, |this, cx| {
@@ -8501,7 +8504,7 @@ impl Project {
                 path: PathBuf::from(serialized_symbol.path).into(),
             };
             let language = languages
-                .language_for_file(&path.path, None)
+                .language_for_file(&path.path, None, None)
                 .await
                 .log_err();
             Ok(Symbol {

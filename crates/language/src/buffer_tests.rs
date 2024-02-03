@@ -90,14 +90,14 @@ fn test_select_language() {
     // matching file extension
     assert_eq!(
         registry
-            .language_for_file("zed/lib.rs", None)
+            .language_for_file("zed/lib.rs", None, None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Rust".into())
     );
     assert_eq!(
         registry
-            .language_for_file("zed/lib.mk", None)
+            .language_for_file("zed/lib.mk", None, None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
@@ -106,7 +106,7 @@ fn test_select_language() {
     // matching filename
     assert_eq!(
         registry
-            .language_for_file("zed/Makefile", None)
+            .language_for_file("zed/Makefile", None, None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
@@ -115,21 +115,21 @@ fn test_select_language() {
     // matching suffix that is not the full file extension or filename
     assert_eq!(
         registry
-            .language_for_file("zed/cars", None)
+            .language_for_file("zed/cars", None, None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
         registry
-            .language_for_file("zed/a.cars", None)
+            .language_for_file("zed/a.cars", None, None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
         registry
-            .language_for_file("zed/sumk", None)
+            .language_for_file("zed/sumk", None, None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None

@@ -575,7 +575,7 @@ impl SemanticIndex {
                                 }
 
                                 if let Ok(language) = language_registry
-                                    .language_for_file(&absolute_path, None)
+                                    .language_for_file(&absolute_path, None, None)
                                     .await
                                 {
                                     // Test if file is valid parseable file
@@ -1137,7 +1137,7 @@ impl SemanticIndex {
 
                     for mut pending_file in pending_files {
                         if let Ok(language) = language_registry
-                            .language_for_file(&pending_file.relative_path, None)
+                            .language_for_file(&pending_file.relative_path, None, None)
                             .await
                         {
                             if !PARSEABLE_ENTIRE_FILE_TYPES.contains(&language.name().as_ref())

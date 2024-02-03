@@ -44,6 +44,7 @@ pub struct AllLanguageSettings {
     pub copilot: CopilotSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
+    pub associations: HashMap<Arc<str>, Vec<Arc<str>>>
 }
 
 /// The settings for a particular language.
@@ -119,6 +120,8 @@ pub struct AllLanguageSettingsContent {
     /// The settings for individual languages.
     #[serde(default, alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
+    #[serde(default)]
+    pub associations: HashMap<Arc<str>, Vec<Arc<str>>>
 }
 
 /// The settings for a particular language.
@@ -473,6 +476,11 @@ impl settings::Settings for AllLanguageSettings {
             }
         }
 
+        let mut associations = default_value.associations.clone();
+        for map in user_settings.iter().map(|s| &s.associations) {
+            associations.extend(map.clone());
+        }
+
         Ok(Self {
             copilot: CopilotSettings {
                 feature_enabled: copilot_enabled,
@@ -483,6 +491,7 @@ impl settings::Settings for AllLanguageSettings {
             },
             defaults,
             languages,
+            associations
         })
     }
 
