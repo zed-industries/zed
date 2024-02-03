@@ -417,6 +417,7 @@ impl ChatPanel {
                             div()
                                 .border_l_2()
                                 .rounded_md()
+                                .text_ui_xs()
                                 .border_color(cx.theme().colors().border)
                                 .px_1()
                                 .py_0p5()
