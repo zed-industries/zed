@@ -723,7 +723,7 @@ impl Render for ChatPanel {
                                         )
                                         .gap_1()
                                         .child(
-                                            IconButton::new("remove-reply", IconName::Close)
+                                            IconButton::new("close-reply-preview", IconName::Close)
                                                 .shape(ui::IconButtonShape::Square)
                                                 .on_click(cx.listener(move |this, _, cx| {
                                                     this.message_editor.update(cx, |editor, _| {
