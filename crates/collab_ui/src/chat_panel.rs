@@ -490,19 +490,21 @@ impl ChatPanel {
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
         let menu = {
-            let this = this.clone();
-            let this2 = this.clone(); //TODO: fixme later
-            ContextMenu::build(cx, move |menu, _| {
-                menu.entry("Reply to message", None, move |cx| {
-                    this2.update(cx, |this, cx| {
+            ContextMenu::build(cx, move |menu, cx| {
+                menu.entry(
+                    "Reply to message",
+                    None,
+                    cx.handler_for(&this, move |this, cx| {
                         this.message_editor
                             .update(cx, |editor, _| editor.set_reply_to_message_id(message_id))
-                    })
-                })
+                    }),
+                )
                 .when(can_delete_message, move |menu| {
-                    menu.entry("Delete message", None, move |cx| {
-                        this.update(cx, |this, cx| this.remove_message(message_id, cx))
-                    })
+                    menu.entry(
+                        "Delete messsage",
+                        None,
+                        cx.handler_for(&this, move |this, cx| this.remove_message(message_id, cx)),
+                    )
                 })
             })
         };
