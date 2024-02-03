@@ -648,7 +648,7 @@ mod tests {
     use workspace::item::Item;
 
     #[gpui::test]
-    async fn test_link_go_to_type_definition(cx: &mut gpui::TestAppContext) {
+    async fn test_hover_type_links(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
         let mut cx = EditorLspTestContext::new_rust(
@@ -721,7 +721,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_link_go_to_definition(cx: &mut gpui::TestAppContext) {
+    async fn test_hover_links(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
         let mut cx = EditorLspTestContext::new_rust(
@@ -981,7 +981,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_link_go_to_inlay(cx: &mut gpui::TestAppContext) {
+    async fn test_inlay_hover_links(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,

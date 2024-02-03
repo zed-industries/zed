@@ -22,9 +22,9 @@ mod inlay_hint_cache;
 mod debounced_delay;
 mod git;
 mod highlight_matching_bracket;
+mod hover_links;
 mod hover_popover;
 pub mod items;
-mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
@@ -77,7 +77,7 @@ use language::{
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
-use link_go_to_definition::{HoverLink, HoveredLinkState, InlayHighlight};
+use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;

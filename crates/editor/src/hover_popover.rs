@@ -1,6 +1,6 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
-    link_go_to_definition::{InlayHighlight, RangeInEditor},
+    hover_links::{InlayHighlight, RangeInEditor},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
     ExcerptId, Hover, RangeToAnchorExt,
 };
@@ -605,8 +605,8 @@ mod tests {
     use crate::{
         editor_tests::init_test,
         element::PointForPosition,
+        hover_links::update_inlay_link_and_hover_points,
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
-        link_go_to_definition::update_inlay_link_and_hover_points,
         test::editor_lsp_test_context::EditorLspTestContext,
         InlayId,
     };
