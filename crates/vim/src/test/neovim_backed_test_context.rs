@@ -1,4 +1,4 @@
-use editor::{scroll::VERTICAL_SCROLL_MARGIN, test::editor_test_context::ContextHandle};
+use editor::test::editor_test_context::ContextHandle;
 use gpui::{px, size, Context};
 use indoc::indoc;
 use settings::SettingsStore;
@@ -155,9 +155,7 @@ impl NeovimBackedTestContext {
 
     pub async fn set_scroll_height(&mut self, rows: u32) {
         // match Zed's scrolling behavior
-        self.neovim
-            .set_option(&format!("scrolloff={}", VERTICAL_SCROLL_MARGIN))
-            .await;
+        self.neovim.set_option(&format!("scrolloff={}", 3)).await;
         // +2 to account for the vim command UI at the bottom.
         self.neovim.set_option(&format!("lines={}", rows + 2)).await;
         let (line_height, visible_line_count) = self.editor(|editor, cx| {

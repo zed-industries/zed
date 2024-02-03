@@ -1,11 +1,10 @@
 use crate::Vim;
 use editor::{
-    display_map::ToDisplayPoint,
-    scroll::{ScrollAmount, VERTICAL_SCROLL_MARGIN},
-    DisplayPoint, Editor,
+    display_map::ToDisplayPoint, scroll::ScrollAmount, DisplayPoint, Editor, EditorSettings,
 };
 use gpui::{actions, ViewContext};
 use language::Bias;
+use settings::Settings;
 use workspace::Workspace;
 
 actions!(
@@ -77,6 +76,7 @@ fn scroll_editor(
         };
 
         let top_anchor = editor.scroll_manager.anchor().anchor;
+        let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
 
         editor.change_selections(None, cx, |s| {
             s.move_with(|map, selection| {
@@ -88,8 +88,8 @@ fn scroll_editor(
                     let new_row = top.row() + selection.head().row() - old_top.row();
                     head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
                 }
-                let min_row = top.row() + VERTICAL_SCROLL_MARGIN as u32;
-                let max_row = top.row() + visible_rows - VERTICAL_SCROLL_MARGIN as u32 - 1;
+                let min_row = top.row() + vertical_scroll_margin as u32;
+                let max_row = top.row() + visible_rows - vertical_scroll_margin as u32 - 1;
 
                 let new_head = if head.row() < min_row {
                     map.clip_point(DisplayPoint::new(min_row, head.column()), Bias::Left)

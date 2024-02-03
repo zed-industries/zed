@@ -364,7 +364,7 @@ impl TerminalBuilder {
             pty,
             pty_options.hold,
             false,
-        );
+        )?;
 
         //Kick things off
         let pty_tx = event_loop.channel();

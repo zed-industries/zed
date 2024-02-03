@@ -16,8 +16,8 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSPoint, NSRect,
-        NSSize, NSString, NSUInteger,
+        NSArray, NSAutoreleasePool, NSDefaultRunLoopMode, NSDictionary, NSFastEnumeration,
+        NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger,
     },
 };
 use core_graphics::display::CGRect;
@@ -321,6 +321,7 @@ struct MacWindowState {
     executor: ForegroundExecutor,
     native_window: id,
     native_view: NonNull<id>,
+    display_link: id,
     renderer: MetalRenderer,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
@@ -458,6 +459,7 @@ impl MacWindow {
         handle: AnyWindowHandle,
         options: WindowOptions,
         executor: ForegroundExecutor,
+        instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -522,6 +524,10 @@ impl MacWindow {
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
 
+            let display_link: id = msg_send![class!(CADisplayLink), displayLinkWithTarget: native_view selector: sel!(displayLayer:)];
+            let main_run_loop: id = msg_send![class!(NSRunLoop), mainRunLoop];
+            let _: () =
+                msg_send![display_link, addToRunLoop: main_run_loop forMode: NSDefaultRunLoopMode];
             assert!(!native_view.is_null());
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -529,7 +535,8 @@ impl MacWindow {
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view as *mut _),
-                renderer: MetalRenderer::new(true),
+                display_link,
+                renderer: MetalRenderer::new(instance_buffer_pool),
                 kind: options.kind,
                 request_frame_callback: None,
                 event_callback: None,
@@ -687,6 +694,9 @@ impl Drop for MacWindow {
     fn drop(&mut self) {
         let this = self.0.lock();
         let window = this.native_window;
+        unsafe {
+            let _: () = msg_send![this.display_link, invalidate];
+        }
         this.executor
             .spawn(async move {
                 unsafe {
@@ -997,13 +1007,6 @@ impl PlatformWindow for MacWindow {
                 // Someone else's window is on top
                 false
             }
-        }
-    }
-
-    fn invalidate(&self) {
-        let this = self.0.lock();
-        unsafe {
-            let _: () = msg_send![this.native_window.contentView(), setNeedsDisplay: YES];
         }
     }
 
