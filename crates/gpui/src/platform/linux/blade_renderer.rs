@@ -285,6 +285,7 @@ impl BladeRenderer {
         self.command_encoder.start();
         self.command_encoder.init_texture(frame.texture());
 
+        self.atlas.before_frame(&mut self.command_encoder);
         self.rasterize_paths(scene.paths());
 
         let globals = GlobalParams {
@@ -365,7 +366,11 @@ impl BladeRenderer {
 
         self.command_encoder.present(frame);
         let sync_point = self.gpu.submit(&mut self.command_encoder);
+
         self.instance_belt.flush(&sync_point);
+        self.atlas.after_frame(&sync_point);
+        self.atlas.clear_textures(AtlasTextureKind::Path);
+
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
     }

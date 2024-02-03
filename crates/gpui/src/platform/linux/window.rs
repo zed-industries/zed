@@ -244,7 +244,7 @@ impl LinuxWindowState {
 
     pub fn configure(&self, bounds: Bounds<i32>) {
         let mut resize_args = None;
-        let mut do_move = false;
+        let do_move;
         {
             let mut inner = self.inner.lock();
             let old_bounds = mem::replace(&mut inner.bounds, bounds);
@@ -393,7 +393,7 @@ impl PlatformWindow for LinuxWindow {
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
-        let mut inner = self.0.inner.lock();
+        let inner = self.0.inner.lock();
         inner.renderer.atlas().clone()
     }
 }

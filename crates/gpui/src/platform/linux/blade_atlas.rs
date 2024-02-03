@@ -14,14 +14,20 @@ pub(crate) const PATH_TEXTURE_FORMAT: gpu::TextureFormat = gpu::TextureFormat::R
 
 pub(crate) struct BladeAtlas(Mutex<BladeAtlasState>);
 
+struct PendingUpload {
+    id: AtlasTextureId,
+    bounds: Bounds<DevicePixels>,
+    data: gpu::BufferPiece,
+}
+
 struct BladeAtlasState {
     gpu: Arc<gpu::Context>,
-    gpu_encoder: gpu::CommandEncoder,
     upload_belt: BladeBelt,
     monochrome_textures: Vec<BladeAtlasTexture>,
     polychrome_textures: Vec<BladeAtlasTexture>,
     path_textures: Vec<BladeAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    uploads: Vec<PendingUpload>,
 }
 
 impl BladeAtlasState {
@@ -36,7 +42,6 @@ impl BladeAtlasState {
             self.gpu.destroy_texture(texture.raw);
             self.gpu.destroy_texture_view(texture.raw_view.unwrap());
         }
-        self.gpu.destroy_command_encoder(&mut self.gpu_encoder);
         self.upload_belt.destroy(&self.gpu);
     }
 }
@@ -50,10 +55,6 @@ impl BladeAtlas {
     pub(crate) fn new(gpu: &Arc<gpu::Context>) -> Self {
         BladeAtlas(Mutex::new(BladeAtlasState {
             gpu: Arc::clone(gpu),
-            gpu_encoder: gpu.create_command_encoder(gpu::CommandEncoderDesc {
-                name: "atlas",
-                buffer_count: 3,
-            }),
             upload_belt: BladeBelt::new(BladeBeltDescriptor {
                 memory: gpu::Memory::Upload,
                 min_chunk_size: 0x10000,
@@ -62,6 +63,7 @@ impl BladeAtlas {
             polychrome_textures: Default::default(),
             path_textures: Default::default(),
             tiles_by_key: Default::default(),
+            uploads: Vec::new(),
         }))
     }
 
@@ -81,22 +83,19 @@ impl BladeAtlas {
         }
     }
 
-    pub fn start_frame(&self) {
-        let mut lock = self.0.lock();
-        lock.gpu_encoder.start();
-    }
-
     pub fn allocate(&self, size: Size<DevicePixels>, texture_kind: AtlasTextureKind) -> AtlasTile {
         let mut lock = self.0.lock();
         lock.allocate(size, texture_kind)
     }
 
-    pub fn finish_frame(&self) -> gpu::SyncPoint {
+    pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
         let mut lock = self.0.lock();
-        let gpu = lock.gpu.clone();
-        let sync_point = gpu.submit(&mut lock.gpu_encoder);
-        lock.upload_belt.flush(&sync_point);
-        sync_point
+        lock.flush(gpu_encoder.transfer());
+    }
+
+    pub fn after_frame(&self, sync_point: &gpu::SyncPoint) {
+        let mut lock = self.0.lock();
+        lock.upload_belt.flush(sync_point);
     }
 
     pub fn get_texture_info(&self, id: AtlasTextureId) -> BladeTextureInfo {
@@ -186,7 +185,7 @@ impl BladeAtlasState {
         }
 
         let raw = self.gpu.create_texture(gpu::TextureDesc {
-            name: "",
+            name: "atlas",
             format,
             size: gpu::Extent {
                 width: size.width.into(),
@@ -230,31 +229,39 @@ impl BladeAtlasState {
     }
 
     fn upload_texture(&mut self, id: AtlasTextureId, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
-        let textures = match id.kind {
-            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
-            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-            crate::AtlasTextureKind::Path => &self.path_textures,
-        };
-        let texture = &textures[id.index as usize];
+        let data = self.upload_belt.alloc_data(bytes, &self.gpu);
+        self.uploads.push(PendingUpload { id, bounds, data });
+    }
 
-        let src_data = self.upload_belt.alloc_data(bytes, &self.gpu);
+    fn flush(&mut self, mut transfers: gpu::TransferCommandEncoder) {
+        for upload in self.uploads.drain(..) {
+            let textures = match upload.id.kind {
+                crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
+                crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
+                crate::AtlasTextureKind::Path => &self.path_textures,
+            };
+            let texture = &textures[upload.id.index as usize];
 
-        let mut transfers = self.gpu_encoder.transfer();
-        transfers.copy_buffer_to_texture(
-            src_data,
-            bounds.size.width.to_bytes(texture.bytes_per_pixel()),
-            gpu::TexturePiece {
-                texture: texture.raw,
-                mip_level: 0,
-                array_layer: 0,
-                origin: [bounds.origin.x.into(), bounds.origin.y.into(), 0],
-            },
-            gpu::Extent {
-                width: bounds.size.width.into(),
-                height: bounds.size.height.into(),
-                depth: 1,
-            },
-        );
+            transfers.copy_buffer_to_texture(
+                upload.data,
+                upload.bounds.size.width.to_bytes(texture.bytes_per_pixel()),
+                gpu::TexturePiece {
+                    texture: texture.raw,
+                    mip_level: 0,
+                    array_layer: 0,
+                    origin: [
+                        upload.bounds.origin.x.into(),
+                        upload.bounds.origin.y.into(),
+                        0,
+                    ],
+                },
+                gpu::Extent {
+                    width: upload.bounds.size.width.into(),
+                    height: upload.bounds.size.height.into(),
+                    depth: 1,
+                },
+            );
+        }
     }
 }
 
