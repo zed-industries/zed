@@ -2,7 +2,9 @@ mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 
+use collections::HashSet;
 use editor::{scroll::Autoscroll, Editor};
+use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, Pixels,
@@ -10,7 +12,7 @@ use gpui::{
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
-use project::{search::SearchQuery, LocalWorktree, Project};
+use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -177,8 +179,21 @@ impl TerminalView {
             Event::NewNavigationTarget(maybe_navigation_target) => {
                 this.can_navigate_to_selected_word = match maybe_navigation_target {
                     Some(MaybeNavigationTarget::Url(_)) => true,
-                    Some(MaybeNavigationTarget::PathLike(maybe_path)) => {
-                        !possible_open_targets(&workspace, maybe_path, cx).is_empty()
+                    Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
+                        if let Ok(fs) = workspace.update(cx, |workspace, cx| {
+                            workspace.project().read(cx).fs().clone()
+                        }) {
+                            let valid_files_to_open_task = possible_open_targets(
+                                fs,
+                                &workspace,
+                                &path_like_target.terminal_dir,
+                                &path_like_target.maybe_path,
+                                cx,
+                            );
+                            smol::block_on(valid_files_to_open_task).len() > 0
+                        } else {
+                            false
+                        }
                     }
                     None => false,
                 }
@@ -187,57 +202,60 @@ impl TerminalView {
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {
                 MaybeNavigationTarget::Url(url) => cx.open_url(url),
 
-                MaybeNavigationTarget::PathLike(maybe_path) => {
+                MaybeNavigationTarget::PathLike(path_like_target) => {
                     if !this.can_navigate_to_selected_word {
                         return;
                     }
-                    let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
-                    if let Some(path) = potential_abs_paths.into_iter().next() {
-                        let task_workspace = workspace.clone();
-                        cx.spawn(|_, mut cx| async move {
-                            let fs = task_workspace.update(&mut cx, |workspace, cx| {
-                                workspace.project().read(cx).fs().clone()
-                            })?;
-                            let is_dir = fs
-                                .metadata(&path.path_like)
-                                .await?
-                                .with_context(|| {
-                                    format!("Missing metadata for file {:?}", path.path_like)
-                                })?
-                                .is_dir;
-                            let opened_items = task_workspace
-                                .update(&mut cx, |workspace, cx| {
-                                    workspace.open_paths(
-                                        vec![path.path_like],
-                                        OpenVisible::OnlyDirectories,
-                                        None,
-                                        cx,
-                                    )
-                                })
-                                .context("workspace update")?
-                                .await;
-                            anyhow::ensure!(
-                                opened_items.len() == 1,
-                                "For a single path open, expected single opened item"
-                            );
-                            let opened_item = opened_items
-                                .into_iter()
-                                .next()
-                                .unwrap()
-                                .transpose()
-                                .context("path open")?;
-                            if is_dir {
-                                task_workspace.update(&mut cx, |workspace, cx| {
-                                    workspace.project().update(cx, |_, cx| {
-                                        cx.emit(project::Event::ActivateProjectPanel);
-                                    })
-                                })?;
-                            } else {
+                    let task_workspace = workspace.clone();
+                    let Some(fs) = workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.project().read(cx).fs().clone()
+                        })
+                        .ok()
+                    else {
+                        return;
+                    };
+
+                    let path_like_target = path_like_target.clone();
+                    cx.spawn(|terminal_view, mut cx| async move {
+                        let valid_files_to_open = terminal_view
+                            .update(&mut cx, |_, cx| {
+                                possible_open_targets(
+                                    fs,
+                                    &task_workspace,
+                                    &path_like_target.terminal_dir,
+                                    &path_like_target.maybe_path,
+                                    cx,
+                                )
+                            })?
+                            .await;
+                        let paths_to_open = valid_files_to_open
+                            .iter()
+                            .map(|(p, _)| p.path_like.clone())
+                            .collect();
+                        let opened_items = task_workspace
+                            .update(&mut cx, |workspace, cx| {
+                                workspace.open_paths(
+                                    paths_to_open,
+                                    OpenVisible::OnlyDirectories,
+                                    None,
+                                    cx,
+                                )
+                            })
+                            .context("workspace update")?
+                            .await;
+
+                        let mut has_dirs = false;
+                        for ((path, metadata), opened_item) in valid_files_to_open
+                            .into_iter()
+                            .zip(opened_items.into_iter())
+                        {
+                            if metadata.is_dir {
+                                has_dirs = true;
+                            } else if let Some(Ok(opened_item)) = opened_item {
                                 if let Some(row) = path.row {
                                     let col = path.column.unwrap_or(0);
-                                    if let Some(active_editor) =
-                                        opened_item.and_then(|item| item.downcast::<Editor>())
-                                    {
+                                    if let Some(active_editor) = opened_item.downcast::<Editor>() {
                                         active_editor
                                             .downgrade()
                                             .update(&mut cx, |editor, cx| {
@@ -259,10 +277,19 @@ impl TerminalView {
                                     }
                                 }
                             }
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx);
-                    }
+                        }
+
+                        if has_dirs {
+                            task_workspace.update(&mut cx, |workspace, cx| {
+                                workspace.project().update(cx, |_, cx| {
+                                    cx.emit(project::Event::ActivateProjectPanel);
+                                })
+                            })?;
+                        }
+
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx)
                 }
             },
             Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
@@ -554,48 +581,87 @@ impl TerminalView {
     }
 }
 
+fn possible_open_paths_metadata(
+    fs: Arc<dyn Fs>,
+    row: Option<u32>,
+    column: Option<u32>,
+    potential_paths: HashSet<PathBuf>,
+    cx: &mut ViewContext<TerminalView>,
+) -> Task<Vec<(PathLikeWithPosition<PathBuf>, Metadata)>> {
+    cx.background_executor().spawn(async move {
+        let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
+
+        let mut fetch_metadata_tasks = potential_paths
+            .into_iter()
+            .map(|potential_path| async {
+                let metadata = fs.metadata(&potential_path).await.ok().flatten();
+                (
+                    PathLikeWithPosition {
+                        path_like: potential_path,
+                        row,
+                        column,
+                    },
+                    metadata,
+                )
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        while let Some((path, metadata)) = fetch_metadata_tasks.next().await {
+            if let Some(metadata) = metadata {
+                paths_with_metadata.push((path, metadata));
+            }
+        }
+
+        paths_with_metadata
+    })
+}
+
 fn possible_open_targets(
+    fs: Arc<dyn Fs>,
     workspace: &WeakView<Workspace>,
+    cwd: &Option<PathBuf>,
     maybe_path: &String,
-    cx: &mut ViewContext<'_, TerminalView>,
-) -> Vec<PathLikeWithPosition<PathBuf>> {
+    cx: &mut ViewContext<TerminalView>,
+) -> Task<Vec<(PathLikeWithPosition<PathBuf>, Metadata)>> {
     let path_like = PathLikeWithPosition::parse_str(maybe_path.as_str(), |path_str| {
         Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
     })
     .expect("infallible");
+    let row = path_like.row;
+    let column = path_like.column;
     let maybe_path = path_like.path_like;
     let potential_abs_paths = if maybe_path.is_absolute() {
-        vec![maybe_path]
+        HashSet::from_iter([maybe_path])
     } else if maybe_path.starts_with("~") {
         if let Some(abs_path) = maybe_path
             .strip_prefix("~")
             .ok()
             .and_then(|maybe_path| Some(dirs::home_dir()?.join(maybe_path)))
         {
-            vec![abs_path]
+            HashSet::from_iter([abs_path])
         } else {
-            Vec::new()
+            HashSet::default()
         }
-    } else if let Some(workspace) = workspace.upgrade() {
-        workspace.update(cx, |workspace, cx| {
-            workspace
-                .worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
-                .collect()
-        })
     } else {
-        Vec::new()
+        // First check cwd and then workspace
+        let mut potential_cwd_and_workspace_paths = HashSet::default();
+        if let Some(cwd) = cwd {
+            potential_cwd_and_workspace_paths.insert(Path::join(cwd, &maybe_path));
+        }
+        if let Some(workspace) = workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                for potential_worktree_path in workspace
+                    .worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
+                {
+                    potential_cwd_and_workspace_paths.insert(potential_worktree_path);
+                }
+            });
+        }
+        potential_cwd_and_workspace_paths
     };
 
-    potential_abs_paths
-        .into_iter()
-        .filter(|path| path.exists())
-        .map(|path| PathLikeWithPosition {
-            path_like: path,
-            row: path_like.row,
-            column: path_like.column,
-        })
-        .collect()
+    possible_open_paths_metadata(fs, row, column, potential_abs_paths, cx)
 }
 
 pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
