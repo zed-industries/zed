@@ -15,6 +15,19 @@ pub enum ParsedMarkdownElement {
     Paragraph(ParsedMarkdownText),
 }
 
+impl ParsedMarkdownElement {
+    pub fn source_range(&self) -> Range<usize> {
+        match self {
+            ParsedMarkdownElement::Heading(heading) => heading.source_range.clone(),
+            ParsedMarkdownElement::List(list) => list.source_range.clone(),
+            ParsedMarkdownElement::Table(table) => table.source_range.clone(),
+            ParsedMarkdownElement::BlockQuote(block_quote) => block_quote.source_range.clone(),
+            ParsedMarkdownElement::CodeBlock(code_block) => code_block.source_range.clone(),
+            ParsedMarkdownElement::Paragraph(text) => text.source_range.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdown {

@@ -5,15 +5,15 @@ use crate::markdown_elements::{
 };
 use gpui::{
     div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, ParentElement, Styled, StyledText,
-    TextStyle, WeakView, WindowContext,
+    HighlightStyle, Hsla, InteractiveText, IntoElement, ParentElement, SharedString, Styled,
+    StyledText, TextStyle, WeakView, WindowContext,
 };
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 use theme::{ActiveTheme, SyntaxTheme};
 use ui::{h_flex, v_flex, Label};
 use workspace::Workspace;
 
-struct RenderContext {
+pub struct RenderContext {
     workspace: Option<WeakView<Workspace>>,
     next_id: usize,
     text_style: TextStyle,
@@ -26,7 +26,7 @@ struct RenderContext {
 }
 
 impl RenderContext {
-    fn new(workspace: Option<WeakView<Workspace>>, cx: &WindowContext) -> RenderContext {
+    pub fn new(workspace: Option<WeakView<Workspace>>, cx: &WindowContext) -> RenderContext {
         let theme = cx.theme().clone();
 
         RenderContext {
@@ -42,14 +42,14 @@ impl RenderContext {
         }
     }
 
-    fn next_id(&mut self) -> ElementId {
-        let id = self.next_id;
+    fn next_id(&mut self, span: &Range<usize>) -> ElementId {
+        let id = format!("markdown-{}-{}-{}", self.next_id, span.start, span.end);
         self.next_id += 1;
-        ElementId::from(id)
+        ElementId::from(SharedString::from(id))
     }
 
     fn with_common_mb(&self, element: Div) -> Div {
-        element.mb_3()
+        element.pb_3()
     }
 }
 
@@ -68,7 +68,7 @@ pub fn render_parsed_markdown(
     return elements;
 }
 
-fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
+pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
     use ParsedMarkdownElement::*;
     match block {
         Paragraph(text) => render_markdown_paragraph(text, cx),
@@ -102,8 +102,8 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .line_height(line_height)
         .text_size(size)
         .text_color(color)
-        .mb_4()
-        .pb(rems(0.15))
+        .pt(rems(0.15))
+        .pb_4()
         .child(render_markdown_text(&parsed.contents, cx))
         .into_any()
 }
@@ -226,7 +226,7 @@ fn render_markdown_paragraph(parsed: &ParsedMarkdownText, cx: &mut RenderContext
 }
 
 fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
-    let element_id = cx.next_id();
+    let element_id = cx.next_id(&parsed.source_range);
 
     let highlights = gpui::combine_highlights(
         parsed.highlights.iter().filter_map(|(range, highlight)| {
