@@ -1,35 +1,35 @@
 use editor::{Editor, EditorEvent};
 use gpui::{
     canvas, AnyElement, AppContext, AvailableSpace, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ParentElement, Render, Styled, View, ViewContext,
+    InteractiveElement, IntoElement, ParentElement, Render, Styled, View, ViewContext, WeakView,
 };
-use language::LanguageRegistry;
-use std::sync::Arc;
 use ui::prelude::*;
 use workspace::item::Item;
 use workspace::Workspace;
 
-use crate::{markdown_renderer::render_markdown, OpenPreview};
+use crate::{
+    markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
+    markdown_renderer::render_parsed_markdown, OpenPreview,
+};
 
 pub struct MarkdownPreviewView {
+    workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
-    languages: Arc<LanguageRegistry>,
-    contents: String,
+    contents: ParsedMarkdown,
 }
 
 impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
-        let languages = workspace.app_state().languages.clone();
-
         workspace.register_action(move |workspace, _: &OpenPreview, cx| {
             if workspace.has_active_modal(cx) {
                 cx.propagate();
                 return;
             }
-            let languages = languages.clone();
+
             if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
+                let workspace_handle = workspace.weak_handle();
                 let view: View<MarkdownPreviewView> =
-                    cx.new_view(|cx| MarkdownPreviewView::new(editor, languages, cx));
+                    cx.new_view(|cx| MarkdownPreviewView::new(editor, workspace_handle, cx));
                 workspace.split_item(workspace::SplitDirection::Right, Box::new(view.clone()), cx);
                 cx.notify();
             }
@@ -38,7 +38,7 @@ impl MarkdownPreviewView {
 
     pub fn new(
         active_editor: View<Editor>,
-        languages: Arc<LanguageRegistry>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -47,7 +47,7 @@ impl MarkdownPreviewView {
             if *event == EditorEvent::Edited {
                 let editor = editor.read(cx);
                 let contents = editor.buffer().read(cx).snapshot(cx).text();
-                this.contents = contents;
+                this.contents = parse_markdown(&contents);
                 cx.notify();
             }
         })
@@ -58,8 +58,8 @@ impl MarkdownPreviewView {
 
         Self {
             focus_handle,
-            languages,
-            contents,
+            workspace,
+            contents: parse_markdown(&contents),
         }
     }
 }
@@ -119,7 +119,11 @@ impl Render for MarkdownPreviewView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
-            .children(render_markdown(&self.contents, &self.languages, cx));
+            .children(render_parsed_markdown(
+                &self.contents,
+                Some(self.workspace.clone()),
+                cx,
+            ));
 
         div().flex_1().child(
             // FIXME: This shouldn't be necessary
