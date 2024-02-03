@@ -9,10 +9,6 @@ use crate::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     items::BufferSearchHighlights,
-    link_go_to_definition::{
-        go_to_fetched_definition, go_to_fetched_type_definition, hide_link_definition,
-        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
-    },
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
@@ -373,39 +369,19 @@ impl EditorElement {
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) {
-        let pending_selection = editor.has_pending_selection();
         let mouse_position = cx.mouse_position();
-        let was_top = cx.was_top_layer(&mouse_position, stacking_order);
-
-        if event.command && !pending_selection && text_bounds.contains(&mouse_position) && was_top {
-            let point_for_position = position_map.point_for_position(text_bounds, mouse_position);
-
-            match point_for_position.as_valid() {
-                Some(point) => {
-                    update_go_to_definition_link(
-                        editor,
-                        Some(GoToDefinitionTrigger::Text(point)),
-                        event.modifiers.command,
-                        event.modifiers.shift,
-                        cx,
-                    );
-                    hover_at(editor, Some(point), cx);
-                    Self::update_visible_cursor(editor, point, position_map, cx);
-                }
-                None => {
-                    update_inlay_link_and_hover_points(
-                        &position_map.snapshot,
-                        point_for_position,
-                        editor,
-                        event.modifiers.command,
-                        event.modifiers.shift,
-                        cx,
-                    );
-                }
-            }
-        } else {
-            hide_link_definition(editor, cx)
+        if !text_bounds.contains(&mouse_position)
+            || !cx.was_top_layer(&mouse_position, stacking_order)
+        {
+            return;
         }
+
+        editor.update_hovered_link(
+            position_map.point_for_position(text_bounds, mouse_position),
+            &position_map.snapshot,
+            event.modifiers,
+            cx,
+        )
     }
 
     fn mouse_left_down(
@@ -506,13 +482,7 @@ impl EditorElement {
             && cx.was_top_layer(&event.position, stacking_order)
         {
             let point = position_map.point_for_position(text_bounds, event.position);
-            let could_be_inlay = point.as_valid().is_none();
-            let split = event.modifiers.alt;
-            if event.modifiers.shift || could_be_inlay {
-                go_to_fetched_type_definition(editor, point, split, cx);
-            } else {
-                go_to_fetched_definition(editor, point, split, cx);
-            }
+            editor.handle_click_hovered_link(point, event.modifiers, cx);
 
             cx.stop_propagation();
         } else if end_selection {
@@ -585,31 +555,14 @@ impl EditorElement {
         if text_hovered && was_top {
             let point_for_position = position_map.point_for_position(text_bounds, event.position);
 
-            match point_for_position.as_valid() {
-                Some(point) => {
-                    update_go_to_definition_link(
-                        editor,
-                        Some(GoToDefinitionTrigger::Text(point)),
-                        modifiers.command,
-                        modifiers.shift,
-                        cx,
-                    );
-                    hover_at(editor, Some(point), cx);
-                    Self::update_visible_cursor(editor, point, position_map, cx);
-                }
-                None => {
-                    update_inlay_link_and_hover_points(
-                        &position_map.snapshot,
-                        point_for_position,
-                        editor,
-                        modifiers.command,
-                        modifiers.shift,
-                        cx,
-                    );
-                }
+            editor.update_hovered_link(point_for_position, &position_map.snapshot, modifiers, cx);
+
+            if let Some(point) = point_for_position.as_valid() {
+                hover_at(editor, Some(point), cx);
+                Self::update_visible_cursor(editor, point, position_map, cx);
             }
         } else {
-            hide_link_definition(editor, cx);
+            editor.hide_hovered_link(cx);
             hover_at(editor, None, cx);
             if gutter_hovered && was_top {
                 cx.stop_propagation();
@@ -953,9 +906,7 @@ impl EditorElement {
                         .read(cx)
                         .hovered_link_state
                         .as_ref()
-                        .is_some_and(|hovered_link_state| {
-                            !hovered_link_state.definitions.is_empty()
-                        })
+                        .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
                     {
                         cx.set_cursor_style(CursorStyle::PointingHand);
                     } else {
@@ -3247,16 +3198,6 @@ pub struct PointForPosition {
 }
 
 impl PointForPosition {
-    #[cfg(test)]
-    pub fn valid(valid: DisplayPoint) -> Self {
-        Self {
-            previous_valid: valid,
-            next_valid: valid,
-            exact_unclipped: valid,
-            column_overshoot_after_line_end: 0,
-        }
-    }
-
     pub fn as_valid(&self) -> Option<DisplayPoint> {
         if self.previous_valid == self.exact_unclipped && self.next_valid == self.exact_unclipped {
             Some(self.previous_valid)
