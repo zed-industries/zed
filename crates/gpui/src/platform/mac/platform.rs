@@ -146,6 +146,7 @@ pub(crate) struct MacPlatformState {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<MacTextSystem>,
     display_linker: MacDisplayLinker,
+    instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
     pasteboard: id,
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
@@ -176,6 +177,7 @@ impl MacPlatform {
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system: Arc::new(MacTextSystem::new()),
             display_linker: MacDisplayLinker::new(),
+            instance_buffer_pool: Arc::default(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
@@ -494,7 +496,13 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(MacWindow::open(handle, options, self.foreground_executor()))
+        let instance_buffer_pool = self.0.lock().instance_buffer_pool.clone();
+        Box::new(MacWindow::open(
+            handle,
+            options,
+            self.foreground_executor(),
+            instance_buffer_pool,
+        ))
     }
 
     fn set_display_link_output_callback(

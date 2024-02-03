@@ -458,6 +458,7 @@ impl MacWindow {
         handle: AnyWindowHandle,
         options: WindowOptions,
         executor: ForegroundExecutor,
+        instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -529,7 +530,7 @@ impl MacWindow {
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view as *mut _),
-                renderer: MetalRenderer::new(true),
+                renderer: MetalRenderer::new(instance_buffer_pool),
                 kind: options.kind,
                 request_frame_callback: None,
                 event_callback: None,
