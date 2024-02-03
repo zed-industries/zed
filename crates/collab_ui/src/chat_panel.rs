@@ -7,7 +7,7 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
-    actions, div, list, prelude::*, px, red, Action, AppContext, AsyncWindowContext, CursorStyle,
+    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, CursorStyle,
     DismissEvent, ElementId, EventEmitter, Fill, FocusHandle, FocusableView, FontStyle, FontWeight,
     HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
     Subscription, Task, View, ViewContext, VisualContext, WeakView,
@@ -318,9 +318,6 @@ impl ChatPanel {
             });
 
         let _is_pending = message.is_pending();
-        let text = self.markdown_data.entry(message.id).or_insert_with(|| {
-            Self::render_markdown_with_mentions(&self.languages, self.client.id(), &message)
-        });
 
         let belongs_to_user = Some(message.sender.id) == self.client.user_id();
         let can_delete_message = belongs_to_user || is_admin;
@@ -350,12 +347,15 @@ impl ChatPanel {
         let reply_to_message_info = if let Some(reply_to_message) = &reply_to_message {
             Some((
                 reply_to_message,
-                Self::render_markdown_with_mentions(
-                    // TODO: ALLOW to cache
-                    &self.languages,
-                    self.client.id(),
-                    reply_to_message,
-                ),
+                self.markdown_data
+                    .entry(reply_to_message.id)
+                    .or_insert_with(|| {
+                        Self::render_markdown_with_mentions(
+                            &self.languages,
+                            self.client.id(),
+                            reply_to_message,
+                        )
+                    }),
             ))
         } else {
             None
@@ -488,42 +488,51 @@ impl ChatPanel {
                     )
                 })
                 .when(mentioning_you, |this| this.mt_1())
-                .child(
-                    v_flex()
-                        .w_full()
-                        .text_ui_sm()
-                        .id(element_id)
-                        .group("")
-                        .child(text.element("body".into(), cx))
-                        .child(
-                            div()
-                                .absolute()
-                                .z_index(1)
-                                .right_0()
-                                .w_6()
-                                .bg(cx.theme().colors().panel_background)
-                                .when(!self.has_open_menu(message_id), |el| {
-                                    el.visible_on_hover("")
-                                })
-                                .when_some(message_id, |el, message_id| {
-                                    el.child(
-                                        popover_menu(("menu", message_id))
-                                            .trigger(IconButton::new(
-                                                ("trigger", message_id),
-                                                IconName::Ellipsis,
-                                            ))
-                                            .menu(move |cx| {
-                                                Some(Self::render_message_menu(
-                                                    &this,
-                                                    message_id,
-                                                    can_delete_message,
-                                                    cx,
+                .map(|el| {
+                    let text = self.markdown_data.entry(message.id).or_insert_with(|| {
+                        Self::render_markdown_with_mentions(
+                            &self.languages,
+                            self.client.id(),
+                            &message,
+                        )
+                    });
+                    el.child(
+                        v_flex()
+                            .w_full()
+                            .text_ui_sm()
+                            .id(element_id)
+                            .group("")
+                            .child(text.element("body".into(), cx))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .z_index(1)
+                                    .right_0()
+                                    .w_6()
+                                    .bg(cx.theme().colors().panel_background)
+                                    .when(!self.has_open_menu(message_id), |el| {
+                                        el.visible_on_hover("")
+                                    })
+                                    .when_some(message_id, |el, message_id| {
+                                        el.child(
+                                            popover_menu(("menu", message_id))
+                                                .trigger(IconButton::new(
+                                                    ("trigger", message_id),
+                                                    IconName::Ellipsis,
                                                 ))
-                                            }),
-                                    )
-                                }),
-                        ),
-                ),
+                                                .menu(move |cx| {
+                                                    Some(Self::render_message_menu(
+                                                        &this,
+                                                        message_id,
+                                                        can_delete_message,
+                                                        cx,
+                                                    ))
+                                                }),
+                                        )
+                                    }),
+                            ),
+                    )
+                }),
         )
     }
 
