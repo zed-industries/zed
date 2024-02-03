@@ -16,8 +16,8 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSPoint, NSRect,
-        NSSize, NSString, NSUInteger,
+        NSArray, NSAutoreleasePool, NSDefaultRunLoopMode, NSDictionary, NSFastEnumeration,
+        NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger,
     },
 };
 use core_graphics::display::CGRect;
@@ -168,6 +168,7 @@ unsafe fn build_classes() {
             sel!(displayLayer:),
             display_layer as extern "C" fn(&Object, Sel, id),
         );
+        decl.add_method(sel!(step:), step as extern "C" fn(&Object, Sel, id));
 
         decl.add_protocol(Protocol::get("NSTextInputClient").unwrap());
         decl.add_method(
@@ -261,6 +262,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_did_move as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
+        sel!(windowDidChangeScreen:),
+        window_did_change_screen as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
         sel!(windowDidBecomeKey:),
         window_did_change_key_status as extern "C" fn(&Object, Sel, id),
     );
@@ -320,7 +325,8 @@ struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
     native_window: id,
-    native_view: NonNull<id>,
+    native_view: NonNull<Object>,
+    display_link: id,
     renderer: MetalRenderer,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
@@ -522,14 +528,16 @@ impl MacWindow {
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
-
             assert!(!native_view.is_null());
+
+            let display_link = start_display_link(native_window, native_view);
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
                 native_window,
-                native_view: NonNull::new_unchecked(native_view as *mut _),
+                native_view: NonNull::new_unchecked(native_view),
+                display_link,
                 renderer: MetalRenderer::new(instance_buffer_pool),
                 kind: options.kind,
                 request_frame_callback: None,
@@ -664,6 +672,7 @@ impl MacWindow {
             }
 
             window.0.lock().move_traffic_light();
+
             pool.drain();
 
             window
@@ -684,10 +693,19 @@ impl MacWindow {
     }
 }
 
+unsafe fn start_display_link(native_screen: id, native_view: id) -> id {
+    let display_link: id =
+        msg_send![native_screen, displayLinkWithTarget: native_view selector: sel!(step:)];
+    let main_run_loop: id = msg_send![class!(NSRunLoop), mainRunLoop];
+    let _: () = msg_send![display_link, addToRunLoop: main_run_loop forMode: NSDefaultRunLoopMode];
+    display_link
+}
+
 impl Drop for MacWindow {
     fn drop(&mut self) {
-        let this = self.0.lock();
+        let mut this = self.0.lock();
         let window = this.native_window;
+        this.display_link = nil;
         this.executor
             .spawn(async move {
                 unsafe {
@@ -998,13 +1016,6 @@ impl PlatformWindow for MacWindow {
                 // Someone else's window is on top
                 false
             }
-        }
-    }
-
-    fn invalidate(&self) {
-        let this = self.0.lock();
-        unsafe {
-            let _: () = msg_send![this.native_window.contentView(), setNeedsDisplay: YES];
         }
     }
 
@@ -1354,6 +1365,19 @@ extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     }
 }
 
+extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    unsafe {
+        let screen = lock.native_window.screen();
+        if screen != nil {
+            lock.display_link = start_display_link(screen, lock.native_view.as_ptr());
+        } else {
+            lock.display_link = nil;
+        }
+    }
+}
+
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let lock = window_state.lock();
@@ -1500,6 +1524,22 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
         drop(lock);
         callback();
         window_state.lock().request_frame_callback = Some(callback);
+    }
+}
+
+extern "C" fn step(this: &Object, _: Sel, display_link: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.lock();
+    if lock.display_link == display_link {
+        if let Some(mut callback) = lock.request_frame_callback.take() {
+            drop(lock);
+            callback();
+            window_state.lock().request_frame_callback = Some(callback);
+        }
+    } else {
+        unsafe {
+            let _: () = msg_send![display_link, invalidate];
+        }
     }
 }
 
