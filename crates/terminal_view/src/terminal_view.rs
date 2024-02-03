@@ -9,6 +9,7 @@ use gpui::{
     Render, Styled, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
+use lazy_static::lazy_static;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, LocalWorktree, Project};
 use terminal::{
@@ -38,6 +39,7 @@ use settings::Settings;
 use smol::Timer;
 
 use std::{
+    collections::HashSet,
     ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::Arc,
@@ -418,21 +420,6 @@ impl TerminalView {
         .detach();
     }
 
-    pub fn find_matches(
-        &mut self,
-        query: Arc<project::search::SearchQuery>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Vec<RangeInclusive<Point>>> {
-        let searcher = regex_search_for_query(&query);
-
-        if let Some(searcher) = searcher {
-            self.terminal
-                .update(cx, |term, cx| term.find_matches(searcher, cx))
-        } else {
-            cx.background_executor().spawn(async { Vec::new() })
-        }
-    }
-
     pub fn terminal(&self) -> &Model<Terminal> {
         &self.terminal
     }
@@ -594,6 +581,27 @@ fn possible_open_targets(
             path_like: path,
             row: path_like.row,
             column: path_like.column,
+        })
+        .collect()
+}
+
+lazy_static! {
+    pub static ref SPECIAL_CHARS: HashSet<char> = {
+        HashSet::from([
+            '\\', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '^', '$',
+        ])
+    };
+}
+
+fn regex_to_literal(regex: &str) -> String {
+    regex
+        .chars()
+        .flat_map(|c| {
+            if SPECIAL_CHARS.contains(&c) {
+                vec!['\\', c]
+            } else {
+                vec![c]
+            }
         })
         .collect()
 }
@@ -859,12 +867,27 @@ impl SearchableItem for TerminalView {
     /// Get all of the matches for this query, should be done on the background
     fn find_matches(
         &mut self,
-        query: Arc<project::search::SearchQuery>,
+        query: Arc<SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Self::Match>> {
-        if let Some(searcher) = regex_search_for_query(&query) {
+        let searcher = match &*query {
+            SearchQuery::Text { .. } => regex_search_for_query(
+                &(SearchQuery::text(
+                    regex_to_literal(&query.as_str()),
+                    query.whole_word(),
+                    query.case_sensitive(),
+                    query.include_ignored(),
+                    query.files_to_include().to_vec(),
+                    query.files_to_exclude().to_vec(),
+                )
+                .unwrap()),
+            ),
+            SearchQuery::Regex { .. } => regex_search_for_query(&query),
+        };
+
+        if let Some(s) = searcher {
             self.terminal()
-                .update(cx, |term, cx| term.find_matches(searcher, cx))
+                .update(cx, |term, cx| term.find_matches(s, cx))
         } else {
             Task::ready(vec![])
         }
@@ -1154,5 +1177,15 @@ mod tests {
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
+    }
+
+    #[test]
+    fn escapes_only_special_characters() {
+        assert_eq!(regex_to_literal(r"test(\w)"), r"test\(\\w\)".to_string());
+    }
+
+    #[test]
+    fn empty_string_stays_empty() {
+        assert_eq!(regex_to_literal(""), "".to_string());
     }
 }
