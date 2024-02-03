@@ -32,7 +32,6 @@ pub enum SeedQuerySetting {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
-    pub show: bool,
     pub breadcrumbs: bool,
     pub quick_actions: bool,
 }
@@ -123,10 +122,6 @@ pub struct EditorSettingsContent {
 // Toolbar related settings
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolbarContent {
-    /// Whether to display the toolbar in the editor.
-    ///
-    /// Default: true
-    pub show: Option<bool>,
     /// Whether to display breadcrumbs in the editor toolbar.
     ///
     /// Default: true

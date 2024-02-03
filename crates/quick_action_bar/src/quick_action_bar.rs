@@ -2,8 +2,8 @@ use assistant::{AssistantPanel, InlineAssist};
 use editor::{Editor, EditorSettings};
 
 use gpui::{
-    Action, AppContext, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement,
-    Render, Styled, Subscription, View, ViewContext, WeakView,
+    Action, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement, Render, Styled,
+    Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
@@ -17,7 +17,7 @@ pub struct QuickActionBar {
     active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
     workspace: WeakView<Workspace>,
-    visible: bool,
+    show: bool,
 }
 
 impl QuickActionBar {
@@ -31,7 +31,7 @@ impl QuickActionBar {
             active_item: None,
             _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
-            visible: true,
+            show: true,
         };
         this.apply_settings(cx);
         cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
@@ -45,16 +45,24 @@ impl QuickActionBar {
             .and_then(|item| item.downcast::<Editor>())
     }
 
-    fn apply_settings(&mut self, cx: &mut AppContext) {
-        self.visible = EditorSettings::get_global(cx).toolbar.quick_actions;
+    fn apply_settings(&mut self, cx: &mut ViewContext<Self>) {
+        self.show = EditorSettings::get_global(cx).toolbar.quick_actions;
+        cx.emit(ToolbarItemEvent::ChangeLocation(
+            self.get_toolbar_item_location(),
+        ));
+    }
+
+    fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
+        if self.show && self.active_editor().is_some() {
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 }
 
 impl Render for QuickActionBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if !self.visible {
-            return div().id("hidden quick action bar");
-        }
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
@@ -172,36 +180,28 @@ impl ToolbarItemView for QuickActionBar {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
-        match active_pane_item {
-            Some(active_item) => {
-                self.active_item = Some(active_item.boxed_clone());
-                self._inlay_hints_enabled_subscription.take();
+        self.active_item = active_pane_item.map(ItemHandle::boxed_clone);
+        if let Some(active_item) = active_pane_item {
+            self._inlay_hints_enabled_subscription.take();
 
-                if let Some(editor) = active_item.downcast::<Editor>() {
-                    let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-                    let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
-                    self._inlay_hints_enabled_subscription =
-                        Some(cx.observe(&editor, move |_, editor, cx| {
-                            let editor = editor.read(cx);
-                            let new_inlay_hints_enabled = editor.inlay_hints_enabled();
-                            let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
-                            let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                                || supports_inlay_hints != new_supports_inlay_hints;
-                            inlay_hints_enabled = new_inlay_hints_enabled;
-                            supports_inlay_hints = new_supports_inlay_hints;
-                            if should_notify {
-                                cx.notify()
-                            }
-                        }));
-                    ToolbarItemLocation::PrimaryRight
-                } else {
-                    ToolbarItemLocation::Hidden
-                }
-            }
-            None => {
-                self.active_item = None;
-                ToolbarItemLocation::Hidden
+            if let Some(editor) = active_item.downcast::<Editor>() {
+                let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
+                let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
+                self._inlay_hints_enabled_subscription =
+                    Some(cx.observe(&editor, move |_, editor, cx| {
+                        let editor = editor.read(cx);
+                        let new_inlay_hints_enabled = editor.inlay_hints_enabled();
+                        let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
+                        let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
+                            || supports_inlay_hints != new_supports_inlay_hints;
+                        inlay_hints_enabled = new_inlay_hints_enabled;
+                        supports_inlay_hints = new_supports_inlay_hints;
+                        if should_notify {
+                            cx.notify()
+                        }
+                    }));
             }
         }
+        self.get_toolbar_item_location()
     }
 }

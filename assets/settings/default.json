@@ -111,8 +111,6 @@
   },
   // Toolbar related settings
   "toolbar": {
-    // Whether to show toolbar.
-    "show": true,
     // Whether to show breadcrumbs.
     "breadcrumbs": true,
     // Whether to show quick action buttons.
