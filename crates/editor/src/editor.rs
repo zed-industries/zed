@@ -1430,7 +1430,7 @@ impl Editor {
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
-            scroll_manager: ScrollManager::new(),
+            scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
             add_selections_state: None,
             select_next_state: None,
@@ -3086,8 +3086,9 @@ impl Editor {
             text_system: cx.text_system().clone(),
             editor_style: self.style.clone().unwrap(),
             rem_size: cx.rem_size(),
-            anchor: self.scroll_manager.anchor().anchor,
+            scroll_anchor: self.scroll_manager.anchor(),
             visible_rows: self.visible_line_count(),
+            vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
         }
     }
 
@@ -8762,6 +8763,8 @@ impl Editor {
             )),
             cx,
         );
+        self.scroll_manager.vertical_scroll_margin =
+            EditorSettings::get_global(cx).vertical_scroll_margin;
         cx.notify();
     }
 

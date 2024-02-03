@@ -11,6 +11,7 @@ pub struct EditorSettings {
     pub completion_documentation_secondary_query_debounce: u64,
     pub use_on_type_format: bool,
     pub scrollbar: Scrollbar,
+    pub vertical_scroll_margin: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub redact_private_values: bool,
@@ -87,6 +88,11 @@ pub struct EditorSettingsContent {
     pub use_on_type_format: Option<bool>,
     /// Scrollbar related settings
     pub scrollbar: Option<ScrollbarContent>,
+
+    /// The number of lines to keep above/below the cursor when auto-scrolling.
+    ///
+    /// Default: 3.
+    pub vertical_scroll_margin: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false

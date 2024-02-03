@@ -2,13 +2,11 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
+use crate::{char_kind, scroll::ScrollAnchor, CharKind, EditorStyle, ToOffset, ToPoint};
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
 
 use std::{ops::Range, sync::Arc};
-
-use multi_buffer::Anchor;
 
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
@@ -25,8 +23,9 @@ pub struct TextLayoutDetails {
     pub(crate) text_system: Arc<WindowTextSystem>,
     pub(crate) editor_style: EditorStyle,
     pub(crate) rem_size: Pixels,
-    pub anchor: Anchor,
+    pub scroll_anchor: ScrollAnchor,
     pub visible_rows: Option<f32>,
+    pub vertical_scroll_margin: f32,
 }
 
 /// Returns a column to the left of the current point, wrapping

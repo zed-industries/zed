@@ -133,6 +133,8 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  // The number of lines to keep above/below the cursor when scrolling.
+  "vertical_scroll_margin": 3,
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
