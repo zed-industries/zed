@@ -177,8 +177,14 @@ impl TerminalView {
             Event::NewNavigationTarget(maybe_navigation_target) => {
                 this.can_navigate_to_selected_word = match maybe_navigation_target {
                     Some(MaybeNavigationTarget::Url(_)) => true,
-                    Some(MaybeNavigationTarget::PathLike(maybe_path, cwd)) => {
-                        !possible_open_targets(&workspace, cwd, maybe_path, cx).is_empty()
+                    Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
+                        !possible_open_targets(
+                            &workspace,
+                            &path_like_target.terminal_dir,
+                            &path_like_target.maybe_path,
+                            cx,
+                        )
+                        .is_empty()
                     }
                     None => false,
                 }
@@ -187,12 +193,16 @@ impl TerminalView {
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {
                 MaybeNavigationTarget::Url(url) => cx.open_url(url),
 
-                MaybeNavigationTarget::PathLike(maybe_path, cwd) => {
+                MaybeNavigationTarget::PathLike(path_like_target) => {
                     if !this.can_navigate_to_selected_word {
                         return;
                     }
-                    let potential_abs_paths =
-                        possible_open_targets(&workspace, cwd, maybe_path, cx);
+                    let potential_abs_paths = possible_open_targets(
+                        &workspace,
+                        &path_like_target.terminal_dir,
+                        &path_like_target.maybe_path,
+                        cx,
+                    );
                     if let Some(path) = potential_abs_paths.into_iter().next() {
                         let task_workspace = workspace.clone();
                         cx.spawn(|_, mut cx| async move {
@@ -580,20 +590,19 @@ fn possible_open_targets(
         }
     } else {
         // First check cwd and then workspace
-        let mut potential_cwd_and_workspace_paths = Vec::new();
-
-        if let Some(cwd) = cwd {
-            potential_cwd_and_workspace_paths.push(Path::join(cwd, maybe_path.clone()));
-        }
-
-        if let Some(workspace) = workspace.upgrade() {
-            let workspace_path = workspace.update(cx, |workspace, cx| {
+        let mut potential_cwd_and_workspace_paths = if let Some(workspace) = workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
                 workspace
                     .worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
                     .collect()
-            });
-            potential_cwd_and_workspace_paths.push(workspace_path);
+            })
+        } else {
+            Vec::new()
+        };
+
+        if let Some(cwd) = cwd {
+            potential_cwd_and_workspace_paths.insert(0, Path::join(cwd, &maybe_path));
         }
 
         potential_cwd_and_workspace_paths
