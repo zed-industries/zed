@@ -8,9 +8,9 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, red, Action, AppContext, AsyncWindowContext, CursorStyle,
-    DismissEvent, ElementId, EventEmitter, Fill, FocusHandle, FocusableView, FontWeight,
-    ListOffset, ListScrollEvent, ListState, Model, Render, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView,
+    DismissEvent, ElementId, EventEmitter, Fill, FocusHandle, FocusableView, FontStyle, FontWeight,
+    HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -397,7 +397,34 @@ impl ChatPanel {
                             ),
                     )
                 })
-                .when_some(reply_to_message_info, |this, reply_to_message_info| {
+                .when(
+                    message.reply_to_message_id.is_some() && reply_to_message.is_none(),
+                    |this| {
+                        const MESSAGE_DELETED: &str = "Message has been deleted";
+
+                        let body_text = StyledText::new(MESSAGE_DELETED).with_highlights(
+                            &cx.text_style(),
+                            vec![(
+                                0..MESSAGE_DELETED.len(),
+                                HighlightStyle {
+                                    font_style: Some(FontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            )],
+                        );
+
+                        this.child(
+                            div()
+                                .border_l_2()
+                                .rounded_md()
+                                .border_color(cx.theme().colors().border)
+                                .px_1()
+                                .py_0p5()
+                                .child(body_text),
+                        )
+                    },
+                )
+                .when_some(reply_to_message_info, |el, reply_to_message_info| {
                     let (reply_to_message, reply_to_message_body) = reply_to_message_info;
                     let body_element_id: ElementId = match message.id {
                         ChannelMessageId::Saved(id) => ("reply-to-saved-message", id).into(),
