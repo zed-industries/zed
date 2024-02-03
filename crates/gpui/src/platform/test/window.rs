@@ -282,6 +282,8 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
+    fn invalidate(&self) {}
+
     fn draw(&self, _scene: &crate::Scene) {}
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
