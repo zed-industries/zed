@@ -8124,6 +8124,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "collections",
  "db",
  "dirs 4.0.0",
  "editor",
