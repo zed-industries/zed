@@ -4,7 +4,7 @@
 use super::{BladeBelt, BladeBeltDescriptor};
 use crate::{
     AtlasTextureKind, AtlasTile, BladeAtlas, Bounds, ContentMask, Hsla, Path, PathId, PathVertex,
-    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, PATH_TEXTURE_FORMAT,
+    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Underline, PATH_TEXTURE_FORMAT,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
@@ -48,6 +48,12 @@ struct ShaderPathsData {
     b_path_sprites: gpu::BufferPiece,
 }
 
+#[derive(blade_macros::ShaderData)]
+struct ShaderUnderlinesData {
+    globals: GlobalParams,
+    b_underlines: gpu::BufferPiece,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 struct PathSprite {
@@ -61,6 +67,7 @@ struct BladePipelines {
     shadows: gpu::RenderPipeline,
     path_rasterization: gpu::RenderPipeline,
     paths: gpu::RenderPipeline,
+    underlines: gpu::RenderPipeline,
 }
 
 impl BladePipelines {
@@ -75,11 +82,13 @@ impl BladePipelines {
             shader.get_struct_size("PathVertex") as usize,
         );
         shader.check_struct_size::<PathSprite>();
+        shader.check_struct_size::<Underline>();
 
         let quads_layout = <ShaderQuadsData as gpu::ShaderData>::layout();
         let shadows_layout = <ShaderShadowsData as gpu::ShaderData>::layout();
         let path_rasterization_layout = <ShaderPathRasterizationData as gpu::ShaderData>::layout();
         let paths_layout = <ShaderPathsData as gpu::ShaderData>::layout();
+        let underlines_layout = <ShaderUnderlinesData as gpu::ShaderData>::layout();
 
         Self {
             quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
@@ -140,6 +149,22 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_path"),
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
+            }),
+            underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "underlines",
+                data_layouts: &[&underlines_layout],
+                vertex: shader.at("vs_underline"),
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: shader.at("fs_underline"),
                 color_targets: &[gpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
@@ -358,6 +383,18 @@ impl BladeRenderer {
                             );
                             encoder.draw(0, 4, 0, sprites.len() as u32);
                         }
+                    }
+                    PrimitiveBatch::Underlines(underlines) => {
+                        let instance_buf = self.instance_belt.alloc_data(underlines, &self.gpu);
+                        let mut encoder = pass.with(&self.pipelines.underlines);
+                        encoder.bind(
+                            0,
+                            &ShaderUnderlinesData {
+                                globals,
+                                b_underlines: instance_buf,
+                            },
+                        );
+                        encoder.draw(0, 4, 0, underlines.len() as u32);
                     }
                     _ => continue,
                 }

@@ -753,8 +753,8 @@ impl<'a> ElementContext<'a> {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
-                thickness: style.thickness.scale(scale_factor),
                 color: style.color.unwrap_or_default(),
+                thickness: style.thickness.scale(scale_factor),
                 wavy: style.wavy,
             },
         );

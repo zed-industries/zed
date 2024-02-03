@@ -373,7 +373,7 @@ struct PathVarying {
 
 @vertex
 fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PathVarying {
-	let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = b_path_sprites[instance_id];
     // Don't apply content mask because it was already accounted for when rasterizing the path.
 
@@ -386,7 +386,69 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 
 @fragment
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
-	let sample = textureSample(t_tile, s_tile, input.tile_position).r;
-	let mask = 1.0 - abs(1.0 - sample % 2.0);
-	return input.color * mask;
+    let sample = textureSample(t_tile, s_tile, input.tile_position).r;
+    let mask = 1.0 - abs(1.0 - sample % 2.0);
+    return input.color * mask;
+}
+
+// --- underlines --- //
+
+struct Underline {
+    view_id: ViewId,
+    layer_id: u32,
+    order: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    color: Hsla,
+    thickness: f32,
+    wavy: u32,
+}
+var<storage, read> b_underlines: array<Underline>;
+
+struct UnderlineVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) color: vec4<f32>,
+    @location(1) @interpolate(flat) underline_id: u32,
+    //TODO: use `clip_distance` once Naga supports it
+    @location(3) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> UnderlineVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let underline = b_underlines[instance_id];
+
+    var out = UnderlineVarying();
+    out.position = to_device_position(unit_vertex, underline.bounds);
+    out.color = hsla_to_rgba(underline.color);
+    out.underline_id = instance_id;
+    out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
+    // Alpha clip first, since we don't have `clip_distance`.
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+
+    let underline = b_underlines[input.underline_id];
+    if (underline.wavy == 0u)
+    {
+        return vec4<f32>(0.0);
+    }
+
+    let half_thickness = underline.thickness * 0.5;
+    let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
+    let frequency = M_PI_F * 3.0 * underline.thickness / 8.0;
+    let amplitude = 1.0 / (2.0 * underline.thickness);
+    let sine = sin(st.x * frequency) * amplitude;
+    let dSine = cos(st.x * frequency) * amplitude * frequency;
+    let distance = (st.y - sine) / sqrt(1.0 + dSine * dSine);
+    let distance_in_pixels = distance * underline.bounds.size.y;
+    let distance_from_top_border = distance_in_pixels - half_thickness;
+    let distance_from_bottom_border = distance_in_pixels + half_thickness;
+    let alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
+    return input.color * vec4<f32>(1.0, 1.0, 1.0, alpha);
 }

@@ -543,8 +543,8 @@ pub(crate) struct Underline {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    pub thickness: ScaledPixels,
     pub color: Hsla,
+    pub thickness: ScaledPixels,
     pub wavy: bool,
 }
 
