@@ -6064,6 +6064,7 @@ dependencies = [
  "editor",
  "gpui",
  "search",
+ "settings",
  "ui",
  "workspace",
 ]

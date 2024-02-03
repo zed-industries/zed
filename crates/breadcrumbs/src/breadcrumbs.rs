@@ -1,9 +1,9 @@
-use editor::Editor;
+use editor::{Editor, EditorSettings};
 use gpui::{
-    Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
-    ViewContext,
+    AppContext, Element, EventEmitter, ParentElement, Render, StyledText, Subscription, ViewContext,
 };
 use itertools::Itertools;
+use settings::{Settings, SettingsStore};
 use theme::ActiveTheme;
 use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
 use workspace::{
@@ -15,15 +15,25 @@ pub struct Breadcrumbs {
     pane_focused: bool,
     active_item: Option<Box<dyn ItemHandle>>,
     subscription: Option<Subscription>,
+    visible: bool,
 }
 
 impl Breadcrumbs {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        let mut this = Self {
             pane_focused: false,
             active_item: Default::default(),
             subscription: Default::default(),
-        }
+            visible: true,
+        };
+        this.apply_settings(cx);
+        cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
+            .detach();
+        this
+    }
+
+    fn apply_settings(&mut self, cx: &mut AppContext) {
+        self.visible = EditorSettings::get_global(cx).toolbar.breadcrumbs;
     }
 }
 
@@ -31,6 +41,9 @@ impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if !self.visible {
+            return div();
+        }
         let element = h_flex().text_ui();
         let Some(active_item) = self.active_item.as_ref() else {
             return element;

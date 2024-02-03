@@ -347,13 +347,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
-            let breadcrumbs = cx.new_view(|_| Breadcrumbs::new());
+            let breadcrumbs = cx.new_view(|cx| Breadcrumbs::new(cx));
             toolbar.add_item(breadcrumbs, cx);
             let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
             let quick_action_bar =
-                cx.new_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
+                cx.new_view(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, cx);
             let diagnostic_editor_controls = cx.new_view(|_| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, cx);

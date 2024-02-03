@@ -1,11 +1,12 @@
 use assistant::{AssistantPanel, InlineAssist};
-use editor::Editor;
+use editor::{Editor, EditorSettings};
 
 use gpui::{
-    Action, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement, Render, Styled,
-    Subscription, View, ViewContext, WeakView,
+    Action, AppContext, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement,
+    Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
+use settings::{Settings, SettingsStore};
 use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -16,16 +17,26 @@ pub struct QuickActionBar {
     active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
     workspace: WeakView<Workspace>,
+    visible: bool,
 }
 
 impl QuickActionBar {
-    pub fn new(buffer_search_bar: View<BufferSearchBar>, workspace: &Workspace) -> Self {
-        Self {
+    pub fn new(
+        buffer_search_bar: View<BufferSearchBar>,
+        workspace: &Workspace,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let mut this = Self {
             buffer_search_bar,
             active_item: None,
             _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
-        }
+            visible: true,
+        };
+        this.apply_settings(cx);
+        cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
+            .detach();
+        this
     }
 
     fn active_editor(&self) -> Option<View<Editor>> {
@@ -33,14 +44,20 @@ impl QuickActionBar {
             .as_ref()
             .and_then(|item| item.downcast::<Editor>())
     }
+
+    fn apply_settings(&mut self, cx: &mut AppContext) {
+        self.visible = EditorSettings::get_global(cx).toolbar.quick_actions;
+    }
 }
 
 impl Render for QuickActionBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if !self.visible {
+            return div().id("hidden quick action bar");
+        }
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
-
         let inlay_hints_button = Some(QuickActionBarButton::new(
             "toggle inlay hints",
             IconName::InlayHint,
