@@ -7,9 +7,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
-    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, DismissEvent,
-    ElementId, EventEmitter, Fill, FocusHandle, FocusableView, FontWeight, ListOffset,
-    ListScrollEvent, ListState, Model, Render, Subscription, Task, View, ViewContext,
+    actions, div, list, prelude::*, px, red, Action, AppContext, AsyncWindowContext, CursorStyle,
+    DismissEvent, ElementId, EventEmitter, Fill, FocusHandle, FocusableView, FontWeight,
+    ListOffset, ListScrollEvent, ListState, Model, Render, Subscription, Task, View, ViewContext,
     VisualContext, WeakView,
 };
 use language::LanguageRegistry;
@@ -23,7 +23,7 @@ use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     popover_menu, prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label,
-    TabBar,
+    TabBar, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -404,7 +404,18 @@ impl ChatPanel {
                         ChannelMessageId::Pending(id) => ("reply-to-pending-message", id).into(), // This should never happen
                     };
 
-                    this.mt_2().pl_1().child(
+                    let message_element_id: ElementId = match message.id {
+                        ChannelMessageId::Saved(id) => {
+                            ("reply-to-saved-message-container", id).into()
+                        }
+                        ChannelMessageId::Pending(id) => {
+                            ("reply-to-pending-message-container", id).into()
+                        } // This should never happen
+                    };
+
+                    let current_channel_id = active_chat.read(cx).channel_id;
+
+                    el.mt_2().pl_1().child(
                         v_flex()
                             .text_ui_xs()
                             .child(
@@ -426,6 +437,18 @@ impl ChatPanel {
                             )
                             .child(
                                 div()
+                                    .id(message_element_id)
+                                    .cursor(CursorStyle::PointingHand)
+                                    .tooltip(|cx| Tooltip::text("Go to message", cx))
+                                    .on_click(cx.listener(move |chat_panel, _, cx| {
+                                        chat_panel
+                                            .select_channel(
+                                                current_channel_id.clone(),
+                                                message.reply_to_message_id.clone(),
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx)
+                                    }))
                                     .border_l_2()
                                     .rounded_md()
                                     .border_color(cx.theme().colors().border)
