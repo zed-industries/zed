@@ -695,6 +695,7 @@ impl Render for ChatPanel {
 
                         el.child(
                             div()
+                                .mt_1p5()
                                 .py_1()
                                 .px_2()
                                 .bg(cx.theme().colors().background)
