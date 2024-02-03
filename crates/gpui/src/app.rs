@@ -658,7 +658,7 @@ impl AppContext {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        (window.dirty.get() || window.focus_invalidated).then_some(window.handle)
+                        window.dirty.get().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
