@@ -15,6 +15,7 @@ mod clojure;
 mod csharp;
 mod css;
 mod dart;
+mod d;
 mod deno;
 mod dockerfile;
 mod elixir;
@@ -74,6 +75,7 @@ pub fn init(
         ("clojure", tree_sitter_clojure::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
+        ("d", tree_sitter_d::language()),
         ("dockerfile", tree_sitter_dockerfile::language()),
         ("elixir", tree_sitter_elixir::language()),
         ("elm", tree_sitter_elm::language()),
@@ -159,6 +161,7 @@ pub fn init(
             node_runtime.clone(),
         ))],
     );
+    language("d", vec![Arc::new(d::ServeDAdapter {})]);
 
     match &ElixirSettings::get(None, cx).lsp {
         elixir::ElixirLspSetting::ElixirLs => language(

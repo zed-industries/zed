@@ -51,6 +51,7 @@ rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"]}
 tempfile.workspace = true
 tree-sitter-cpp.workspace = true
+tree-sitter-d.workspace = true
 tree-sitter-elixir.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-lua.workspace = true

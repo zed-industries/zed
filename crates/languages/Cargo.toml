@@ -40,6 +40,7 @@ tree-sitter-c.workspace = true
 tree-sitter-clojure.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
+tree-sitter-d.workspace = true
 tree-sitter-dart.workspace = true
 tree-sitter-dockerfile.workspace = true
 tree-sitter-elixir.workspace = true

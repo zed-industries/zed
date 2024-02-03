@@ -18,6 +18,9 @@ extend-exclude = [
     "crates/languages/src/clojure/config.toml",
 ]
 
+[default.extend-words]
+inout = "inout"
+
 [default]
 extend-ignore-re = [
     '"ba"',
