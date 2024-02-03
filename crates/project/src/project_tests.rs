@@ -3401,6 +3401,66 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_buffer_language(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".zed": {
+                "settings.json": r#"{
+                    "associations": {
+                        "Rust": ["my_rust", "my_rs"]
+                    }
+                }"#
+            },
+            "a.rs": "",
+            "b.my_rust": "",
+            "c.my_rs": ""
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer_a = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+    let buffer_b = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/b.my_rust", cx))
+        .await
+        .unwrap();
+    let buffer_c = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/c.my_rs", cx))
+        .await
+        .unwrap();
+    let registry = Arc::new(LanguageRegistry::test());
+    registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    )));
+    let mut check_language = |buffer: &Model<Buffer>, expected: &str| {
+        buffer.update(cx, |buffer, cx| {
+            let file = buffer.file().unwrap();
+            let path = file.path();
+            let id = file.worktree_id();
+            assert_eq!(
+                registry.language_for_file(path, Some((id, cx)), None)
+                .now_or_never()
+                .and_then(|l| Some(l.ok()?.name())),
+                Some(expected.into())
+            );
+        })
+    };
+    check_language(&buffer_a, "Rust");
+    check_language(&buffer_b, "Rust");
+    check_language(&buffer_c, "Rust");
+}
+
+#[gpui::test]
 async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
