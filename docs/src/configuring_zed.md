@@ -190,6 +190,23 @@ List of `string` values
 2. Position the dock to the right of the workspace like a side panel: `right`
 3. Position the dock full screen over the entire workspace: `expanded`
 
+## Editor Toolbar
+
+- Description: Whether or not to show various elements in the editor toolbar.
+- Setting: `toolbar`
+- Default:
+
+```json
+"toolbar": {
+  "breadcrumbs": true,
+  "quick_actions": true
+},
+```
+
+**Options**
+
+Each option controls displaying of a particular toolbar element. If all elements are hidden, the editor toolbar is not displayed.
+
 ## Enable Language Server
 
 - Description: Whether or not to use language servers to provide code intelligence.
