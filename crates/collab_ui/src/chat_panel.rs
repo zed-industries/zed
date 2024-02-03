@@ -344,6 +344,9 @@ impl ChatPanel {
             .flatten()
             .cloned();
 
+        let replied_to_you =
+            reply_to_message.as_ref().map(|m| m.sender.id) == self.client.user_id();
+
         let reply_to_message_info = if let Some(reply_to_message) = &reply_to_message {
             Some((
                 reply_to_message,
@@ -363,7 +366,7 @@ impl ChatPanel {
 
         v_flex().w_full().relative().child(
             div()
-                .bg(if mentioning_you {
+                .bg(if mentioning_you || replied_to_you {
                     Fill::from(cx.theme().colors().background)
                 } else {
                     Fill::default()
