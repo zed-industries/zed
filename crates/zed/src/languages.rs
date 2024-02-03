@@ -67,6 +67,7 @@ pub fn init(
     };
 
     language("bash", tree_sitter_bash::language(), vec![]);
+    language("beancount", tree_sitter_beancount::language(), vec![]);
     language(
         "c",
         tree_sitter_c::language(),
