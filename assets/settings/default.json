@@ -502,6 +502,12 @@
     },
     "JSON": {
       "tab_size": 2
+    },
+    "OCaml": {
+      "tab_size": 2
+    },
+    "OCaml Interface": {
+      "tab_size": 2
     }
   },
   // Zed's Prettier integration settings.
