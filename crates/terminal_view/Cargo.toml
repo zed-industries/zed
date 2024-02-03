@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 db = { path = "../db" }
+collections = { path = "../collections" }
 dirs = "4.0.0"
 editor = { path = "../editor" }
 futures.workspace = true

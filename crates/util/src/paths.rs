@@ -121,7 +121,7 @@ pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
 /// A representation of a path-like string with optional row and column numbers.
 /// Matching values example: `te`, `test.rs:22`, `te:22:5`, etc.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct PathLikeWithPosition<P> {
     pub path_like: P,
     pub row: Option<u32>,
