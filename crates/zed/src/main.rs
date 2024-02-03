@@ -11,6 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
+#[cfg(target_os = "macos")]
 use fsevent::StreamFlags;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
@@ -173,6 +174,7 @@ fn main() {
         assistant::init(cx);
 
         load_user_themes_in_background(fs.clone(), cx);
+        #[cfg(target_os = "macos")]
         watch_themes(fs.clone(), cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
@@ -916,6 +918,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 }
 
 /// Spawns a background task to watch the themes directory for changes.
+#[cfg(target_os = "macos")]
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     cx.spawn(|cx| async move {
         let mut events = fs

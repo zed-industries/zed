@@ -3,13 +3,13 @@ use crate::{
     PlatformTextSystem, RenderGlyphParams, Size,
 };
 use anyhow::Result;
-use std::sync::Arc;
+use std::borrow::Cow;
 
 pub(crate) struct TestTextSystem {}
 
 #[allow(unused)]
 impl PlatformTextSystem for TestTextSystem {
-    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         unimplemented!()
     }
     fn all_font_names(&self) -> Vec<String> {

@@ -19,7 +19,7 @@ test-support = [
     "collections/test-support",
     "gpui/test-support",
     "live_kit_server",
-    "nanoid",
+    #"nanoid",
 ]
 
 [dependencies]
@@ -32,7 +32,7 @@ gpui = { path = "../gpui", optional = true }
 live_kit_server = { path = "../live_kit_server", optional = true }
 log.workspace = true
 media = { path = "../media" }
-nanoid = { version ="0.4", optional = true}
+nanoid = "0.4" #TODO: optional
 parking_lot.workspace = true
 postage.workspace = true
 
