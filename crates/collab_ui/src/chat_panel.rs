@@ -698,10 +698,12 @@ impl Render for ChatPanel {
 
                         el.child(
                             div()
+                                .overflow_hidden()
                                 .mt_1p5()
                                 .py_1()
                                 .px_2()
                                 .bg(cx.theme().colors().background)
+                                .max_h_20()
                                 .child(
                                     h_flex()
                                         .justify_between()
@@ -735,11 +737,17 @@ impl Render for ChatPanel {
                                         ),
                                 )
                                 .child(
-                                    div()
-                                        .rounded_md()
-                                        .text_ui_sm()
-                                        .bg(cx.theme().colors().background)
-                                        .child(reply_text.element("reply-preview-body".into(), cx)),
+                                    h_flex().rounded_md().h_full().child(
+                                        div()
+                                            .id("reply-preview-body-container")
+                                            .overflow_y_scroll()
+                                            .h_full()
+                                            .text_ui_xs()
+                                            .bg(cx.theme().colors().background)
+                                            .child(
+                                                reply_text.element("reply-preview-body".into(), cx),
+                                            ),
+                                    ),
                                 ),
                         )
                     })
