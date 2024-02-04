@@ -8,7 +8,7 @@ use blade_graphics as gpu;
 use collections::FxHashMap;
 use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, ops, sync::Arc};
 
 pub(crate) const PATH_TEXTURE_FORMAT: gpu::TextureFormat = gpu::TextureFormat::R16Float;
 
@@ -23,9 +23,7 @@ struct PendingUpload {
 struct BladeAtlasState {
     gpu: Arc<gpu::Context>,
     upload_belt: BladeBelt,
-    monochrome_textures: Vec<BladeAtlasTexture>,
-    polychrome_textures: Vec<BladeAtlasTexture>,
-    path_textures: Vec<BladeAtlasTexture>,
+    storage: BladeAtlasStorage,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
     initializations: Vec<AtlasTextureId>,
     uploads: Vec<PendingUpload>,
@@ -33,15 +31,7 @@ struct BladeAtlasState {
 
 impl BladeAtlasState {
     fn destroy(&mut self) {
-        for mut texture in self.monochrome_textures.drain(..) {
-            texture.destroy(&self.gpu);
-        }
-        for mut texture in self.polychrome_textures.drain(..) {
-            texture.destroy(&self.gpu);
-        }
-        for mut texture in self.path_textures.drain(..) {
-            texture.destroy(&self.gpu);
-        }
+        self.storage.destroy(&self.gpu);
         self.upload_belt.destroy(&self.gpu);
     }
 }
@@ -60,9 +50,7 @@ impl BladeAtlas {
                 min_chunk_size: 0x10000,
                 alignment: 64, // Vulkan `optimalBufferCopyOffsetAlignment` on Intel XE
             }),
-            monochrome_textures: Default::default(),
-            polychrome_textures: Default::default(),
-            path_textures: Default::default(),
+            storage: BladeAtlasStorage::default(),
             tiles_by_key: Default::default(),
             initializations: Vec::new(),
             uploads: Vec::new(),
@@ -75,11 +63,7 @@ impl BladeAtlas {
 
     pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {
         let mut lock = self.0.lock();
-        let textures = match texture_kind {
-            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
-            AtlasTextureKind::Path => &mut lock.path_textures,
-        };
+        let textures = &mut lock.storage[texture_kind];
         for texture in textures {
             texture.clear();
         }
@@ -102,12 +86,7 @@ impl BladeAtlas {
 
     pub fn get_texture_info(&self, id: AtlasTextureId) -> BladeTextureInfo {
         let lock = self.0.lock();
-        let textures = match id.kind {
-            crate::AtlasTextureKind::Monochrome => &lock.monochrome_textures,
-            crate::AtlasTextureKind::Polychrome => &lock.polychrome_textures,
-            crate::AtlasTextureKind::Path => &lock.path_textures,
-        };
-        let texture = &textures[id.index as usize];
+        let texture = &lock.storage[id];
         let size = texture.allocator.size();
         BladeTextureInfo {
             size: gpu::Extent {
@@ -141,11 +120,7 @@ impl PlatformAtlas for BladeAtlas {
 
 impl BladeAtlasState {
     fn allocate(&mut self, size: Size<DevicePixels>, texture_kind: AtlasTextureKind) -> AtlasTile {
-        let textures = match texture_kind {
-            AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
-            AtlasTextureKind::Path => &mut self.path_textures,
-        };
+        let textures = &mut self.storage[texture_kind];
         textures
             .iter_mut()
             .rev()
@@ -207,11 +182,7 @@ impl BladeAtlasState {
             subresources: &Default::default(),
         });
 
-        let textures = match kind {
-            AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
-            AtlasTextureKind::Path => &mut self.path_textures,
-        };
+        let textures = &mut self.storage[kind];
         let atlas_texture = BladeAtlasTexture {
             id: AtlasTextureId {
                 index: textures.len() as u32,
@@ -235,24 +206,13 @@ impl BladeAtlasState {
 
     fn flush(&mut self, encoder: &mut gpu::CommandEncoder) {
         for id in self.initializations.drain(..) {
-            let textures = match id.kind {
-                crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
-                crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-                crate::AtlasTextureKind::Path => &self.path_textures,
-            };
-            let texture = &textures[id.index as usize];
+            let texture = &self.storage[id];
             encoder.init_texture(texture.raw);
         }
 
         let mut transfers = encoder.transfer();
         for upload in self.uploads.drain(..) {
-            let textures = match upload.id.kind {
-                crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
-                crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-                crate::AtlasTextureKind::Path => &self.path_textures,
-            };
-            let texture = &textures[upload.id.index as usize];
-
+            let texture = &self.storage[upload.id];
             transfers.copy_buffer_to_texture(
                 upload.data,
                 upload.bounds.size.width.to_bytes(texture.bytes_per_pixel()),
@@ -272,6 +232,60 @@ impl BladeAtlasState {
                     depth: 1,
                 },
             );
+        }
+    }
+}
+
+#[derive(Default)]
+struct BladeAtlasStorage {
+    monochrome_textures: Vec<BladeAtlasTexture>,
+    polychrome_textures: Vec<BladeAtlasTexture>,
+    path_textures: Vec<BladeAtlasTexture>,
+}
+
+impl ops::Index<AtlasTextureKind> for BladeAtlasStorage {
+    type Output = Vec<BladeAtlasTexture>;
+    fn index(&self, kind: AtlasTextureKind) -> &Self::Output {
+        match kind {
+            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
+            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
+            crate::AtlasTextureKind::Path => &self.path_textures,
+        }
+    }
+}
+
+impl ops::IndexMut<AtlasTextureKind> for BladeAtlasStorage {
+    fn index_mut(&mut self, kind: AtlasTextureKind) -> &mut Self::Output {
+        match kind {
+            crate::AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
+            crate::AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
+            crate::AtlasTextureKind::Path => &mut self.path_textures,
+        }
+    }
+}
+
+impl ops::Index<AtlasTextureId> for BladeAtlasStorage {
+    type Output = BladeAtlasTexture;
+    fn index(&self, id: AtlasTextureId) -> &Self::Output {
+        let textures = match id.kind {
+            crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
+            crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
+            crate::AtlasTextureKind::Path => &self.path_textures,
+        };
+        &textures[id.index as usize]
+    }
+}
+
+impl BladeAtlasStorage {
+    fn destroy(&mut self, gpu: &gpu::Context) {
+        for mut texture in self.monochrome_textures.drain(..) {
+            texture.destroy(gpu);
+        }
+        for mut texture in self.polychrome_textures.drain(..) {
+            texture.destroy(gpu);
+        }
+        for mut texture in self.path_textures.drain(..) {
+            texture.destroy(gpu);
         }
     }
 }
