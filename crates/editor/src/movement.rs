@@ -382,7 +382,6 @@ pub fn find_preceding_boundary(
         }
         if let Some(prev_ch) = prev_ch {
             if is_boundary(ch, prev_ch) {
-                log::error!("found boundary at {:?}", offset.to_display_point(map));
                 break;
             }
         }
@@ -410,24 +409,12 @@ pub fn find_boundary(
     let mut offset = from.to_offset(&map, Bias::Right);
 
     let mut prev_ch = None;
-
-    log::error!("start offset {:?}", offset);
     for ch in map.buffer_snapshot.chars_at(offset) {
-        log::error!(
-            "iterating over map.buffer_snapshot.chars_at(offset) - ch: {:?}",
-            ch
-        );
-
         if find_range == FindRange::SingleLine && ch == '\n' {
-            log::error!("find range cond");
             break;
         }
         if let Some(prev_ch) = prev_ch {
-            log::error!("prevch when Some(prev_ch) = prev_ch {:?}", prev_ch);
-
             if is_boundary(prev_ch, ch) {
-                log::error!("offset {:?}", offset);
-                log::error!("FOUND BOUNDARY: {:?} {:?}", prev_ch, ch);
                 offset -= ch.len_utf8();
                 break;
             }
@@ -435,9 +422,7 @@ pub fn find_boundary(
         offset += ch.len_utf8();
         prev_ch = Some(ch);
     }
-    log::error!("before clip point - {:?}", offset.to_display_point(map));
     let clipped_point = map.clip_point(offset.to_display_point(map), Bias::Right);
-    log::error!("clipped_point - {:?}", clipped_point);
     clipped_point
 }
 
