@@ -3,8 +3,9 @@
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, LinuxDisplay, LinuxTextSystem, LinuxWindow,
-    LinuxWindowState, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Point, Result, SemanticVersion, Size, Task, WindowOptions,
+    LinuxWindowState, Menu, PathPromptOptions, Platform, PlatformDispatcher as _, PlatformDisplay,
+    PlatformInput, PlatformTextSystem, PlatformWindow, Point, Result, SemanticVersion, Size, Task,
+    WindowOptions,
 };
 
 use collections::{HashMap, HashSet};
@@ -39,6 +40,7 @@ pub(crate) struct LinuxPlatformState {
     atoms: XcbAtoms,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
+    dispatcher: Arc<LinuxDispatcher>,
     windows: HashMap<x::Window, Arc<LinuxWindowState>>,
     text_system: Arc<LinuxTextSystem>,
 }
@@ -61,7 +63,8 @@ impl LinuxPlatform {
             x_root_index,
             atoms,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
-            foreground_executor: ForegroundExecutor::new(dispatcher),
+            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
+            dispatcher,
             windows: HashMap::default(),
             text_system: Arc::new(LinuxTextSystem::new()),
         }))
@@ -118,6 +121,7 @@ impl Platform for LinuxPlatform {
                 }
                 _ => {}
             }
+            self.0.lock().dispatcher.tick(false);
         }
     }
 
@@ -182,7 +186,7 @@ impl Platform for LinuxPlatform {
         display_id: DisplayId,
         callback: Box<dyn FnMut() + Send>,
     ) {
-        unimplemented!()
+        log::warn!("unimplemented: set_display_link_output_callback");
     }
 
     fn start_display_link(&self, display_id: DisplayId) {}

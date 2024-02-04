@@ -43,11 +43,15 @@ struct AtlasTextureId {
     kind: u32,
 }
 
+struct AtlasBounds {
+    origin: vec2<i32>,
+    size: vec2<i32>,
+}
 struct AtlasTile {
     texture_id: AtlasTextureId,
     tile_id: u32,
     padding: u32,
-    bounds: Bounds,
+    bounds: AtlasBounds,
 }
 
 fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
@@ -62,7 +66,7 @@ fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
 
 fn to_tile_position(unit_vertex: vec2<f32>, tile: AtlasTile) -> vec2<f32> {
   let atlas_size = vec2<f32>(textureDimensions(t_sprite, 0));
-  return (tile.bounds.origin + unit_vertex * tile.bounds.size) / atlas_size;
+  return (vec2<f32>(tile.bounds.origin) + unit_vertex * vec2<f32>(tile.bounds.size)) / atlas_size;
 }
 
 fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {
