@@ -10,7 +10,7 @@ pub use line_wrapper::*;
 
 use crate::{
     px, Bounds, DevicePixels, EntityId, Hsla, Pixels, PlatformTextSystem, Point, Result,
-    SharedString, Size, UnderlineStyle,
+    SharedString, Size, StrikethroughStyle, UnderlineStyle,
 };
 use anyhow::anyhow;
 use collections::{BTreeSet, FxHashMap, FxHashSet};
@@ -328,6 +328,7 @@ impl WindowTextSystem {
                 color: run.color,
                 background_color: run.background_color,
                 underline: run.underline,
+                strikethrough: run.strikethrough,
             });
         }
 
@@ -391,6 +392,7 @@ impl WindowTextSystem {
                         color: run.color,
                         background_color: run.background_color,
                         underline: run.underline,
+                        strikethrough: run.strikethrough,
                     });
                 }
 
@@ -406,6 +408,7 @@ impl WindowTextSystem {
             let layout = self
                 .line_layout_cache
                 .layout_wrapped_line(&line_text, font_size, &font_runs, wrap_width);
+
             lines.push(WrappedLine {
                 layout,
                 decoration_runs,
@@ -599,6 +602,8 @@ pub struct TextRun {
     pub background_color: Option<Hsla>,
     /// The underline style (if any)
     pub underline: Option<UnderlineStyle>,
+    /// The strikethrough style (if any)
+    pub strikethrough: Option<StrikethroughStyle>,
 }
 
 /// An identifier for a specific glyph, as returned by [`TextSystem::layout_line`].

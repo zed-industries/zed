@@ -9459,6 +9459,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 background_color: None,
                 underline: None,
+                strikethrough: None,
                 white_space: WhiteSpace::Normal,
             },
 
@@ -9472,6 +9473,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 background_color: None,
                 underline: None,
+                strikethrough: None,
                 white_space: WhiteSpace::Normal,
             },
         };

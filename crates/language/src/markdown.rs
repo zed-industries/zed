@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
-use gpui::{px, FontStyle, FontWeight, HighlightStyle, UnderlineStyle};
+use gpui::{px, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, UnderlineStyle};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
 /// Parsed Markdown content.
@@ -47,6 +47,13 @@ impl MarkdownHighlight {
                     });
                 }
 
+                if style.strikethrough {
+                    highlight.strikethrough = Some(StrikethroughStyle {
+                        thickness: px(1.),
+                        ..Default::default()
+                    });
+                }
+
                 if style.weight != FontWeight::default() {
                     highlight.font_weight = Some(style.weight);
                 }
@@ -66,6 +73,8 @@ pub struct MarkdownHighlightStyle {
     pub italic: bool,
     /// Whether the text should be underlined.
     pub underline: bool,
+    /// Whether the text should be strikethrough.
+    pub strikethrough: bool,
     /// The weight of the text.
     pub weight: FontWeight,
 }
@@ -151,6 +160,7 @@ pub async fn parse_markdown_block(
 ) {
     let mut bold_depth = 0;
     let mut italic_depth = 0;
+    let mut strikethrough_depth = 0;
     let mut link_url = None;
     let mut current_language = None;
     let mut list_stack = Vec::new();
@@ -172,6 +182,10 @@ pub async fn parse_markdown_block(
 
                     if italic_depth > 0 {
                         style.italic = true;
+                    }
+
+                    if strikethrough_depth > 0 {
+                        style.strikethrough = true;
                     }
 
                     if let Some(link) = link_url.clone().and_then(|u| Link::identify(u)) {
@@ -242,6 +256,8 @@ pub async fn parse_markdown_block(
 
                 Tag::Strong => bold_depth += 1,
 
+                Tag::Strikethrough => strikethrough_depth += 1,
+
                 Tag::Link(_, url, _) => link_url = Some(url.to_string()),
 
                 Tag::List(number) => {
@@ -276,6 +292,7 @@ pub async fn parse_markdown_block(
                 Tag::CodeBlock(_) => current_language = None,
                 Tag::Emphasis => italic_depth -= 1,
                 Tag::Strong => bold_depth -= 1,
+                Tag::Strikethrough => strikethrough_depth -= 1,
                 Tag::Link(_, _, _) => link_url = None,
                 Tag::List(_) => drop(list_stack.pop()),
                 _ => {}
