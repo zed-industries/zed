@@ -58,6 +58,7 @@ impl BladeAtlas {
             upload_belt: BladeBelt::new(BladeBeltDescriptor {
                 memory: gpu::Memory::Upload,
                 min_chunk_size: 0x10000,
+                alignment: 4,
             }),
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),

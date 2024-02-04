@@ -9,6 +9,7 @@ struct ReusableBuffer {
 pub struct BladeBeltDescriptor {
     pub memory: gpu::Memory,
     pub min_chunk_size: u64,
+    pub alignment: u64,
 }
 
 /// A belt of buffers, used by the BladeAtlas to cheaply
@@ -21,6 +22,7 @@ pub struct BladeBelt {
 
 impl BladeBelt {
     pub fn new(desc: BladeBeltDescriptor) -> Self {
+        assert_ne!(desc.alignment, 0);
         Self {
             desc,
             buffers: Vec::new(),
@@ -39,9 +41,10 @@ impl BladeBelt {
 
     pub fn alloc(&mut self, size: u64, gpu: &gpu::Context) -> gpu::BufferPiece {
         for &mut (ref rb, ref mut offset) in self.active.iter_mut() {
-            if *offset + size <= rb.size {
-                let piece = rb.raw.at(*offset);
-                *offset += size;
+            let aligned = offset.next_multiple_of(self.desc.alignment);
+            if aligned + size <= rb.size {
+                let piece = rb.raw.at(aligned);
+                *offset = aligned + size;
                 return piece;
             }
         }
@@ -75,13 +78,15 @@ impl BladeBelt {
     //Note: assuming T: bytemuck::Zeroable
     pub fn alloc_data<T>(&mut self, data: &[T], gpu: &gpu::Context) -> gpu::BufferPiece {
         assert!(!data.is_empty());
-        let alignment = mem::align_of::<T>() as u64;
+        let type_alignment = mem::align_of::<T>() as u64;
+        assert_eq!(
+            self.desc.alignment % type_alignment,
+            0,
+            "Type alignment {} is too big",
+            type_alignment
+        );
         let total_bytes = data.len() * mem::size_of::<T>();
-        let mut bp = self.alloc(alignment + (total_bytes - 1) as u64, gpu);
-        let rem = bp.offset % alignment;
-        if rem != 0 {
-            bp.offset += alignment - rem;
-        }
+        let bp = self.alloc(total_bytes as u64, gpu);
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, bp.data(), total_bytes);
         }
