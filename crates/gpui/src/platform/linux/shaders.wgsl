@@ -276,14 +276,13 @@ struct ShadowVarying {
 @vertex
 fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> ShadowVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let shadow = b_shadows[instance_id];
+    var shadow = b_shadows[instance_id];
 
     let margin = 3.0 * shadow.blur_radius;
     // Set the bounds of the shadow and adjust its size based on the shadow's
     // spread radius to achieve the spreading effect
-    var bounds = shadow.bounds;
-    bounds.origin -= vec2<f32>(margin);
-    bounds.size += 2.0 * vec2<f32>(margin);
+    shadow.bounds.origin -= vec2<f32>(margin);
+    shadow.bounds.size += 2.0 * vec2<f32>(margin);
 
     var out = ShadowVarying();
     out.position = to_device_position(unit_vertex, shadow.bounds);
