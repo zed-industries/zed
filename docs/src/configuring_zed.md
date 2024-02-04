@@ -262,7 +262,7 @@ List of `string` values
 
 ### Git Status
 
-- Description: Wheter or not to show Git file status in tab.
+- Description: Whether or not to show Git file status in tab.
 - Setting: `git_status`
 - Default: false
 
