@@ -4,10 +4,11 @@ struct Globals {
 }
 
 var<uniform> globals: Globals;
-var t_tile: texture_2d<f32>;
-var s_tile: sampler;
+var t_sprite: texture_2d<f32>;
+var s_sprite: sampler;
 
 const M_PI_F: f32 = 3.1415926;
+const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
 struct ViewId {
     lo: u32,
@@ -60,7 +61,7 @@ fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
 }
 
 fn to_tile_position(unit_vertex: vec2<f32>, tile: AtlasTile) -> vec2<f32> {
-  let atlas_size = vec2<f32>(textureDimensions(t_tile, 0));
+  let atlas_size = vec2<f32>(textureDimensions(t_sprite, 0));
   return (tile.bounds.origin + unit_vertex * tile.bounds.size) / atlas_size;
 }
 
@@ -151,6 +152,17 @@ fn pick_corner_radius(point: vec2<f32>, radii: Corners) -> f32 {
             return radii.bottom_right;
         }
     }
+}
+
+fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
+    let half_size = bounds.size / 2.0;
+    let center = bounds.origin + half_size;
+    let center_to_point = point - center;
+    let corner_radius = pick_corner_radius(center_to_point, corner_radii);
+    let rounded_edge_to_point = abs(center_to_point) - half_size + corner_radius;
+    return length(max(vec2<f32>(0.0), rounded_edge_to_point)) +
+        min(0.0, max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
+        corner_radius;
 }
 
 // --- quads --- //
@@ -386,7 +398,7 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 
 @fragment
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
-    let sample = textureSample(t_tile, s_tile, input.tile_position).r;
+    let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let mask = 1.0 - abs(1.0 - sample % 2.0);
     return input.color * mask;
 }
@@ -434,7 +446,7 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     }
 
     let underline = b_underlines[input.underline_id];
-    if (underline.wavy == 0u)
+    if ((underline.wavy & 0xFFu) == 0u)
     {
         return vec4<f32>(0.0);
     }
@@ -452,3 +464,94 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     let alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
     return input.color * vec4<f32>(1.0, 1.0, 1.0, alpha);
 }
+
+// --- monochrome sprites --- //
+
+struct MonochromeSprite {
+    view_id: ViewId,
+    layer_id: u32,
+    order: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    color: Hsla,
+    tile: AtlasTile,
+}
+var<storage, read> b_mono_sprites: array<MonochromeSprite>;
+
+struct MonoSpriteVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) tile_position: vec2<f32>,
+    @location(1) @interpolate(flat) color: vec4<f32>,
+    @location(3) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> MonoSpriteVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let sprite = b_mono_sprites[instance_id];
+
+    var out = MonoSpriteVarying();
+    out.position = to_device_position(unit_vertex, sprite.bounds);
+    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    out.color = hsla_to_rgba(sprite.color);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
+    let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
+    return input.color * vec4<f32>(1.0, 1.0, 1.0, sample);
+}
+
+// --- polychrome sprites --- //
+
+struct PolychromeSprite {
+    view_id: ViewId,
+    layer_id: u32,
+    order: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    corner_radii: Corners,
+    tile: AtlasTile,
+    grayscale: u32,
+    pad: u32,
+}
+var<storage, read> b_poly_sprites: array<PolychromeSprite>;
+
+struct PolySpriteVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) tile_position: vec2<f32>,
+    @location(1) @interpolate(flat) sprite_id: u32,
+    @location(3) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PolySpriteVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let sprite = b_poly_sprites[instance_id];
+
+    var out = PolySpriteVarying();
+    out.position = to_device_position(unit_vertex, sprite.bounds);
+    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    out.sprite_id = instance_id;
+    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
+    let sample = textureSample(t_sprite, s_sprite, input.tile_position);
+    let sprite = b_poly_sprites[input.sprite_id];
+    let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+
+    var color = sample;
+    if ((sprite.grayscale & 0xFFu) != 0u) {
+        let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
+        color = vec4<f32>(vec3<f32>(grayscale), sample.a);
+    }
+    color.a *= saturate(0.5 - distance);
+    return color;;
+}
+
+// --- surface sprites --- //

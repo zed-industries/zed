@@ -4,7 +4,7 @@
 use super::{BladeBelt, BladeBeltDescriptor};
 use crate::{
     AtlasTextureKind, AtlasTile, BladeAtlas, Bounds, ContentMask, Hsla, Path, PathId, PathVertex,
-    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Underline, PATH_TEXTURE_FORMAT,
+    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Underline, MonochromeSprite, PolychromeSprite, PATH_TEXTURE_FORMAT,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
@@ -43,8 +43,8 @@ struct ShaderPathRasterizationData {
 #[derive(blade_macros::ShaderData)]
 struct ShaderPathsData {
     globals: GlobalParams,
-    t_tile: gpu::TextureView,
-    s_tile: gpu::Sampler,
+    t_sprite: gpu::TextureView,
+    s_sprite: gpu::Sampler,
     b_path_sprites: gpu::BufferPiece,
 }
 
@@ -52,6 +52,22 @@ struct ShaderPathsData {
 struct ShaderUnderlinesData {
     globals: GlobalParams,
     b_underlines: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
+struct ShaderMonoSpritesData {
+    globals: GlobalParams,
+    t_sprite: gpu::TextureView,
+    s_sprite: gpu::Sampler,
+    b_mono_sprites: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
+struct ShaderPolySpritesData {
+    globals: GlobalParams,
+    t_sprite: gpu::TextureView,
+    s_sprite: gpu::Sampler,
+    b_poly_sprites: gpu::BufferPiece,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,10 +84,14 @@ struct BladePipelines {
     path_rasterization: gpu::RenderPipeline,
     paths: gpu::RenderPipeline,
     underlines: gpu::RenderPipeline,
+    mono_sprites: gpu::RenderPipeline,
+    poly_sprites: gpu::RenderPipeline,
 }
 
 impl BladePipelines {
     fn new(gpu: &gpu::Context, surface_format: gpu::TextureFormat) -> Self {
+        use gpu::ShaderData as _;
+
         let shader = gpu.create_shader(gpu::ShaderDesc {
             source: include_str!("shaders.wgsl"),
         });
@@ -83,17 +103,13 @@ impl BladePipelines {
         );
         shader.check_struct_size::<PathSprite>();
         shader.check_struct_size::<Underline>();
-
-        let quads_layout = <ShaderQuadsData as gpu::ShaderData>::layout();
-        let shadows_layout = <ShaderShadowsData as gpu::ShaderData>::layout();
-        let path_rasterization_layout = <ShaderPathRasterizationData as gpu::ShaderData>::layout();
-        let paths_layout = <ShaderPathsData as gpu::ShaderData>::layout();
-        let underlines_layout = <ShaderUnderlinesData as gpu::ShaderData>::layout();
+        shader.check_struct_size::<MonochromeSprite>();
+        shader.check_struct_size::<PolychromeSprite>();
 
         Self {
             quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "quads",
-                data_layouts: &[&quads_layout],
+                data_layouts: &[&ShaderQuadsData::layout()],
                 vertex: shader.at("vs_quad"),
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
@@ -109,7 +125,7 @@ impl BladePipelines {
             }),
             shadows: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "shadows",
-                data_layouts: &[&shadows_layout],
+                data_layouts: &[&ShaderShadowsData::layout()],
                 vertex: shader.at("vs_shadow"),
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
@@ -125,7 +141,7 @@ impl BladePipelines {
             }),
             path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "path_rasterization",
-                data_layouts: &[&path_rasterization_layout],
+                data_layouts: &[&ShaderPathRasterizationData::layout()],
                 vertex: shader.at("vs_path_rasterization"),
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
@@ -141,7 +157,7 @@ impl BladePipelines {
             }),
             paths: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "paths",
-                data_layouts: &[&paths_layout],
+                data_layouts: &[&ShaderPathsData::layout()],
                 vertex: shader.at("vs_path"),
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
@@ -157,7 +173,7 @@ impl BladePipelines {
             }),
             underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "underlines",
-                data_layouts: &[&underlines_layout],
+                data_layouts: &[&ShaderUnderlinesData::layout()],
                 vertex: shader.at("vs_underline"),
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
@@ -165,6 +181,38 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_underline"),
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
+            }),
+            mono_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "mono-sprites",
+                data_layouts: &[&ShaderMonoSpritesData::layout()],
+                vertex: shader.at("vs_mono_sprite"),
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: shader.at("fs_mono_sprite"),
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
+            }),
+            poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "poly-sprites",
+                data_layouts: &[&ShaderPolySpritesData::layout()],
+                vertex: shader.at("vs_poly_sprite"),
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: shader.at("fs_poly_sprite"),
                 color_targets: &[gpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
@@ -376,8 +424,8 @@ impl BladeRenderer {
                                 0,
                                 &ShaderPathsData {
                                     globals,
-                                    t_tile: tex_info.raw_view.unwrap(),
-                                    s_tile: self.atlas_sampler,
+                                    t_sprite: tex_info.raw_view.unwrap(),
+                                    s_sprite: self.atlas_sampler,
                                     b_path_sprites: instance_buf,
                                 },
                             );
@@ -396,7 +444,39 @@ impl BladeRenderer {
                         );
                         encoder.draw(0, 4, 0, underlines.len() as u32);
                     }
-                    _ => continue,
+                    PrimitiveBatch::MonochromeSprites { texture_id, sprites } => {
+                        let tex_info = self.atlas.get_texture_info(texture_id);
+                        let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
+                        let mut encoder = pass.with(&self.pipelines.mono_sprites);
+                        encoder.bind(
+                            0,
+                            &ShaderMonoSpritesData {
+                                globals,
+                                t_sprite: tex_info.raw_view.unwrap(),
+                                s_sprite: self.atlas_sampler,
+                                b_mono_sprites: instance_buf,
+                            },
+                        );
+                        encoder.draw(0, 4, 0, sprites.len() as u32);
+                    }
+                    PrimitiveBatch::PolychromeSprites { texture_id, sprites } => {
+                        let tex_info = self.atlas.get_texture_info(texture_id);
+                        let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
+                        let mut encoder = pass.with(&self.pipelines.poly_sprites);
+                        encoder.bind(
+                            0,
+                            &ShaderPolySpritesData {
+                                globals,
+                                t_sprite: tex_info.raw_view.unwrap(),
+                                s_sprite: self.atlas_sampler,
+                                b_poly_sprites: instance_buf,
+                            },
+                        );
+                        encoder.draw(0, 4, 0, sprites.len() as u32);
+                    }
+                    PrimitiveBatch::Surfaces {..} => {
+                        unimplemented!()
+                    }
                 }
             }
         }

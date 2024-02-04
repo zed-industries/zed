@@ -874,6 +874,7 @@ impl<'a> ElementContext<'a> {
                     content_mask,
                     tile,
                     grayscale: false,
+                    pad: 0,
                 },
             );
         }
@@ -958,6 +959,7 @@ impl<'a> ElementContext<'a> {
                 corner_radii,
                 tile,
                 grayscale,
+                pad: 0,
             },
         );
         Ok(())

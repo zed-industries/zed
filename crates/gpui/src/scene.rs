@@ -642,6 +642,7 @@ pub(crate) struct PolychromeSprite {
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
     pub grayscale: bool,
+    pub pad: u32, // align to 8 bytes
 }
 
 impl Ord for PolychromeSprite {
