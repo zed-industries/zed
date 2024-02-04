@@ -49,7 +49,6 @@ impl MarkdownPreviewView {
     ) -> Option<PathBuf> {
         if let Some(file) = editor.file_at(0, cx) {
             if let Some(file) = file.as_local() {
-                println!("Editor locator {:?}", file.abs_path(cx));
                 file.abs_path(cx).parent().map(|p| p.to_path_buf())
             } else {
                 None
