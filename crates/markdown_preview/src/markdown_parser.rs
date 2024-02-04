@@ -319,8 +319,6 @@ impl<'a> MarkdownParser<'a> {
         let mut in_header = true;
         let mut alignment: Vec<ParsedMarkdownTableAlignment> = vec![];
 
-        // Expect at least a header row
-        // Expect zero or more rows for the body
         loop {
             if self.eof() {
                 break;
