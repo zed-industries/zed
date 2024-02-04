@@ -213,14 +213,21 @@ pub enum Link {
 }
 
 impl Link {
-    pub fn identify(text: String) -> Option<Link> {
+    pub fn identify(file_location_directory: Option<PathBuf>, text: String) -> Option<Link> {
         if text.starts_with("http") {
             return Some(Link::Web { url: text });
         }
 
-        let path = PathBuf::from(text);
-        if path.is_absolute() {
+        let path = PathBuf::from(&text);
+        if path.is_absolute() && path.exists() {
             return Some(Link::Path { path });
+        }
+
+        if let Some(file_location_directory) = file_location_directory {
+            let path = file_location_directory.join(text);
+            if path.exists() {
+                return Some(Link::Path { path });
+            }
         }
 
         None

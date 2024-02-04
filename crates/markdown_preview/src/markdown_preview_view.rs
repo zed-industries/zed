@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, path::PathBuf};
 
 use editor::{Editor, EditorEvent};
 use gpui::{
@@ -42,6 +42,23 @@ impl MarkdownPreviewView {
         });
     }
 
+    /// The absolute path of the file that is currently being previewed.
+    fn get_folder_for_active_editor(
+        editor: &Editor,
+        cx: &ViewContext<MarkdownPreviewView>,
+    ) -> Option<PathBuf> {
+        if let Some(file) = editor.file_at(0, cx) {
+            if let Some(file) = file.as_local() {
+                println!("Editor locator {:?}", file.abs_path(cx));
+                file.abs_path(cx).parent().map(|p| p.to_path_buf())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn new(
         active_editor: View<Editor>,
         workspace: WeakView<Workspace>,
@@ -49,17 +66,20 @@ impl MarkdownPreviewView {
     ) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let view = cx.view().downgrade();
-
             let editor = active_editor.read(cx);
+
+            let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
             let contents = editor.buffer().read(cx).snapshot(cx).text();
-            let contents = parse_markdown(&contents);
+            let contents = parse_markdown(&contents, file_location);
 
             cx.subscribe(&active_editor, |this, editor, event: &EditorEvent, cx| {
                 match event {
                     EditorEvent::Edited => {
                         let editor = editor.read(cx);
                         let contents = editor.buffer().read(cx).snapshot(cx).text();
-                        this.contents = parse_markdown(&contents);
+                        let file_location =
+                            MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
+                        this.contents = parse_markdown(&contents, file_location);
                         this.list_state.reset(this.contents.children.len());
                         cx.notify();
                     }

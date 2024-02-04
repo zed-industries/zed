@@ -1,12 +1,15 @@
 use crate::markdown_elements::*;
 use gpui::FontWeight;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag};
-use std::ops::Range;
+use std::{ops::Range, path::PathBuf};
 
-pub fn parse_markdown(markdown_input: &str) -> ParsedMarkdown {
+pub fn parse_markdown(
+    markdown_input: &str,
+    file_location_directory: Option<PathBuf>,
+) -> ParsedMarkdown {
     let options = Options::all();
     let parser = Parser::new_ext(markdown_input, options);
-    let parser = MarkdownParser::new(parser.into_offset_iter().collect());
+    let parser = MarkdownParser::new(parser.into_offset_iter().collect(), file_location_directory);
     let renderer = parser.parse_document();
     ParsedMarkdown {
         children: renderer.parsed,
@@ -19,12 +22,17 @@ struct MarkdownParser<'a> {
     cursor: usize,
     /// The blocks that we have successfully parsed so far
     parsed: Vec<ParsedMarkdownElement>,
+    file_location_directory: Option<PathBuf>,
 }
 
 impl<'a> MarkdownParser<'a> {
-    fn new(tokens: Vec<(Event<'a>, Range<usize>)>) -> Self {
+    fn new(
+        tokens: Vec<(Event<'a>, Range<usize>)>,
+        file_location_directory: Option<PathBuf>,
+    ) -> Self {
         Self {
             tokens,
+            file_location_directory,
             cursor: 0,
             parsed: vec![],
         }
@@ -136,7 +144,7 @@ impl<'a> MarkdownParser<'a> {
         let mut text = String::new();
         let mut bold_depth = 0;
         let mut italic_depth = 0;
-        let mut link_url = None;
+        let mut link: Option<Link> = None;
         let mut region_ranges: Vec<Range<usize>> = vec![];
         let mut regions: Vec<ParsedRegion> = vec![];
         let mut highlights: Vec<(Range<usize>, MarkdownHighlight)> = vec![];
@@ -175,7 +183,7 @@ impl<'a> MarkdownParser<'a> {
                         style.italic = true;
                     }
 
-                    if let Some(link) = link_url.clone().and_then(|u| Link::identify(u)) {
+                    if let Some(link) = link.clone() {
                         region_ranges.push(prev_len..text.len());
                         regions.push(ParsedRegion {
                             code: false,
@@ -206,7 +214,6 @@ impl<'a> MarkdownParser<'a> {
                     text.push_str(t.as_ref());
                     region_ranges.push(prev_len..text.len());
 
-                    let link = link_url.clone().and_then(|u| Link::identify(u));
                     if link.is_some() {
                         highlights.push((
                             prev_len..text.len(),
@@ -216,7 +223,11 @@ impl<'a> MarkdownParser<'a> {
                             }),
                         ));
                     }
-                    regions.push(ParsedRegion { code: true, link });
+
+                    regions.push(ParsedRegion {
+                        code: true,
+                        link: link.clone(),
+                    });
                 }
 
                 Event::Start(tag) => {
@@ -224,7 +235,10 @@ impl<'a> MarkdownParser<'a> {
                         Tag::Emphasis => italic_depth += 1,
                         Tag::Strong => bold_depth += 1,
                         Tag::Link(_type, url, _title) => {
-                            link_url = Some(url.to_string());
+                            link = Link::identify(
+                                self.file_location_directory.clone(),
+                                url.to_string(),
+                            );
                         }
                         Tag::Strikethrough => {
                             // TODO: Confirm that gpui currently doesn't support strikethroughs
@@ -243,7 +257,7 @@ impl<'a> MarkdownParser<'a> {
                         bold_depth -= 1;
                     }
                     Tag::Link(_, _, _) => {
-                        link_url = None;
+                        link = None;
                     }
                     Tag::Strikethrough => {
                         // TODO: Confirm that gpui currently doesn't support strikethroughs
@@ -396,8 +410,15 @@ impl<'a> MarkdownParser<'a> {
 
                     if let Some(next) = self.current() {
                         // This is a plain list item.
-                        // For example `- some text`
-                        if let Event::Text(_) = next.0 {
+                        // For example `- some text` or `1. [Docs](./docs.md)`
+                        let plain_text = matches!(
+                            next.0,
+                            Event::Text(_)
+                                | Event::Start(Tag::Link(_, _, _))
+                                | Event::Start(Tag::Image(_, _, _))
+                        );
+
+                        if plain_text {
                             let text = self.parse_text(false);
                             let block = ParsedMarkdownElement::Paragraph(text);
                             current_list_items.push(Box::new(block));
@@ -459,7 +480,6 @@ impl<'a> MarkdownParser<'a> {
             if let Some(block) = block {
                 children.push(Box::new(block));
             } else {
-                // TODO: Needed?
                 break;
             }
 
@@ -531,9 +551,13 @@ mod tests {
 
     use ParsedMarkdownElement::*;
 
+    fn parse(input: &str) -> ParsedMarkdown {
+        parse_markdown(input, None)
+    }
+
     #[test]
     fn test_headings() {
-        let parsed = parse_markdown("# Heading one\n## Heading two\n### Heading three");
+        let parsed = parse("# Heading one\n## Heading two\n### Heading three");
 
         assert_eq!(
             parsed.children,
@@ -547,7 +571,7 @@ mod tests {
 
     #[test]
     fn test_newlines_dont_new_paragraphs() {
-        let parsed = parse_markdown("Some text **that is bolded**\n and *italicized*");
+        let parsed = parse("Some text **that is bolded**\n and *italicized*");
 
         assert_eq!(
             parsed.children,
@@ -557,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_heading_with_paragraph() {
-        let parsed = parse_markdown("# Zed\nThe editor");
+        let parsed = parse("# Zed\nThe editor");
 
         assert_eq!(
             parsed.children,
@@ -567,7 +591,7 @@ mod tests {
 
     #[test]
     fn test_double_newlines_do_new_paragraphs() {
-        let parsed = parse_markdown("Some text **that is bolded**\n\n and *italicized*");
+        let parsed = parse("Some text **that is bolded**\n\n and *italicized*");
 
         assert_eq!(
             parsed.children,
@@ -579,8 +603,20 @@ mod tests {
     }
 
     #[test]
+    fn test_text_with_link() {
+        let parsed = parse("[Docs](./docs.md)");
+
+        assert_eq!(
+            parsed.children,
+            vec![
+                // h3(text("Heading three", 29..46), 29..46),
+            ]
+        );
+    }
+
+    #[test]
     fn test_bold_italic_text() {
-        let parsed = parse_markdown("Some text **that is bolded** and *italicized*");
+        let parsed = parse("Some text **that is bolded** and *italicized*");
 
         assert_eq!(
             parsed.children,
@@ -604,7 +640,7 @@ Some other content
         );
 
         assert_eq!(
-            parse_markdown(markdown).children[0],
+            parse(markdown).children[0],
             ParsedMarkdownElement::Table(expected_table)
         );
     }
@@ -627,14 +663,14 @@ Some other content
         );
 
         assert_eq!(
-            parse_markdown(markdown).children[0],
+            parse(markdown).children[0],
             ParsedMarkdownElement::Table(expected_table)
         );
     }
 
     #[test]
     fn test_list_basic() {
-        let parsed = parse_markdown(
+        let parsed = parse(
             "\
 * Item 1
 * Item 2
@@ -657,7 +693,7 @@ Some other content
 
     #[test]
     fn test_list_nested() {
-        let parsed = parse_markdown(
+        let parsed = parse(
             "\
 * Item 1
 * Item 2
@@ -766,7 +802,7 @@ Some other content
 
     #[test]
     fn test_list_with_nested_content() {
-        let parsed = parse_markdown(
+        let parsed = parse(
             "\
 *   This is a list item with two paragraphs.
 
@@ -791,7 +827,7 @@ Some other content
 
     #[test]
     fn test_simple_block_quote() {
-        let parsed = parse_markdown("> Simple block quote with **styled text**");
+        let parsed = parse("> Simple block quote with **styled text**");
 
         assert_eq!(
             parsed.children,
@@ -804,7 +840,7 @@ Some other content
 
     #[test]
     fn test_simple_block_quote_with_multiple_lines() {
-        let parsed = parse_markdown(
+        let parsed = parse(
             "\
 > # Heading
 > More
@@ -829,7 +865,7 @@ Some other content
 
     #[test]
     fn test_nested_block_quote() {
-        let parsed = parse_markdown(
+        let parsed = parse(
             "\
 > A
 >
@@ -859,7 +895,7 @@ More text
 
     #[test]
     fn test_code_block() {
-        let parsed = parse_markdown(
+        let parsed = parse(
             "\
 ```
 fn main() {
@@ -877,7 +913,7 @@ fn main() {
 
     #[test]
     fn test_code_block_with_language() {
-        let parsed = parse_markdown(
+        let parsed = parse(
             "\
 ```rust
 fn main() {
