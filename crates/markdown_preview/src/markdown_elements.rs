@@ -48,7 +48,7 @@ pub struct ParsedMarkdownListItem {
     pub depth: u16,
     /// If the list is ordered, this field contains the number of the list item.
     pub order: Option<u64>,
-    pub contents: ParsedMarkdownText,
+    pub contents: Vec<Box<ParsedMarkdownElement>>,
 }
 
 #[derive(Debug)]

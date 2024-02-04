@@ -1,7 +1,7 @@
 use crate::markdown_elements::*;
 use gpui::FontWeight;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag};
-use std::{collections::HashMap, ops::Range};
+use std::ops::Range;
 
 pub fn parse_markdown(markdown_input: &str) -> ParsedMarkdown {
     let options = Options::all();
@@ -87,7 +87,7 @@ impl<'a> MarkdownParser<'a> {
                 Tag::List(order) => {
                     let order = order.clone();
                     self.cursor += 1;
-                    let list = self.parse_list(order);
+                    let list = self.parse_list(1, order);
                     Some(ParsedMarkdownElement::List(list))
                 }
                 Tag::BlockQuote => {
@@ -361,59 +361,76 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    fn parse_list(&mut self, order: Option<u64>) -> ParsedMarkdownList {
+    fn parse_list(&mut self, depth: u16, order: Option<u64>) -> ParsedMarkdownList {
         let (_event, source_range) = self.previous().unwrap();
         let source_range = source_range.clone();
-        let mut orders_by_depth: HashMap<u16, Option<u64>> = HashMap::new();
-        let mut depth: u16 = 1;
         let mut children = vec![];
+        let mut inside_list_item = false;
+        let mut order = order;
 
-        orders_by_depth.insert(1, order);
+        let mut current_list_items: Vec<Box<ParsedMarkdownElement>> = vec![];
 
-        loop {
-            if self.eof() {
-                break;
-            }
-
+        while !self.eof() {
             let (current, _source_range) = self.current().unwrap();
             match current {
                 Event::Start(Tag::List(order)) => {
-                    depth += 1;
-                    orders_by_depth.insert(depth, order.clone());
-
+                    let order = order.clone();
                     self.cursor += 1;
+
+                    let inner_list = self.parse_list(depth + 1, order);
+                    let block = ParsedMarkdownElement::List(inner_list);
+                    current_list_items.push(Box::new(block));
                 }
                 Event::End(Tag::List(_)) => {
                     self.cursor += 1;
-
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
+                    break;
                 }
                 Event::Start(Tag::Item) => {
                     self.cursor += 1;
+                    inside_list_item = true;
 
-                    let order = orders_by_depth.get(&depth).unwrap_or(&None).clone();
-                    match order {
-                        Some(order) => {
-                            orders_by_depth.insert(depth, Some(order + 1));
+                    if let Some(next) = self.current() {
+                        // This is a plain list item.
+                        // For example `- some text`
+                        if let Event::Text(_) = next.0 {
+                            let text = self.parse_text(false);
+                            let block = ParsedMarkdownElement::Paragraph(text);
+                            current_list_items.push(Box::new(block));
+                        } else {
+                            let block = self.parse_block();
+                            if let Some(block) = block {
+                                current_list_items.push(Box::new(block));
+                            }
                         }
-                        _ => {}
-                    };
-
-                    let contents = self.parse_text(false);
-                    children.push(ParsedMarkdownListItem {
-                        order,
-                        depth,
-                        contents,
-                    });
+                    }
                 }
                 Event::End(Tag::Item) => {
                     self.cursor += 1;
+
+                    let current = order.clone();
+                    if let Some(current) = order {
+                        order = Some(current + 1);
+                    }
+
+                    let contents = std::mem::replace(&mut current_list_items, vec![]);
+
+                    children.push(ParsedMarkdownListItem {
+                        contents,
+                        depth,
+                        order: current,
+                    });
+
+                    inside_list_item = false;
                 }
                 _ => {
-                    break;
+                    if !inside_list_item {
+                        break;
+                    }
+
+                    let block = self.parse_block();
+                    if let Some(block) = block {
+                        current_list_items.push(Box::new(block));
+                    }
                 }
             }
         }
@@ -449,6 +466,8 @@ impl<'a> MarkdownParser<'a> {
             match current {
                 // This is a nested block quote.
                 // Record that we're in a nested block quote and continue parsing.
+                // We don't need to advance the cursor since the next
+                // call to `parse_block` will handle it.
                 Event::Start(Tag::BlockQuote) => {
                     nested_depth += 1;
                 }
@@ -609,7 +628,30 @@ Some other content
     }
 
     #[test]
-    fn test_list() {
+    fn test_list_basic() {
+        let parsed = parse_markdown(
+            "\
+* Item 1
+* Item 2
+* Item 3
+",
+        );
+
+        assert_eq!(
+            parsed.children,
+            vec![list(
+                vec![
+                    list_item(1, None, vec![p("Item 1", 0..9)]),
+                    list_item(1, None, vec![p("Item 2", 9..18)]),
+                    list_item(1, None, vec![p("Item 3", 18..27)]),
+                ],
+                0..27
+            ),]
+        );
+    }
+
+    #[test]
+    fn test_list_nested() {
         let parsed = parse_markdown(
             "\
 * Item 1
@@ -637,35 +679,108 @@ Some other content
             vec![
                 list(
                     vec![
-                        list_item(1, None, text("Item 1", 0..9)),
-                        list_item(1, None, text("Item 2", 9..18)),
-                        list_item(1, None, text("Item 3", 18..28)),
+                        list_item(1, None, vec![p("Item 1", 0..9)]),
+                        list_item(1, None, vec![p("Item 2", 9..18)]),
+                        list_item(1, None, vec![p("Item 3", 18..28)]),
                     ],
                     0..28
                 ),
                 list(
                     vec![
-                        list_item(1, Some(1), text("Hello", 28..37)),
-                        list_item(1, Some(2), text("Two", 37..56)),
-                        list_item(2, Some(1), text("Three", 47..56)),
-                        list_item(1, Some(3), text("Four", 56..64)),
-                        list_item(1, Some(4), text("Five", 64..73)),
+                        list_item(1, Some(1), vec![p("Hello", 28..37)]),
+                        list_item(
+                            1,
+                            Some(2),
+                            vec![
+                                p("Two", 37..56),
+                                list(
+                                    vec![list_item(2, Some(1), vec![p("Three", 47..56)]),],
+                                    47..56
+                                ),
+                            ]
+                        ),
+                        list_item(1, Some(3), vec![p("Four", 56..64)]),
+                        list_item(1, Some(4), vec![p("Five", 64..73)]),
                     ],
                     28..73
                 ),
                 list(
                     vec![
-                        list_item(1, None, text("First", 73..155)),
-                        list_item(2, Some(1), text("Hello", 83..141)),
-                        list_item(3, Some(1), text("Goodbyte", 97..141)),
-                        list_item(4, None, text("Inner", 117..125)),
-                        list_item(4, None, text("Inner", 133..141)),
-                        list_item(2, Some(2), text("Goodbyte", 143..155)),
-                        list_item(1, None, text("Last", 155..162)),
+                        list_item(
+                            1,
+                            None,
+                            vec![
+                                p("First", 73..155),
+                                list(
+                                    vec![
+                                        list_item(
+                                            2,
+                                            Some(1),
+                                            vec![
+                                                p("Hello", 83..141),
+                                                list(
+                                                    vec![list_item(
+                                                        3,
+                                                        Some(1),
+                                                        vec![
+                                                            p("Goodbyte", 97..141),
+                                                            list(
+                                                                vec![
+                                                                    list_item(
+                                                                        4,
+                                                                        None,
+                                                                        vec![p("Inner", 117..125)]
+                                                                    ),
+                                                                    list_item(
+                                                                        4,
+                                                                        None,
+                                                                        vec![p("Inner", 133..141)]
+                                                                    ),
+                                                                ],
+                                                                117..141
+                                                            )
+                                                        ]
+                                                    ),],
+                                                    97..141
+                                                )
+                                            ]
+                                        ),
+                                        list_item(2, Some(2), vec![p("Goodbyte", 143..155)]),
+                                    ],
+                                    83..155
+                                )
+                            ]
+                        ),
+                        list_item(1, None, vec![p("Last", 155..162)]),
                     ],
                     73..162
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn test_list_with_nested_content() {
+        let parsed = parse_markdown(
+            "\
+*   This is a list item with two paragraphs.
+
+    This is the second paragraph in the list item.",
+        );
+
+        assert_eq!(
+            parsed.children,
+            vec![list(
+                vec![list_item(
+                    1,
+                    None,
+                    vec![
+                        p("This is a list item with two paragraphs.", 4..45),
+                        p("This is the second paragraph in the list item.", 50..96)
+                    ],
+                ),],
+                0..96,
+            ),]
         );
     }
 
@@ -850,12 +965,12 @@ fn main() {
     fn list_item(
         depth: u16,
         order: Option<u64>,
-        contents: ParsedMarkdownText,
+        contents: Vec<ParsedMarkdownElement>,
     ) -> ParsedMarkdownListItem {
         ParsedMarkdownListItem {
             order,
             depth,
-            contents,
+            contents: contents.into_iter().map(Box::new).collect(),
         }
     }
 

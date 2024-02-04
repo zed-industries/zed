@@ -23,6 +23,7 @@ pub struct RenderContext {
     code_block_background_color: Hsla,
     code_span_background_color: Hsla,
     syntax_theme: Arc<SyntaxTheme>,
+    indent: usize,
 }
 
 impl RenderContext {
@@ -32,6 +33,7 @@ impl RenderContext {
         RenderContext {
             workspace,
             next_id: 0,
+            indent: 0,
             text_style: cx.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
@@ -48,9 +50,25 @@ impl RenderContext {
         ElementId::from(SharedString::from(id))
     }
 
+    /// This ensures that children inside of block quotes
+    /// have padding between them.
+    ///
+    /// For example, for this markdown:
+    ///
+    /// ```markdown
+    /// > This is a block quote.
+    /// >
+    /// > And this is the next paragraph.
+    /// ```
+    ///
+    /// We give padding between "This is a block quote."
+    /// and "And this is the next paragraph."
     fn with_common_p(&self, element: Div) -> Div {
-        // TODO: Remove this. It's now done in the list view.
-        element.pb_0()
+        if self.indent > 0 {
+            element.pb_3()
+        } else {
+            element
+        }
     }
 }
 
@@ -118,13 +136,18 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
             Some(order) => format!("{}.", order),
             None => "•".to_string(),
         };
-        let bullet = div().mr_2().child(Label::new(bullet)).into_any();
+        let bullet = div().mr_2().child(Label::new(bullet));
 
-        let contents = render_markdown_text(&item.contents, cx);
+        let contents: Vec<AnyElement> = item
+            .contents
+            .iter()
+            .map(|c| render_markdown_block(c.as_ref(), cx))
+            .collect();
 
         let item = h_flex()
             .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
-            .children(vec![bullet, contents]);
+            .items_start()
+            .children(vec![bullet, div().children(contents)]);
 
         items.push(item);
     }
@@ -193,11 +216,15 @@ fn render_markdown_block_quote(
     parsed: &ParsedMarkdownBlockQuote,
     cx: &mut RenderContext,
 ) -> AnyElement {
+    cx.indent += 1;
+
     let children: Vec<AnyElement> = parsed
         .children
         .iter()
         .map(|child| render_markdown_block(child, cx))
         .collect();
+
+    cx.indent -= 1;
 
     cx.with_common_p(div())
         .child(
@@ -205,8 +232,6 @@ fn render_markdown_block_quote(
                 .border_l_4()
                 .border_color(cx.border_color)
                 .pl_3()
-                // TODO: Add a bit of spacing
-                // between each child
                 .children(children),
         )
         .into_any()
