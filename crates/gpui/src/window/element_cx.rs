@@ -777,8 +777,6 @@ impl<'a> ElementContext<'a> {
         let window = &mut *self.window;
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
-            // TODO: Does it make sense to have a separate struct for
-            // strikethroughs, or should this be made generic?
             Underline {
                 view_id: view_id.into(),
                 layer_id: 0,
