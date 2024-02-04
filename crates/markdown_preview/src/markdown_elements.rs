@@ -13,6 +13,7 @@ pub enum ParsedMarkdownElement {
     CodeBlock(ParsedMarkdownCodeBlock),
     /// A paragraph of text and other inline elements.
     Paragraph(ParsedMarkdownText),
+    HorizontalRule(Range<usize>),
 }
 
 impl ParsedMarkdownElement {
@@ -24,6 +25,7 @@ impl ParsedMarkdownElement {
             ParsedMarkdownElement::BlockQuote(block_quote) => block_quote.source_range.clone(),
             ParsedMarkdownElement::CodeBlock(code_block) => code_block.source_range.clone(),
             ParsedMarkdownElement::Paragraph(text) => text.source_range.clone(),
+            ParsedMarkdownElement::HorizontalRule(range) => range.clone(),
         }
     }
 }

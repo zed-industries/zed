@@ -4,9 +4,9 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
-    div, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId, HighlightStyle,
-    Hsla, InteractiveText, IntoElement, ParentElement, SharedString, Styled, StyledText, TextStyle,
-    WeakView, WindowContext,
+    div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
+    HighlightStyle, Hsla, InteractiveText, IntoElement, ParentElement, SharedString, Styled,
+    StyledText, TextStyle, WeakView, WindowContext,
 };
 use std::{ops::Range, sync::Arc};
 use theme::{ActiveTheme, SyntaxTheme};
@@ -96,6 +96,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         Table(table) => render_markdown_table(table, cx),
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
+        HorizontalRule(_) => render_markdown_rule(cx),
     }
 }
 
@@ -130,7 +131,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
 fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> AnyElement {
     let mut items = vec![];
     for item in &parsed.children {
-        let padding = rems((item.depth - 1) as f32 * 1.);
+        let padding = rems((item.depth - 1) as f32 * 0.25);
 
         let bullet = match item.order {
             Some(order) => format!("{}.", order),
@@ -311,4 +312,9 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
         },
     )
     .into_any_element()
+}
+
+fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
+    let rule = div().w_full().h(px(2.)).bg(cx.border_color);
+    div().pt_3().pb_3().child(rule).into_any()
 }

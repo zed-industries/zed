@@ -65,7 +65,7 @@ impl<'a> MarkdownParser<'a> {
     }
 
     fn parse_block(&mut self) -> Option<ParsedMarkdownElement> {
-        let (current, _source_range) = self.current().unwrap();
+        let (current, source_range) = self.current().unwrap();
         match current {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
@@ -117,6 +117,11 @@ impl<'a> MarkdownParser<'a> {
                     None
                 }
             },
+            Event::Rule => {
+                let source_range = source_range.clone();
+                self.cursor += 1;
+                Some(ParsedMarkdownElement::HorizontalRule(source_range))
+            }
             _ => {
                 self.cursor += 1;
                 None
