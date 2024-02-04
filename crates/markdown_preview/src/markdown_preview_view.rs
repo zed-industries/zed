@@ -42,22 +42,6 @@ impl MarkdownPreviewView {
         });
     }
 
-    /// The absolute path of the file that is currently being previewed.
-    fn get_folder_for_active_editor(
-        editor: &Editor,
-        cx: &ViewContext<MarkdownPreviewView>,
-    ) -> Option<PathBuf> {
-        if let Some(file) = editor.file_at(0, cx) {
-            if let Some(file) = file.as_local() {
-                file.abs_path(cx).parent().map(|p| p.to_path_buf())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
     pub fn new(
         active_editor: View<Editor>,
         workspace: WeakView<Workspace>,
@@ -143,6 +127,22 @@ impl MarkdownPreviewView {
                 list_state,
             }
         })
+    }
+
+    /// The absolute path of the file that is currently being previewed.
+    fn get_folder_for_active_editor(
+        editor: &Editor,
+        cx: &ViewContext<MarkdownPreviewView>,
+    ) -> Option<PathBuf> {
+        if let Some(file) = editor.file_at(0, cx) {
+            if let Some(file) = file.as_local() {
+                file.abs_path(cx).parent().map(|p| p.to_path_buf())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
     fn get_block_index_under_cursor(&self, selection_range: Range<usize>) -> usize {
