@@ -17,7 +17,7 @@ use gpui::{
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Settings, TabBarPlacement};
 use std::{
     any::Any,
     cmp, fmt, mem,
@@ -1486,6 +1486,13 @@ impl Pane {
         })
     }
 
+    fn need_tab_bar_at(&self, placement: TabBarPlacement, cx: &mut ViewContext<'_, Pane>) -> bool {
+        let Some(item) = self.active_item() else {
+            return false;
+        };
+        item.tab_bar_placement(cx) == placement
+    }
+
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         TabBar::new("tab_bar")
             .track_scroll(self.tab_bar_scroll_handle.clone())
@@ -1857,7 +1864,7 @@ impl Render for Pane {
                     }
                 }),
             )
-            .when(self.active_item().is_some(), |pane| {
+            .when(self.need_tab_bar_at(TabBarPlacement::Top, cx), |pane| {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({
@@ -1925,6 +1932,9 @@ impl Render for Pane {
                                 }
                             }),
                     )
+            })
+            .when(self.need_tab_bar_at(TabBarPlacement::Bottom, cx), |pane| {
+                pane.child(self.render_tab_bar(cx))
             })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),

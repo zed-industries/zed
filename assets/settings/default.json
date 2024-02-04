@@ -118,6 +118,19 @@
     // Share your project when you are the first to join a channel
     "share_on_join": true
   },
+  // The editor tab bar related settings
+  "tab_bar": {
+    // Where to show the tab bar in the editor.
+    // This setting can take three values:
+    //
+    // 1. Don't show the tab bar:
+    //   "no"
+    // 2. Show tab bar at the top of the editor (default):
+    //    "top"
+    // 3. Show tab bar at the bottom of the editor:
+    //    "bottom"
+    "placement": "top"
+  },
   // Toolbar related settings
   "toolbar": {
     // Whether to show breadcrumbs.

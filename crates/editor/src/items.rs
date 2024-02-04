@@ -18,7 +18,7 @@ use language::{
 use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
-use settings::Settings;
+use settings::{Settings, TabBarPlacement};
 use workspace::item::ItemSettings;
 
 use std::{
@@ -793,6 +793,10 @@ impl Item for Editor {
 
     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<gpui::Point<Pixels>> {
         self.pixel_position_of_newest_cursor
+    }
+
+    fn tab_bar_placement(&self) -> TabBarPlacement {
+        self.tab_bar_settings.placement
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {

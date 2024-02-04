@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, TabBarPlacement};
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -10,6 +10,7 @@ pub struct EditorSettings {
     pub show_completion_documentation: bool,
     pub completion_documentation_secondary_query_debounce: u64,
     pub use_on_type_format: bool,
+    pub tab_bar: TabBar,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
@@ -44,6 +45,11 @@ pub enum DoubleClickInMultibuffer {
     /// Open the excerpt clicked as a new buffer in the new tab, if no `alt` modifier was pressed during double click.
     /// Otherwise, behave as a regular buffer and select the whole word.
     Open,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct TabBar {
+    pub placement: TabBarPlacement,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -126,6 +132,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub use_on_type_format: Option<bool>,
+    /// Tab bar related settings
+    pub tab_bar: Option<TabBarContent>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -160,6 +168,15 @@ pub struct EditorSettingsContent {
     ///
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
+}
+
+// Tab bar related settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct TabBarContent {
+    /// Where to place tab bar in the editor.
+    ///
+    /// Default: top
+    pub placement: Option<TabBarPlacement>,
 }
 
 // Toolbar related settings
