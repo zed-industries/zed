@@ -603,18 +603,6 @@ mod tests {
     }
 
     #[test]
-    fn test_text_with_link() {
-        let parsed = parse("[Docs](./docs.md)");
-
-        assert_eq!(
-            parsed.children,
-            vec![
-                // h3(text("Heading three", 29..46), 29..46),
-            ]
-        );
-    }
-
-    #[test]
     fn test_bold_italic_text() {
         let parsed = parse("Some text **that is bolded** and *italicized*");
 
