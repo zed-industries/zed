@@ -135,8 +135,6 @@ impl MarkdownPreviewView {
                 },
             );
 
-            cx.subscribe(entity, on_event)
-
             Self {
                 selected_block: 0,
                 focus_handle: cx.focus_handle(),
