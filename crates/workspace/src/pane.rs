@@ -1,5 +1,5 @@
 use crate::{
-    item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
+    item::{ClosePosition, Item, ItemHandle, TabBarPlacement, TabsSettings, WeakItemHandle},
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
@@ -17,7 +17,7 @@ use gpui::{
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::{Settings, TabBarPlacement};
+use settings::Settings;
 use std::{
     any::Any,
     cmp, fmt, mem,
@@ -1305,7 +1305,7 @@ impl Pane {
         let is_active = ix == self.active_item_index;
 
         let label = item.tab_content(Some(detail), is_active, cx);
-        let close_side = &ItemSettings::get_global(cx).close_position;
+        let close_side = &TabsSettings::get_global(cx).close_position;
 
         let indicator = maybe!({
             let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {

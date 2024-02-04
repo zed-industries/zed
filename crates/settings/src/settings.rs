@@ -1,7 +1,6 @@
 mod keymap_file;
 mod settings_file;
 mod settings_store;
-mod tab_bar;
 
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str};

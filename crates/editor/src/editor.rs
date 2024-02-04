@@ -49,7 +49,7 @@ use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 pub use display_map::DisplayPoint;
 use display_map::*;
-pub use editor_settings::{EditorSettings, TabBar};
+pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -124,9 +124,10 @@ use ui::{
     Tooltip,
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::Toast;
 use workspace::{
-    searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
+    item::{TabBarPlacement, TabsSettings},
+    searchable::SearchEvent,
+    ItemNavHistory, Pane, SplitDirection, Toast, ViewId, Workspace, WorkspaceId,
 };
 
 use crate::hover_links::find_url;
@@ -387,7 +388,7 @@ pub struct Editor {
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
-    tab_bar_settings: TabBar,
+    tab_bar_placement: TabBarPlacement,
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
@@ -1529,7 +1530,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
-            tab_bar_settings: EditorSettings::get_global(cx).tab_bar,
+            tab_bar_placement: TabsSettings::get_global(cx).placement,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
@@ -9536,8 +9537,8 @@ impl Editor {
         );
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
-        self.tab_bar_settings = editor_settings.tab_bar;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+        self.tab_bar_placement = TabsSettings::get_global(cx).placement;
         cx.notify();
     }
 

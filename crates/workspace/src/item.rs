@@ -20,7 +20,7 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, TabBarPlacement};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -37,9 +37,22 @@ use ui::Element as _;
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
 #[derive(Deserialize)]
-pub struct ItemSettings {
+pub struct TabsSettings {
+    pub placement: TabBarPlacement,
     pub git_status: bool,
     pub close_position: ClosePosition,
+}
+
+/// The tab bar placement in a pane.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TabBarPlacement {
+    /// Don't show tab bar.
+    No,
+    /// Place tab bar on top of the pane.
+    Top,
+    /// Place tab bar at the bottom of the pane.
+    Bottom,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -60,10 +73,14 @@ impl ClosePosition {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ItemSettingsContent {
+pub struct TabsSettingsContent {
+    /// Where to place tab bar in the editor.
+    ///
+    /// Default: top
+    pub placement: Option<TabBarPlacement>,
     /// Whether to show the Git file status on a tab item.
     ///
-    /// Default: true
+    /// Default: false
     git_status: Option<bool>,
     /// Position of the close button in a tab.
     ///
@@ -71,10 +88,10 @@ pub struct ItemSettingsContent {
     close_position: Option<ClosePosition>,
 }
 
-impl Settings for ItemSettings {
+impl Settings for TabsSettings {
     const KEY: Option<&'static str> = Some("tabs");
 
-    type FileContent = ItemSettingsContent;
+    type FileContent = TabsSettingsContent;
 
     fn load(
         default_value: &Self::FileContent,

@@ -18,8 +18,8 @@ use language::{
 use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
-use settings::{Settings, TabBarPlacement};
-use workspace::item::ItemSettings;
+use settings::Settings;
+use workspace::item::{TabBarPlacement, TabsSettings};
 
 use std::{
     borrow::Cow,
@@ -595,7 +595,7 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        let label_color = if ItemSettings::get_global(cx).git_status {
+        let label_color = if TabsSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
                 .as_singleton()
@@ -796,7 +796,7 @@ impl Item for Editor {
     }
 
     fn tab_bar_placement(&self) -> TabBarPlacement {
-        self.tab_bar_settings.placement
+        self.tab_bar_placement
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
