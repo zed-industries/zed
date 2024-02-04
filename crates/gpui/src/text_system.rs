@@ -317,6 +317,7 @@ impl WindowTextSystem {
             if let Some(last_run) = decoration_runs.last_mut() {
                 if last_run.color == run.color
                     && last_run.underline == run.underline
+                    && last_run.strikethrough == run.strikethrough
                     && last_run.background_color == run.background_color
                 {
                     last_run.len += run.len as u32;
@@ -383,6 +384,7 @@ impl WindowTextSystem {
                 if decoration_runs.last().map_or(false, |last_run| {
                     last_run.color == run.color
                         && last_run.underline == run.underline
+                        && last_run.strikethrough == run.strikethrough
                         && last_run.background_color == run.background_color
                 }) {
                     decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
