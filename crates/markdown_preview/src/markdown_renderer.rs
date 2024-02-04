@@ -48,8 +48,9 @@ impl RenderContext {
         ElementId::from(SharedString::from(id))
     }
 
-    fn with_common_mb(&self, element: Div) -> Div {
-        element.pb_3()
+    fn with_common_p(&self, element: Div) -> Div {
+        // TODO: Remove this. It's now done in the list view.
+        element.pb_0()
     }
 }
 
@@ -103,7 +104,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .text_size(size)
         .text_color(color)
         .pt(rems(0.15))
-        .pb_4()
+        .pb_1()
         .child(render_markdown_text(&parsed.contents, cx))
         .into_any()
 }
@@ -128,7 +129,7 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
         items.push(item);
     }
 
-    cx.with_common_mb(div()).children(items).into_any()
+    cx.with_common_p(div()).children(items).into_any()
 }
 
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
@@ -140,7 +141,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .map(|row| render_markdown_table_row(row, &parsed.column_alignments, false, cx))
         .collect();
 
-    cx.with_common_mb(v_flex())
+    cx.with_common_p(v_flex())
         .w_full()
         .child(header)
         .children(body)
@@ -198,12 +199,16 @@ fn render_markdown_block_quote(
         .map(|child| render_markdown_block(child, cx))
         .collect();
 
-    let leading_line = div().w(px(4.)).bg(cx.border_color).h_full().mr_3();
-
-    cx.with_common_mb(h_flex())
-        .child(leading_line)
-        .text_color(cx.text_muted_color)
-        .child(v_flex().children(children))
+    cx.with_common_p(div())
+        .child(
+            div()
+                .border_l_4()
+                .border_color(cx.border_color)
+                .pl_3()
+                // TODO: Add a bit of spacing
+                // between each child
+                .children(children),
+        )
         .into_any()
 }
 
@@ -211,7 +216,7 @@ fn render_markdown_code_block(
     parsed: &ParsedMarkdownCodeBlock,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    cx.with_common_mb(div())
+    cx.with_common_p(div())
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
@@ -220,7 +225,7 @@ fn render_markdown_code_block(
 }
 
 fn render_markdown_paragraph(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
-    cx.with_common_mb(div())
+    cx.with_common_p(div())
         .child(render_markdown_text(parsed, cx))
         .into_any_element()
 }

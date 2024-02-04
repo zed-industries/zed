@@ -86,14 +86,14 @@ impl MarkdownPreviewView {
                                 RenderContext::new(Some(view.workspace.clone()), cx);
                             let block = view.contents.children.get(ix).unwrap();
                             let block = render_markdown_block(block, &mut render_cx);
-                            let block = div().child(block).pl_4();
+                            let block = div().child(block).pl_4().pb_3();
 
                             if ix == view.selected_block {
                                 let indicator = div()
                                     .h_full()
                                     .w(px(4.0))
-                                    .bg(cx.theme().colors().border_selected)
-                                    .rounded_md();
+                                    .bg(cx.theme().colors().border)
+                                    .rounded_sm();
 
                                 return div()
                                     .relative()
