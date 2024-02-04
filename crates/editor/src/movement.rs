@@ -1032,6 +1032,7 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
         crate::init(cx);
+        workspace::init_settings(cx);
         Project::init_settings(cx);
     }
 }
