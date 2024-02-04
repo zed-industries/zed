@@ -791,6 +791,15 @@ fn next_word_end(
     times: usize,
 ) -> DisplayPoint {
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+
+    log::error!("\n***********************************************");
+    log::error!("-----------");
+    log::error!("{:?}", map.chars_at(point).nth(0));
+    log::error!("-----------");
+
+    log::error!("map.line_len(point.row()): {:?}", map.line_len(point.row()));
+    log::error!("point.row(): {:?}", point.row());
+
     for _ in 0..times {
         if point.column() < map.line_len(point.row()) {
             *point.column_mut() += 1;
@@ -798,26 +807,77 @@ fn next_word_end(
             *point.row_mut() += 1;
             *point.column_mut() = 0;
         }
+
+        log::error!("point after adjustmnet {:?}", map.chars_at(point).nth(0));
         point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
             let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
             let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-            left_kind != right_kind && left_kind != CharKind::Whitespace
+            log::error!("------------");
+            log::error!("left: {:?}, right: {:?}", left_kind, right_kind);
+            log::error!("left char: {:?}, right char: {:?}", left, right);
+
+            // left_kind != right_kind && left_kind != CharKind::Whitespace
+
+            let cond = (left_kind != right_kind && !left.is_whitespace()) || right == '\n';
+            /*
+            let cond = (left_kind != right_kind
+                && !left.is_whitespace()
+                && right_kind == CharKind::Punctuation)
+                || (left_kind == CharKind::Word && right_kind == CharKind::Punctuation)
+                || right == '\n';
+            */
+            log::error!("cond: {:?}", cond);
+            cond
         });
 
         // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
         // we have backtracked already
-        if !map
-            .chars_at(point)
-            .nth(1)
-            .map(|(c, _)| c == '\n')
-            .unwrap_or(true)
-        {
+        log::error!("current char (0th) {:?}", map.chars_at(point).nth(0));
+        log::error!("next char (1st) {:?}", map.chars_at(point).nth(1));
+
+        let cur_char = map.chars_at(point).nth(0);
+        let next_char = map.chars_at(point).nth(1);
+        /*
+        if next_char.map(|(c, _)| c == '\n').unwrap_or(true) {
+            log::error!("backtracking");
+            log::error!("before sub: {:?}", point);
             *point.column_mut() = point.column().saturating_sub(1);
+            log::error!("after sub: {:?}", point);
         }
+        */
+        log::error!("before clip point: {:?}", point);
         point = map.clip_point(point, Bias::Left);
+        log::error!("after clip point: {:?}", point);
     }
     point
+}
+
+fn is_bracket_brace_or_parenthesis(c: char) -> bool {
+    match c {
+        '(' | ')' | '{' | '}' | '[' | ']' => true,
+        _ => false,
+    }
+}
+
+fn is_newline(c: char) -> bool {
+    let is_word_bound = c == '\n';
+    log::error!("is_word_bound: {:?}, char: {:?}", is_word_bound, c);
+    is_word_bound
+}
+
+fn is_newline_before_punctuation(a: char, b: char) -> bool {
+    let is_newline = a == '\n';
+    let is_punctuation = b.is_ascii_punctuation();
+
+    log::error!(
+        "is_newline: {:?}, is_punctuation: {:?}, char: {:?}",
+        is_newline,
+        is_punctuation,
+        b
+    );
+
+    is_newline && is_punctuation
 }
 
 fn previous_word_start(
@@ -826,6 +886,7 @@ fn previous_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
+    log::error!("previous_word_start");
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
@@ -835,9 +896,17 @@ fn previous_word_start(
                 let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
                 let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-                (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
+                log::error!("left: {:?}, right: {:?}", left_kind, right_kind);
+                log::error!("left char: {:?}, right char: {:?}", left, right);
+
+                let cond = (left_kind != right_kind && !right.is_whitespace()) || left == '\n';
+                cond
             });
     }
+
+    log::error!("current char (0th) {:?}", map.chars_at(point).nth(0));
+    log::error!("next char (1st) {:?}", map.chars_at(point).nth(1));
+
     point
 }
 
