@@ -280,6 +280,8 @@ pub fn init(
         ],
     );
 
+    /// Produces a link error on linux due to duplicated `state_new` symbol
+    #[cfg(not(target_os = "linux"))]
     language(
         "purescript",
         tree_sitter_purescript::language(),
