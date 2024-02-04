@@ -8972,6 +8972,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-roc"
+version = "0.0.1"
+source = "git+https://github.com/h2000/tree-sitter-roc?rev=16981c2f#16981c2f009d8210cc4f56c1c130d9a1cdcda8e0"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-ruby"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10383,6 +10392,7 @@ dependencies = [
  "tree-sitter-purescript",
  "tree-sitter-python",
  "tree-sitter-racket",
+ "tree-sitter-roc",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",

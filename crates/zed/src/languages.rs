@@ -25,8 +25,10 @@ mod language_plugin;
 mod lua;
 mod nu;
 mod php;
-mod purescript;
+// FIXME got duplicate symbol error (see below)
+// mod purescript;
 mod python;
+mod roc;
 mod ruby;
 mod rust;
 mod svelte;
@@ -155,6 +157,11 @@ pub fn init(
         ))],
     );
     language(
+        "roc",
+        tree_sitter_roc::language(),
+        vec![Arc::new(roc::RocAdapter)],
+    );
+    language(
         "rust",
         tree_sitter_rust::language(),
         vec![Arc::new(rust::RustLspAdapter)],
@@ -272,14 +279,19 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
-
-    language(
-        "purescript",
-        tree_sitter_purescript::language(),
-        vec![Arc::new(purescript::PurescriptLspAdapter::new(
-            node_runtime.clone(),
-        ))],
-    );
+    // FIXME duplicate symbol error:
+    //   = note: ld64.lld: error: duplicate symbol: state_new
+    //        >>> defined in scanner.c:218 (src/scanner.c:218)
+    //        >>>            zed.git/target/debug/deps/libtree_sitter_purescript-3713eb7f17357eb4.rlib(scanner.o)
+    //        >>> defined in scanner.c:218 (src/scanner.c:218)
+    //        >>>            zed.git/target/debug/deps/libtree_sitter_haskell-666d616fc2c84fae.rlib(scanner.o)
+    // language(
+    //     "purescript",
+    //     tree_sitter_purescript::language(),
+    //     vec![Arc::new(purescript::PurescriptLspAdapter::new(
+    //         node_runtime.clone(),
+    //     ))],
+    // );
     language(
         "elm",
         tree_sitter_elm::language(),
