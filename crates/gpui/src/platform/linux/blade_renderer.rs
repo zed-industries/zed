@@ -251,7 +251,7 @@ impl BladeRenderer {
         let instance_belt = BladeBelt::new(BladeBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
-            alignment: 0x100, // required by DX12
+            alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
         let atlas = Arc::new(BladeAtlas::new(&gpu));
         let atlas_sampler = gpu.create_sampler(gpu::SamplerDesc {
