@@ -403,9 +403,8 @@ pub fn find_boundary(
     find_range: FindRange,
     mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    // get offset from the original DisplayPoint, which is the
-    // nth character (difference from start of file to the current
-    // character the point is on).
+    // Get the offset from the original DisplayPoint passed into this function,
+    // which is the nth character in the file.
     let mut offset = from.to_offset(&map, Bias::Right);
 
     let mut prev_ch = None;
@@ -415,6 +414,8 @@ pub fn find_boundary(
         }
         if let Some(prev_ch) = prev_ch {
             if is_boundary(prev_ch, ch) {
+                // We will want to return the point *before* the boundary,
+                // so we subtract the length of the current character from the offset.
                 offset -= ch.len_utf8();
                 break;
             }

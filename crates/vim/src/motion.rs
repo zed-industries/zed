@@ -803,7 +803,8 @@ fn next_word_end(
             let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
             let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-            let is_boundary = (left_kind != right_kind && !left.is_whitespace()) || right == '\n';
+            let is_boundary =
+                (left_kind != right_kind && left_kind != CharKind::Whitespace) || right == '\n';
             is_boundary
         });
 
