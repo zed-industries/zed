@@ -27,6 +27,7 @@ struct BladeAtlasState {
     polychrome_textures: Vec<BladeAtlasTexture>,
     path_textures: Vec<BladeAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    initializations: Vec<AtlasTextureId>,
     uploads: Vec<PendingUpload>,
 }
 
@@ -63,6 +64,7 @@ impl BladeAtlas {
             polychrome_textures: Default::default(),
             path_textures: Default::default(),
             tiles_by_key: Default::default(),
+            initializations: Vec::new(),
             uploads: Vec::new(),
         }))
     }
@@ -90,7 +92,7 @@ impl BladeAtlas {
 
     pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
         let mut lock = self.0.lock();
-        lock.flush(gpu_encoder.transfer());
+        lock.flush(gpu_encoder);
     }
 
     pub fn after_frame(&self, sync_point: &gpu::SyncPoint) {
@@ -220,6 +222,8 @@ impl BladeAtlasState {
             raw,
             raw_view,
         };
+
+        self.initializations.push(atlas_texture.id);
         textures.push(atlas_texture);
         textures.last_mut().unwrap()
     }
@@ -229,7 +233,18 @@ impl BladeAtlasState {
         self.uploads.push(PendingUpload { id, bounds, data });
     }
 
-    fn flush(&mut self, mut transfers: gpu::TransferCommandEncoder) {
+    fn flush(&mut self, encoder: &mut gpu::CommandEncoder) {
+        for id in self.initializations.drain(..) {
+            let textures = match id.kind {
+                crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
+                crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
+                crate::AtlasTextureKind::Path => &self.path_textures,
+            };
+            let texture = &textures[id.index as usize];
+            encoder.init_texture(texture.raw);
+        }
+
+        let mut transfers = encoder.transfer();
         for upload in self.uploads.drain(..) {
             let textures = match upload.id.kind {
                 crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
