@@ -9,6 +9,8 @@ use raw_window_handle as rwh;
 use std::{
     ffi::c_void,
     mem,
+    num::NonZeroU32,
+    ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
 };
@@ -71,17 +73,17 @@ pub(crate) struct LinuxWindowState {
 #[derive(Clone)]
 pub(crate) struct LinuxWindow(pub(crate) Arc<LinuxWindowState>);
 
-unsafe impl rwh::HasRawWindowHandle for RawWindow {
-    fn raw_window_handle(&self) -> rwh::RawWindowHandle {
-        let mut wh = rwh::XcbWindowHandle::empty();
+unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
+    fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
+        let mut wh = blade_rwh::XcbWindowHandle::empty();
         wh.window = self.window_id;
         wh.visual_id = self.visual_id;
         wh.into()
     }
 }
-unsafe impl rwh::HasRawDisplayHandle for RawWindow {
-    fn raw_display_handle(&self) -> rwh::RawDisplayHandle {
-        let mut dh = rwh::XcbDisplayHandle::empty();
+unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
+    fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
+        let mut dh = blade_rwh::XcbDisplayHandle::empty();
         dh.connection = self.connection;
         dh.screen = self.screen_id;
         dh.into()
@@ -91,16 +93,18 @@ unsafe impl rwh::HasRawDisplayHandle for RawWindow {
 impl rwh::HasWindowHandle for LinuxWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
         Ok(unsafe {
-            let raw_handle = rwh::HasRawWindowHandle::raw_window_handle(&self.0.raw);
-            rwh::WindowHandle::borrow_raw(raw_handle, rwh::ActiveHandle::new())
+            let non_zero = NonZeroU32::new(self.0.raw.window_id).unwrap();
+            let handle = rwh::XcbWindowHandle::new(non_zero);
+            rwh::WindowHandle::borrow_raw(handle.into())
         })
     }
 }
 impl rwh::HasDisplayHandle for LinuxWindow {
     fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
         Ok(unsafe {
-            let raw_handle = rwh::HasRawDisplayHandle::raw_display_handle(&self.0.raw);
-            rwh::DisplayHandle::borrow_raw(raw_handle)
+            let non_zero = NonNull::new(self.0.raw.connection).unwrap();
+            let handle = rwh::XcbDisplayHandle::new(Some(non_zero), self.0.raw.screen_id);
+            rwh::DisplayHandle::borrow_raw(handle.into())
         })
     }
 }

@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "macos"), allow(unused))]
+
 use std::{
     env,
     path::{Path, PathBuf},
@@ -6,15 +8,19 @@ use std::{
 use cbindgen::Config;
 
 fn main() {
-    //generate_dispatch_bindings();
-    //let header_path = generate_shader_bindings();
-    //#[cfg(feature = "runtime_shaders")]
-    //emit_stitched_shaders(&header_path);
-    //#[cfg(not(feature = "runtime_shaders"))]
-    //compile_metal_shaders(&header_path);
+    #[cfg(target_os = "macos")]
+    generate_dispatch_bindings();
+    #[cfg(target_os = "macos")]
+    let header_path = generate_shader_bindings();
+    #[cfg(target_os = "macos")]
+    #[cfg(feature = "runtime_shaders")]
+    emit_stitched_shaders(&header_path);
+    #[cfg(target_os = "macos")]
+    #[cfg(not(feature = "runtime_shaders"))]
+    compile_metal_shaders(&header_path);
 }
 
-fn _generate_dispatch_bindings() {
+fn generate_dispatch_bindings() {
     println!("cargo:rustc-link-lib=framework=System");
     println!("cargo:rerun-if-changed=src/platform/mac/dispatch.h");
 
@@ -38,7 +44,7 @@ fn _generate_dispatch_bindings() {
         .expect("couldn't write dispatch bindings");
 }
 
-fn _generate_shader_bindings() -> PathBuf {
+fn generate_shader_bindings() -> PathBuf {
     let output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("scene.h");
     let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let mut config = Config::default();
@@ -116,7 +122,7 @@ fn emit_stitched_shaders(header_path: &Path) {
     println!("cargo:rerun-if-changed={}", &shader_source_path);
 }
 #[cfg(not(feature = "runtime_shaders"))]
-fn _compile_metal_shaders(header_path: &Path) {
+fn compile_metal_shaders(header_path: &Path) {
     use std::process::{self, Command};
     let shader_path = "./src/platform/mac/shaders.metal";
     let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");

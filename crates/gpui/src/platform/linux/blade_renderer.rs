@@ -3,8 +3,9 @@
 
 use super::{BladeBelt, BladeBeltDescriptor};
 use crate::{
-    AtlasTextureKind, AtlasTile, BladeAtlas, Bounds, ContentMask, Hsla, Path, PathId, PathVertex,
-    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Underline, MonochromeSprite, PolychromeSprite, PATH_TEXTURE_FORMAT,
+    AtlasTextureKind, AtlasTile, BladeAtlas, Bounds, ContentMask, Hsla, MonochromeSprite, Path,
+    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
+    Underline, PATH_TEXTURE_FORMAT,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
@@ -444,7 +445,10 @@ impl BladeRenderer {
                         );
                         encoder.draw(0, 4, 0, underlines.len() as u32);
                     }
-                    PrimitiveBatch::MonochromeSprites { texture_id, sprites } => {
+                    PrimitiveBatch::MonochromeSprites {
+                        texture_id,
+                        sprites,
+                    } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
                         let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.mono_sprites);
@@ -459,7 +463,10 @@ impl BladeRenderer {
                         );
                         encoder.draw(0, 4, 0, sprites.len() as u32);
                     }
-                    PrimitiveBatch::PolychromeSprites { texture_id, sprites } => {
+                    PrimitiveBatch::PolychromeSprites {
+                        texture_id,
+                        sprites,
+                    } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
                         let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.poly_sprites);
@@ -474,7 +481,7 @@ impl BladeRenderer {
                         );
                         encoder.draw(0, 4, 0, sprites.len() as u32);
                     }
-                    PrimitiveBatch::Surfaces {..} => {
+                    PrimitiveBatch::Surfaces { .. } => {
                         unimplemented!()
                     }
                 }
