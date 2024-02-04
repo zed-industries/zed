@@ -32,15 +32,14 @@ struct BladeAtlasState {
 
 impl BladeAtlasState {
     fn destroy(&mut self) {
-        for texture in self.monochrome_textures.drain(..) {
-            self.gpu.destroy_texture(texture.raw);
+        for mut texture in self.monochrome_textures.drain(..) {
+            texture.destroy(&self.gpu);
         }
-        for texture in self.polychrome_textures.drain(..) {
-            self.gpu.destroy_texture(texture.raw);
+        for mut texture in self.polychrome_textures.drain(..) {
+            texture.destroy(&self.gpu);
         }
-        for texture in self.path_textures.drain(..) {
-            self.gpu.destroy_texture(texture.raw);
-            self.gpu.destroy_texture_view(texture.raw_view.unwrap());
+        for mut texture in self.path_textures.drain(..) {
+            texture.destroy(&self.gpu);
         }
         self.upload_belt.destroy(&self.gpu);
     }
@@ -48,7 +47,7 @@ impl BladeAtlasState {
 
 pub struct BladeTextureInfo {
     pub size: gpu::Extent,
-    pub raw_view: Option<gpu::TextureView>,
+    pub raw_view: gpu::TextureView,
 }
 
 impl BladeAtlas {
@@ -198,17 +197,13 @@ impl BladeAtlasState {
             dimension: gpu::TextureDimension::D2,
             usage,
         });
-        let raw_view = if usage.contains(gpu::TextureUsage::TARGET) {
-            Some(self.gpu.create_texture_view(gpu::TextureViewDesc {
-                name: "",
-                texture: raw,
-                format,
-                dimension: gpu::ViewDimension::D2,
-                subresources: &Default::default(),
-            }))
-        } else {
-            None
-        };
+        let raw_view = self.gpu.create_texture_view(gpu::TextureViewDesc {
+            name: "",
+            texture: raw,
+            format,
+            dimension: gpu::ViewDimension::D2,
+            subresources: &Default::default(),
+        });
 
         let textures = match kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
@@ -270,7 +265,7 @@ struct BladeAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
     raw: gpu::Texture,
-    raw_view: Option<gpu::TextureView>,
+    raw_view: gpu::TextureView,
     format: gpu::TextureFormat,
 }
 
@@ -291,6 +286,11 @@ impl BladeAtlasTexture {
             },
         };
         Some(tile)
+    }
+
+    fn destroy(&mut self, gpu: &gpu::Context) {
+        gpu.destroy_texture(self.raw);
+        gpu.destroy_texture_view(self.raw_view);
     }
 
     fn bytes_per_pixel(&self) -> u8 {

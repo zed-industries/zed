@@ -336,7 +336,7 @@ impl BladeRenderer {
             let vertex_buf = self.instance_belt.alloc_data(&vertices, &self.gpu);
             let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
-                    view: tex_info.raw_view.unwrap(),
+                    view: tex_info.raw_view,
                     init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
                     finish_op: gpu::FinishOp::Store,
                 }],
@@ -426,7 +426,7 @@ impl BladeRenderer {
                                 0,
                                 &ShaderPathsData {
                                     globals,
-                                    t_sprite: tex_info.raw_view.unwrap(),
+                                    t_sprite: tex_info.raw_view,
                                     s_sprite: self.atlas_sampler,
                                     b_path_sprites: instance_buf,
                                 },
@@ -457,7 +457,7 @@ impl BladeRenderer {
                             0,
                             &ShaderMonoSpritesData {
                                 globals,
-                                t_sprite: tex_info.raw_view.unwrap(),
+                                t_sprite: tex_info.raw_view,
                                 s_sprite: self.atlas_sampler,
                                 b_mono_sprites: instance_buf,
                             },
@@ -475,7 +475,7 @@ impl BladeRenderer {
                             0,
                             &ShaderPolySpritesData {
                                 globals,
-                                t_sprite: tex_info.raw_view.unwrap(),
+                                t_sprite: tex_info.raw_view,
                                 s_sprite: self.atlas_sampler,
                                 b_poly_sprites: instance_buf,
                             },
