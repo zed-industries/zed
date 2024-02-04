@@ -1299,6 +1299,7 @@ impl Pane {
         ix: usize,
         item: &Box<dyn ItemHandle>,
         detail: usize,
+        tab_bar_placement: ui::TabBarPlacement,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
@@ -1322,6 +1323,7 @@ impl Pane {
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
         let tab = Tab::new(ix)
+            .tab_bar_placement(tab_bar_placement)
             .position(if is_first_item {
                 TabPosition::First
             } else if is_last_item {
@@ -1493,8 +1495,13 @@ impl Pane {
         item.tab_bar_placement(cx) == placement
     }
 
-    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
+    fn render_tab_bar(
+        &mut self,
+        placement: ui::TabBarPlacement,
+        cx: &mut ViewContext<'_, Pane>,
+    ) -> impl IntoElement {
         TabBar::new("tab_bar")
+            .placement(placement)
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(self.display_nav_history_buttons, |tab_bar| {
                 tab_bar.start_child(
@@ -1533,7 +1540,7 @@ impl Pane {
                     .iter()
                     .enumerate()
                     .zip(self.tab_details(cx))
-                    .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
+                    .map(|((ix, item), detail)| self.render_tab(ix, item, detail, placement, cx)),
             )
             .child(
                 div()
@@ -1865,7 +1872,7 @@ impl Render for Pane {
                 }),
             )
             .when(self.need_tab_bar_at(TabBarPlacement::Top, cx), |pane| {
-                pane.child(self.render_tab_bar(cx))
+                pane.child(self.render_tab_bar(ui::TabBarPlacement::Top, cx))
             })
             .child({
                 let has_worktrees = self.project.read(cx).worktrees().next().is_some();
@@ -1934,7 +1941,7 @@ impl Render for Pane {
                     )
             })
             .when(self.need_tab_bar_at(TabBarPlacement::Bottom, cx), |pane| {
-                pane.child(self.render_tab_bar(cx))
+                pane.child(self.render_tab_bar(ui::TabBarPlacement::Bottom, cx))
             })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
