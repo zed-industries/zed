@@ -81,6 +81,12 @@ impl MarkdownPreviewView {
                         this.contents = parse_markdown(&contents, file_location);
                         this.list_state.reset(this.contents.children.len());
                         cx.notify();
+
+                        // TODO: This does not work as expected.
+                        // The scroll request appears to be dropped
+                        // after `.reset` is called.
+                        this.list_state.scroll_to_reveal_item(this.selected_block);
+                        cx.notify();
                     }
                     EditorEvent::SelectionsChanged { .. } => {
                         let editor = editor.read(cx);
@@ -128,6 +134,8 @@ impl MarkdownPreviewView {
                     }
                 },
             );
+
+            cx.subscribe(entity, on_event)
 
             Self {
                 selected_block: 0,

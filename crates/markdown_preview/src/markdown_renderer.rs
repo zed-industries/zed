@@ -117,8 +117,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
 
     let line_height = DefiniteLength::from(rems(1.25));
 
-    h_flex()
-        .w_full()
+    div()
         .line_height(line_height)
         .text_size(size)
         .text_color(color)
@@ -148,7 +147,7 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
         let item = h_flex()
             .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
             .items_start()
-            .children(vec![bullet, div().children(contents)]);
+            .children(vec![bullet, div().children(contents).pr_2().w_full()]);
 
         items.push(item);
     }
