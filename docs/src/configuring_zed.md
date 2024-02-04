@@ -190,6 +190,50 @@ List of `string` values
 2. Position the dock to the right of the workspace like a side panel: `right`
 3. Position the dock full screen over the entire workspace: `expanded`
 
+## Editor Tab Bar
+
+- Description: Configuration for the editor tab bar.
+- Setting: `tab_bar`
+- Default:
+
+```json
+"tab_bar": {
+  "placement": "top"
+},
+```
+
+### Placement
+
+- Description: Where to place the editor tab bar.
+- Setting: `placement`
+- Default: `top`
+
+**Options**
+
+1. Place the tab bar on top of the editor:
+
+```json
+{
+  "placement": "top"
+}
+```
+
+2. Place the tab bar at the bottom of the editor:
+
+```json
+{
+  "placement": "bottom"
+}
+```
+
+3. Hide the tab bar:
+
+```json
+{
+  "placement": "no"
+}
+```
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
