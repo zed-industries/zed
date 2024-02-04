@@ -4,9 +4,9 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, ParentElement, SharedString, Styled,
-    StyledText, TextStyle, WeakView, WindowContext,
+    div, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId, HighlightStyle,
+    Hsla, InteractiveText, IntoElement, ParentElement, SharedString, Styled, StyledText, TextStyle,
+    WeakView, WindowContext,
 };
 use std::{ops::Range, sync::Arc};
 use theme::{ActiveTheme, SyntaxTheme};
