@@ -199,7 +199,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     }
 
     fn tab_bar_placement(&self) -> TabBarPlacement {
-        TabBarPlacement::Bottom
+        TabBarPlacement::Top
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
