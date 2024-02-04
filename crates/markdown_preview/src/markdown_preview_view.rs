@@ -2,9 +2,8 @@ use std::ops::Range;
 
 use editor::{Editor, EditorEvent};
 use gpui::{
-    canvas, list, AnyElement, AppContext, AvailableSpace, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext,
-    WeakView,
+    list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext, WeakView,
 };
 use ui::prelude::*;
 use workspace::item::Item;
@@ -13,7 +12,7 @@ use workspace::Workspace;
 use crate::{
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
-    markdown_renderer::{render_markdown_block, render_parsed_markdown, RenderContext},
+    markdown_renderer::{render_markdown_block, RenderContext},
     OpenPreview,
 };
 
@@ -21,6 +20,7 @@ pub struct MarkdownPreviewView {
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     contents: ParsedMarkdown,
+    selected_block: usize,
     list_state: ListState,
 }
 
@@ -66,8 +66,8 @@ impl MarkdownPreviewView {
                     EditorEvent::SelectionsChanged { .. } => {
                         let editor = editor.read(cx);
                         let selection_range = editor.selections.last::<usize>(cx).range();
-                        let selected_block = this.get_block_index_under_cursor(selection_range);
-                        this.list_state.scroll_to_reveal_item(selected_block);
+                        this.selected_block = this.get_block_index_under_cursor(selection_range);
+                        this.list_state.scroll_to_reveal_item(this.selected_block);
                         cx.notify();
                     }
                     _ => {}
@@ -85,7 +85,24 @@ impl MarkdownPreviewView {
                             let mut render_cx =
                                 RenderContext::new(Some(view.workspace.clone()), cx);
                             let block = view.contents.children.get(ix).unwrap();
-                            render_markdown_block(block, &mut render_cx)
+                            let block = render_markdown_block(block, &mut render_cx);
+                            let block = div().child(block).pl_4();
+
+                            if ix == view.selected_block {
+                                let indicator = div()
+                                    .h_full()
+                                    .w(px(4.0))
+                                    .bg(cx.theme().colors().border_selected)
+                                    .rounded_md();
+
+                                return div()
+                                    .relative()
+                                    .child(block)
+                                    .child(indicator.absolute().left_0().top_0())
+                                    .into_any();
+                            }
+
+                            block.into_any()
                         })
                     } else {
                         div().into_any()
@@ -94,6 +111,7 @@ impl MarkdownPreviewView {
             );
 
             Self {
+                selected_block: 0,
                 focus_handle: cx.focus_handle(),
                 workspace,
                 contents,
@@ -161,12 +179,8 @@ impl Item for MarkdownPreviewView {
 }
 
 impl Render for MarkdownPreviewView {
-    // TODO: Block quote not rendering as expected
-    // TODO: List items will overflow
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            // .items_start() // TODO: Need?
-            // .justify_start()
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle)
@@ -176,8 +190,6 @@ impl Render for MarkdownPreviewView {
             .child(
                 div()
                     .flex_grow()
-                    // .px_2()
-                    // .pt_1()
                     .map(|this| this.child(list(self.list_state.clone()).full())),
             )
     }
