@@ -423,8 +423,7 @@ pub fn find_boundary(
         offset += ch.len_utf8();
         prev_ch = Some(ch);
     }
-    let clipped_point = map.clip_point(offset.to_display_point(map), Bias::Right);
-    clipped_point
+    map.clip_point(offset.to_display_point(map), Bias::Right)
 }
 
 /// Returns an iterator over the characters following a given offset in the [`DisplaySnapshot`].

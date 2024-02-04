@@ -803,13 +803,8 @@ fn next_word_end(
             let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
             let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-            let is_boundary =
-                (left_kind != right_kind && left_kind != CharKind::Whitespace) || right == '\n';
-            is_boundary
+            (left_kind != right_kind && left_kind != CharKind::Whitespace) || right == '\n'
         });
-
-        let cur_char = map.chars_at(point).nth(0);
-        let next_char = map.chars_at(point).nth(1);
         point = map.clip_point(point, Bias::Left);
     }
     point
@@ -830,8 +825,7 @@ fn previous_word_start(
                 let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
                 let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-                let cond = (left_kind != right_kind && !right.is_whitespace()) || left == '\n';
-                cond
+                (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
             });
     }
     point
