@@ -586,7 +586,7 @@ fn possible_open_targets(
 }
 
 lazy_static! {
-    pub static ref SPECIAL_CHARS: HashSet<char> = {
+    pub static ref REGEX_SPECIAL_CHARS: HashSet<char> = {
         HashSet::from([
             '\\', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '^', '$',
         ])
@@ -597,7 +597,7 @@ fn regex_to_literal(regex: &str) -> String {
     regex
         .chars()
         .flat_map(|c| {
-            if SPECIAL_CHARS.contains(&c) {
+            if REGEX_SPECIAL_CHARS.contains(&c) {
                 vec!['\\', c]
             } else {
                 vec![c]
