@@ -814,25 +814,6 @@ fn next_word_end(
     point
 }
 
-fn is_bracket_brace_or_parenthesis(c: char) -> bool {
-    match c {
-        '(' | ')' | '{' | '}' | '[' | ']' => true,
-        _ => false,
-    }
-}
-
-fn is_newline(c: char) -> bool {
-    let is_word_bound = c == '\n';
-    is_word_bound
-}
-
-fn is_newline_before_punctuation(a: char, b: char) -> bool {
-    let is_newline = a == '\n';
-    let is_punctuation = b.is_ascii_punctuation();
-
-    is_newline && is_punctuation
-}
-
 fn previous_word_start(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
