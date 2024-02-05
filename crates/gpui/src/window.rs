@@ -269,7 +269,7 @@ pub struct Window {
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
-    active: bool,
+    active: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
@@ -334,11 +334,13 @@ impl Window {
         let bounds = platform_window.bounds();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
+        let active = Rc::new(Cell::new(false));
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
+            let active = active.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move || {
                 if dirty.get() {
@@ -350,9 +352,12 @@ impl Window {
                             })
                             .log_err();
                     })
-                } else if last_input_timestamp.get().elapsed() < Duration::from_secs(1) {
-                    // Keep presenting the current scene for 1 extra second since the
-                    // last input to prevent the display from underclocking the refresh rate.
+                }
+                // Keep presenting the current scene for 1 extra second since the
+                // last input to prevent the display from underclocking the refresh rate.
+                else if active.get()
+                    && last_input_timestamp.get().elapsed() < Duration::from_secs(1)
+                {
                     handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
             }
@@ -378,7 +383,7 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, cx| {
-                        cx.window.active = active;
+                        cx.window.active.set(active);
                         cx.window
                             .activation_observers
                             .clone()
@@ -422,7 +427,7 @@ impl Window {
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
-            active: false,
+            active,
             dirty,
             last_input_timestamp,
             refreshing: false,
@@ -750,7 +755,7 @@ impl<'a> WindowContext<'a> {
 
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
-        self.window.active
+        self.window.active.get()
     }
 
     /// Toggle zoom on the window.
@@ -1006,7 +1011,7 @@ impl<'a> WindowContext<'a> {
                 self.window.focus,
             );
         self.window.next_frame.focus = self.window.focus;
-        self.window.next_frame.window_active = self.window.active;
+        self.window.next_frame.window_active = self.window.active.get();
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
@@ -2512,7 +2517,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
         cx.windows
             .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active))
+            .and_then(|window| window.as_ref().map(|window| window.active.get()))
     }
 }
 
