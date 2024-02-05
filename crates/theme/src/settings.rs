@@ -78,16 +78,22 @@ pub(crate) struct AdjustedBufferFontSize(Pixels);
 
 impl Global for AdjustedBufferFontSize {}
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ThemeSelection {
-    Static(String),
+    Static(#[schemars(schema_with = "theme_name_ref")] String),
     Dynamic {
         #[serde(default)]
         mode: ThemeMode,
+        #[schemars(schema_with = "theme_name_ref")]
         light: String,
+        #[schemars(schema_with = "theme_name_ref")]
         dark: String,
     },
+}
+
+fn theme_name_ref(_: &mut SchemaGenerator) -> Schema {
+    Schema::new_ref("#/definitions/ThemeName".into())
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -102,47 +108,6 @@ pub enum ThemeMode {
     /// Use the theme based on the system's appearance.
     #[default]
     System,
-}
-
-impl JsonSchema for ThemeSelection {
-    fn schema_name() -> String {
-        "ThemeSelection".into()
-    }
-
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        let theme_name_ref = Schema::new_ref("#/definitions/ThemeName".into());
-
-        Schema::Object(SchemaObject {
-            subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
-                any_of: Some(vec![theme_name_ref.clone(), {
-                    let mut schema_object = schemars::schema::SchemaObject {
-                        instance_type: Some(schemars::schema::InstanceType::Object.into()),
-                        ..Default::default()
-                    };
-                    let object_validation = schema_object.object();
-                    {
-                        object_validation
-                            .properties
-                            .insert("light".to_owned(), theme_name_ref.clone());
-                        if !<String as schemars::JsonSchema>::_schemars_private_is_option() {
-                            object_validation.required.insert("light".to_owned());
-                        }
-                    }
-                    {
-                        object_validation
-                            .properties
-                            .insert("dark".to_owned(), theme_name_ref);
-                        if !<String as schemars::JsonSchema>::_schemars_private_is_option() {
-                            object_validation.required.insert("dark".to_owned());
-                        }
-                    }
-                    schemars::schema::Schema::Object(schema_object)
-                }]),
-                ..Default::default()
-            })),
-            ..Default::default()
-        })
-    }
 }
 
 impl ThemeSelection {
