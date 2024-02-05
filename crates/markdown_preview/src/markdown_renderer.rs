@@ -1,7 +1,7 @@
 use crate::markdown_elements::{
     HeadingLevel, Link, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock,
-    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownList, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
+    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownList, ParsedMarkdownListItemType,
+    ParsedMarkdownTable, ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
     div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
@@ -128,13 +128,16 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
 }
 
 fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> AnyElement {
+    use ParsedMarkdownListItemType::*;
+
     let mut items = vec![];
     for item in &parsed.children {
         let padding = rems((item.depth - 1) as f32 * 0.25);
 
-        let bullet = match item.order {
-            Some(order) => format!("{}.", order),
-            None => "•".to_string(),
+        let bullet = match item.item_type {
+            Ordered(order) => format!("{}.", order),
+            Unordered => "•".to_string(),
+            Task(checked) => if checked { "☑" } else { "☐" }.to_string(),
         };
         let bullet = div().mr_2().child(Label::new(bullet));
 

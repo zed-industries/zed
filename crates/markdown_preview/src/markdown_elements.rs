@@ -48,9 +48,16 @@ pub struct ParsedMarkdownList {
 pub struct ParsedMarkdownListItem {
     /// How many indentations deep this item is.
     pub depth: u16,
-    /// If the list is ordered, this field contains the number of the list item.
-    pub order: Option<u64>,
+    pub item_type: ParsedMarkdownListItemType,
     pub contents: Vec<Box<ParsedMarkdownElement>>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub enum ParsedMarkdownListItemType {
+    Ordered(u64),
+    Task(bool),
+    Unordered,
 }
 
 #[derive(Debug)]

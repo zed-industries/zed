@@ -384,6 +384,7 @@ impl<'a> MarkdownParser<'a> {
         let mut children = vec![];
         let mut inside_list_item = false;
         let mut order = order;
+        let mut task_item = None;
 
         let mut current_list_items: Vec<Box<ParsedMarkdownElement>> = vec![];
 
@@ -406,24 +407,34 @@ impl<'a> MarkdownParser<'a> {
                     self.cursor += 1;
                     inside_list_item = true;
 
+                    // Check for task list marker (`- [ ]` or `- [x]`)
                     if let Some(next) = self.current() {
-                        // This is a plain list item.
-                        // For example `- some text` or `1. [Docs](./docs.md)`
-                        let plain_text = matches!(
-                            next.0,
-                            Event::Text(_)
-                                | Event::Start(Tag::Link(_, _, _))
-                                | Event::Start(Tag::Image(_, _, _))
-                        );
+                        match next.0 {
+                            Event::TaskListMarker(checked) => {
+                                task_item = Some(checked);
+                                self.cursor += 1;
+                            }
+                            _ => {}
+                        }
+                    }
 
-                        if plain_text {
-                            let text = self.parse_text(false);
-                            let block = ParsedMarkdownElement::Paragraph(text);
-                            current_list_items.push(Box::new(block));
-                        } else {
-                            let block = self.parse_block();
-                            if let Some(block) = block {
+                    if let Some(next) = self.current() {
+                        match next.0 {
+                            // This is a plain list item.
+                            // For example `- some text` or `1. [Docs](./docs.md)`
+                            Event::Text(_)
+                            | Event::Start(Tag::Link(_, _, _))
+                            | Event::Start(Tag::Image(_, _, _)) => {
+                                let text = self.parse_text(false);
+                                let block = ParsedMarkdownElement::Paragraph(text);
                                 current_list_items.push(Box::new(block));
+                            }
+
+                            _ => {
+                                let block = self.parse_block();
+                                if let Some(block) = block {
+                                    current_list_items.push(Box::new(block));
+                                }
                             }
                         }
                     }
@@ -431,7 +442,14 @@ impl<'a> MarkdownParser<'a> {
                 Event::End(Tag::Item) => {
                     self.cursor += 1;
 
-                    let current = order.clone();
+                    let item_type = if let Some(checked) = task_item {
+                        ParsedMarkdownListItemType::Task(checked)
+                    } else if let Some(order) = order.clone() {
+                        ParsedMarkdownListItemType::Ordered(order)
+                    } else {
+                        ParsedMarkdownListItemType::Unordered
+                    };
+
                     if let Some(current) = order {
                         order = Some(current + 1);
                     }
@@ -441,10 +459,11 @@ impl<'a> MarkdownParser<'a> {
                     children.push(ParsedMarkdownListItem {
                         contents,
                         depth,
-                        order: current,
+                        item_type,
                     });
 
                     inside_list_item = false;
+                    task_item = None;
                 }
                 _ => {
                     if !inside_list_item {
@@ -548,6 +567,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use ParsedMarkdownElement::*;
+    use ParsedMarkdownListItemType::*;
 
     fn parse(input: &str) -> ParsedMarkdown {
         parse_markdown(input, None)
@@ -668,11 +688,32 @@ Some other content
             parsed.children,
             vec![list(
                 vec![
-                    list_item(1, None, vec![p("Item 1", 0..9)]),
-                    list_item(1, None, vec![p("Item 2", 9..18)]),
-                    list_item(1, None, vec![p("Item 3", 18..27)]),
+                    list_item(1, Unordered, vec![p("Item 1", 0..9)]),
+                    list_item(1, Unordered, vec![p("Item 2", 9..18)]),
+                    list_item(1, Unordered, vec![p("Item 3", 18..27)]),
                 ],
                 0..27
+            ),]
+        );
+    }
+
+    #[test]
+    fn test_list_with_tasks() {
+        let parsed = parse(
+            "\
+- [ ] TODO
+- [x] Checked
+",
+        );
+
+        assert_eq!(
+            parsed.children,
+            vec![list(
+                vec![
+                    list_item(1, Task(false), vec![p("TODO", 2..5)]),
+                    list_item(1, Task(true), vec![p("Checked", 13..16)]),
+                ],
+                0..25
             ),]
         );
     }
@@ -706,28 +747,28 @@ Some other content
             vec![
                 list(
                     vec![
-                        list_item(1, None, vec![p("Item 1", 0..9)]),
-                        list_item(1, None, vec![p("Item 2", 9..18)]),
-                        list_item(1, None, vec![p("Item 3", 18..28)]),
+                        list_item(1, Unordered, vec![p("Item 1", 0..9)]),
+                        list_item(1, Unordered, vec![p("Item 2", 9..18)]),
+                        list_item(1, Unordered, vec![p("Item 3", 18..28)]),
                     ],
                     0..28
                 ),
                 list(
                     vec![
-                        list_item(1, Some(1), vec![p("Hello", 28..37)]),
+                        list_item(1, Ordered(1), vec![p("Hello", 28..37)]),
                         list_item(
                             1,
-                            Some(2),
+                            Ordered(2),
                             vec![
                                 p("Two", 37..56),
                                 list(
-                                    vec![list_item(2, Some(1), vec![p("Three", 47..56)]),],
+                                    vec![list_item(2, Ordered(1), vec![p("Three", 47..56)]),],
                                     47..56
                                 ),
                             ]
                         ),
-                        list_item(1, Some(3), vec![p("Four", 56..64)]),
-                        list_item(1, Some(4), vec![p("Five", 64..73)]),
+                        list_item(1, Ordered(3), vec![p("Four", 56..64)]),
+                        list_item(1, Ordered(4), vec![p("Five", 64..73)]),
                     ],
                     28..73
                 ),
@@ -735,32 +776,32 @@ Some other content
                     vec![
                         list_item(
                             1,
-                            None,
+                            Unordered,
                             vec![
                                 p("First", 73..155),
                                 list(
                                     vec![
                                         list_item(
                                             2,
-                                            Some(1),
+                                            Ordered(1),
                                             vec![
                                                 p("Hello", 83..141),
                                                 list(
                                                     vec![list_item(
                                                         3,
-                                                        Some(1),
+                                                        Ordered(1),
                                                         vec![
                                                             p("Goodbyte", 97..141),
                                                             list(
                                                                 vec![
                                                                     list_item(
                                                                         4,
-                                                                        None,
+                                                                        Unordered,
                                                                         vec![p("Inner", 117..125)]
                                                                     ),
                                                                     list_item(
                                                                         4,
-                                                                        None,
+                                                                        Unordered,
                                                                         vec![p("Inner", 133..141)]
                                                                     ),
                                                                 ],
@@ -772,13 +813,13 @@ Some other content
                                                 )
                                             ]
                                         ),
-                                        list_item(2, Some(2), vec![p("Goodbyte", 143..155)]),
+                                        list_item(2, Ordered(2), vec![p("Goodbyte", 143..155)]),
                                     ],
                                     83..155
                                 )
                             ]
                         ),
-                        list_item(1, None, vec![p("Last", 155..162)]),
+                        list_item(1, Unordered, vec![p("Last", 155..162)]),
                     ],
                     73..162
                 ),
@@ -800,7 +841,7 @@ Some other content
             vec![list(
                 vec![list_item(
                     1,
-                    None,
+                    Unordered,
                     vec![
                         p("This is a list item with two paragraphs.", 4..45),
                         p("This is the second paragraph in the list item.", 50..96)
@@ -991,11 +1032,11 @@ fn main() {
 
     fn list_item(
         depth: u16,
-        order: Option<u64>,
+        item_type: ParsedMarkdownListItemType,
         contents: Vec<ParsedMarkdownElement>,
     ) -> ParsedMarkdownListItem {
         ParsedMarkdownListItem {
-            order,
+            item_type,
             depth,
             contents: contents.into_iter().map(Box::new).collect(),
         }
