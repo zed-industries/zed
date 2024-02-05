@@ -46,6 +46,13 @@ impl LinuxDispatcher {
             main_thread_id: thread::current().id(),
         }
     }
+
+    pub fn tick_main(&self) {
+        assert!(self.is_main_thread());
+        if let Ok(runnable) = self.main_receiver.try_recv() {
+            runnable.run();
+        }
+    }
 }
 
 impl PlatformDispatcher for LinuxDispatcher {

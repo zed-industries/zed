@@ -3,9 +3,8 @@
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, LinuxDisplay, LinuxTextSystem, LinuxWindow,
-    LinuxWindowState, Menu, PathPromptOptions, Platform, PlatformDispatcher as _, PlatformDisplay,
-    PlatformInput, PlatformTextSystem, PlatformWindow, Point, Result, SemanticVersion, Size, Task,
-    WindowOptions,
+    LinuxWindowState, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
+    PlatformTextSystem, PlatformWindow, Point, Result, SemanticVersion, Size, Task, WindowOptions,
 };
 
 use collections::{HashMap, HashSet};
@@ -121,7 +120,7 @@ impl Platform for LinuxPlatform {
                 }
                 _ => {}
             }
-            self.0.lock().dispatcher.tick(false);
+            self.0.lock().dispatcher.tick_main();
         }
     }
 
