@@ -1370,10 +1370,10 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     let mut lock = window_state.as_ref().lock();
     unsafe {
         let screen = lock.native_window.screen();
-        if screen != nil {
-            lock.display_link = start_display_link(screen, lock.native_view.as_ptr());
-        } else {
+        if screen == nil {
             lock.display_link = nil;
+        } else {
+            lock.display_link = start_display_link(screen, lock.native_view.as_ptr());
         }
     }
 }
