@@ -78,7 +78,7 @@ pub(super) enum InvalidationStrategy {
 /// "Visible" inlays may not be displayed in the buffer right away, but those are ready to be displayed on further buffer scroll, pane item activations, etc. right away without additional LSP queries or settings changes.
 /// The data in the cache is never used directly for displaying inlays on the screen, to avoid races with updates from LSP queries and sync overhead.
 /// Splice is picked to help avoid extra hint flickering and "jumps" on the screen.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) struct InlaySplice {
     pub to_remove: Vec<InlayId>,
     pub to_insert: Vec<Inlay>,
@@ -87,7 +87,7 @@ pub(super) struct InlaySplice {
 #[derive(Debug)]
 struct ExcerptHintsUpdate {
     excerpt_id: ExcerptId,
-    remove_from_visible: Vec<InlayId>,
+    remove_from_visible: HashSet<InlayId>,
     remove_from_cache: HashSet<InlayId>,
     add_to_cache: Vec<InlayHint>,
 }
@@ -1052,7 +1052,7 @@ fn calculate_hint_updates(
         }
     }
 
-    let mut remove_from_visible = Vec::new();
+    let mut remove_from_visible = HashSet::default();
     let mut remove_from_cache = HashSet::default();
     if invalidate {
         remove_from_visible.extend(
@@ -1074,6 +1074,7 @@ fn calculate_hint_updates(
                     })
                     .copied(),
             );
+            remove_from_visible.extend(remove_from_cache.iter().cloned());
         }
     }
 
@@ -1135,10 +1136,8 @@ fn apply_hint_update(
     cached_excerpt_hints
         .hints_by_id
         .retain(|hint_id, _| !new_update.remove_from_cache.contains(hint_id));
-    let mut splice = InlaySplice {
-        to_remove: new_update.remove_from_visible,
-        to_insert: Vec::new(),
-    };
+    let mut splice = InlaySplice::default();
+    splice.to_remove.extend(new_update.remove_from_visible);
     for new_hint in new_update.add_to_cache {
         let insert_position = match cached_excerpt_hints
             .ordered_hints
