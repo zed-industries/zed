@@ -336,7 +336,7 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
-        let dirty = Rc::new(Cell::new(false));
+        let dirty = Rc::new(Cell::new(true));
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
