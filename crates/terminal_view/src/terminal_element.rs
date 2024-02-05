@@ -776,7 +776,6 @@ impl Element for TerminalElement {
         self.interactivity
             .paint(bounds, bounds.size, state, cx, |_, _, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
-                cx.keymatch_mode_immediate();
 
                 cx.on_key_event({
                     let this = self.terminal.clone();

@@ -2,12 +2,12 @@ use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
     AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
-    KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds,
-    WindowOptions, WindowTextSystem,
+    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
+    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
+    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds, WindowOptions,
+    WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -289,10 +289,6 @@ struct PendingInput {
 }
 
 impl PendingInput {
-    fn is_noop(&self) -> bool {
-        self.bindings.is_empty() && (self.keystrokes.iter().all(|k| k.ime_key.is_none()))
-    }
-
     fn input(&self) -> String {
         self.keystrokes
             .iter()
@@ -1255,20 +1251,11 @@ impl<'a> WindowContext<'a> {
             .dispatch_path(node_id);
 
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            let KeymatchResult {
-                bindings,
-                mut pending,
-            } = self
+            let KeymatchResult { bindings, pending } = self
                 .window
                 .rendered_frame
                 .dispatch_tree
                 .dispatch_key(&key_down_event.keystroke, &dispatch_path);
-
-            if self.window.rendered_frame.dispatch_tree.keymatch_mode == KeymatchMode::Immediate
-                && !bindings.is_empty()
-            {
-                pending = false;
-            }
 
             if pending {
                 let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
@@ -1284,22 +1271,17 @@ impl<'a> WindowContext<'a> {
                     currently_pending.bindings.push(binding);
                 }
 
-                // for vim compatibility, we also should check "is input handler enabled"
-                if !currently_pending.is_noop() {
-                    currently_pending.timer = Some(self.spawn(|mut cx| async move {
-                        cx.background_executor.timer(Duration::from_secs(1)).await;
-                        cx.update(move |cx| {
-                            cx.clear_pending_keystrokes();
-                            let Some(currently_pending) = cx.window.pending_input.take() else {
-                                return;
-                            };
-                            cx.replay_pending_input(currently_pending)
-                        })
-                        .log_err();
-                    }));
-                } else {
-                    currently_pending.timer = None;
-                }
+                currently_pending.timer = Some(self.spawn(|mut cx| async move {
+                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    cx.update(move |cx| {
+                        cx.clear_pending_keystrokes();
+                        let Some(currently_pending) = cx.window.pending_input.take() else {
+                            return;
+                        };
+                        cx.replay_pending_input(currently_pending)
+                    })
+                    .log_err();
+                }));
                 self.window.pending_input = Some(currently_pending);
 
                 self.propagate_event = false;
@@ -1327,8 +1309,21 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        self.dispatch_key_down_up_event(event, &dispatch_path);
+        if !self.propagate_event {
+            return;
+        }
+
+        self.dispatch_keystroke_observers(event, None);
+    }
+
+    fn dispatch_key_down_up_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) {
         // Capture phase
-        for node_id in &dispatch_path {
+        for node_id in dispatch_path {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
 
             for key_listener in node.key_listeners.clone() {
@@ -1354,8 +1349,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-
-        self.dispatch_keystroke_observers(event, None);
     }
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
@@ -1387,6 +1380,24 @@ impl<'a> WindowContext<'a> {
         self.propagate_event = true;
         for binding in currently_pending.bindings {
             self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+            if !self.propagate_event {
+                return;
+            }
+        }
+
+        let dispatch_path = self
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .dispatch_path(node_id);
+
+        for keystroke in currently_pending.keystrokes {
+            let event = KeyDownEvent {
+                keystroke,
+                is_held: false,
+            };
+
+            self.dispatch_key_down_up_event(&event, &dispatch_path);
             if !self.propagate_event {
                 return;
             }
