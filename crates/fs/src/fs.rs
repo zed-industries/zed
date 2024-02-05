@@ -301,8 +301,6 @@ impl Fs for RealFs {
             .configure(Config::default().with_poll_interval(latency))
             .unwrap();
 
-        //TODO: unblock this
-        #[cfg(not(target_os = "linux"))]
         watcher
             .watch(path, notify::RecursiveMode::Recursive)
             .unwrap();
