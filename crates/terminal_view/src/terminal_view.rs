@@ -478,7 +478,8 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        self.terminal.update(cx, |term, _| term.copy())
+        self.terminal.update(cx, |term, _| term.copy());
+        cx.notify();
     }
 
     ///Attempt to paste the clipboard into the terminal
