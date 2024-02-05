@@ -237,6 +237,7 @@ impl LinuxWindowState {
         if let Some(fun) = self.callbacks.lock().close.take() {
             fun();
         }
+        self.xcb_connection.flush().unwrap();
     }
 
     pub fn expose(&self) {

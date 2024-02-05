@@ -7,29 +7,50 @@ use async_task::Runnable;
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use std::{
-    panic, thread,
+    panic,
+    sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
+use xcb::x;
 
 pub(crate) struct LinuxDispatcher {
+    xcb_connection: Arc<xcb::Connection>,
+    x_listener_window: x::Window,
     parker: Mutex<Parker>,
     timed_tasks: Mutex<Vec<(Instant, Runnable)>>,
     main_sender: flume::Sender<Runnable>,
-    main_receiver: flume::Receiver<Runnable>,
     background_sender: flume::Sender<Runnable>,
-    background_thread: thread::JoinHandle<()>,
+    _background_thread: thread::JoinHandle<()>,
     main_thread_id: thread::ThreadId,
 }
 
-impl Default for LinuxDispatcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl LinuxDispatcher {
-    pub fn new() -> Self {
-        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
+    pub fn new(
+        main_sender: flume::Sender<Runnable>,
+        xcb_connection: &Arc<xcb::Connection>,
+        x_root_index: i32,
+    ) -> Self {
+        let x_listener_window = xcb_connection.generate_id();
+        let screen = xcb_connection
+            .get_setup()
+            .roots()
+            .nth(x_root_index as usize)
+            .unwrap();
+        xcb_connection.send_request(&x::CreateWindow {
+            depth: 0,
+            wid: x_listener_window,
+            parent: screen.root(),
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            border_width: 0,
+            class: x::WindowClass::InputOnly,
+            visual: screen.root_visual(),
+            value_list: &[],
+        });
+
         let (background_sender, background_receiver) = flume::unbounded::<Runnable>();
         let background_thread = thread::spawn(move || {
             for runnable in background_receiver {
@@ -37,21 +58,23 @@ impl LinuxDispatcher {
             }
         });
         LinuxDispatcher {
+            xcb_connection: Arc::clone(xcb_connection),
+            x_listener_window,
             parker: Mutex::new(Parker::new()),
             timed_tasks: Mutex::new(Vec::new()),
             main_sender,
-            main_receiver,
             background_sender,
-            background_thread,
+            _background_thread: background_thread,
             main_thread_id: thread::current().id(),
         }
     }
+}
 
-    pub fn tick_main(&self) {
-        assert!(self.is_main_thread());
-        if let Ok(runnable) = self.main_receiver.try_recv() {
-            runnable.run();
-        }
+impl Drop for LinuxDispatcher {
+    fn drop(&mut self) {
+        self.xcb_connection.send_request(&x::DestroyWindow {
+            window: self.x_listener_window,
+        });
     }
 }
 
@@ -66,6 +89,18 @@ impl PlatformDispatcher for LinuxDispatcher {
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
         self.main_sender.send(runnable).unwrap();
+        // Send a message to the invisible window, forcing
+        // tha main loop to wake up and dispatch the runnable.
+        self.xcb_connection.send_request(&x::SendEvent {
+            propagate: false,
+            destination: x::SendEventDest::Window(self.x_listener_window),
+            event_mask: x::EventMask::NO_EVENT,
+            event: &x::VisibilityNotifyEvent::new(
+                self.x_listener_window,
+                x::Visibility::Unobscured,
+            ),
+        });
+        self.xcb_connection.flush().unwrap();
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
@@ -76,24 +111,17 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn tick(&self, background_only: bool) -> bool {
-        let mut ran = false;
-        if self.is_main_thread() && !background_only {
-            for runnable in self.main_receiver.try_iter() {
-                runnable.run();
-                ran = true;
-            }
-        }
         let mut timed_tasks = self.timed_tasks.lock();
+        let old_count = timed_tasks.len();
         while let Some(&(moment, _)) = timed_tasks.last() {
             if moment <= Instant::now() {
                 let (_, runnable) = timed_tasks.pop().unwrap();
                 runnable.run();
-                ran = true;
             } else {
                 break;
             }
         }
-        ran
+        timed_tasks.len() != old_count
     }
 
     fn park(&self) {

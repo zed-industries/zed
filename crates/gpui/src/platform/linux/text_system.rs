@@ -76,7 +76,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         unimplemented!()
     }
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        unimplemented!()
+        None
     }
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         unimplemented!()

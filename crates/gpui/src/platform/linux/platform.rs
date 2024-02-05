@@ -7,6 +7,7 @@ use crate::{
     PlatformTextSystem, PlatformWindow, Point, Result, SemanticVersion, Size, Task, WindowOptions,
 };
 
+use async_task::Runnable;
 use collections::{HashMap, HashSet};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
@@ -37,12 +38,13 @@ pub(crate) struct LinuxPlatform {
     atoms: XcbAtoms,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    dispatcher: Arc<LinuxDispatcher>,
+    main_receiver: flume::Receiver<Runnable>,
     text_system: Arc<LinuxTextSystem>,
     state: Mutex<LinuxPlatformState>,
 }
 
 pub(crate) struct LinuxPlatformState {
+    quit_requested: bool,
     windows: HashMap<x::Window, Arc<LinuxWindowState>>,
 }
 
@@ -57,17 +59,24 @@ impl LinuxPlatform {
         let (xcb_connection, x_root_index) = xcb::Connection::connect(None).unwrap();
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new());
+        let xcb_connection = Arc::new(xcb_connection);
+        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
+        let dispatcher = Arc::new(LinuxDispatcher::new(
+            main_sender,
+            &xcb_connection,
+            x_root_index,
+        ));
 
         Self {
-            xcb_connection: Arc::new(xcb_connection),
+            xcb_connection,
             x_root_index,
             atoms,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
-            dispatcher,
+            main_receiver,
             text_system: Arc::new(LinuxTextSystem::new()),
             state: Mutex::new(LinuxPlatformState {
+                quit_requested: false,
                 windows: HashMap::default(),
             }),
         }
@@ -92,8 +101,7 @@ impl Platform for LinuxPlatform {
         //Note: here and below, don't keep the lock() open when calling
         // into window functions as they may invoke callbacks that need
         // to immediately access the platform (self).
-
-        while !self.state.lock().windows.is_empty() {
+        while !self.state.lock().quit_requested {
             let event = self.xcb_connection.wait_for_event().unwrap();
             match event {
                 xcb::Event::X(x::Event::ClientMessage(ev)) => {
@@ -129,15 +137,18 @@ impl Platform for LinuxPlatform {
                     };
                     window.configure(bounds)
                 }
-                ref other => {
-                    println!("Other event {:?}", other);
-                }
+                _ => {}
             }
-            self.dispatcher.tick_main();
+
+            if let Ok(runnable) = self.main_receiver.try_recv() {
+                runnable.run();
+            }
         }
     }
 
-    fn quit(&self) {}
+    fn quit(&self) {
+        self.state.lock().quit_requested = true;
+    }
 
     fn restart(&self) {}
 
@@ -186,6 +197,7 @@ impl Platform for LinuxPlatform {
             x_window,
             &self.atoms,
         ));
+
         self.state
             .lock()
             .windows
