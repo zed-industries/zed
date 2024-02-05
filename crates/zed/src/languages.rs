@@ -159,7 +159,7 @@ pub fn init(
     language(
         "roc",
         tree_sitter_roc::language(),
-        vec![Arc::new(roc::RocAdapter)],
+        vec![Arc::new(roc::RocLspAdapter)],
     );
     language(
         "rust",
