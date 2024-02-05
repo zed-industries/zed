@@ -2993,6 +2993,11 @@ impl BufferSnapshot {
         self.git_diff.hunks_intersecting_range_rev(range, self)
     }
 
+    /// Returns if the buffer contains any diagnostics.
+    pub fn has_diagnostics(&self) -> bool {
+        !self.diagnostics.is_empty()
+    }
+
     /// Returns all the diagnostics intersecting the given range.
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,

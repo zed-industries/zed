@@ -7,20 +7,21 @@
     "func" @context
     name: (identifier) @name
     parameters: (parameter_list
-      "(" @context
-      ")" @context)) @item
+      "("
+      ")")) @item
 
 (method_declaration
     "func" @context
     receiver: (parameter_list
         "(" @context
         (parameter_declaration
+            name: (_) @name
             type: (_) @context)
         ")" @context)
     name: (field_identifier) @name
     parameters: (parameter_list
-      "(" @context
-      ")" @context)) @item
+      "("
+      ")")) @item
 
 (const_declaration
     "const" @context

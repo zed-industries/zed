@@ -171,7 +171,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        unimplemented!()
+        WindowAppearance::Light
     }
 
     fn display(&self) -> std::rc::Rc<dyn crate::PlatformDisplay> {
@@ -276,15 +276,11 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
         unimplemented!()
     }
-
-    fn invalidate(&self) {}
 
     fn draw(&self, _scene: &crate::Scene) {}
 

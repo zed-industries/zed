@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
-use json_comments::StripComments;
 use log::LevelFilter;
 use schemars::schema_for;
 use serde::Deserialize;
@@ -132,8 +131,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let theme_without_comments = StripComments::new(theme_file);
-    let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_without_comments)
+    let vscode_theme: VsCodeTheme = serde_json_lenient::from_reader(theme_file)
         .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
     let theme_metadata = ThemeMetadata {

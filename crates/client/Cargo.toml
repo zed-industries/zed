@@ -27,7 +27,7 @@ sum_tree = { path = "../sum_tree" }
 
 anyhow.workspace = true
 async-recursion = "0.3"
-async-tungstenite = { version = "0.16", features = ["async-tls"] }
+async-tungstenite = { version = "0.16", features = ["async-std", "async-native-tls"] }
 futures.workspace = true
 image = "0.23"
 lazy_static.workspace = true

@@ -4,7 +4,8 @@ use crate::{
 use collections::BTreeMap;
 use futures::Future;
 use gpui::{
-    AnyWindowHandle, AppContext, Keystroke, ModelContext, View, ViewContext, VisualTestContext,
+    AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, View, ViewContext,
+    VisualTestContext,
 };
 use indoc::indoc;
 use itertools::Itertools;
@@ -187,6 +188,31 @@ impl EditorTestContext {
         ranges[0].start.to_display_point(&snapshot)
     }
 
+    pub fn pixel_position(&mut self, marked_text: &str) -> Point<Pixels> {
+        let display_point = self.display_point(marked_text);
+        self.pixel_position_for(display_point)
+    }
+
+    pub fn pixel_position_for(&mut self, display_point: DisplayPoint) -> Point<Pixels> {
+        self.update_editor(|editor, cx| {
+            let newest_point = editor.selections.newest_display(cx).head();
+            let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
+            let line_height = editor
+                .style()
+                .unwrap()
+                .text
+                .line_height_in_pixels(cx.rem_size());
+            let snapshot = editor.snapshot(cx);
+            let details = editor.text_layout_details(cx);
+
+            let y = pixel_position.y
+                + line_height * (display_point.row() as f32 - newest_point.row() as f32);
+            let x = pixel_position.x + snapshot.x_for_display_point(display_point, &details)
+                - snapshot.x_for_display_point(newest_point, &details);
+            Point::new(x, y)
+        })
+    }
+
     // Returns anchors for the current buffer using `«` and `»`
     pub fn text_anchor_range(&mut self, marked_text: &str) -> Range<language::Anchor> {
         let ranges = self.ranges(marked_text);
@@ -343,7 +369,7 @@ impl EditorTestContext {
 }
 
 impl Deref for EditorTestContext {
-    type Target = gpui::TestAppContext;
+    type Target = gpui::VisualTestContext;
 
     fn deref(&self) -> &Self::Target {
         &self.cx

@@ -22,9 +22,9 @@ mod inlay_hint_cache;
 mod debounced_delay;
 mod git;
 mod highlight_matching_bracket;
+mod hover_links;
 mod hover_popover;
 pub mod items;
-mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
@@ -77,7 +77,7 @@ use language::{
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
-use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
+use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
@@ -374,6 +374,7 @@ pub struct Editor {
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
+    show_breadcrumbs: bool,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -402,7 +403,7 @@ pub struct Editor {
     remote_id: Option<ViewId>,
     hover_state: HoverState,
     gutter_hovered: bool,
-    link_go_to_definition_state: LinkGoToDefinitionState,
+    hovered_link_state: Option<HoveredLinkState>,
     copilot_state: CopilotState,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
@@ -857,9 +858,15 @@ impl CompletionsMenu {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
-                Some(Documentation::MultiLineMarkdown(parsed)) => Some(div().child(
-                    render_parsed_markdown("completions_markdown", parsed, &style, workspace, cx),
-                )),
+                Some(Documentation::MultiLineMarkdown(parsed)) if !parsed.text.is_empty() => {
+                    Some(div().child(render_parsed_markdown(
+                        "completions_markdown",
+                        parsed,
+                        &style,
+                        workspace,
+                        cx,
+                    )))
+                }
                 _ => None,
             };
             multiline_docs.map(|div| {
@@ -1424,7 +1431,7 @@ impl Editor {
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
-            scroll_manager: ScrollManager::new(),
+            scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
             add_selections_state: None,
             select_next_state: None,
@@ -1442,6 +1449,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
+            show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
@@ -1471,7 +1479,7 @@ impl Editor {
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
-            link_go_to_definition_state: Default::default(),
+            hovered_link_state: Default::default(),
             copilot_state: Default::default(),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
@@ -3080,8 +3088,9 @@ impl Editor {
             text_system: cx.text_system().clone(),
             editor_style: self.style.clone().unwrap(),
             rem_size: cx.rem_size(),
-            anchor: self.scroll_manager.anchor().anchor,
+            scroll_anchor: self.scroll_manager.anchor(),
             visible_rows: self.visible_line_count(),
+            vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
         }
     }
 
@@ -5373,6 +5382,86 @@ impl Editor {
         })
     }
 
+    pub fn move_up_by_lines(&mut self, action: &MoveUpByLines, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::up_by_rows(
+                    map,
+                    selection.start,
+                    action.lines,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        })
+    }
+
+    pub fn move_down_by_lines(&mut self, action: &MoveDownByLines, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::down_by_rows(
+                    map,
+                    selection.start,
+                    action.lines,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        })
+    }
+
+    pub fn select_down_by_lines(&mut self, action: &SelectDownByLines, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::down_by_rows(map, head, action.lines, goal, false, &text_layout_details)
+            })
+        })
+    }
+
+    pub fn select_up_by_lines(&mut self, action: &SelectUpByLines, cx: &mut ViewContext<Self>) {
+        let text_layout_details = &self.text_layout_details(cx);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::up_by_rows(map, head, action.lines, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -7156,11 +7245,8 @@ impl Editor {
         cx.spawn(|editor, mut cx| async move {
             let definitions = definitions.await?;
             editor.update(&mut cx, |editor, cx| {
-                editor.navigate_to_definitions(
-                    definitions
-                        .into_iter()
-                        .map(GoToDefinitionLink::Text)
-                        .collect(),
+                editor.navigate_to_hover_links(
+                    definitions.into_iter().map(HoverLink::Text).collect(),
                     split,
                     cx,
                 );
@@ -7170,9 +7256,9 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    pub fn navigate_to_definitions(
+    pub fn navigate_to_hover_links(
         &mut self,
-        mut definitions: Vec<GoToDefinitionLink>,
+        mut definitions: Vec<HoverLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -7184,9 +7270,13 @@ impl Editor {
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
             let target_task = match definition {
-                GoToDefinitionLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
-                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                HoverLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                HoverLink::InlayHint(lsp_location, server_id) => {
                     self.compute_target_location(lsp_location, server_id, cx)
+                }
+                HoverLink::Url(url) => {
+                    cx.open_url(&url);
+                    Task::ready(Ok(None))
                 }
             };
             cx.spawn(|editor, mut cx| async move {
@@ -7238,29 +7328,27 @@ impl Editor {
                         let title = definitions
                             .iter()
                             .find_map(|definition| match definition {
-                                GoToDefinitionLink::Text(link) => {
-                                    link.origin.as_ref().map(|origin| {
-                                        let buffer = origin.buffer.read(cx);
-                                        format!(
-                                            "Definitions for {}",
-                                            buffer
-                                                .text_for_range(origin.range.clone())
-                                                .collect::<String>()
-                                        )
-                                    })
-                                }
-                                GoToDefinitionLink::InlayHint(_, _) => None,
+                                HoverLink::Text(link) => link.origin.as_ref().map(|origin| {
+                                    let buffer = origin.buffer.read(cx);
+                                    format!(
+                                        "Definitions for {}",
+                                        buffer
+                                            .text_for_range(origin.range.clone())
+                                            .collect::<String>()
+                                    )
+                                }),
+                                HoverLink::InlayHint(_, _) => None,
+                                HoverLink::Url(_) => None,
                             })
                             .unwrap_or("Definitions".to_string());
                         let location_tasks = definitions
                             .into_iter()
                             .map(|definition| match definition {
-                                GoToDefinitionLink::Text(link) => {
-                                    Task::Ready(Some(Ok(Some(link.target))))
-                                }
-                                GoToDefinitionLink::InlayHint(lsp_location, server_id) => {
+                                HoverLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                                HoverLink::InlayHint(lsp_location, server_id) => {
                                     editor.compute_target_location(lsp_location, server_id, cx)
                                 }
+                                HoverLink::Url(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
                         (title, location_tasks)
@@ -8676,6 +8764,9 @@ impl Editor {
             )),
             cx,
         );
+        let editor_settings = EditorSettings::get_global(cx);
+        self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
+        self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
         cx.notify();
     }
 

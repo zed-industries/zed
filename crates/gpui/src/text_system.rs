@@ -15,6 +15,7 @@ use crate::{
 use anyhow::anyhow;
 use collections::{BTreeSet, FxHashMap, FxHashSet};
 use core::fmt;
+use derive_more::Deref;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{smallvec, SmallVec};
@@ -38,9 +39,8 @@ pub struct FontFamilyId(pub usize);
 
 pub(crate) const SUBPIXEL_VARIANTS: u8 = 4;
 
-/// The GPUI text layout and rendering sub system.
+/// The GPUI text rendering sub system.
 pub struct TextSystem {
-    line_layout_cache: Arc<LineLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
@@ -53,7 +53,6 @@ pub struct TextSystem {
 impl TextSystem {
     pub(crate) fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
-            line_layout_cache: Arc::new(LineLayoutCache::new(platform_text_system.clone())),
             platform_text_system,
             font_metrics: RwLock::default(),
             raster_bounds: RwLock::default(),
@@ -234,43 +233,66 @@ impl TextSystem {
         }
     }
 
-    pub(crate) fn with_view<R>(&self, view_id: EntityId, f: impl FnOnce() -> R) -> R {
-        self.line_layout_cache.with_view(view_id, f)
+    /// Returns a handle to a line wrapper, for the given font and font size.
+    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
+        let lock = &mut self.wrapper_pool.lock();
+        let font_id = self.resolve_font(&font);
+        let wrappers = lock
+            .entry(FontIdWithSize { font_id, font_size })
+            .or_default();
+        let wrapper = wrappers.pop().unwrap_or_else(|| {
+            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
+        });
+
+        LineWrapperHandle {
+            wrapper: Some(wrapper),
+            text_system: self.clone(),
+        }
     }
 
-    /// Layout the given line of text, at the given font_size.
-    /// Subsets of the line can be styled independently with the `runs` parameter.
-    /// Generally, you should prefer to use `TextLayout::shape_line` instead, which
-    /// can be painted directly.
-    pub fn layout_line(
-        &self,
-        text: &str,
-        font_size: Pixels,
-        runs: &[TextRun],
-    ) -> Result<Arc<LineLayout>> {
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
-        for run in runs.iter() {
-            let font_id = self.resolve_font(&run.font);
-            if let Some(last_run) = font_runs.last_mut() {
-                if last_run.font_id == font_id {
-                    last_run.len += run.len;
-                    continue;
-                }
-            }
-            font_runs.push(FontRun {
-                len: run.len,
-                font_id,
-            });
+    /// Get the rasterized size and location of a specific, rendered glyph.
+    pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        let raster_bounds = self.raster_bounds.upgradable_read();
+        if let Some(bounds) = raster_bounds.get(params) {
+            Ok(*bounds)
+        } else {
+            let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
+            let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
+            raster_bounds.insert(params.clone(), bounds);
+            Ok(bounds)
         }
+    }
 
-        let layout = self
-            .line_layout_cache
-            .layout_line(text, font_size, &font_runs);
+    pub(crate) fn rasterize_glyph(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+        let raster_bounds = self.raster_bounds(params)?;
+        self.platform_text_system
+            .rasterize_glyph(params, raster_bounds)
+    }
+}
 
-        font_runs.clear();
-        self.font_runs_pool.lock().push(font_runs);
+/// The GPUI text layout subsystem.
+#[derive(Deref)]
+pub struct WindowTextSystem {
+    line_layout_cache: Arc<LineLayoutCache>,
+    #[deref]
+    text_system: Arc<TextSystem>,
+}
 
-        Ok(layout)
+impl WindowTextSystem {
+    pub(crate) fn new(text_system: Arc<TextSystem>) -> Self {
+        Self {
+            line_layout_cache: Arc::new(LineLayoutCache::new(
+                text_system.platform_text_system.clone(),
+            )),
+            text_system,
+        }
+    }
+
+    pub(crate) fn with_view<R>(&self, view_id: EntityId, f: impl FnOnce() -> R) -> R {
+        self.line_layout_cache.with_view(view_id, f)
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.
@@ -429,43 +451,39 @@ impl TextSystem {
         self.line_layout_cache.finish_frame(reused_views)
     }
 
-    /// Returns a handle to a line wrapper, for the given font and font size.
-    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
-        let lock = &mut self.wrapper_pool.lock();
-        let font_id = self.resolve_font(&font);
-        let wrappers = lock
-            .entry(FontIdWithSize { font_id, font_size })
-            .or_default();
-        let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
-        });
-
-        LineWrapperHandle {
-            wrapper: Some(wrapper),
-            text_system: self.clone(),
-        }
-    }
-
-    /// Get the rasterized size and location of a specific, rendered glyph.
-    pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let raster_bounds = self.raster_bounds.upgradable_read();
-        if let Some(bounds) = raster_bounds.get(params) {
-            Ok(*bounds)
-        } else {
-            let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
-            let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
-            raster_bounds.insert(params.clone(), bounds);
-            Ok(bounds)
-        }
-    }
-
-    pub(crate) fn rasterize_glyph(
+    /// Layout the given line of text, at the given font_size.
+    /// Subsets of the line can be styled independently with the `runs` parameter.
+    /// Generally, you should prefer to use `TextLayout::shape_line` instead, which
+    /// can be painted directly.
+    pub fn layout_line(
         &self,
-        params: &RenderGlyphParams,
-    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        let raster_bounds = self.raster_bounds(params)?;
-        self.platform_text_system
-            .rasterize_glyph(params, raster_bounds)
+        text: &str,
+        font_size: Pixels,
+        runs: &[TextRun],
+    ) -> Result<Arc<LineLayout>> {
+        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        for run in runs.iter() {
+            let font_id = self.resolve_font(&run.font);
+            if let Some(last_run) = font_runs.last_mut() {
+                if last_run.font_id == font_id {
+                    last_run.len += run.len;
+                    continue;
+                }
+            }
+            font_runs.push(FontRun {
+                len: run.len,
+                font_id,
+            });
+        }
+
+        let layout = self
+            .line_layout_cache
+            .layout_line(text, font_size, &font_runs);
+
+        font_runs.clear();
+        self.font_runs_pool.lock().push(font_runs);
+
+        Ok(layout)
     }
 }
 

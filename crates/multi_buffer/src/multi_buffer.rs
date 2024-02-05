@@ -3052,6 +3052,12 @@ impl MultiBufferSnapshot {
         self.has_conflict
     }
 
+    pub fn has_diagnostics(&self) -> bool {
+        self.excerpts
+            .iter()
+            .any(|excerpt| excerpt.buffer.has_diagnostics())
+    }
+
     pub fn diagnostic_group<'a, O>(
         &'a self,
         group_id: usize,

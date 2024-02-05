@@ -6,8 +6,8 @@ use crate::{
     KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds,
-    WindowOptions,
+    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance,
+    WindowBounds, WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::hash_map::Entry,
     fmt::{Debug, Display},
     future::Future,
@@ -34,7 +34,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::{measure, ResultExt};
 
@@ -251,6 +251,7 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    text_system: Arc<WindowTextSystem>,
     pub(crate) rem_size: Pixels,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
@@ -268,17 +269,17 @@ pub struct Window {
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
+    appearance: WindowAppearance,
+    appearance_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
-    pub(crate) dirty: bool,
+    pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) focus_invalidated: bool,
 }
 
 #[derive(Default, Debug)]
@@ -337,13 +338,30 @@ impl Window {
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
+        let appearance = platform_window.appearance();
+        let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        let dirty = Rc::new(Cell::new(false));
+        let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
+            let dirty = dirty.clone();
+            let last_input_timestamp = last_input_timestamp.clone();
             move || {
-                measure("frame duration", || {
-                    handle.update(&mut cx, |_, cx| cx.draw()).log_err();
-                })
+                if dirty.get() {
+                    measure("frame duration", || {
+                        handle
+                            .update(&mut cx, |_, cx| {
+                                cx.draw();
+                                cx.present();
+                            })
+                            .log_err();
+                    })
+                } else if last_input_timestamp.get().elapsed() < Duration::from_secs(1) {
+                    // Keep presenting the current scene for 1 extra second since the
+                    // last input to prevent the display from underclocking the refresh rate.
+                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
+                }
             }
         }));
         platform_window.on_resize(Box::new({
@@ -359,6 +377,14 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .log_err();
+            }
+        }));
+        platform_window.on_appearance_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, cx| cx.appearance_changed())
                     .log_err();
             }
         }));
@@ -393,6 +419,7 @@ impl Window {
             platform_window,
             display_id,
             sprite_atlas,
+            text_system,
             rem_size: px(16.),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
@@ -410,17 +437,17 @@ impl Window {
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
+            appearance,
+            appearance_observers: SubscriberSet::new(),
             active: false,
-            dirty: false,
+            dirty,
+            last_input_timestamp,
             refreshing: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
             pending_input: None,
-
-            #[cfg(any(test, feature = "test-support"))]
-            focus_invalidated: false,
         }
     }
 }
@@ -472,7 +499,7 @@ impl<'a> WindowContext<'a> {
     pub fn refresh(&mut self) {
         if !self.window.drawing {
             self.window.refreshing = true;
-            self.window.dirty = true;
+            self.window.dirty.set(true);
         }
     }
 
@@ -505,12 +532,6 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .clear_pending_keystrokes();
-
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.window.focus_invalidated = true;
-        }
-
         self.refresh();
     }
 
@@ -528,6 +549,11 @@ impl<'a> WindowContext<'a> {
     pub fn disable_focus(&mut self) {
         self.blur();
         self.window.focus_enabled = false;
+    }
+
+    /// Accessor for the text system.
+    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+        &self.window.text_system
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -734,6 +760,20 @@ impl<'a> WindowContext<'a> {
         self.window.bounds
     }
 
+    fn appearance_changed(&mut self) {
+        self.window.appearance = self.window.platform_window.appearance();
+
+        self.window
+            .appearance_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
+    }
+
+    /// Returns the appearance of the current window.
+    pub fn appearance(&self) -> WindowAppearance {
+        self.window.appearance
+    }
+
     /// Returns the size of the drawable area within the window.
     pub fn viewport_size(&self) -> Size<Pixels> {
         self.window.viewport_size
@@ -927,15 +967,11 @@ impl<'a> WindowContext<'a> {
         &self.window.next_frame.z_index_stack
     }
 
-    /// Draw pixels to the display for this window based on the contents of its scene.
+    /// Produces a new frame and assigns it to `rendered_frame`. To actually show
+    /// the contents of the new [Scene], use [present].
     pub(crate) fn draw(&mut self) {
-        self.window.dirty = false;
+        self.window.dirty.set(false);
         self.window.drawing = true;
-
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.window.focus_invalidated = false;
-        }
 
         if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
         {
@@ -1070,16 +1106,19 @@ impl<'a> WindowContext<'a> {
                 .clone()
                 .retain(&(), |listener| listener(&event, self));
         }
-
-        self.window
-            .platform_window
-            .draw(&self.window.rendered_frame.scene);
         self.window.refreshing = false;
         self.window.drawing = false;
     }
 
+    fn present(&self) {
+        self.window
+            .platform_window
+            .draw(&self.window.rendered_frame.scene);
+    }
+
     /// Dispatch a mouse or keyboard event on the window.
     pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
+        self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
         self.app.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
@@ -2023,7 +2062,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
 
         if !self.window.drawing {
-            self.window_cx.window.dirty = true;
+            self.window_cx.window.dirty.set(true);
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,
             });
@@ -2051,6 +2090,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.activation_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback to be invoked when the window appearance changes.
+    pub fn observe_window_appearance(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.appearance_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
         );
