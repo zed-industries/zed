@@ -320,50 +320,36 @@ impl LanguageServer {
             }
         });
         let mut buffer = Vec::new();
-        loop {
+        'outer: loop {
             buffer.clear();
 
-            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
-                break;
-            };
-
-            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
-                break;
-            };
-
-            let header = std::str::from_utf8(&buffer)?;
-            let mut segments = header.lines();
-
-            let message_len: usize = segments
-                .next()
-                .with_context(|| {
-                    format!("unable to find the first line of the LSP message header `{header}`")
-                })?
-                .strip_prefix(CONTENT_LEN_HEADER)
-                .with_context(|| format!("invalid LSP message header `{header}`"))?
-                .parse()
-                .with_context(|| {
-                    format!("failed to parse Content-Length of LSP message header: `{header}`")
-                })?;
-
-            if let Some(second_segment) = segments.next() {
-                match second_segment {
-                    "" => (), // Header end
-                    header_field => {
-                        if header_field.starts_with("Content-Type:") {
-                            stdout.read_until(b'\n', &mut buffer).await?;
-                        } else {
-                            anyhow::bail!(
-                                "inside `{header}`, expected a Content-Type header field or a header ending CRLF, got `{second_segment:?}`"
-                            )
-                        }
-                    }
+            while let Ok(bytes_read) = stdout.read_until(b'\n', &mut buffer).await {
+                if bytes_read == 0 {
+                    break 'outer;
                 }
-            } else {
-                anyhow::bail!(
-                    "unable to find the second line of the LSP message header `{header}`"
-                );
+                if buffer.ends_with(b"\r\n\r\n") {
+                    break;
+                }
             }
+
+            let header = str::from_utf8(&buffer)?;
+            let mut message_len: Option<usize> = None;
+            while let Some(header_line) = header.lines().next() {
+                if header_line.starts_with(CONTENT_LEN_HEADER) {
+                    message_len = Some(header_line
+                        .strip_prefix(CONTENT_LEN_HEADER)
+                        .with_context(|| format!("invalid LSP message header `{header}`"))?
+                        .parse::<usize>().with_context(|| {
+                        format!("failed to parse Content-Length of LSP message header: `{header}`")
+                    })?);
+                    break;
+                }
+            }
+            if message_len.is_none() {
+                warn!("missing Content-Length header in LSP message: `{header}`");
+                continue;
+            }
+            let message_len = message_len.unwrap();
 
             buffer.resize(message_len, 0);
             stdout.read_exact(&mut buffer).await?;
