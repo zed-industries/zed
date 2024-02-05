@@ -1,6 +1,7 @@
 use crate::one_themes::one_dark;
-use crate::{SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
+use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
+use derive_more::{Deref, DerefMut};
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
     ViewContext,
@@ -32,10 +33,63 @@ pub struct ThemeSettings {
     pub theme_overrides: Option<ThemeStyleContent>,
 }
 
+/// The appearance of the system.
+#[derive(Debug, Clone, Copy, Deref)]
+pub struct SystemAppearance(pub Appearance);
+
+impl Default for SystemAppearance {
+    fn default() -> Self {
+        Self(Appearance::Dark)
+    }
+}
+
+#[derive(Deref, DerefMut, Default)]
+struct GlobalSystemAppearance(SystemAppearance);
+
+impl Global for GlobalSystemAppearance {}
+
+impl SystemAppearance {
+    /// Returns the global [`SystemAppearance`].
+    ///
+    /// Inserts a default [`SystemAppearance`] if one does not yet exist.
+    pub(crate) fn default_global(cx: &mut AppContext) -> Self {
+        cx.default_global::<GlobalSystemAppearance>().0
+    }
+
+    /// Returns the global [`SystemAppearance`].
+    pub fn global(cx: &AppContext) -> Self {
+        cx.global::<GlobalSystemAppearance>().0
+    }
+
+    /// Returns a mutable reference to the global [`SystemAppearance`].
+    pub fn global_mut(cx: &mut AppContext) -> &mut Self {
+        cx.global_mut::<GlobalSystemAppearance>()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct AdjustedBufferFontSize(Pixels);
 
 impl Global for AdjustedBufferFontSize {}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ThemeSelection {
+    Theme(String),
+    System { light: String, dark: String },
+}
+
+impl ThemeSelection {
+    pub fn theme(&self, system_appearance: Appearance) -> &str {
+        match self {
+            Self::Theme(theme) => theme,
+            Self::System { light, dark } => match system_appearance {
+                Appearance::Light => light,
+                Appearance::Dark => dark,
+            },
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
@@ -54,7 +108,7 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub buffer_font_features: Option<FontFeatures>,
     #[serde(default)]
-    pub theme: Option<String>,
+    pub theme: Option<ThemeSelection>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
@@ -188,6 +242,7 @@ impl settings::Settings for ThemeSettings {
         cx: &mut AppContext,
     ) -> Result<Self> {
         let themes = ThemeRegistry::default_global(cx);
+        let system_appearance = SystemAppearance::default_global(cx);
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
@@ -205,9 +260,12 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
-            requested_theme: defaults.theme.clone(),
+            requested_theme: defaults
+                .theme
+                .as_ref()
+                .map(|selection| selection.theme(*system_appearance).to_string()),
             active_theme: themes
-                .get(defaults.theme.as_ref().unwrap())
+                .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
@@ -229,9 +287,11 @@ impl settings::Settings for ThemeSettings {
             }
 
             if let Some(value) = &value.theme {
-                this.requested_theme = Some(value.clone());
+                let theme_name = value.theme(*system_appearance);
 
-                if let Some(theme) = themes.get(value).log_err() {
+                this.requested_theme = Some(theme_name.to_string());
+
+                if let Some(theme) = themes.get(theme_name).log_err() {
                     this.active_theme = theme;
                 }
             }

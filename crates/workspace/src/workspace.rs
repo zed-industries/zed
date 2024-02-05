@@ -64,7 +64,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use theme::{ActiveTheme, ThemeSettings};
+use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::Label;
@@ -681,6 +681,21 @@ impl Workspace {
                     }
                 }
                 cx.notify();
+            }),
+            cx.observe_window_appearance(|_, cx| {
+                *SystemAppearance::global_mut(cx) = SystemAppearance(cx.appearance().into());
+
+                let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+                if let Some(requested_theme) =
+                    theme_settings.requested_theme.clone()
+                {
+                    if let Some(_theme) =
+                        theme_settings.switch_theme(&requested_theme, cx)
+                    {
+                        ThemeSettings::override_global(theme_settings, cx);
+                    }
+                }
             }),
             cx.observe(&left_dock, |this, _, cx| {
                 this.serialize_workspace(cx);
