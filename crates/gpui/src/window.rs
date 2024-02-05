@@ -451,6 +451,12 @@ impl Window {
             pending_input: None,
         }
     }
+    fn new_focus_listener(
+        &mut self,
+        value: AnyWindowFocusListener,
+    ) -> (Subscription, impl FnOnce()) {
+        self.focus_listeners.insert((), value)
+    }
 }
 
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
@@ -635,7 +641,7 @@ impl<'a> WindowContext<'a> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.event_listeners.insert(
+        self.app.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -653,9 +659,7 @@ impl<'a> WindowContext<'a> {
                         .unwrap_or(false)
                 }),
             ),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
@@ -1747,13 +1751,15 @@ impl VisualContext for WindowContext<'_> {
         let entity = build_view_state(&mut cx);
         cx.entities.insert(slot, entity);
 
-        cx.new_view_observers
-            .clone()
-            .retain(&TypeId::of::<V>(), |observer| {
-                let any_view = AnyView::from(view.clone());
-                (observer)(any_view, self);
+        // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
+        fn notify_observers(cx: &mut WindowContext, tid: TypeId, view: AnyView) {
+            cx.new_view_observers.clone().retain(&tid, |observer| {
+                let any_view = view.clone();
+                (observer)(any_view, cx);
                 true
             });
+        }
+        notify_observers(self, TypeId::of::<V>(), AnyView::from(view.clone()));
 
         view
     }
@@ -1955,7 +1961,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.observers.insert(
+        self.app.new_observer(
             entity_id,
             Box::new(move |cx| {
                 window_handle
@@ -1969,9 +1975,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     })
                     .unwrap_or(false)
             }),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Subscribe to events emitted by another model or view.
@@ -1991,7 +1995,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.event_listeners.insert(
+        self.app.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -2009,9 +2013,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                         .unwrap_or(false)
                 }),
             ),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Register a callback to be invoked when the view is released.
@@ -2136,9 +2138,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.last() != Some(&focus_id)
                         && event.current_focus_path.last() == Some(&focus_id)
@@ -2147,9 +2148,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
-        self.app.defer(move |_| activate());
+            }));
+        self.app.defer(|_| activate());
         subscription
     }
 
@@ -2162,9 +2162,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if !event.previous_focus_path.contains(&focus_id)
                         && event.current_focus_path.contains(&focus_id)
@@ -2173,8 +2172,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
@@ -2188,9 +2186,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.last() == Some(&focus_id)
                         && event.current_focus_path.last() != Some(&focus_id)
@@ -2199,8 +2196,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
@@ -2231,9 +2227,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.contains(&focus_id)
                         && !event.current_focus_path.contains(&focus_id)
@@ -2242,8 +2237,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
