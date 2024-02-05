@@ -8,31 +8,37 @@ maysudo=$(command -v sudo || true)
 export maysudo
 
 # Ubuntu, Debian, etc.
+# https://packages.ubuntu.com/
 apt=$(command -v apt-get || true)
-deps=(
-  libasound2-dev
-)
 if [[ -n $apt ]]; then
+  deps=(
+    libasound2-dev
+    libfontconfig-dev
+  )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
 fi
 
 # Fedora, CentOS, RHEL, etc.
+# https://packages.fedoraproject.org/
 dnf=$(command -v dnf || true)
-deps=(
-  alsa-lib-devel
-)
 if [[ -n $dnf ]]; then
+  deps=(
+    alsa-lib-devel
+    fontconfig-devel
+  )
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
 fi
 
 # Arch, Manjaro, etc.
+# https://archlinux.org/packages
 pacman=$(command -v pacman || true)
-deps=(
-  alsa-lib
-)
 if [[ -n $pacman ]]; then
+  deps=(
+    alsa-lib
+    fontconfig
+  )
   $maysudo "$pacman" -S --noconfirm "${deps[@]}"
   exit 0
 fi
