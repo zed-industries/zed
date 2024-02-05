@@ -2478,11 +2478,8 @@ impl CollabPanel {
                         }),
                     )
                     .on_click(cx.listener(move |this, _, cx| {
-                        if is_active {
-                            this.open_channel_notes(channel_id, cx)
-                        } else {
-                            this.join_channel(channel_id, cx)
-                        }
+                        this.open_channel_notes(channel_id, cx);
+                        this.join_channel_chat(channel_id, cx);
                     }))
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, cx| {
