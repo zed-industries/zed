@@ -1530,6 +1530,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 extern "C" fn step(this: &Object, _: Sel, display_link: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
+
     if lock.display_link == display_link {
         if let Some(mut callback) = lock.request_frame_callback.take() {
             drop(lock);
