@@ -351,7 +351,7 @@ impl DispatchTree {
                 .or_insert_with(|| KeystrokeMatcher::new(self.keymap.clone()));
 
             let result = keystroke_matcher.match_keystroke(keystroke, &context_stack);
-            if result.pending && !pending && bindings.len() > 0 {
+            if result.pending && !pending && !bindings.is_empty() {
                 context_stack.pop();
                 continue;
             }
