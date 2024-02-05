@@ -78,6 +78,7 @@ pub(super) enum InvalidationStrategy {
 /// "Visible" inlays may not be displayed in the buffer right away, but those are ready to be displayed on further buffer scroll, pane item activations, etc. right away without additional LSP queries or settings changes.
 /// The data in the cache is never used directly for displaying inlays on the screen, to avoid races with updates from LSP queries and sync overhead.
 /// Splice is picked to help avoid extra hint flickering and "jumps" on the screen.
+#[derive(Debug)]
 pub(super) struct InlaySplice {
     pub to_remove: Vec<InlayId>,
     pub to_insert: Vec<Inlay>,
@@ -788,6 +789,7 @@ fn new_update_task(
                                 excerpt_buffer.clone(),
                                 query,
                                 visible_range.clone(),
+                                query.invalidate.should_invalidate(),
                                 cx,
                             )
                         })
@@ -837,6 +839,7 @@ fn new_update_task(
                                 excerpt_buffer.clone(),
                                 query,
                                 invisible_range.clone(),
+                                false, // visible screen request already invalidated the entries
                                 cx,
                             )
                         })
@@ -857,10 +860,10 @@ fn fetch_and_update_hints(
     excerpt_buffer: Model<Buffer>,
     query: ExcerptQuery,
     fetch_range: Range<language::Anchor>,
+    invalidate: bool,
     cx: &mut ViewContext<Editor>,
 ) -> Task<anyhow::Result<()>> {
     cx.spawn(|editor, mut cx| async move {
-        let invalidate = query.invalidate.should_invalidate();
         let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
         let (lsp_request_limiter, multi_buffer_snapshot) = editor.update(&mut cx, |editor, cx| {
             let multi_buffer_snapshot  = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
