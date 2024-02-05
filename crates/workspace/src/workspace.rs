@@ -64,7 +64,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use theme::{ActiveTheme, ThemeSettings};
+use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::Label;
@@ -682,6 +682,21 @@ impl Workspace {
                 }
                 cx.notify();
             }),
+            cx.observe_window_appearance(|_, cx| {
+                let window_appearance = cx.appearance();
+
+                *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
+
+                let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+                if let Some(theme_selection) = theme_settings.theme_selection.clone() {
+                    let theme_name = theme_selection.theme(window_appearance.into());
+
+                    if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
+                        ThemeSettings::override_global(theme_settings, cx);
+                    }
+                }
+            }),
             cx.observe(&left_dock, |this, _, cx| {
                 this.serialize_workspace(cx);
                 cx.notify();
@@ -840,6 +855,8 @@ impl Workspace {
                     let workspace_id = workspace_id.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
+                        SystemAppearance::init_for_window(cx);
+
                         cx.new_view(|cx| {
                             Workspace::new(workspace_id, project_handle, app_state, cx)
                         })
