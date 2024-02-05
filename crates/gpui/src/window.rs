@@ -95,8 +95,8 @@ type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 struct FocusEvent {
-    previous_focus_path: SmallVec<[FocusId; 8]>,
-    current_focus_path: SmallVec<[FocusId; 8]>,
+    old_focus_path: SmallVec<[FocusId; 8]>,
+    new_focus_path: SmallVec<[FocusId; 8]>,
 }
 
 slotmap::new_key_type! {
@@ -344,24 +344,55 @@ impl Window {
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
-            let mut cx = cx.to_async();
+            let mut cx = AsyncWindowContext::new(cx.to_async(), handle);
             let dirty = dirty.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move || {
-                if dirty.get() {
-                    measure("frame duration", || {
-                        handle
-                            .update(&mut cx, |_, cx| {
-                                cx.draw();
-                                cx.present();
-                            })
-                            .log_err();
-                    })
-                } else if last_input_timestamp.get().elapsed() < Duration::from_secs(1) {
-                    // Keep presenting the current scene for 1 extra second since the
-                    // last input to prevent the display from underclocking the refresh rate.
-                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
+                fn handle_frame_request(
+                    dirty: &Rc<Cell<bool>>,
+                    last_input_timestamp: &Rc<Cell<Instant>>,
+                    cx: &mut AsyncWindowContext,
+                ) -> Result<()> {
+                    if dirty.get() {
+                        measure("frame duration", || {
+                            let original_focus_path =
+                                cx.update(|cx| cx.window.rendered_frame.focus_path())?;
+
+                            let mut draw_count = 0;
+                            while dirty.get() {
+                                cx.update(|cx| {
+                                    let old_window_active = cx.window.rendered_frame.focus_path();
+                                    let old_focus_path = cx.window.rendered_frame.focus_path();
+
+                                    cx.draw();
+                                    cx.notify_focus_listeners(
+                                        &original_focus_path,
+                                        old_focus_path,
+                                        old_window_active,
+                                    );
+                                })?;
+                                draw_count += 1;
+                                if draw_count > 2 {
+                                    log::warn!(
+                                        "redrew frame {} times due to focus changes",
+                                        draw_count
+                                    );
+                                }
+                            }
+
+                            cx.update(|cx| cx.present())?;
+                            Ok(())
+                        })?;
+                    } else if last_input_timestamp.get().elapsed() < Duration::from_secs(1) {
+                        // Keep presenting the current scene for 1 extra second since the
+                        // last input to prevent the display from underclocking the refresh rate.
+                        cx.update(|cx| cx.present())?;
+                    }
+
+                    Ok(())
                 }
+
+                handle_frame_request(&dirty, &last_input_timestamp, &mut cx).log_err();
             }
         }));
         platform_window.on_resize(Box::new({
@@ -1071,18 +1102,28 @@ impl<'a> WindowContext<'a> {
             }
             element_arena.clear();
         });
-
-        let previous_focus_path = self.window.rendered_frame.focus_path();
-        let previous_window_active = self.window.rendered_frame.window_active;
         mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
         self.window.next_frame.clear();
-        let current_focus_path = self.window.rendered_frame.focus_path();
-        let current_window_active = self.window.rendered_frame.window_active;
+        self.window.refreshing = false;
+        self.window.drawing = false;
+    }
 
-        if previous_focus_path != current_focus_path
-            || previous_window_active != current_window_active
-        {
-            if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
+    fn notify_focus_listeners(
+        &mut self,
+        original_focus_path: &SmallVec<[FocusId; 8]>,
+        old_focus_path: SmallVec<[FocusId; 8]>,
+        old_window_active: bool,
+    ) {
+        let new_window_active = self.window.rendered_frame.window_active;
+        let new_focus_path = self.window.rendered_frame.focus_path();
+
+        if new_window_active == old_window_active && new_focus_path == *original_focus_path {
+            log::warn!("skipping focus notifications due to restoring focus to the original handle in a single frame");
+            return;
+        }
+
+        if new_focus_path != old_focus_path || new_window_active != old_window_active {
+            if !old_focus_path.is_empty() && new_focus_path.is_empty() {
                 self.window
                     .focus_lost_listeners
                     .clone()
@@ -1090,15 +1131,15 @@ impl<'a> WindowContext<'a> {
             }
 
             let event = FocusEvent {
-                previous_focus_path: if previous_window_active {
-                    previous_focus_path
+                old_focus_path: if old_window_active {
+                    old_focus_path
                 } else {
-                    Default::default()
+                    SmallVec::new()
                 },
-                current_focus_path: if current_window_active {
-                    current_focus_path
+                new_focus_path: if new_window_active {
+                    new_focus_path
                 } else {
-                    Default::default()
+                    SmallVec::new()
                 },
             };
             self.window
@@ -1106,8 +1147,6 @@ impl<'a> WindowContext<'a> {
                 .clone()
                 .retain(&(), |listener| listener(&event, self));
         }
-        self.window.refreshing = false;
-        self.window.drawing = false;
     }
 
     fn present(&self) {
@@ -2124,8 +2163,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.previous_focus_path.last() != Some(&focus_id)
-                        && event.current_focus_path.last() == Some(&focus_id)
+                    if event.old_focus_path.last() != Some(&focus_id)
+                        && event.new_focus_path.last() == Some(&focus_id)
                     {
                         listener(view, cx)
                     }
@@ -2150,8 +2189,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if !event.previous_focus_path.contains(&focus_id)
-                        && event.current_focus_path.contains(&focus_id)
+                    if !event.old_focus_path.contains(&focus_id)
+                        && event.new_focus_path.contains(&focus_id)
                     {
                         listener(view, cx)
                     }
@@ -2176,8 +2215,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.previous_focus_path.last() == Some(&focus_id)
-                        && event.current_focus_path.last() != Some(&focus_id)
+                    if event.old_focus_path.last() == Some(&focus_id)
+                        && event.new_focus_path.last() != Some(&focus_id)
                     {
                         listener(view, cx)
                     }
@@ -2219,8 +2258,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.previous_focus_path.contains(&focus_id)
-                        && !event.current_focus_path.contains(&focus_id)
+                    if event.old_focus_path.contains(&focus_id)
+                        && !event.new_focus_path.contains(&focus_id)
                     {
                         listener(view, cx)
                     }
