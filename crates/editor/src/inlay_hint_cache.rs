@@ -636,8 +636,7 @@ fn spawn_new_update_tasks(
             continue;
         }
 
-        let cached_excerpt_hints = editor.inlay_hint_cache.hints.get(&excerpt_id).cloned();
-        if let Some(cached_excerpt_hints) = &cached_excerpt_hints {
+        if let Some(cached_excerpt_hints) = editor.inlay_hint_cache.hints.get(&excerpt_id) {
             let cached_excerpt_hints = cached_excerpt_hints.read();
             let cached_buffer_version = &cached_excerpt_hints.buffer_version;
             if cached_excerpt_hints.version > update_cache_version
@@ -678,7 +677,6 @@ fn spawn_new_update_tasks(
                 multi_buffer_snapshot,
                 buffer_snapshot.clone(),
                 Arc::clone(&visible_hints),
-                cached_excerpt_hints,
                 Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter),
                 cx,
             )
@@ -793,7 +791,6 @@ fn new_update_task(
     multi_buffer_snapshot: MultiBufferSnapshot,
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
-    cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
     lsp_request_limiter: Arc<Semaphore>,
     cx: &mut ViewContext<'_, Editor>,
 ) -> Task<()> {
@@ -805,7 +802,6 @@ fn new_update_task(
                 multi_buffer_snapshot.clone(),
                 buffer_snapshot.clone(),
                 Arc::clone(&visible_hints),
-                cached_excerpt_hints.as_ref().map(Arc::clone),
                 query,
                 invalidate,
                 range,
@@ -876,7 +872,6 @@ async fn fetch_and_update_hints(
     multi_buffer_snapshot: MultiBufferSnapshot,
     buffer_snapshot: BufferSnapshot,
     visible_hints: Arc<Vec<Inlay>>,
-    cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
     query: ExcerptQuery,
     invalidate: bool,
     fetch_range: Range<language::Anchor>,
@@ -938,6 +933,14 @@ async fn fetch_and_update_hints(
         })
         .ok()
         .flatten();
+
+    let cached_excerpt_hints = editor.update(&mut cx, |editor, _| {
+        editor
+            .inlay_hint_cache
+            .hints
+            .get(&query.excerpt_id)
+            .cloned()
+    })?;
     let new_hints = match inlay_hints_fetch_task {
         Some(fetch_task) => {
             log::debug!(
@@ -2739,6 +2742,7 @@ pub mod tests {
                 assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scrolled buffer");
             });
 
+        dbg!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         editor_edited.store(true, Ordering::Release);
         _ = editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
