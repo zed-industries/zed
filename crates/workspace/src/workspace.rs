@@ -683,16 +683,16 @@ impl Workspace {
                 cx.notify();
             }),
             cx.observe_window_appearance(|_, cx| {
-                *SystemAppearance::global_mut(cx) = SystemAppearance(cx.appearance().into());
+                let window_appearance = cx.appearance();
+
+                *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
                 let mut theme_settings = ThemeSettings::get_global(cx).clone();
 
-                if let Some(requested_theme) =
-                    theme_settings.requested_theme.clone()
-                {
-                    if let Some(_theme) =
-                        theme_settings.switch_theme(&requested_theme, cx)
-                    {
+                if let Some(theme_selection) = theme_settings.theme_selection.clone() {
+                    let theme_name = theme_selection.theme(window_appearance.into());
+
+                    if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
                         ThemeSettings::override_global(theme_settings, cx);
                     }
                 }
