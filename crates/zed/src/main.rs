@@ -257,6 +257,8 @@ fn main() {
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
+            //TODO: unblock this
+            #[cfg(not(target_os = "linux"))]
             upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);
             let urls = collect_url_args();
