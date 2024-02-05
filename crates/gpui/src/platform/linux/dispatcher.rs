@@ -89,6 +89,8 @@ impl PlatformDispatcher for LinuxDispatcher {
                 let (_, runnable) = timed_tasks.pop().unwrap();
                 runnable.run();
                 ran = true;
+            } else {
+                break;
             }
         }
         ran

@@ -31,17 +31,19 @@ xcb::atoms_struct! {
     }
 }
 
-pub(crate) struct LinuxPlatform(Mutex<LinuxPlatformState>);
-
-pub(crate) struct LinuxPlatformState {
+pub(crate) struct LinuxPlatform {
     xcb_connection: Arc<xcb::Connection>,
     x_root_index: i32,
     atoms: XcbAtoms,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     dispatcher: Arc<LinuxDispatcher>,
-    windows: HashMap<x::Window, Arc<LinuxWindowState>>,
     text_system: Arc<LinuxTextSystem>,
+    state: Mutex<LinuxPlatformState>,
+}
+
+pub(crate) struct LinuxPlatformState {
+    windows: HashMap<x::Window, Arc<LinuxWindowState>>,
 }
 
 impl Default for LinuxPlatform {
@@ -57,52 +59,58 @@ impl LinuxPlatform {
 
         let dispatcher = Arc::new(LinuxDispatcher::new());
 
-        Self(Mutex::new(LinuxPlatformState {
+        Self {
             xcb_connection: Arc::new(xcb_connection),
             x_root_index,
             atoms,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             dispatcher,
-            windows: HashMap::default(),
             text_system: Arc::new(LinuxTextSystem::new()),
-        }))
+            state: Mutex::new(LinuxPlatformState {
+                windows: HashMap::default(),
+            }),
+        }
     }
 }
 
 impl Platform for LinuxPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.0.lock().background_executor.clone()
+        self.background_executor.clone()
     }
 
-    fn foreground_executor(&self) -> crate::ForegroundExecutor {
-        self.0.lock().foreground_executor.clone()
+    fn foreground_executor(&self) -> ForegroundExecutor {
+        self.foreground_executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.0.lock().text_system.clone()
+        self.text_system.clone()
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
+        //Note: here and below, don't keep the lock() open when calling
+        // into window functions as they may invoke callbacks that need
+        // to immediately access the platform (self).
 
-        while !self.0.lock().windows.is_empty() {
-            let event = self.0.lock().xcb_connection.wait_for_event().unwrap();
+        while !self.state.lock().windows.is_empty() {
+            let event = self.xcb_connection.wait_for_event().unwrap();
             match event {
                 xcb::Event::X(x::Event::ClientMessage(ev)) => {
                     if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
-                        let mut this = self.0.lock();
-                        if atom == this.atoms.wm_del_window.resource_id() {
+                        if atom == self.atoms.wm_del_window.resource_id() {
                             // window "x" button clicked by user, we gracefully exit
-                            let window = this.windows.remove(&ev.window()).unwrap();
+                            let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
-                            break;
                         }
                     }
                 }
                 xcb::Event::X(x::Event::Expose(ev)) => {
-                    let this = self.0.lock();
-                    this.windows[&ev.window()].expose();
+                    let window = {
+                        let state = self.state.lock();
+                        Arc::clone(&state.windows[&ev.window()])
+                    };
+                    window.expose();
                 }
                 xcb::Event::X(x::Event::ConfigureNotify(ev)) => {
                     let bounds = Bounds {
@@ -115,12 +123,17 @@ impl Platform for LinuxPlatform {
                             height: ev.height().into(),
                         },
                     };
-                    let this = self.0.lock();
-                    this.windows[&ev.window()].configure(bounds);
+                    let window = {
+                        let state = self.state.lock();
+                        Arc::clone(&state.windows[&ev.window()])
+                    };
+                    window.configure(bounds)
                 }
-                _ => {}
+                ref other => {
+                    println!("Other event {:?}", other);
+                }
             }
-            self.0.lock().dispatcher.tick_main();
+            self.dispatcher.tick_main();
         }
     }
 
@@ -137,22 +150,20 @@ impl Platform for LinuxPlatform {
     fn unhide_other_apps(&self) {}
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        let this = self.0.lock();
-        let setup = this.xcb_connection.get_setup();
+        let setup = self.xcb_connection.get_setup();
         setup
             .roots()
             .enumerate()
             .map(|(root_id, _)| {
-                Rc::new(LinuxDisplay::new(&this.xcb_connection, root_id as i32))
+                Rc::new(LinuxDisplay::new(&self.xcb_connection, root_id as i32))
                     as Rc<dyn PlatformDisplay>
             })
             .collect()
     }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        let this = self.0.lock();
         Some(Rc::new(LinuxDisplay::new(
-            &this.xcb_connection,
+            &self.xcb_connection,
             id.0 as i32,
         )))
     }
@@ -166,17 +177,19 @@ impl Platform for LinuxPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let mut this = self.0.lock();
-        let x_window = this.xcb_connection.generate_id();
+        let x_window = self.xcb_connection.generate_id();
 
         let window_ptr = Arc::new(LinuxWindowState::new(
             options,
-            &this.xcb_connection,
-            this.x_root_index,
+            &self.xcb_connection,
+            self.x_root_index,
             x_window,
-            &this.atoms,
+            &self.atoms,
         ));
-        this.windows.insert(x_window, Arc::clone(&window_ptr));
+        self.state
+            .lock()
+            .windows
+            .insert(x_window, Arc::clone(&window_ptr));
         Box::new(LinuxWindow(window_ptr))
     }
 
