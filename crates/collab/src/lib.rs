@@ -8,6 +8,7 @@ pub mod rpc;
 #[cfg(test)]
 mod tests;
 
+use ::rpc::{proto, ErrorExt};
 use axum::{http::StatusCode, response::IntoResponse};
 use db::Database;
 use executor::Executor;
@@ -20,6 +21,37 @@ pub enum Error {
     Http(StatusCode, String),
     Database(sea_orm::error::DbErr),
     Internal(anyhow::Error),
+}
+
+impl ErrorExt for Error {
+    fn error_code(&self) -> proto::ErrorCode {
+        match self {
+            Error::Internal(anyhow_error) => anyhow_error.error_code(),
+            _ => proto::ErrorCode::Internal,
+        }
+    }
+
+    fn error_tag(&self, k: &str) -> Option<&str> {
+        match self {
+            Error::Internal(anyhow_error) => anyhow_error.error_tag(k),
+            _ => None,
+        }
+    }
+
+    fn to_proto(&self) -> proto::Error {
+        match self {
+            Error::Internal(anyhow_error) => anyhow_error.to_proto(),
+            _ => proto::Error {
+                message: self.to_string(),
+                code: self.error_code() as i32,
+                tags: Vec::new(),
+            },
+        }
+    }
+
+    fn cloned(&self) -> anyhow::Error {
+        todo!()
+    }
 }
 
 impl From<anyhow::Error> for Error {

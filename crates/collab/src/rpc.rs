@@ -100,6 +100,24 @@ impl<R: RequestMessage> Response<R> {
     }
 }
 
+struct StreamingResponse<R: RequestMessage> {
+    peer: Arc<Peer>,
+    receipt: Receipt<R>,
+}
+
+impl<R: RequestMessage> StreamingResponse<R> {
+    fn send(&self, payload: R::Response) -> Result<()> {
+        self.peer.respond(self.receipt, payload)?;
+        Ok(())
+    }
+}
+
+impl<R: RequestMessage> Drop for StreamingResponse<R> {
+    fn drop(&mut self) {
+        self.peer.end_stream(self.receipt).trace_err();
+    }
+}
+
 #[derive(Clone)]
 struct Session {
     user_id: UserId,
@@ -546,6 +564,40 @@ impl Server {
                             _ => ErrorCode::Internal.message(format!("{}", error)).to_proto(),
                         };
                         peer.respond_with_error(receipt, proto_err)?;
+                        Err(error)
+                    }
+                }
+            }
+        })
+    }
+
+    fn add_streaming_request_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
+    where
+        F: 'static + Send + Sync + Fn(M, StreamingResponse<M>, Session) -> Fut,
+        Fut: Send + Future<Output = Result<()>>,
+        M: RequestMessage,
+    {
+        let handler = Arc::new(handler);
+        self.add_handler(move |envelope, session| {
+            let receipt = envelope.receipt();
+            let handler = handler.clone();
+            async move {
+                let peer = session.peer.clone();
+                let responded = Arc::new(AtomicBool::default());
+                let response = StreamingResponse {
+                    peer: peer.clone(),
+                    receipt,
+                };
+                match (handler)(envelope.payload, response, session).await {
+                    Ok(()) => {
+                        if responded.load(std::sync::atomic::Ordering::SeqCst) {
+                            Ok(())
+                        } else {
+                            Err(anyhow!("handler did not send a response"))?
+                        }
+                    }
+                    Err(error) => {
+                        peer.respond_with_error(receipt, error.to_proto())?;
                         Err(error)
                     }
                 }
