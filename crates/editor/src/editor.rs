@@ -7264,10 +7264,6 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        let Some(workspace) = self.workspace() else {
-            return;
-        };
-        let pane = workspace.read(cx).active_pane().clone();
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
@@ -7285,6 +7281,11 @@ impl Editor {
                 let target = target_task.await.context("target resolution task")?;
                 if let Some(target) = target {
                     editor.update(&mut cx, |editor, cx| {
+                        let Some(workspace) = editor.workspace() else {
+                            return;
+                        };
+                        let pane = workspace.read(cx).active_pane().clone();
+
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
@@ -7325,7 +7326,7 @@ impl Editor {
         } else if !definitions.is_empty() {
             let replica_id = self.replica_id(cx);
             cx.spawn(|editor, mut cx| async move {
-                let (title, location_tasks) = editor
+                let (title, location_tasks, workspace) = editor
                     .update(&mut cx, |editor, cx| {
                         let title = definitions
                             .iter()
@@ -7353,7 +7354,7 @@ impl Editor {
                                 HoverLink::Url(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
-                        (title, location_tasks)
+                        (title, location_tasks, editor.workspace().clone())
                     })
                     .context("location tasks preparation")?;
 
@@ -7363,6 +7364,10 @@ impl Editor {
                     .filter_map(|location| location.transpose())
                     .collect::<Result<_>>()
                     .context("location tasks")?;
+
+                let Some(workspace) = workspace else {
+                    return Ok(());
+                };
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         Self::open_locations_in_multibuffer(
