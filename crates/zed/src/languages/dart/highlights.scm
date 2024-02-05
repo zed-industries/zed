@@ -137,7 +137,7 @@
   (hex_integer_literal)
   (decimal_integer_literal)
   (decimal_floating_point_literal)
-  ; TODO: inaccessbile nodes
+  ; TODO: inaccessible nodes
   ; (octal_integer_literal)
   ; (hex_floating_point_literal)
   ] @number
