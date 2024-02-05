@@ -1345,22 +1345,14 @@ impl Workspace {
         let is_remote = self.project.read(cx).is_remote();
         let has_worktree = self.project.read(cx).worktrees().next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-        let close_task = if is_remote || has_worktree || has_dirty_items {
+        let window_to_replace = if is_remote || has_worktree || has_dirty_items {
             None
         } else {
-            Some(self.prepare_to_close(false, cx))
+            window
         };
         let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
-            let window_to_replace = if let Some(close_task) = close_task {
-                if !close_task.await? {
-                    return Ok(());
-                }
-                window
-            } else {
-                None
-            };
             cx.update(|cx| open_paths(&paths, &app_state, window_to_replace, cx))?
                 .await?;
             Ok(())
