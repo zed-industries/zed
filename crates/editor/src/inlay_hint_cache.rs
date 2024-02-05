@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context;
 use clock::Global;
 use futures::future;
-use gpui::{Model, ModelContext, Task, ViewContext};
+use gpui::{AsyncWindowContext, Model, ModelContext, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -29,7 +29,7 @@ use language::language_settings::InlayHintSettings;
 use smol::lock::Semaphore;
 use sum_tree::Bias;
 use text::{BufferId, ToOffset, ToPoint};
-use util::post_inc;
+use util::{post_inc, ResultExt};
 
 pub struct InlayHintCache {
     hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
@@ -78,6 +78,7 @@ pub(super) enum InvalidationStrategy {
 /// "Visible" inlays may not be displayed in the buffer right away, but those are ready to be displayed on further buffer scroll, pane item activations, etc. right away without additional LSP queries or settings changes.
 /// The data in the cache is never used directly for displaying inlays on the screen, to avoid races with updates from LSP queries and sync overhead.
 /// Splice is picked to help avoid extra hint flickering and "jumps" on the screen.
+#[derive(Debug)]
 pub(super) struct InlaySplice {
     pub to_remove: Vec<InlayId>,
     pub to_insert: Vec<Inlay>,
@@ -619,7 +620,6 @@ fn spawn_new_update_tasks(
     update_cache_version: usize,
     cx: &mut ViewContext<'_, Editor>,
 ) {
-    let visible_hints = Arc::new(editor.visible_inlay_hints(cx));
     for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
         excerpts_to_query
     {
@@ -636,8 +636,7 @@ fn spawn_new_update_tasks(
             continue;
         }
 
-        let cached_excerpt_hints = editor.inlay_hint_cache.hints.get(&excerpt_id).cloned();
-        if let Some(cached_excerpt_hints) = &cached_excerpt_hints {
+        if let Some(cached_excerpt_hints) = editor.inlay_hint_cache.hints.get(&excerpt_id) {
             let cached_excerpt_hints = cached_excerpt_hints.read();
             let cached_buffer_version = &cached_excerpt_hints.buffer_version;
             if cached_excerpt_hints.version > update_cache_version
@@ -647,20 +646,15 @@ fn spawn_new_update_tasks(
             }
         };
 
-        let (multi_buffer_snapshot, Some(query_ranges)) =
-            editor.buffer.update(cx, |multi_buffer, cx| {
-                (
-                    multi_buffer.snapshot(cx),
-                    determine_query_ranges(
-                        multi_buffer,
-                        excerpt_id,
-                        &excerpt_buffer,
-                        excerpt_visible_range,
-                        cx,
-                    ),
-                )
-            })
-        else {
+        let Some(query_ranges) = editor.buffer.update(cx, |multi_buffer, cx| {
+            determine_query_ranges(
+                multi_buffer,
+                excerpt_id,
+                &excerpt_buffer,
+                excerpt_visible_range,
+                cx,
+            )
+        }) else {
             return;
         };
         let query = ExcerptQuery {
@@ -671,18 +665,8 @@ fn spawn_new_update_tasks(
             reason,
         };
 
-        let new_update_task = |query_ranges| {
-            new_update_task(
-                query,
-                query_ranges,
-                multi_buffer_snapshot,
-                buffer_snapshot.clone(),
-                Arc::clone(&visible_hints),
-                cached_excerpt_hints,
-                Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter),
-                cx,
-            )
-        };
+        let mut new_update_task =
+            |query_ranges| new_update_task(query, query_ranges, excerpt_buffer.clone(), cx);
 
         match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
             hash_map::Entry::Occupied(mut o) => {
@@ -790,62 +774,55 @@ const INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS: u64 = 400;
 fn new_update_task(
     query: ExcerptQuery,
     query_ranges: QueryRanges,
-    multi_buffer_snapshot: MultiBufferSnapshot,
-    buffer_snapshot: BufferSnapshot,
-    visible_hints: Arc<Vec<Inlay>>,
-    cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
-    lsp_request_limiter: Arc<Semaphore>,
+    excerpt_buffer: Model<Buffer>,
     cx: &mut ViewContext<'_, Editor>,
 ) -> Task<()> {
-    cx.spawn(|editor, mut cx| async move {
-        let closure_cx = cx.clone();
-        let fetch_and_update_hints = |invalidate, range| {
-            fetch_and_update_hints(
-                editor.clone(),
-                multi_buffer_snapshot.clone(),
-                buffer_snapshot.clone(),
-                Arc::clone(&visible_hints),
-                cached_excerpt_hints.as_ref().map(Arc::clone),
-                query,
-                invalidate,
-                range,
-                Arc::clone(&lsp_request_limiter),
-                closure_cx.clone(),
-            )
-        };
-        let visible_range_update_results = future::join_all(query_ranges.visible.into_iter().map(
-            |visible_range| async move {
-                (
-                    visible_range.clone(),
-                    fetch_and_update_hints(query.invalidate.should_invalidate(), visible_range)
-                        .await,
-                )
-            },
-        ))
+    cx.spawn(move |editor, mut cx| async move {
+        let visible_range_update_results = future::join_all(
+            query_ranges
+                .visible
+                .into_iter()
+                .filter_map(|visible_range| {
+                    let fetch_task = editor
+                        .update(&mut cx, |_, cx| {
+                            fetch_and_update_hints(
+                                excerpt_buffer.clone(),
+                                query,
+                                visible_range.clone(),
+                                query.invalidate.should_invalidate(),
+                                cx,
+                            )
+                        })
+                        .log_err()?;
+                    Some(async move { (visible_range, fetch_task.await) })
+                }),
+        )
         .await;
 
         let hint_delay = cx.background_executor().timer(Duration::from_millis(
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
         ));
 
-        let mut query_range_failed = |range: &Range<language::Anchor>, e: anyhow::Error| {
-            log::error!("inlay hint update task for range {range:?} failed: {e:#}");
-            editor
-                .update(&mut cx, |editor, _| {
-                    if let Some(task_ranges) = editor
-                        .inlay_hint_cache
-                        .update_tasks
-                        .get_mut(&query.excerpt_id)
-                    {
-                        task_ranges.invalidate_range(&buffer_snapshot, &range);
-                    }
-                })
-                .ok()
-        };
+        let query_range_failed =
+            |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncWindowContext| {
+                log::error!("inlay hint update task for range {range:?} failed: {e:#}");
+                editor
+                    .update(cx, |editor, cx| {
+                        if let Some(task_ranges) = editor
+                            .inlay_hint_cache
+                            .update_tasks
+                            .get_mut(&query.excerpt_id)
+                        {
+                            let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
+                            task_ranges.invalidate_range(&buffer_snapshot, &range);
+                        }
+                    })
+                    .ok()
+            };
 
         for (range, result) in visible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(&range, e);
+                query_range_failed(&range, e, &mut cx);
             }
         }
 
@@ -855,149 +832,171 @@ fn new_update_task(
                 .before_visible
                 .into_iter()
                 .chain(query_ranges.after_visible.into_iter())
-                .map(|invisible_range| async move {
-                    (
-                        invisible_range.clone(),
-                        fetch_and_update_hints(false, invisible_range).await,
-                    )
+                .filter_map(|invisible_range| {
+                    let fetch_task = editor
+                        .update(&mut cx, |_, cx| {
+                            fetch_and_update_hints(
+                                excerpt_buffer.clone(),
+                                query,
+                                invisible_range.clone(),
+                                false, // visible screen request already invalidated the entries
+                                cx,
+                            )
+                        })
+                        .log_err()?;
+                    Some(async move { (invisible_range, fetch_task.await) })
                 }),
         )
         .await;
         for (range, result) in invisible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(&range, e);
+                query_range_failed(&range, e, &mut cx);
             }
         }
     })
 }
 
-async fn fetch_and_update_hints(
-    editor: gpui::WeakView<Editor>,
-    multi_buffer_snapshot: MultiBufferSnapshot,
-    buffer_snapshot: BufferSnapshot,
-    visible_hints: Arc<Vec<Inlay>>,
-    cached_excerpt_hints: Option<Arc<RwLock<CachedExcerptHints>>>,
+fn fetch_and_update_hints(
+    excerpt_buffer: Model<Buffer>,
     query: ExcerptQuery,
-    invalidate: bool,
     fetch_range: Range<language::Anchor>,
-    lsp_request_limiter: Arc<Semaphore>,
-    mut cx: gpui::AsyncWindowContext,
-) -> anyhow::Result<()> {
-    let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
-        (None, false)
-    } else {
-        match lsp_request_limiter.try_acquire() {
-            Some(guard) => (Some(guard), false),
-            None => (Some(lsp_request_limiter.acquire().await), true),
-        }
-    };
-    let fetch_range_to_log =
-        fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
-    let inlay_hints_fetch_task = editor
-        .update(&mut cx, |editor, cx| {
-            if got_throttled {
-                let query_not_around_visible_range = match editor.excerpts_for_inlay_hints_query(None, cx).remove(&query.excerpt_id) {
-                    Some((_, _, current_visible_range)) => {
-                        let visible_offset_length = current_visible_range.len();
-                        let double_visible_range = current_visible_range
-                            .start
-                            .saturating_sub(visible_offset_length)
-                            ..current_visible_range
-                                .end
-                                .saturating_add(visible_offset_length)
-                                .min(buffer_snapshot.len());
-                        !double_visible_range
-                            .contains(&fetch_range.start.to_offset(&buffer_snapshot))
-                            && !double_visible_range
-                                .contains(&fetch_range.end.to_offset(&buffer_snapshot))
-                    },
-                    None => true,
-                };
-                if query_not_around_visible_range {
-                    log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
-                    if let Some(task_ranges) = editor
-                        .inlay_hint_cache
-                        .update_tasks
-                        .get_mut(&query.excerpt_id)
-                    {
-                        task_ranges.invalidate_range(&buffer_snapshot, &fetch_range);
-                    }
-                    return None;
-                }
-            }
-            editor
-                .buffer()
-                .read(cx)
-                .buffer(query.buffer_id)
-                .and_then(|buffer| {
-                    let project = editor.project.as_ref()?;
-                    Some(project.update(cx, |project, cx| {
-                        project.inlay_hints(buffer, fetch_range.clone(), cx)
-                    }))
-                })
-        })
-        .ok()
-        .flatten();
-    let new_hints = match inlay_hints_fetch_task {
-        Some(fetch_task) => {
-            log::debug!(
-                "Fetching inlay hints for range {fetch_range_to_log:?}, reason: {query_reason}, invalidate: {invalidate}",
-                query_reason = query.reason,
-            );
-            log::trace!(
-                "Currently visible hints: {visible_hints:?}, cached hints present: {}",
-                cached_excerpt_hints.is_some(),
-            );
-            fetch_task.await.context("inlay hint fetch task")?
-        }
-        None => return Ok(()),
-    };
-    drop(lsp_request_guard);
-    log::debug!(
-        "Fetched {} hints for range {fetch_range_to_log:?}",
-        new_hints.len()
-    );
-    log::trace!("Fetched hints: {new_hints:?}");
+    invalidate: bool,
+    cx: &mut ViewContext<Editor>,
+) -> Task<anyhow::Result<()>> {
+    cx.spawn(|editor, mut cx| async move {
+        let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let (lsp_request_limiter, multi_buffer_snapshot) = editor.update(&mut cx, |editor, cx| {
+            let multi_buffer_snapshot  = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let lsp_request_limiter = Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter);
+            (lsp_request_limiter, multi_buffer_snapshot)
+        })?;
 
-    let background_task_buffer_snapshot = buffer_snapshot.clone();
-    let background_fetch_range = fetch_range.clone();
-    let new_update = cx
-        .background_executor()
-        .spawn(async move {
-            calculate_hint_updates(
-                query.excerpt_id,
-                invalidate,
-                background_fetch_range,
-                new_hints,
-                &background_task_buffer_snapshot,
-                cached_excerpt_hints,
-                &visible_hints,
-            )
-        })
-        .await;
-    if let Some(new_update) = new_update {
-        log::debug!(
-            "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
-            new_update.remove_from_visible.len(),
-            new_update.remove_from_cache.len(),
-            new_update.add_to_cache.len()
-        );
-        log::trace!("New update: {new_update:?}");
-        editor
+        let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
+            (None, false)
+        } else {
+            match lsp_request_limiter.try_acquire() {
+                Some(guard) => (Some(guard), false),
+                None => (Some(lsp_request_limiter.acquire().await), true),
+            }
+        };
+        let fetch_range_to_log =
+            fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
+        let inlay_hints_fetch_task = editor
             .update(&mut cx, |editor, cx| {
-                apply_hint_update(
-                    editor,
-                    new_update,
-                    query,
-                    invalidate,
-                    buffer_snapshot,
-                    multi_buffer_snapshot,
-                    cx,
-                );
+                if got_throttled {
+                    let query_not_around_visible_range = match editor.excerpts_for_inlay_hints_query(None, cx).remove(&query.excerpt_id) {
+                        Some((_, _, current_visible_range)) => {
+                            let visible_offset_length = current_visible_range.len();
+                            let double_visible_range = current_visible_range
+                                .start
+                                .saturating_sub(visible_offset_length)
+                                ..current_visible_range
+                                    .end
+                                    .saturating_add(visible_offset_length)
+                                    .min(buffer_snapshot.len());
+                            !double_visible_range
+                                .contains(&fetch_range.start.to_offset(&buffer_snapshot))
+                                && !double_visible_range
+                                    .contains(&fetch_range.end.to_offset(&buffer_snapshot))
+                        },
+                        None => true,
+                    };
+                    if query_not_around_visible_range {
+                        log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                        if let Some(task_ranges) = editor
+                            .inlay_hint_cache
+                            .update_tasks
+                            .get_mut(&query.excerpt_id)
+                        {
+                            task_ranges.invalidate_range(&buffer_snapshot, &fetch_range);
+                        }
+                        return None;
+                    }
+                }
+                editor
+                    .buffer()
+                    .read(cx)
+                    .buffer(query.buffer_id)
+                    .and_then(|buffer| {
+                        let project = editor.project.as_ref()?;
+                        Some(project.update(cx, |project, cx| {
+                            project.inlay_hints(buffer, fetch_range.clone(), cx)
+                        }))
+                    })
             })
-            .ok();
-    }
-    Ok(())
+            .ok()
+            .flatten();
+
+        let cached_excerpt_hints = editor.update(&mut cx, |editor, _| {
+            editor
+                .inlay_hint_cache
+                .hints
+                .get(&query.excerpt_id)
+                .cloned()
+        })?;
+
+        let visible_hints = editor.update(&mut cx, |editor, cx| editor.visible_inlay_hints(cx))?;
+        let new_hints = match inlay_hints_fetch_task {
+            Some(fetch_task) => {
+                log::debug!(
+                    "Fetching inlay hints for range {fetch_range_to_log:?}, reason: {query_reason}, invalidate: {invalidate}",
+                    query_reason = query.reason,
+                );
+                log::trace!(
+                    "Currently visible hints: {visible_hints:?}, cached hints present: {}",
+                    cached_excerpt_hints.is_some(),
+                );
+                fetch_task.await.context("inlay hint fetch task")?
+            }
+            None => return Ok(()),
+        };
+        drop(lsp_request_guard);
+        log::debug!(
+            "Fetched {} hints for range {fetch_range_to_log:?}",
+            new_hints.len()
+        );
+        log::trace!("Fetched hints: {new_hints:?}");
+
+        let background_task_buffer_snapshot = buffer_snapshot.clone();
+        let background_fetch_range = fetch_range.clone();
+        let new_update = cx
+            .background_executor()
+            .spawn(async move {
+                calculate_hint_updates(
+                    query.excerpt_id,
+                    invalidate,
+                    background_fetch_range,
+                    new_hints,
+                    &background_task_buffer_snapshot,
+                    cached_excerpt_hints,
+                    &visible_hints,
+                )
+            })
+            .await;
+        if let Some(new_update) = new_update {
+            log::debug!(
+                "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
+                new_update.remove_from_visible.len(),
+                new_update.remove_from_cache.len(),
+                new_update.add_to_cache.len()
+            );
+            log::trace!("New update: {new_update:?}");
+            editor
+                .update(&mut cx, |editor, cx| {
+                    apply_hint_update(
+                        editor,
+                        new_update,
+                        query,
+                        invalidate,
+                        buffer_snapshot,
+                        multi_buffer_snapshot,
+                        cx,
+                    );
+                })
+                .ok();
+        }
+        anyhow::Ok(())
+    })
 }
 
 fn calculate_hint_updates(
@@ -2436,7 +2435,7 @@ pub mod tests {
         });
     }
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test(iterations = 30)]
     async fn test_multiple_excerpts_large_multibuffer(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
