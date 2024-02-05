@@ -490,8 +490,8 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
             delegate.labels_for_path_match(&matches[0].0);
         assert_eq!(file_name, "the-file");
         assert_eq!(file_name_positions, &[0, 1, 4]);
-        assert_eq!(full_path, "the-file");
-        assert_eq!(full_path_positions, &[0, 1, 4]);
+        assert_eq!(full_path, "");
+        assert_eq!(full_path_positions, &[0; 0]);
     });
 
     // Since the worktree root is a file, searching for its name followed by a slash does

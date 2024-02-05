@@ -566,7 +566,7 @@ impl FileFinderDelegate {
         let path = &path_match.path;
         let path_string = path.to_string_lossy();
         let full_path = [path_match.path_prefix.as_ref(), path_string.as_ref()].join("");
-        let path_positions = path_match.positions.clone();
+        let mut path_positions = path_match.positions.clone();
 
         let file_name = path.file_name().map_or_else(
             || path_match.path_prefix.to_string(),
@@ -583,6 +583,14 @@ impl FileFinderDelegate {
                 }
             })
             .collect();
+
+        // Trim file name from the full path
+        let full_path = if full_path.len() > file_name.len() {
+            full_path[..full_path.len() - file_name.len() - 1].to_string()
+        } else {
+            "".to_string()
+        };
+        path_positions.retain(|idx| *idx < full_path.len());
 
         (file_name, file_name_positions, full_path, path_positions)
     }
@@ -868,9 +876,14 @@ impl PickerDelegate for FileFinderDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(
-                    v_flex()
+                    h_flex()
+                        .gap_2()
                         .child(HighlightedLabel::new(file_name, file_name_positions))
-                        .child(HighlightedLabel::new(full_path, full_path_positions)),
+                        .child(
+                            HighlightedLabel::new(full_path, full_path_positions)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                 ),
         )
     }
