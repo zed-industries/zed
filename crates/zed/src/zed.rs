@@ -9,8 +9,8 @@ use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions, View,
-    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    actions, impl_actions, point, px, AppContext, Context, FocusableView, PromptLevel,
+    TitlebarOptions, View, ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -23,6 +23,7 @@ use quick_action_bar::QuickActionBar;
 use rope::Rope;
 use runnable::{static_runnable_file::RunnableProvider, RunState, RunnablePebble};
 use search::project_search::ProjectSearchBar;
+use serde_derive::{Deserialize, Serialize};
 use settings::{
     initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
 };
@@ -66,9 +67,15 @@ actions!(
         ShowAll,
         ToggleFullScreen,
         Zoom,
-        RunFirstAction,
     ]
 );
+
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
+struct RunActionWithName {
+    name: String,
+}
+
+impl_actions!(zed, [RunActionWithName]);
 
 pub fn init(cx: &mut AppContext) {
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -157,7 +164,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
         let project = workspace.project().clone();
         if project.read(cx).is_local() {
-            dbg!("Adding new stuff");
             let runnables_file_rx = watch_config_file(
                 &cx.background_executor(),
                 app_state.fs.clone(),
@@ -367,18 +373,24 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     }
                 }
             })
-            .register_action(move |this, _: &RunFirstAction, cx| {
+            .register_action(move |this, action: &RunActionWithName, cx| {
                 this.project().update(cx, |this, cx| {
-                    let first_runnable = this
+                    let Some(runnable) = this
                         .runnable_inventory()
                         .list_runnables(&std::path::PathBuf::from(""), cx)
-                        .next()
-                        .unwrap();
-                    if let Some(result) = first_runnable.as_done(cx) {
-                        dbg!(&result.details);
-                    } else {
-                        first_runnable.schedule(cx).log_err();
-                    }
+                        .find(|runnable| runnable.metadata().display_name() == action.name)
+                    else {
+                        dbg!("Could not find a runnable with name", &action.name);
+                        return;
+                    };
+
+                    let Some(handle) = runnable.schedule(cx).log_err() else {
+                        return;
+                    };
+                    cx.spawn(|_, _| async move {
+                        dbg!(handle.await);
+                    })
+                    .detach();
                 });
             });
 

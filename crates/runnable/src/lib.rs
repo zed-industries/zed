@@ -52,7 +52,7 @@ impl Future for TaskHandle {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 /// Represents the result of a task.
 pub struct ExecutionResult {
     /// Status of the task. Should be Ok(()) if the task succeeded, Err(()) otherwise. Note that
@@ -125,6 +125,12 @@ pub struct RunnableLens {
     display_name: String,
 }
 
+impl RunnableLens {
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+}
+
 #[derive(Clone)]
 pub struct RunnablePebble {
     metadata: RunnableLens,
@@ -134,26 +140,27 @@ pub struct RunnablePebble {
 #[derive(Clone)]
 pub enum RunState {
     NotScheduled(Arc<dyn Runnable>),
-    AlreadyUnderway(TaskHandle),
-    Done(ExecutionResult),
+    Scheduled(TaskHandle),
 }
+
 impl RunnablePebble {
-    pub fn schedule(&self, cx: &mut AppContext) -> Result<()> {
+    /// Schedules a task or returns a handle to it if it's already running.
+    pub fn schedule(
+        &self,
+        cx: &mut AppContext,
+    ) -> Result<impl Future<Output = Result<ExecutionResult, TaskTerminated>>> {
+        let mut spawned_first_time = false;
         let ret = self.state.update(cx, |this, cx| match this {
             RunState::NotScheduled(runnable) => {
-                *this = RunState::AlreadyUnderway(runnable.exec(cx.to_async())?);
+                let handle = runnable.exec(cx.to_async())?;
+                spawned_first_time = true;
+                *this = RunState::Scheduled(handle.clone());
 
-                Ok(())
+                Ok(handle)
             }
-            RunState::AlreadyUnderway(_) | RunState::Done(_) => {
-                bail!(
-                    "A runnable {} from source {} cannot be scheduled.",
-                    self.metadata.runnable_id,
-                    self.metadata.source_id.0
-                );
-            }
+            RunState::Scheduled(handle) => Ok(handle.clone()),
         });
-        if ret.is_ok() {
+        if spawned_first_time {
             // todo: this should be a noop when ran multiple times, but we should still strive to do it just once.
             cx.spawn(|_| async_process::driver()).detach();
             self.state.update(cx, |_, cx| {
@@ -163,7 +170,7 @@ impl RunnablePebble {
                     };
                     let Some(handle) = this
                         .update(&mut cx, |this, _| {
-                            if let RunState::AlreadyUnderway(this) = this {
+                            if let RunState::Scheduled(this) = this {
                                 Some(this.clone())
                             } else {
                                 None
@@ -174,23 +181,24 @@ impl RunnablePebble {
                     else {
                         return;
                     };
-                    let res = handle.await.log_err();
-                    if let Some(ret) = res {
-                        state
-                            .update(&mut cx, |this, _| *this = RunState::Done(ret))
-                            .ok();
-                    }
+                    let _ = handle.await.log_err();
                 })
                 .detach()
             })
         }
         ret
     }
-    pub fn as_done<'a>(&self, cx: &'a AppContext) -> Option<&'a ExecutionResult> {
-        if let RunState::Done(done) = self.state.read(cx) {
-            Some(done)
+    pub fn result<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> Option<&'a Result<ExecutionResult, TaskTerminated>> {
+        if let RunState::Scheduled(state) = self.state.read(cx) {
+            state.fut.peek()
         } else {
             None
         }
+    }
+    pub fn metadata(&self) -> &RunnableLens {
+        &self.metadata
     }
 }
