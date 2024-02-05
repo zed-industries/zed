@@ -58,13 +58,16 @@ impl<D: PickerDelegate> FocusableView for Picker<D> {
     }
 }
 
+fn create_editor(placeholder: Arc<str>, cx: &mut WindowContext<'_>) -> View<Editor> {
+    cx.new_view(|cx| {
+        let mut editor = Editor::single_line(cx);
+        editor.set_placeholder_text(placeholder, cx);
+        editor
+    })
+}
 impl<D: PickerDelegate> Picker<D> {
     pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        let editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text(delegate.placeholder_text(), cx);
-            editor
-        });
+        let editor = create_editor(delegate.placeholder_text(), cx);
         cx.subscribe(&editor, Self::on_input_editor_event).detach();
         let mut this = Self {
             delegate,
