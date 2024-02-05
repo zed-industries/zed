@@ -21,7 +21,7 @@ use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use rope::Rope;
-use runnable::static_runnable_file::RunnableProvider;
+use runnable::{static_runnable_file::RunnableProvider, RunState, RunnablePebble};
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
@@ -66,6 +66,7 @@ actions!(
         ShowAll,
         ToggleFullScreen,
         Zoom,
+        RunFirstAction,
     ]
 );
 
@@ -365,6 +366,20 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         .detach();
                     }
                 }
+            })
+            .register_action(move |this, _: &RunFirstAction, cx| {
+                this.project().update(cx, |this, cx| {
+                    let first_runnable = this
+                        .runnable_inventory()
+                        .list_runnables(&std::path::PathBuf::from(""), cx)
+                        .next()
+                        .unwrap();
+                    if let Some(result) = first_runnable.as_done(cx) {
+                        dbg!(&result.details);
+                    } else {
+                        first_runnable.schedule(cx).log_err();
+                    }
+                });
             });
 
         workspace.focus_handle(cx).focus(cx);

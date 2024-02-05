@@ -32,6 +32,7 @@ pub struct Definition {
     pub args: Vec<String>,
     #[serde(default)]
     pub presentation: Presentation,
+    #[serde(default)]
     pub options: Options,
 }
 

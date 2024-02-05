@@ -17,6 +17,7 @@ use std::error::Error;
 use std::path::Path;
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::Arc;
+use util::ResultExt as _;
 
 #[derive(Clone)]
 pub struct TaskHandle {
@@ -137,8 +138,8 @@ pub enum RunState {
     Done(ExecutionResult),
 }
 impl RunnablePebble {
-    fn schedule(&self, cx: &mut AppContext) -> Result<()> {
-        self.state.update(cx, |this, cx| match this {
+    pub fn schedule(&self, cx: &mut AppContext) -> Result<()> {
+        let ret = self.state.update(cx, |this, cx| match this {
             RunState::NotScheduled(runnable) => {
                 *this = RunState::AlreadyUnderway(runnable.exec(cx.to_async())?);
 
@@ -151,6 +152,45 @@ impl RunnablePebble {
                     self.metadata.source_id.0
                 );
             }
-        })
+        });
+        if ret.is_ok() {
+            // todo: this should be a noop when ran multiple times, but we should still strive to do it just once.
+            cx.spawn(|_| async_process::driver()).detach();
+            self.state.update(cx, |_, cx| {
+                cx.spawn(|state, mut cx| async move {
+                    let Some(this) = state.upgrade() else {
+                        return;
+                    };
+                    let Some(handle) = this
+                        .update(&mut cx, |this, _| {
+                            if let RunState::AlreadyUnderway(this) = this {
+                                Some(this.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .ok()
+                        .flatten()
+                    else {
+                        return;
+                    };
+                    let res = handle.await.log_err();
+                    if let Some(ret) = res {
+                        state
+                            .update(&mut cx, |this, _| *this = RunState::Done(ret))
+                            .ok();
+                    }
+                })
+                .detach()
+            })
+        }
+        ret
+    }
+    pub fn as_done<'a>(&self, cx: &'a AppContext) -> Option<&'a ExecutionResult> {
+        if let RunState::Done(done) = self.state.read(cx) {
+            Some(done)
+        } else {
+            None
+        }
     }
 }
