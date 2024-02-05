@@ -2910,25 +2910,27 @@ impl Workspace {
         Ok(())
     }
 
-    fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
+    pub fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
 
-        if let Some(item) = self.active_item(cx) {
-            if item.focus_handle(cx).contains_focused(cx) {
-                if let Some(item) = item.to_followable_item_handle(cx) {
-                    is_project_item = item.is_project_item(cx);
-                    update = proto::UpdateActiveView {
-                        id: item
-                            .remote_id(&self.app_state.client, cx)
-                            .map(|id| id.to_proto()),
-                        leader_id: self.leader_for_pane(&self.active_pane),
-                    };
+        if cx.is_window_active() {
+            if let Some(item) = self.active_item(cx) {
+                if item.focus_handle(cx).contains_focused(cx) {
+                    if let Some(item) = item.to_followable_item_handle(cx) {
+                        is_project_item = item.is_project_item(cx);
+                        update = proto::UpdateActiveView {
+                            id: item
+                                .remote_id(&self.app_state.client, cx)
+                                .map(|id| id.to_proto()),
+                            leader_id: self.leader_for_pane(&self.active_pane),
+                        };
+                    }
                 }
             }
         }
 
-        if update.id != self.last_active_view_id {
+        if &update.id != &self.last_active_view_id {
             self.last_active_view_id = update.id.clone();
             self.update_followers(
                 is_project_item,
