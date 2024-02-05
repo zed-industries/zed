@@ -16,6 +16,7 @@ env:
 jobs:
     style:
         name: Check formatting and Clippy lints
+        if: github.repository_owner == 'zed-industries'
         runs-on:
             - self-hosted
             - test
@@ -32,6 +33,7 @@ jobs:
 
     tests:
         name: Run tests
+        if: github.repository_owner == 'zed-industries'
         runs-on:
             - self-hosted
             - test
@@ -48,6 +50,7 @@ jobs:
 
     bundle:
         name: Bundle app
+        if: github.repository_owner == 'zed-industries'
         runs-on:
             - self-hosted
             - bundle
