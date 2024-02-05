@@ -852,7 +852,7 @@ impl CompletionsMenu {
         let selected_item = self.selected_item;
         let style = style.clone();
 
-        let multiline_docs = {
+        let multiline_docs = if show_completion_documentation {
             let mat = &self.matches[selected_item];
             let multiline_docs = match &self.completions.read()[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
@@ -883,6 +883,8 @@ impl CompletionsMenu {
                     // because that would move the cursor.
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             })
+        } else {
+            None
         };
 
         let list = uniform_list(
