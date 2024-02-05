@@ -530,7 +530,7 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            let display_link = start_display_link(native_window, native_view);
+            let display_link = start_display_link(native_window.screen(), native_view);
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
