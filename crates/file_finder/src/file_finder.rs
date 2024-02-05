@@ -584,12 +584,7 @@ impl FileFinderDelegate {
             })
             .collect();
 
-        // Trim file name from the full path
-        let full_path = if full_path.len() > file_name.len() {
-            full_path[..full_path.len() - file_name.len() - 1].to_string()
-        } else {
-            "".to_string()
-        };
+        let full_path = full_path.trim_end_matches(&file_name).to_string();
         path_positions.retain(|idx| *idx < full_path.len());
 
         (file_name, file_name_positions, full_path, path_positions)
