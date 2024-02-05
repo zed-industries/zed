@@ -803,7 +803,7 @@ fn next_word_end(
             let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
             let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-            (left_kind != right_kind && left_kind != CharKind::Whitespace)
+            left_kind != right_kind && left_kind != CharKind::Whitespace
         });
         point = map.clip_point(point, Bias::Left);
     }
