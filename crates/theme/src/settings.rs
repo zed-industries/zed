@@ -4,7 +4,7 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext,
+    ViewContext, WindowContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -56,6 +56,12 @@ impl SystemAppearance {
         cx.default_global::<GlobalSystemAppearance>().0
     }
 
+    /// Initializes the [`SystemAppearance`] for the current window.
+    pub fn init_for_window(cx: &mut WindowContext) {
+        *cx.default_global::<GlobalSystemAppearance>() =
+            GlobalSystemAppearance(SystemAppearance(cx.appearance().into()));
+    }
+
     /// Returns the global [`SystemAppearance`].
     pub fn global(cx: &AppContext) -> Self {
         cx.global::<GlobalSystemAppearance>().0
@@ -75,8 +81,27 @@ impl Global for AdjustedBufferFontSize {}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ThemeSelection {
-    Theme(String),
-    System { light: String, dark: String },
+    Static(String),
+    Dynamic {
+        #[serde(default)]
+        mode: ThemeMode,
+        light: String,
+        dark: String,
+    },
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    /// Use the specified `light` theme.
+    Light,
+
+    /// Use the specified `dark` theme.
+    Dark,
+
+    /// Use the theme based on the system's appearance.
+    #[default]
+    System,
 }
 
 impl JsonSchema for ThemeSelection {
@@ -123,10 +148,14 @@ impl JsonSchema for ThemeSelection {
 impl ThemeSelection {
     pub fn theme(&self, system_appearance: Appearance) -> &str {
         match self {
-            Self::Theme(theme) => theme,
-            Self::System { light, dark } => match system_appearance {
-                Appearance::Light => light,
-                Appearance::Dark => dark,
+            Self::Static(theme) => theme,
+            Self::Dynamic { mode, light, dark } => match mode {
+                ThemeMode::Light => light,
+                ThemeMode::Dark => dark,
+                ThemeMode::System => match system_appearance {
+                    Appearance::Light => light,
+                    Appearance::Dark => dark,
+                },
             },
         }
     }

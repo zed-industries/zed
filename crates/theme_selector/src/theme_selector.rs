@@ -9,7 +9,9 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
-use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSelection, ThemeSettings};
+use theme::{
+    Appearance, Theme, ThemeMeta, ThemeMode, ThemeRegistry, ThemeSelection, ThemeSettings,
+};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
@@ -172,16 +174,20 @@ impl PickerDelegate for ThemeSelectorDelegate {
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings| {
             if let Some(selection) = settings.theme.as_mut() {
                 let theme_to_update = match selection {
-                    theme::ThemeSelection::Theme(theme) => theme,
-                    theme::ThemeSelection::System { light, dark } => match appearance {
-                        Appearance::Light => light,
-                        Appearance::Dark => dark,
+                    ThemeSelection::Static(theme) => theme,
+                    ThemeSelection::Dynamic { mode, light, dark } => match mode {
+                        ThemeMode::Light => light,
+                        ThemeMode::Dark => dark,
+                        ThemeMode::System => match appearance {
+                            Appearance::Light => light,
+                            Appearance::Dark => dark,
+                        },
                     },
                 };
 
                 *theme_to_update = theme_name.to_string();
             } else {
-                settings.theme = Some(ThemeSelection::Theme(theme_name.to_string()));
+                settings.theme = Some(ThemeSelection::Static(theme_name.to_string()));
             }
         });
 
