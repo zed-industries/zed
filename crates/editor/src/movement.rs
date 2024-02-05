@@ -403,11 +403,8 @@ pub fn find_boundary(
     find_range: FindRange,
     mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    // Get the offset from the original DisplayPoint passed into this function,
-    // which is the nth character in the file.
     let mut offset = from.to_offset(&map, Bias::Right);
     let mut prev_offset = offset;
-
     let mut prev_ch = None;
 
     for ch in map.buffer_snapshot.chars_at(offset) {
@@ -416,8 +413,7 @@ pub fn find_boundary(
         }
         if let Some(prev_ch) = prev_ch {
             if is_boundary(prev_ch, ch) {
-                // We will want to return the point *before* the boundary
-                // so we don't have to do any special handling for most cases
+                // We want to return the point *before* the boundary
                 return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
             }
         }
