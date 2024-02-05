@@ -1,6 +1,7 @@
 pub mod file_associations;
 mod project_panel_settings;
 use client::{ErrorCode, ErrorExt};
+use serde_json::Number;
 use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
@@ -238,6 +239,7 @@ impl ProjectPanel {
                 last_worktree_root_id: Default::default(),
                 expanded_dir_ids: Default::default(),
                 selection: None,
+                selections: None,
                 edit_state: None,
                 context_menu: None,
                 filename_editor,
@@ -821,6 +823,19 @@ impl ProjectPanel {
             .detach_and_log_err(cx);
             Some(())
         });
+    }
+    fn select_from_to(&mut self, index_from: Number, index_to: Number, cx: &mut ViewContext<Self>) {
+        if let Some((worktree_id, worktree_entries)) = self.visible_entries.get(index_from) {
+            if let Some(entry) = worktree_entries.get(index_to) {
+                self.selection = Some(Selection {
+                    worktree_id: *worktree_id,
+                    entry_id: entry.id,
+                });
+                self.selections = vec![(index_from, index_to)];
+                self.autoscroll(cx);
+                cx.notify();
+            }
+        }
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -1424,6 +1439,16 @@ impl ProjectPanel {
                             return;
                         }
                         if !show_editor {
+                            if event.down.modifiers.shift {
+                                // self.selection.map(|selection| {
+                                //     // println!("{}", selection.worktree_id)
+                                //     // if selection.worktree_id == snapshot.id() {
+                                //     //     this.toggle_selection(entry_id, cx);
+                                //     // }
+                                // });
+                                // println!("{:?}", self.selection);
+                                println!("Shift-clicked");
+                            }
                             if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
