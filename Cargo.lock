@@ -8877,6 +8877,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-hcl"
+version = "0.0.1"
+source = "git+https://github.com/MichaHoffmann/tree-sitter-hcl?rev=v1.1.0#636dbe70301ecbab8f353c8c78b3406fe4f185f5"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-heex"
 version = "0.0.1"
 source = "git+https://github.com/phoenixframework/tree-sitter-heex?rev=2e1348c3cf2c9323e87c2744796cf3f3868aa82a#2e1348c3cf2c9323e87c2744796cf3f3868aa82a"
@@ -10394,6 +10403,7 @@ dependencies = [
  "tree-sitter-gomod",
  "tree-sitter-gowork",
  "tree-sitter-haskell",
+ "tree-sitter-hcl",
  "tree-sitter-heex",
  "tree-sitter-html",
  "tree-sitter-json 0.20.0",
