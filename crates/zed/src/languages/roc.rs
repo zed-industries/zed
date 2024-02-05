@@ -116,14 +116,14 @@ impl LspAdapter for RocLspAdapter {
         log::error!("unpacked archive");
 
         let server_bin_path = search_server_binary(&container_dir).await;
-        if let Ok(Some(bin_path)) = server_bin_path {
-            return Ok(LanguageServerBinary {
+        return if let Ok(Some(bin_path)) = server_bin_path {
+            Ok(LanguageServerBinary {
                 path: bin_path,
                 arguments: Vec::new(),
-            });
+            })
         } else {
             log::error!("no binary found in {}", container_dir.display());
-            return Err(anyhow!("no binary found"));
+            Err(anyhow!("no binary found"))
         }
     }
 
@@ -169,6 +169,11 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 }
 
 /// Searches for the language server binary in the given directory
+///
+/// e.g. given the default container dir: "~/Library/Application Support/Zed/languages/roc_lang_server",
+/// search for first roc_nightly-* dir, go into it,
+/// and check that a file named "roc_lang_server" exists.
+/// if not, an error Ok(None) is returned.
 async fn search_server_binary(container_dir: &PathBuf) -> Result<Option<PathBuf>> {
     log::error!(
         ">> searching for server binary in {}",
@@ -179,7 +184,7 @@ async fn search_server_binary(container_dir: &PathBuf) -> Result<Option<PathBuf>
     while let Some(entry) = entries.next().await {
         let path = entry?.path();
         log::error!("checking path: {}", path.display());
-        // if path is a directory and starts with "roc_nightly-macos_apple_silicon"
+        // if path is a directory and starts with "/roc_nightly-"
         if path.is_dir() && path.display().to_string().contains("/roc_nightly-") {
             let bin_path = path.join(SERVER_BINARY_NAME);
             if bin_path.exists() {
