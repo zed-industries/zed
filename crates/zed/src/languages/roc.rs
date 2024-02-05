@@ -60,7 +60,7 @@ impl LspAdapter for RocLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         log::error!(">> fetching latest server version for roc");
 
-        // cals https://api.github.com/repos/roc-lang/roc/releases
+        // calls https://api.github.com/repos/roc-lang/roc/releases
         let release = latest_github_release("roc-lang/roc", true, delegate.http_client()).await?;
         log::error!("found release:\n{:?}", release);
         let archive_name = select_archive_name_from_arch();
@@ -177,8 +177,7 @@ async fn search_server_binary(container_dir: &PathBuf) -> Result<Option<PathBuf>
     let mut entries = fs::read_dir(&container_dir).await?;
 
     while let Some(entry) = entries.next().await {
-        let entry = entry?;
-        let path = entry.path();
+        let path = entry?.path();
         log::error!("checking path: {}", path.display());
         // if path is a directory and starts with "roc_nightly-macos_apple_silicon"
         if path.is_dir() && path.display().to_string().contains("/roc_nightly-") {
