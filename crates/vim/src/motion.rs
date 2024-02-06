@@ -1255,6 +1255,15 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_next_word_end_newline_last_char(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"something(ˇfoo)"};
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"something(fooˇ)"}).await;
+    }
+
+    #[gpui::test]
     async fn test_next_line_start(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state("ˇone\n  two\nthree").await;
