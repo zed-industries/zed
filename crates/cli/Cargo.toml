@@ -23,6 +23,6 @@ serde_derive.workspace = true
 util = { path = "../util" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-#core-foundation = "0.9"
-#core-services = "0.2"
-#plist = "1.3"
+core-foundation = "0.9"
+core-services = "0.2"
+plist = "1.3"
