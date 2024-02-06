@@ -6746,6 +6746,7 @@ dependencies = [
 name = "runnables_panel"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "gpui",
  "project",
  "runnable",
@@ -6753,6 +6754,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "theme",
  "ui",
  "workspace",
 ]

@@ -1,10 +1,15 @@
 mod runnables_settings;
 
+use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    actions, div, px, red, AppContext, EventEmitter, FocusHandle, FocusableView, IntoElement,
-    ParentElement as _, Render, Styled as _, View, ViewContext, VisualContext as _, WindowContext,
+    actions, div, list, px, red, relative, rems, AppContext, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, IntoElement, ListAlignment, ListState,
+    ParentElement as _, Render, Styled as _, TextStyle, View, ViewContext, VisualContext as _,
+    WhiteSpace, WindowContext,
 };
-use ui::h_flex;
+use settings::Settings as _;
+use theme::ThemeSettings;
+use ui::{h_flex, v_flex, ActiveTheme, List, StyledExt};
 use workspace::{
     dock::{Panel, PanelEvent},
     Workspace,
@@ -22,14 +27,56 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct RunnablesPanel {
+    filter_editor: View<Editor>,
     focus_handle: FocusHandle,
 }
 
 impl RunnablesPanel {
     pub fn new(cx: &mut WindowContext<'_>) -> View<Self> {
-        cx.new_view(|cx| Self {
-            focus_handle: cx.focus_handle(),
+        cx.new_view(|cx| {
+            let filter_editor = cx.new_view(|cx| {
+                let mut editor = Editor::single_line(cx);
+                editor.set_placeholder_text("Filter...", cx);
+                editor
+            });
+
+            Self {
+                focus_handle: cx.focus_handle(),
+                filter_editor,
+            }
         })
+    }
+    fn render_filter_input(
+        &self,
+        editor: &View<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if editor.read(cx).read_only(cx) {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        EditorElement::new(
+            editor,
+            EditorStyle {
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
 }
 actions!(runnables_panel, [ToggleFocus]);
@@ -89,7 +136,24 @@ impl Panel for RunnablesPanel {
 
 impl Render for RunnablesPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        h_flex().bg(red()).w_full().h_full().min_w(px(400.))
+        //let list = List::new().empty_message("There are no runnables");
+        let state = ListState::new(2, ListAlignment::Top, px(2.), |index, cx| {
+            div().child("XD").into_any_element()
+        });
+        v_flex()
+            .size_full()
+            //.child(list(self.list_state.clone()).full())
+            .child(list(state).full())
+            .child(
+                v_flex()
+                    .child(div().mx_2().border_primary(cx).border_t())
+                    .child(
+                        v_flex()
+                            .p_2()
+                            .child(self.render_filter_input(&self.filter_editor, cx)),
+                    ),
+            )
+        // h_flex().bg(red()).w_full().h_full().min_w(px(400.))
         // .child("Hey there little man")
     }
 }
