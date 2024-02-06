@@ -43,7 +43,7 @@ use std::{
     thread,
     time::Duration,
 };
-use theme::{ActiveTheme, ThemeRegistry, ThemeSettings};
+use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
     http::{self, HttpClient, ZedHttpClient},
@@ -471,6 +471,7 @@ fn init_paths() {
 fn init_logger() {
     if stdout_is_a_pty() {
         Builder::new()
+            .parse_default_env()
             .format(|buf, record| {
                 use env_logger::fmt::Color;
 
@@ -810,7 +811,7 @@ async fn load_login_shell_environment() -> Result<()> {
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
     let output = Command::new(&shell)
-        .args(["-lic", &format!("echo {marker} && /usr/bin/env -0")])
+        .args(["-l", "-i", "-c", &format!("echo {marker}; /usr/bin/env -0")])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;
@@ -912,8 +913,10 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                 theme_registry.load_user_themes(themes_dir, fs).await?;
                 cx.update(|cx| {
                     let mut theme_settings = ThemeSettings::get_global(cx).clone();
-                    if let Some(requested_theme) = theme_settings.requested_theme.clone() {
-                        if let Some(_theme) = theme_settings.switch_theme(&requested_theme, cx) {
+                    if let Some(theme_selection) = theme_settings.theme_selection.clone() {
+                        let theme_name = theme_selection.theme(*SystemAppearance::global(cx));
+
+                        if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
                             ThemeSettings::override_global(theme_settings, cx);
                         }
                     }
@@ -949,11 +952,14 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                             cx.update(|cx| {
                                 let mut theme_settings = ThemeSettings::get_global(cx).clone();
 
-                                if let Some(requested_theme) =
-                                    theme_settings.requested_theme.clone()
+                                if let Some(theme_selection) =
+                                    theme_settings.theme_selection.clone()
                                 {
+                                    let theme_name =
+                                        theme_selection.theme(*SystemAppearance::global(cx));
+
                                     if let Some(_theme) =
-                                        theme_settings.switch_theme(&requested_theme, cx)
+                                        theme_settings.switch_theme(&theme_name, cx)
                                     {
                                         ThemeSettings::override_global(theme_settings, cx);
                                     }

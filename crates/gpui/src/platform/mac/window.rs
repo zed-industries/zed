@@ -530,7 +530,7 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            let display_link = start_display_link(native_window, native_view);
+            let display_link = start_display_link(native_window.screen(), native_view);
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
@@ -1370,10 +1370,10 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     let mut lock = window_state.as_ref().lock();
     unsafe {
         let screen = lock.native_window.screen();
-        if screen != nil {
-            lock.display_link = start_display_link(screen, lock.native_view.as_ptr());
-        } else {
+        if screen == nil {
             lock.display_link = nil;
+        } else {
+            lock.display_link = start_display_link(screen, lock.native_view.as_ptr());
         }
     }
 }
@@ -1530,6 +1530,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 extern "C" fn step(this: &Object, _: Sel, display_link: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
+
     if lock.display_link == display_link {
         if let Some(mut callback) = lock.request_frame_callback.take() {
             drop(lock);

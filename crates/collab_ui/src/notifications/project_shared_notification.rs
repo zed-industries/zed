@@ -6,7 +6,7 @@ use collections::HashMap;
 use gpui::{AppContext, Size};
 use settings::Settings;
 use std::sync::{Arc, Weak};
-use theme::ThemeSettings;
+use theme::{SystemAppearance, ThemeSettings};
 use ui::{prelude::*, Button, Label};
 use workspace::AppState;
 
@@ -28,6 +28,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             for screen in cx.displays() {
                 let options = notification_window_options(screen, window_size);
                 let window = cx.open_window(options, |cx| {
+                    SystemAppearance::init_for_window(cx);
+
                     cx.new_view(|_| {
                         ProjectSharedNotification::new(
                             owner.clone(),

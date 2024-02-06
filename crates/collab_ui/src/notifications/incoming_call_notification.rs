@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::{prelude::*, AppContext, WindowHandle};
 use settings::Settings;
 use std::sync::{Arc, Weak};
-use theme::ThemeSettings;
+use theme::{SystemAppearance, ThemeSettings};
 use ui::{prelude::*, Button, Label};
 use util::ResultExt;
 use workspace::AppState;
@@ -35,6 +35,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                     let options = notification_window_options(screen, window_size);
                     let window = cx
                         .open_window(options, |cx| {
+                            SystemAppearance::init_for_window(cx);
+
                             cx.new_view(|_| {
                                 IncomingCallNotification::new(
                                     incoming_call.clone(),
