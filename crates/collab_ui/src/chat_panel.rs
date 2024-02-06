@@ -1,7 +1,7 @@
 use crate::{collab_panel, ChatPanelSettings};
 use anyhow::Result;
 use call::{room, ActiveCall};
-use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
+use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};
 use client::Client;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
@@ -62,6 +62,7 @@ pub struct ChatPanel {
     markdown_data: HashMap<ChannelMessageId, RichText>,
     focus_handle: FocusHandle,
     open_context_menu: Option<(u64, Subscription)>,
+    highlighted_message: Option<(u64, Task<()>)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -124,6 +125,7 @@ impl ChatPanel {
                 markdown_data: Default::default(),
                 focus_handle: cx.focus_handle(),
                 open_context_menu: None,
+                highlighted_message: None,
             };
 
             if let Some(channel_id) = ActiveCall::global(cx)
@@ -286,6 +288,99 @@ impl ChatPanel {
         }
     }
 
+    fn render_replied_to_message(
+        &mut self,
+        message_id: Option<ChannelMessageId>,
+        reply_to_message: &ChannelMessage,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let body_element_id: ElementId = match message_id {
+            Some(ChannelMessageId::Saved(id)) => ("reply-to-saved-message", id).into(),
+            Some(ChannelMessageId::Pending(id)) => ("reply-to-pending-message", id).into(), // This should never happen
+            None => ("composing-reply").into(),
+        };
+
+        let message_element_id: ElementId = match message_id {
+            Some(ChannelMessageId::Saved(id)) => ("reply-to-saved-message-container", id).into(),
+            Some(ChannelMessageId::Pending(id)) => {
+                ("reply-to-pending-message-container", id).into()
+            } // This should never happen
+            None => ("composing-reply-container").into(),
+        };
+
+        let current_channel_id = self.channel_id(cx);
+        let reply_to_message_id = reply_to_message.id;
+
+        let reply_to_message_body = self
+            .markdown_data
+            .entry(reply_to_message.id)
+            .or_insert_with(|| {
+                Self::render_markdown_with_mentions(
+                    &self.languages,
+                    self.client.id(),
+                    reply_to_message,
+                )
+            });
+
+        const REPLY_TO_PREFIX: &str = "Reply to @";
+
+        div().flex_grow().child(
+            v_flex()
+                .id(message_element_id)
+                .text_ui_xs()
+                .child(
+                    h_flex()
+                        .gap_x_1()
+                        .items_center()
+                        .justify_start()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .child(
+                            StyledText::new(format!(
+                                "{}{}",
+                                REPLY_TO_PREFIX,
+                                reply_to_message.sender.github_login.clone()
+                            ))
+                            .with_highlights(
+                                &cx.text_style(),
+                                vec![(
+                                    (REPLY_TO_PREFIX.len() - 1)
+                                        ..(reply_to_message.sender.github_login.len()
+                                            + REPLY_TO_PREFIX.len()),
+                                    HighlightStyle {
+                                        font_weight: Some(FontWeight::BOLD),
+                                        ..Default::default()
+                                    },
+                                )],
+                            ),
+                        ),
+                )
+                .child(
+                    div()
+                        .border_l_2()
+                        .border_color(cx.theme().colors().border)
+                        .px_1()
+                        .py_0p5()
+                        .mb_1()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .max_h_12()
+                                .child(reply_to_message_body.element(body_element_id, cx)),
+                        ),
+                )
+                .cursor(CursorStyle::PointingHand)
+                .tooltip(|cx| Tooltip::text("Go to message", cx))
+                .on_click(cx.listener(move |chat_panel, _, cx| {
+                    if let Some(channel_id) = current_channel_id {
+                        chat_panel
+                            .select_channel(channel_id, reply_to_message_id.into(), cx)
+                            .detach_and_log_err(cx)
+                    }
+                })),
+        )
+    }
+
     fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let active_chat = &self.active_chat.as_ref().unwrap().0;
         let (message, is_continuation_from_previous, is_admin) =
@@ -347,30 +442,21 @@ impl ChatPanel {
         let replied_to_you =
             reply_to_message.as_ref().map(|m| m.sender.id) == self.client.user_id();
 
-        let reply_to_message_info = if let Some(reply_to_message) = &reply_to_message {
-            Some((
-                reply_to_message,
-                self.markdown_data
-                    .entry(reply_to_message.id)
-                    .or_insert_with(|| {
-                        Self::render_markdown_with_mentions(
-                            &self.languages,
-                            self.client.id(),
-                            reply_to_message,
-                        )
-                    }),
-            ))
+        let is_highlighted_message = self
+            .highlighted_message
+            .as_ref()
+            .is_some_and(|(id, _)| Some(id) == message_id.as_ref());
+        let background = if is_highlighted_message {
+            cx.theme().status().info_background
+        } else if mentioning_you || replied_to_you {
+            cx.theme().colors().background
         } else {
-            None
+            cx.theme().colors().panel_background
         };
 
         v_flex().w_full().relative().child(
             div()
-                .bg(if mentioning_you || replied_to_you {
-                    Fill::from(cx.theme().colors().background)
-                } else {
-                    Fill::default()
-                })
+                .bg(background)
                 .rounded_md()
                 .overflow_hidden()
                 .px_1()
@@ -419,7 +505,6 @@ impl ChatPanel {
                         this.child(
                             div()
                                 .border_l_2()
-                                .rounded_md()
                                 .text_ui_xs()
                                 .border_color(cx.theme().colors().border)
                                 .px_1()
@@ -428,72 +513,12 @@ impl ChatPanel {
                         )
                     },
                 )
-                .when_some(reply_to_message_info, |el, reply_to_message_info| {
-                    let (reply_to_message, reply_to_message_body) = reply_to_message_info;
-                    let body_element_id: ElementId = match message.id {
-                        ChannelMessageId::Saved(id) => ("reply-to-saved-message", id).into(),
-                        ChannelMessageId::Pending(id) => ("reply-to-pending-message", id).into(), // This should never happen
-                    };
-
-                    let message_element_id: ElementId = match message.id {
-                        ChannelMessageId::Saved(id) => {
-                            ("reply-to-saved-message-container", id).into()
-                        }
-                        ChannelMessageId::Pending(id) => {
-                            ("reply-to-pending-message-container", id).into()
-                        } // This should never happen
-                    };
-
-                    let current_channel_id = active_chat.read(cx).channel_id;
-
-                    el.mt_2().pl_1().child(
-                        v_flex()
-                            .text_ui_xs()
-                            .child(
-                                h_flex()
-                                    .gap_x_1()
-                                    .items_center()
-                                    .justify_start()
-                                    .overflow_x_hidden()
-                                    .whitespace_nowrap()
-                                    .child("Replied to:")
-                                    .child(
-                                        Avatar::new(reply_to_message.sender.avatar_uri.clone())
-                                            .size(rems(0.8)),
-                                    )
-                                    .child(
-                                        Label::new(reply_to_message.sender.github_login.clone())
-                                            .size(LabelSize::XSmall),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(message_element_id)
-                                    .cursor(CursorStyle::PointingHand)
-                                    .tooltip(|cx| Tooltip::text("Go to message", cx))
-                                    .on_click(cx.listener(move |chat_panel, _, cx| {
-                                        chat_panel
-                                            .select_channel(
-                                                current_channel_id.clone(),
-                                                message.reply_to_message_id.clone(),
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx)
-                                    }))
-                                    .border_l_2()
-                                    .rounded_md()
-                                    .border_color(cx.theme().colors().border)
-                                    .px_1()
-                                    .py_0p5()
-                                    .mb_1()
-                                    .overflow_hidden()
-                                    .child(
-                                        div().max_h_12().child(
-                                            reply_to_message_body.element(body_element_id, cx),
-                                        ),
-                                    ),
-                            ),
-                    )
+                .when_some(reply_to_message, |el, reply_to_message| {
+                    el.child(self.render_replied_to_message(
+                        Some(message.id),
+                        &reply_to_message,
+                        cx,
+                    ))
                 })
                 .when(mentioning_you, |this| this.mt_1())
                 .map(|el| {
@@ -517,7 +542,7 @@ impl ChatPanel {
                                     .z_index(1)
                                     .right_0()
                                     .w_6()
-                                    .bg(cx.theme().colors().panel_background)
+                                    .bg(background)
                                     .when(!self.has_open_menu(message_id), |el| {
                                         el.visible_on_hover("")
                                     })
@@ -665,7 +690,21 @@ impl ChatPanel {
                     ChannelChat::load_history_since_message(chat.clone(), message_id, (*cx).clone())
                         .await
                 {
+                    let task = cx.spawn({
+                        let this = this.clone();
+
+                        |mut cx| async move {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            this.update(&mut cx, |this, cx| {
+                                this.highlighted_message.take();
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    });
+
                     this.update(&mut cx, |this, cx| {
+                        this.highlighted_message = Some((message_id, task));
                         if this.active_chat.as_ref().map_or(false, |(c, _)| *c == chat) {
                             this.message_list.scroll_to(ListOffset {
                                 item_ix,
@@ -684,6 +723,8 @@ impl ChatPanel {
 
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let reply_to_message_id = self.message_editor.read(cx).reply_to_message_id();
+
         v_flex()
             .track_focus(&self.focus_handle)
             .full()
@@ -706,7 +747,7 @@ impl Render for ChatPanel {
                     ),
                 ),
             )
-            .child(div().flex_grow().px_2().pt_1().map(|this| {
+            .child(div().flex_grow().px_2().map(|this| {
                 if self.active_chat.is_some() {
                     this.child(list(self.message_list.clone()).full())
                 } else {
@@ -737,97 +778,53 @@ impl Render for ChatPanel {
                     )
                 }
             }))
-            .when_some(
-                self.message_editor.read(cx).reply_to_message_id(),
-                |el, reply_to_message_id| {
-                    let reply_message = self
-                        .active_chat()
-                        .map(|active_chat| {
-                            active_chat.read(cx).messages().iter().find_map(|m| {
-                                if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                    Some(m)
-                                } else {
-                                    None
-                                }
-                            })
+            .when_some(reply_to_message_id, |el, reply_to_message_id| {
+                let reply_message = self
+                    .active_chat()
+                    .map(|active_chat| {
+                        active_chat.read(cx).messages().iter().find_map(|m| {
+                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
+                                Some(m)
+                            } else {
+                                None
+                            }
                         })
-                        .flatten()
-                        .cloned();
-
-                    el.when_some(reply_message, |el, reply_message| {
-                        let reply_text =
-                            self.markdown_data
-                                .entry(reply_message.id)
-                                .or_insert_with(|| {
-                                    Self::render_markdown_with_mentions(
-                                        &self.languages,
-                                        self.client.id(),
-                                        &reply_message,
-                                    )
-                                });
-
-                        el.child(
-                            div()
-                                .overflow_hidden()
-                                .mt_1p5()
-                                .py_1()
-                                .px_2()
-                                .bg(cx.theme().colors().background)
-                                .max_h_20()
-                                .child(
-                                    h_flex()
-                                        .justify_between()
-                                        .child(
-                                            h_flex()
-                                                .gap_1()
-                                                .text_ui_xs()
-                                                .child("Reply to:")
-                                                .child(
-                                                    Avatar::new(
-                                                        reply_message.sender.avatar_uri.clone(),
-                                                    )
-                                                    .size(rems(0.8)),
-                                                )
-                                                .child(
-                                                    Label::new(
-                                                        reply_message.sender.github_login.clone(),
-                                                    )
-                                                    .size(LabelSize::XSmall),
-                                                ),
-                                        )
-                                        .gap_1()
-                                        .child(
-                                            IconButton::new("close-reply-preview", IconName::Close)
-                                                .shape(ui::IconButtonShape::Square)
-                                                .on_click(cx.listener(move |this, _, cx| {
-                                                    this.message_editor.update(cx, |editor, _| {
-                                                        editor.clear_reply_to_message_id()
-                                                    });
-                                                })),
-                                        ),
-                                )
-                                .child(
-                                    h_flex().h_full().child(
-                                        div()
-                                            .id("reply-preview-body-container")
-                                            .overflow_y_scroll()
-                                            .h_full()
-                                            .text_ui_xs()
-                                            .bg(cx.theme().colors().background)
-                                            .child(
-                                                reply_text.element("reply-preview-body".into(), cx),
-                                            ),
-                                    ),
-                                ),
-                        )
                     })
-                },
-            )
+                    .flatten()
+                    .cloned();
+
+                el.when_some(reply_message, |el, reply_message| {
+                    el.child(
+                        div()
+                            .when(!self.is_scrolled_to_bottom, |el| {
+                                el.border_t_1().border_color(cx.theme().colors().border)
+                            })
+                            .flex()
+                            .w_full()
+                            .items_start()
+                            .overflow_hidden()
+                            .py_1()
+                            .px_2()
+                            .bg(cx.theme().colors().background)
+                            .child(self.render_replied_to_message(None, &reply_message, cx))
+                            .child(
+                                IconButton::new("close-reply-preview", IconName::Close)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.message_editor.update(cx, |editor, _| {
+                                            editor.clear_reply_to_message_id()
+                                        });
+                                    })),
+                            ),
+                    )
+                })
+            })
             .child(
                 h_flex()
-                    .when(!self.is_scrolled_to_bottom, |el| {
-                        el.border_t_1().border_color(cx.theme().colors().border)
-                    })
+                    .when(
+                        !self.is_scrolled_to_bottom && reply_to_message_id.is_none(),
+                        |el| el.border_t_1().border_color(cx.theme().colors().border),
+                    )
                     .p_2()
                     .map(|el| {
                         if self.active_chat.is_some() {
