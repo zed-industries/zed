@@ -520,7 +520,7 @@ impl ChatPanel {
                         cx,
                     ))
                 })
-                .when(mentioning_you, |this| this.mt_1())
+                .when(mentioning_you || replied_to_you, |this| this.my_0p5())
                 .map(|el| {
                     let text = self.markdown_data.entry(message.id).or_insert_with(|| {
                         Self::render_markdown_with_mentions(
