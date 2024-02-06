@@ -87,6 +87,7 @@ rope = { path = "../rope" }
 rpc = { path = "../rpc" }
 rsa = "0.4"
 runnable = { path = "../runnable" }
+runnables_panel = { path = "../runnables_panel" }
 rust-embed.workspace = true
 schemars.workspace = true
 search = { path = "../search" }

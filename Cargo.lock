@@ -6743,6 +6743,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "runnables_panel"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "project",
+ "runnable",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10497,6 +10512,7 @@ dependencies = [
  "rpc",
  "rsa 0.4.0",
  "runnable",
+ "runnables_panel",
  "rust-embed",
  "schemars",
  "search",
