@@ -149,6 +149,7 @@ tree-sitter-vue.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-zig.workspace = true
 tree-sitter.workspace = true
+rust-i18n.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"
 util = { path = "../util" }
@@ -157,7 +158,7 @@ vim = { path = "../vim" }
 welcome = { path = "../welcome" }
 workspace = { path = "../workspace" }
 zed_actions = { path = "../zed_actions" }
-rust-i18n.workspace = true
+
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }
@@ -200,3 +201,8 @@ name = "Zed"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
+
+
+[package.metadata.i18n]
+available-locales = ["en", "es"]
+default-locale = "en"

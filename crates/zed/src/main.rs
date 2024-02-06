@@ -22,7 +22,6 @@ use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
-use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -58,12 +57,19 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
     OpenRequest,
 };
+#[macro_use]
+extern crate rust_i18n;
 
-rust_i18n::i18n!("locales");
+i18n!();
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 fn main() {
+    println!("{}", t!("hello"));
+
+    rust_i18n::set_locale("es");
+    println!("{}", t!("hello"));
+
     menu::init();
     zed_actions::init();
 
