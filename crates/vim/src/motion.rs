@@ -986,7 +986,7 @@ fn find_forward(
                 found = right == target;
                 found
             },
-            true,
+            false,
         );
     }
 
