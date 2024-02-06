@@ -380,6 +380,11 @@ impl AppContext {
         })
     }
 
+    pub(crate) fn new_observer(&mut self, key: EntityId, value: Handler) -> Subscription {
+        let (subscription, activate) = self.observers.insert(key, value);
+        self.defer(move |_| activate());
+        subscription
+    }
     pub(crate) fn observe_internal<W, E>(
         &mut self,
         entity: &E,
@@ -391,7 +396,7 @@ impl AppContext {
     {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
-        let (subscription, activate) = self.observers.insert(
+        self.new_observer(
             entity_id,
             Box::new(move |cx| {
                 if let Some(handle) = E::upgrade_from(&handle) {
@@ -400,9 +405,7 @@ impl AppContext {
                     false
                 }
             }),
-        );
-        self.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Arrange for the given callback to be invoked whenever the given model or view emits an event of a given type.
@@ -423,6 +426,15 @@ impl AppContext {
         })
     }
 
+    pub(crate) fn new_subscription(
+        &mut self,
+        key: EntityId,
+        value: (TypeId, Listener),
+    ) -> Subscription {
+        let (subscription, activate) = self.event_listeners.insert(key, value);
+        self.defer(move |_| activate());
+        subscription
+    }
     pub(crate) fn subscribe_internal<T, E, Evt>(
         &mut self,
         entity: &E,
@@ -435,7 +447,7 @@ impl AppContext {
     {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
-        let (subscription, activate) = self.event_listeners.insert(
+        self.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -448,9 +460,7 @@ impl AppContext {
                     }
                 }),
             ),
-        );
-        self.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Returns handles to all open windows in the application.
@@ -930,13 +940,22 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
+    pub(crate) fn new_view_observer(
+        &mut self,
+        key: TypeId,
+        value: NewViewListener,
+    ) -> Subscription {
+        let (subscription, activate) = self.new_view_observers.insert(key, value);
+        activate();
+        subscription
+    }
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
         &mut self,
         on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
     ) -> Subscription {
-        let (subscription, activate) = self.new_view_observers.insert(
+        self.new_view_observer(
             TypeId::of::<V>(),
             Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
                 any_view
@@ -946,9 +965,7 @@ impl AppContext {
                         on_new(view_state, cx);
                     })
             }),
-        );
-        activate();
-        subscription
+        )
     }
 
     /// Observe the release of a model or view. The callback is invoked after the model or view
@@ -980,9 +997,15 @@ impl AppContext {
         &mut self,
         f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
-        let (subscription, activate) = self.keystroke_observers.insert((), Box::new(f));
-        activate();
-        subscription
+        fn inner(
+            keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_observers.insert((), handler);
+            activate();
+            subscription
+        }
+        inner(&mut self.keystroke_observers, Box::new(f))
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
