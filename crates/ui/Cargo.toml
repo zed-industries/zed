@@ -19,7 +19,7 @@ rand = "0.8"
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-story = { path = "../story", optional = true }
+story = { workspace = true, optional = true }
 strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
 

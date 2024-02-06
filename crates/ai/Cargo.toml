@@ -36,4 +36,4 @@ tiktoken-rs.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }

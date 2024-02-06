@@ -31,7 +31,7 @@ log.workspace = true
 libc = "0.2"
 time.workspace = true
 
-gpui = { path = "../gpui", optional = true}
+gpui = { workspace = true, optional = true}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true
@@ -40,7 +40,7 @@ fsevent.workspace = true
 notify = "6.1.1"
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 
 [features]
 test-support = ["gpui/test-support"]

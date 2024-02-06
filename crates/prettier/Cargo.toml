@@ -30,6 +30,6 @@ serde_json.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-fs = { path = "../fs",  features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
+fs = { workspace = true,  features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }

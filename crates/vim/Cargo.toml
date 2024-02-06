@@ -40,16 +40,16 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 indoc.workspace = true
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
-project = { path = "../project", features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 settings.workspace = true
-theme = { path = "../theme", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

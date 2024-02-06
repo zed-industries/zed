@@ -35,8 +35,8 @@ tree-sitter.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-fs = { path = "../fs", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true

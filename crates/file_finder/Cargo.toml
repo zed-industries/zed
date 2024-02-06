@@ -30,10 +30,10 @@ workspace.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
-theme = { path = "../theme", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

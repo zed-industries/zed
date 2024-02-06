@@ -51,8 +51,8 @@ uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

@@ -28,10 +28,10 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
-util = { path = "../util", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

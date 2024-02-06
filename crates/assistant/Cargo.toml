@@ -44,10 +44,10 @@ uuid.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-ai = { path = "../ai", features = ["test-support"] }
+ai = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 log.workspace = true
-project = { path = "../project", features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 rand.workspace = true

@@ -69,12 +69,12 @@ waker-fn = "1.1.0"
 
 [dev-dependencies]
 backtrace = "0.3"
-collections = { path = "../collections", features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
 dhat = "0.3"
 env_logger.workspace = true
 png = "0.16"
 simplelog = "0.9"
-util = { path = "../util", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
 
 [build-dependencies]
 bindgen = "0.65.1"

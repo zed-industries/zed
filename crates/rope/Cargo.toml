@@ -17,6 +17,6 @@ sum_tree.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
-util = { path = "../util", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

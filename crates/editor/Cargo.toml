@@ -72,22 +72,22 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-copilot = { path = "../copilot", features = ["test-support"] }
+copilot = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-multi_buffer = { path = "../multi_buffer", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
+multi_buffer = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 rand.workspace = true
-settings = { path = "../settings", features = ["test-support"] }
-text = { path = "../text", features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+text = { workspace = true, features = ["test-support"] }
 tree-sitter-html.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter.workspace = true
 unindent.workspace = true
-util = { path = "../util", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

@@ -40,11 +40,11 @@ util.workspace = true
 
 [dev-dependencies]
 clock.workspace = true
-collections = { path = "../collections", features = ["test-support"] }
-fs = { path = "../fs", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

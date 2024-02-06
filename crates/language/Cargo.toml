@@ -60,16 +60,16 @@ unicase = "2.6"
 util.workspace = true
 
 [dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-collections = { path = "../collections", features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
-lsp = { path = "../lsp", features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
 rand.workspace = true
-settings = { path = "../settings", features = ["test-support"] }
-text = { path = "../text", features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+text = { workspace = true, features = ["test-support"] }
 tree-sitter-elixir.workspace = true
 tree-sitter-embedded-template.workspace = true
 tree-sitter-heex.workspace = true
@@ -81,4 +81,4 @@ tree-sitter-ruby.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
-util = { path = "../util", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

@@ -33,6 +33,6 @@ release_channel.workspace = true
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 ctor.workspace = true
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
-util = { path = "../util", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

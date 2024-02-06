@@ -31,5 +31,5 @@ util.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

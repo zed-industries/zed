@@ -159,14 +159,14 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
-call = { path = "../call", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-text = { path = "../text", features = ["test-support"] }
+call = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
-workspace = { path = "../workspace", features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
