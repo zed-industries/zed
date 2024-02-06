@@ -32,6 +32,19 @@ xcb::atoms_struct! {
     }
 }
 
+#[derive(Default)]
+struct Callbacks {
+    open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
+    become_active: Option<Box<dyn FnMut()>>,
+    resign_active: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut()>>,
+    reopen: Option<Box<dyn FnMut()>>,
+    event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
+    app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
+    will_open_app_menu: Option<Box<dyn FnMut()>>,
+    validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+}
+
 pub(crate) struct LinuxPlatform {
     xcb_connection: Arc<xcb::Connection>,
     x_root_index: i32,
@@ -40,6 +53,7 @@ pub(crate) struct LinuxPlatform {
     foreground_executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
     text_system: Arc<LinuxTextSystem>,
+    callbacks: Mutex<Callbacks>,
     state: Mutex<LinuxPlatformState>,
 }
 
@@ -75,6 +89,7 @@ impl LinuxPlatform {
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             main_receiver,
             text_system: Arc::new(LinuxTextSystem::new()),
+            callbacks: Mutex::new(Callbacks::default()),
             state: Mutex::new(LinuxPlatformState {
                 quit_requested: false,
                 windows: HashMap::default(),
@@ -110,6 +125,11 @@ impl Platform for LinuxPlatform {
                             // window "x" button clicked by user, we gracefully exit
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
+                            if self.state.lock().windows.is_empty() {
+                                if let Some(ref mut fun) = self.callbacks.lock().quit {
+                                    fun();
+                                }
+                            }
                         }
                     }
                 }
@@ -213,13 +233,21 @@ impl Platform for LinuxPlatform {
         log::warn!("unimplemented: set_display_link_output_callback");
     }
 
-    fn start_display_link(&self, display_id: DisplayId) {}
+    fn start_display_link(&self, display_id: DisplayId) {
+        unimplemented!()
+    }
 
-    fn stop_display_link(&self, display_id: DisplayId) {}
+    fn stop_display_link(&self, display_id: DisplayId) {
+        unimplemented!()
+    }
 
-    fn open_url(&self, url: &str) {}
+    fn open_url(&self, url: &str) {
+        unimplemented!()
+    }
 
-    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {}
+    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
+        self.callbacks.lock().open_urls = Some(callback);
+    }
 
     fn prompt_for_paths(
         &self,
@@ -232,23 +260,41 @@ impl Platform for LinuxPlatform {
         unimplemented!()
     }
 
-    fn reveal_path(&self, path: &Path) {}
+    fn reveal_path(&self, path: &Path) {
+        unimplemented!()
+    }
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {}
+    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
+        self.callbacks.lock().become_active = Some(callback);
+    }
 
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {}
+    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
+        self.callbacks.lock().resign_active = Some(callback);
+    }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {}
+    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+        self.callbacks.lock().quit = Some(callback);
+    }
 
-    fn on_reopen(&self, callback: Box<dyn FnMut()>) {}
+    fn on_reopen(&self, callback: Box<dyn FnMut()>) {
+        self.callbacks.lock().reopen = Some(callback);
+    }
 
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {}
+    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
+        self.callbacks.lock().event = Some(callback);
+    }
 
-    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {}
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+        self.callbacks.lock().app_menu_action = Some(callback);
+    }
 
-    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {}
+    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
+        self.callbacks.lock().will_open_app_menu = Some(callback);
+    }
 
-    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {}
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+        self.callbacks.lock().validate_app_menu_command = Some(callback);
+    }
 
     fn os_name(&self) -> &'static str {
         "Linux"
