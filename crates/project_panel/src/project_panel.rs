@@ -40,6 +40,8 @@ use workspace::{
     Workspace,
 };
 
+use rust_i18n::t;
+
 const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -405,6 +407,7 @@ impl ProjectPanel {
                 menu.context(self.focus_handle.clone()).when_else(
                     is_read_only,
                     |menu| {
+                        t!("hello");
                         menu.action("Copy Relative Path", Box::new(CopyRelativePath))
                             .when(is_dir, |menu| {
                                 menu.action("Search Inside", Box::new(NewSearchInDirectory))

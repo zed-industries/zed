@@ -157,6 +157,7 @@ vim = { path = "../vim" }
 welcome = { path = "../welcome" }
 workspace = { path = "../workspace" }
 zed_actions = { path = "../zed_actions" }
+rust-i18n.workspace = true
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }

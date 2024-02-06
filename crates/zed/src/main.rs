@@ -1,6 +1,5 @@
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
-
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
@@ -23,6 +22,7 @@ use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
+use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -59,9 +59,10 @@ use zed::{
     OpenRequest,
 };
 
+rust_i18n::i18n!("locales");
+
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
-
 fn main() {
     menu::init();
     zed_actions::init();
@@ -74,6 +75,7 @@ fn main() {
     }
 
     log::info!("========== starting zed ==========");
+
     let app = App::new().with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
