@@ -11,20 +11,20 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-editor = { path = "../editor" }
-fuzzy = {   path = "../fuzzy" }
-gpui = { path = "../gpui" }
+editor.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
 ordered-float.workspace = true
-picker = { path = "../picker" }
+picker.workspace = true
 postage.workspace = true
-project = { path = "../project" }
+project.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smol.workspace = true
-text = { path = "../text" }
-theme = { path = "../theme" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+text.workspace = true
+theme.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
@@ -33,7 +33,7 @@ gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
-release_channel = { path = "../release_channel" }
+release_channel.workspace = true
 settings = { path = "../settings", features = ["test-support"] }
 theme = { path = "../theme", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

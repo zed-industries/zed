@@ -22,26 +22,26 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 async-broadcast = "0.4"
-audio = { path = "../audio" }
-client = { path = "../client" }
-collections = { path = "../collections" }
-fs = { path = "../fs" }
+audio.workspace = true
+client.workspace = true
+collections.workspace = true
+fs.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 image = "0.23"
-language = { path = "../language" }
-live_kit_client = { path = "../live_kit_client" }
+language.workspace = true
+live_kit_client.workspace = true
 log.workspace = true
-media = { path = "../media" }
+media.workspace = true
 postage.workspace = true
-project = { path = "../project" }
+project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smallvec.workspace = true
-util = { path = "../util" }
+util.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

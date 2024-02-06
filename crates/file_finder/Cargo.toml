@@ -11,22 +11,22 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-collections = { path = "../collections" }
-editor = { path = "../editor" }
-fuzzy = {  path = "../fuzzy" }
-gpui = { path = "../gpui" }
+collections.workspace = true
+editor.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
 itertools = "0.11"
-menu = { path = "../menu" }
-picker = { path = "../picker" }
+menu.workspace = true
+picker.workspace = true
 postage.workspace = true
-project = { path = "../project" }
+project.workspace = true
 serde.workspace = true
-settings = { path = "../settings" }
-text = { path = "../text" }
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+settings.workspace = true
+text.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

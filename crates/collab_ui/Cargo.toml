@@ -26,46 +26,46 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-auto_update = { path = "../auto_update" }
-call = { path = "../call" }
-channel = { path = "../channel" }
-client = { path = "../client" }
-clock = { path = "../clock" }
-collections = { path = "../collections" }
-db = { path = "../db" }
-editor = { path = "../editor" }
-feature_flags = { path = "../feature_flags" }
-feedback = { path = "../feedback" }
+auto_update.workspace = true
+call.workspace = true
+channel.workspace = true
+client.workspace = true
+clock.workspace = true
+collections.workspace = true
+db.workspace = true
+editor.workspace = true
+feature_flags.workspace = true
+feedback.workspace = true
 futures.workspace = true
-fuzzy = { path = "../fuzzy" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
+fuzzy.workspace = true
+gpui.workspace = true
+language.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-menu = { path = "../menu" }
-notifications = { path = "../notifications" }
+menu.workspace = true
+notifications.workspace = true
 parking_lot.workspace = true
-picker = { path = "../picker" }
+picker.workspace = true
 postage.workspace = true
-project = { path = "../project" }
-recent_projects = { path = "../recent_projects" }
-rich_text = { path = "../rich_text" }
-rpc = { path = "../rpc" }
+project.workspace = true
+recent_projects.workspace = true
+rich_text.workspace = true
+rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smallvec.workspace = true
 story = { path = "../story", optional = true }
-theme = { path = "../theme" }
-theme_selector = { path = "../theme_selector" }
+theme.workspace = true
+theme_selector.workspace = true
 time.workspace = true
-ui = { path = "../ui" }
-util = { path = "../util" }
-vcs_menu = { path = "../vcs_menu" }
-workspace = { path = "../workspace" }
-zed_actions = { path = "../zed_actions" }
+ui.workspace = true
+util.workspace = true
+vcs_menu.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }

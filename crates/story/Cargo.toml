@@ -6,6 +6,6 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-gpui = { path = "../gpui" }
+gpui.workspace = true
 itertools = { package = "itertools", version = "0.10" }
 smallvec.workspace = true
