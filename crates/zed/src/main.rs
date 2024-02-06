@@ -471,6 +471,7 @@ fn init_paths() {
 fn init_logger() {
     if stdout_is_a_pty() {
         Builder::new()
+            .parse_default_env()
             .format(|buf, record| {
                 use env_logger::fmt::Color;
 
