@@ -4,8 +4,8 @@ pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use settings::Settings;
-use std::{borrow::Cow, fs, path::Path, str, sync::Arc};
-use util::{asset_str, paths::PLUGINS_DIR, ResultExt};
+use std::{str, sync::Arc};
+use util::asset_str;
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
@@ -62,30 +62,69 @@ pub fn init(
     ElixirSettings::register(cx);
     DenoSettings::register(cx);
 
-    let language = |name, grammar, adapters| {
-        languages.register(name, load_config(name), grammar, adapters, load_queries)
+    languages.add_grammars([
+        ("bash", tree_sitter_bash::language()),
+        ("beancount", tree_sitter_beancount::language()),
+        ("c", tree_sitter_c::language()),
+        ("c_sharp", tree_sitter_c_sharp::language()),
+        ("cpp", tree_sitter_cpp::language()),
+        ("css", tree_sitter_css::language()),
+        ("elixir", tree_sitter_elixir::language()),
+        ("elm", tree_sitter_elm::language()),
+        (
+            "embedded_template",
+            tree_sitter_embedded_template::language(),
+        ),
+        ("erlang", tree_sitter_erlang::language()),
+        ("gitcommit", tree_sitter_gitcommit::language()),
+        ("gleam", tree_sitter_gleam::language()),
+        ("glsl", tree_sitter_glsl::language()),
+        ("go", tree_sitter_go::language()),
+        ("gomod", tree_sitter_gomod::language()),
+        ("gowork", tree_sitter_gowork::language()),
+        ("haskell", tree_sitter_haskell::language()),
+        ("hcl", tree_sitter_hcl::language()),
+        ("heex", tree_sitter_heex::language()),
+        ("html", tree_sitter_html::language()),
+        ("json", tree_sitter_json::language()),
+        ("lua", tree_sitter_lua::language()),
+        ("markdown", tree_sitter_markdown::language()),
+        ("nix", tree_sitter_nix::language()),
+        ("nu", tree_sitter_nu::language()),
+        ("ocaml", tree_sitter_ocaml::language_ocaml()),
+        (
+            "ocaml_interface",
+            tree_sitter_ocaml::language_ocaml_interface(),
+        ),
+        ("php", tree_sitter_php::language_php()),
+        ("proto", tree_sitter_proto::language()),
+        ("purescript", tree_sitter_purescript::language()),
+        ("python", tree_sitter_python::language()),
+        ("racket", tree_sitter_racket::language()),
+        ("ruby", tree_sitter_ruby::language()),
+        ("rust", tree_sitter_rust::language()),
+        ("scheme", tree_sitter_scheme::language()),
+        ("svelte", tree_sitter_svelte::language()),
+        ("toml", tree_sitter_toml::language()),
+        ("tsx", tree_sitter_typescript::language_tsx()),
+        ("typescript", tree_sitter_typescript::language_typescript()),
+        ("uiua", tree_sitter_uiua::language()),
+        ("vue", tree_sitter_vue::language()),
+        ("yaml", tree_sitter_yaml::language()),
+        ("zig", tree_sitter_zig::language()),
+    ]);
+
+    let language = |name: &'static str, adapters| {
+        languages.register(name, load_config(name), adapters, load_queries)
     };
 
-    language("bash", tree_sitter_bash::language(), vec![]);
-    language("beancount", tree_sitter_beancount::language(), vec![]);
-    language(
-        "c",
-        tree_sitter_c::language(),
-        vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>],
-    );
-    language(
-        "cpp",
-        tree_sitter_cpp::language(),
-        vec![Arc::new(c::CLspAdapter)],
-    );
-    language(
-        "csharp",
-        tree_sitter_c_sharp::language(),
-        vec![Arc::new(csharp::OmniSharpAdapter {})],
-    );
+    language("bash", vec![]);
+    language("beancount", vec![]);
+    language("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
+    language("cpp", vec![Arc::new(c::CLspAdapter)]);
+    language("csharp", vec![Arc::new(csharp::OmniSharpAdapter {})]);
     language(
         "css",
-        tree_sitter_css::language(),
         vec![
             Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
@@ -95,53 +134,32 @@ pub fn init(
     match &ElixirSettings::get(None, cx).lsp {
         elixir::ElixirLspSetting::ElixirLs => language(
             "elixir",
-            tree_sitter_elixir::language(),
             vec![
                 Arc::new(elixir::ElixirLspAdapter),
                 Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
             ],
         ),
-        elixir::ElixirLspSetting::NextLs => language(
-            "elixir",
-            tree_sitter_elixir::language(),
-            vec![Arc::new(elixir::NextLspAdapter)],
-        ),
+        elixir::ElixirLspSetting::NextLs => {
+            language("elixir", vec![Arc::new(elixir::NextLspAdapter)])
+        }
         elixir::ElixirLspSetting::Local { path, arguments } => language(
             "elixir",
-            tree_sitter_elixir::language(),
             vec![Arc::new(elixir::LocalLspAdapter {
                 path: path.clone(),
                 arguments: arguments.clone(),
             })],
         ),
     }
-    language("gitcommit", tree_sitter_gitcommit::language(), vec![]);
-    language(
-        "erlang",
-        tree_sitter_erlang::language(),
-        vec![Arc::new(erlang::ErlangLspAdapter)],
-    );
+    language("gitcommit", vec![]);
+    language("erlang", vec![Arc::new(erlang::ErlangLspAdapter)]);
 
-    language(
-        "gleam",
-        tree_sitter_gleam::language(),
-        vec![Arc::new(gleam::GleamLspAdapter)],
-    );
-    language(
-        "go",
-        tree_sitter_go::language(),
-        vec![Arc::new(go::GoLspAdapter)],
-    );
-    language("gomod", tree_sitter_gomod::language(), vec![]);
-    language("gowork", tree_sitter_gowork::language(), vec![]);
-    language(
-        "zig",
-        tree_sitter_zig::language(),
-        vec![Arc::new(zig::ZlsAdapter)],
-    );
+    language("gleam", vec![Arc::new(gleam::GleamLspAdapter)]);
+    language("go", vec![Arc::new(go::GoLspAdapter)]);
+    language("gomod", vec![]);
+    language("gowork", vec![]);
+    language("zig", vec![Arc::new(zig::ZlsAdapter)]);
     language(
         "heex",
-        tree_sitter_heex::language(),
         vec![
             Arc::new(elixir::ElixirLspAdapter),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
@@ -149,48 +167,32 @@ pub fn init(
     );
     language(
         "json",
-        tree_sitter_json::language(),
         vec![Arc::new(json::JsonLspAdapter::new(
             node_runtime.clone(),
             languages.clone(),
         ))],
     );
-    language("markdown", tree_sitter_markdown::language(), vec![]);
+    language("markdown", vec![]);
     language(
         "python",
-        tree_sitter_python::language(),
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
         ))],
     );
-    language(
-        "rust",
-        tree_sitter_rust::language(),
-        vec![Arc::new(rust::RustLspAdapter)],
-    );
-    language(
-        "toml",
-        tree_sitter_toml::language(),
-        vec![Arc::new(toml::TaploLspAdapter)],
-    );
+    language("rust", vec![Arc::new(rust::RustLspAdapter)]);
+    language("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
             language(
                 "tsx",
-                tree_sitter_typescript::language_tsx(),
                 vec![
                     Arc::new(deno::DenoLspAdapter::new()),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ],
             );
-            language(
-                "typescript",
-                tree_sitter_typescript::language_typescript(),
-                vec![Arc::new(deno::DenoLspAdapter::new())],
-            );
+            language("typescript", vec![Arc::new(deno::DenoLspAdapter::new())]);
             language(
                 "javascript",
-                tree_sitter_typescript::language_tsx(),
                 vec![
                     Arc::new(deno::DenoLspAdapter::new()),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
@@ -200,7 +202,6 @@ pub fn init(
         false => {
             language(
                 "tsx",
-                tree_sitter_typescript::language_tsx(),
                 vec![
                     Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
                     Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
@@ -209,7 +210,6 @@ pub fn init(
             );
             language(
                 "typescript",
-                tree_sitter_typescript::language_typescript(),
                 vec![
                     Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
                     Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
@@ -217,7 +217,6 @@ pub fn init(
             );
             language(
                 "javascript",
-                tree_sitter_typescript::language_tsx(),
                 vec![
                     Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
                     Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
@@ -227,47 +226,31 @@ pub fn init(
         }
     }
 
-    language(
-        "haskell",
-        tree_sitter_haskell::language(),
-        vec![Arc::new(haskell::HaskellLanguageServer {})],
-    );
+    language("haskell", vec![Arc::new(haskell::HaskellLanguageServer {})]);
     language(
         "html",
-        tree_sitter_html::language(),
         vec![
             Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
-    language(
-        "ruby",
-        tree_sitter_ruby::language(),
-        vec![Arc::new(ruby::RubyLanguageServer)],
-    );
+    language("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
     language(
         "erb",
-        tree_sitter_embedded_template::language(),
         vec![
             Arc::new(ruby::RubyLanguageServer),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
-    language("scheme", tree_sitter_scheme::language(), vec![]);
-    language("racket", tree_sitter_racket::language(), vec![]);
-    language(
-        "lua",
-        tree_sitter_lua::language(),
-        vec![Arc::new(lua::LuaLspAdapter)],
-    );
+    language("scheme", vec![]);
+    language("racket", vec![]);
+    language("lua", vec![Arc::new(lua::LuaLspAdapter)]);
     language(
         "yaml",
-        tree_sitter_yaml::language(),
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
     );
     language(
         "svelte",
-        tree_sitter_svelte::language(),
         vec![
             Arc::new(svelte::SvelteLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
@@ -275,7 +258,6 @@ pub fn init(
     );
     language(
         "php",
-        tree_sitter_php::language_php(),
         vec![
             Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
@@ -284,62 +266,24 @@ pub fn init(
 
     language(
         "purescript",
-        tree_sitter_purescript::language(),
         vec![Arc::new(purescript::PurescriptLspAdapter::new(
             node_runtime.clone(),
         ))],
     );
     language(
         "elm",
-        tree_sitter_elm::language(),
         vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))],
     );
-    language("glsl", tree_sitter_glsl::language(), vec![]);
-    language("nix", tree_sitter_nix::language(), vec![]);
-    language(
-        "nu",
-        tree_sitter_nu::language(),
-        vec![Arc::new(nu::NuLanguageServer {})],
-    );
-    language(
-        "ocaml",
-        tree_sitter_ocaml::language_ocaml(),
-        vec![Arc::new(ocaml::OCamlLspAdapter)],
-    );
-    language(
-        "ocaml-interface",
-        tree_sitter_ocaml::language_ocaml_interface(),
-        vec![Arc::new(ocaml::OCamlLspAdapter)],
-    );
-    language(
-        "vue",
-        tree_sitter_vue::language(),
-        vec![Arc::new(vue::VueLspAdapter::new(node_runtime))],
-    );
-    language(
-        "uiua",
-        tree_sitter_uiua::language(),
-        vec![Arc::new(uiua::UiuaLanguageServer {})],
-    );
-    language("proto", tree_sitter_proto::language(), vec![]);
-    language("terraform", tree_sitter_hcl::language(), vec![]);
-    language("hcl", tree_sitter_hcl::language(), vec![]);
-
-    if let Ok(children) = std::fs::read_dir(&*PLUGINS_DIR) {
-        for child in children {
-            if let Ok(child) = child {
-                let path = child.path();
-                let config_path = path.join("config.toml");
-                if let Ok(config) = std::fs::read(&config_path) {
-                    languages.register_wasm(
-                        path.into(),
-                        ::toml::from_slice(&config).unwrap(),
-                        load_plugin_queries,
-                    );
-                }
-            }
-        }
-    }
+    language("glsl", vec![]);
+    language("nix", vec![]);
+    language("nu", vec![Arc::new(nu::NuLanguageServer {})]);
+    language("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
+    language("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
+    language("vue", vec![Arc::new(vue::VueLspAdapter::new(node_runtime))]);
+    language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
+    language("proto", vec![]);
+    language("terraform", vec![]);
+    language("hcl", vec![]);
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -367,20 +311,6 @@ fn load_config(name: &str) -> LanguageConfig {
     .unwrap()
 }
 
-const QUERY_FILENAME_PREFIXES: &[(
-    &str,
-    fn(&mut LanguageQueries) -> &mut Option<Cow<'static, str>>,
-)] = &[
-    ("highlights", |q| &mut q.highlights),
-    ("brackets", |q| &mut q.brackets),
-    ("outline", |q| &mut q.outline),
-    ("indents", |q| &mut q.indents),
-    ("embedding", |q| &mut q.embedding),
-    ("injections", |q| &mut q.injections),
-    ("overrides", |q| &mut q.overrides),
-    ("redactions", |q| &mut q.redactions),
-];
-
 fn load_queries(name: &str) -> LanguageQueries {
     let mut result = LanguageQueries::default();
     for path in LanguageDir::iter() {
@@ -394,35 +324,6 @@ fn load_queries(name: &str) -> LanguageQueries {
                     match query(&mut result) {
                         None => *query(&mut result) = Some(contents),
                         Some(r) => r.to_mut().push_str(contents.as_ref()),
-                    }
-                }
-            }
-        }
-    }
-    result
-}
-
-fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
-    let mut result = LanguageQueries::default();
-    if let Some(entries) = fs::read_dir(root_path).log_err() {
-        for entry in entries {
-            let Some(entry) = entry.log_err() else {
-                continue;
-            };
-            let path = entry.path();
-            if let Some(remainder) = path.strip_prefix(root_path).ok().and_then(|p| p.to_str()) {
-                if !remainder.ends_with(".scm") {
-                    continue;
-                }
-                for (name, query) in QUERY_FILENAME_PREFIXES {
-                    if remainder.starts_with(name) {
-                        if let Some(contents) = fs::read_to_string(&path).log_err() {
-                            match query(&mut result) {
-                                None => *query(&mut result) = Some(contents.into()),
-                                Some(r) => r.to_mut().push_str(contents.as_ref()),
-                            }
-                        }
-                        break;
                     }
                 }
             }

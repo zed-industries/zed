@@ -1,7 +1,7 @@
-use crate::{ExtensionStore, GrammarLocation, LanguageLocation, ThemeLocation};
+use crate::{ExtensionStore, GrammarManifestEntry, LanguageManifestEntry, ThemeLocation};
 use fs::FakeFs;
 use gpui::{Context, TestAppContext};
-use language::LanguageRegistry;
+use language::{LanguageMatcher, LanguageRegistry};
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
@@ -82,13 +82,12 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let language_registry = Arc::new(LanguageRegistry::test());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
 
-    let store = cx.new_model(|cx| {
+    let store = cx.new_model(|_| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-path"),
             fs,
             language_registry,
             theme_registry,
-            cx,
         )
     });
 
@@ -97,36 +96,44 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    store.read_with(cx, |store, cx| {
+    store.read_with(cx, |store, _| {
         let manifest = &store.manifest;
         assert_eq!(
             manifest.grammars,
             &[
-                GrammarLocation {
+                GrammarManifestEntry {
                     extension: "zed-ruby".into(),
                     grammar_name: "embedded_template".into(),
                 },
-                GrammarLocation {
+                GrammarManifestEntry {
                     extension: "zed-ruby".into(),
                     grammar_name: "ruby".into(),
                 },
             ],
         );
         assert_eq!(
-            manifest.languages_by_path_suffix.get("rb"),
-            Some(&LanguageLocation {
-                extension: "zed-ruby".into(),
-                language_dir: "ruby".into(),
-            })
+            manifest.languages,
+            &[
+                LanguageManifestEntry {
+                    extension: "zed-ruby".into(),
+                    language_dir: "erb".into(),
+                    name: "ERB".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["erb".into()],
+                        first_line_pattern: None,
+                    }
+                },
+                LanguageManifestEntry {
+                    extension: "zed-ruby".into(),
+                    language_dir: "ruby".into(),
+                    name: "Ruby".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["rb".into()],
+                        first_line_pattern: None,
+                    }
+                },
+            ],
         );
-        assert_eq!(
-            manifest.languages_by_path_suffix.get("erb"),
-            Some(&LanguageLocation {
-                extension: "zed-ruby".into(),
-                language_dir: "erb".into(),
-            })
-        );
-        dbg!(&manifest.themes_by_name);
         assert_eq!(
             manifest.themes_by_name.get("Monokai Dark"),
             Some(&ThemeLocation {

@@ -5,7 +5,9 @@ use crate::lsp_log::LogMenuItem;
 use super::*;
 use futures::StreamExt;
 use gpui::{Context, TestAppContext, VisualTestContext};
-use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageServerName};
+use language::{
+    tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerName,
+};
 use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
@@ -21,7 +23,10 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
     let mut rust_language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),

@@ -1,4 +1,5 @@
 name = "PureScript"
+grammar = "purescript"
 path_suffixes = ["purs"]
 autoclose_before = ",=)}]"
 line_comments = ["-- "]

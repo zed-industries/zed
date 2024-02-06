@@ -1003,7 +1003,7 @@ pub mod tests {
     use gpui::{div, font, observe, px, AppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
-        Buffer, Language, LanguageConfig, SelectionGoal,
+        Buffer, Language, LanguageConfig, LanguageMatcher, SelectionGoal,
     };
     use project::Project;
     use rand::{prelude::*, Rng};
@@ -1453,7 +1453,10 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    path_suffixes: vec![".test".to_string()],
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec![".test".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -1540,7 +1543,10 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    path_suffixes: vec![".test".to_string()],
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec![".test".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -1608,7 +1614,10 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    path_suffixes: vec![".test".to_string()],
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec![".test".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),

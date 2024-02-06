@@ -3985,6 +3985,7 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
+ "toml",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",

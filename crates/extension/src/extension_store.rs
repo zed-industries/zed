@@ -2,10 +2,16 @@ use anyhow::Result;
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
-use language::{LanguageConfig, LanguageRegistry};
+use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
+use language::{
+    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+};
 use serde::{Deserialize, Serialize};
-use std::{ffi::OsStr, path::PathBuf, sync::Arc};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use theme::ThemeRegistry;
 use util::{paths::EXTENSIONS_DIR, ResultExt};
 
@@ -25,18 +31,20 @@ struct GlobalExtensionStore(Model<ExtensionStore>);
 impl Global for GlobalExtensionStore {}
 
 #[derive(PartialEq, Eq, Debug, PartialOrd, Ord, Deserialize, Serialize)]
-pub struct GrammarLocation {
+pub struct GrammarManifestEntry {
     extension: String,
     grammar_name: String,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
-pub struct LanguageLocation {
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
+pub struct LanguageManifestEntry {
     extension: String,
     language_dir: String,
+    name: Arc<str>,
+    matcher: LanguageMatcher,
 }
 
-#[derive(PartialEq, Debug, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
 pub struct ThemeLocation {
     extension: String,
     filename: String,
@@ -44,11 +52,12 @@ pub struct ThemeLocation {
 
 #[derive(Deserialize, Serialize, Default)]
 pub struct Manifest {
-    pub grammars: Vec<GrammarLocation>,
-    pub languages_by_path_suffix: HashMap<String, LanguageLocation>,
-    pub languages_by_name: HashMap<String, LanguageLocation>,
+    pub grammars: Vec<GrammarManifestEntry>,
+    pub languages: Vec<LanguageManifestEntry>,
     pub themes_by_name: HashMap<String, ThemeLocation>,
 }
+
+actions!(extensions, [RebuildManifest]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
@@ -62,10 +71,16 @@ pub fn init(
             fs,
             language_registry,
             theme_registry,
-            cx,
         );
-        store.load(cx);
+        store.load(cx).log_err();
         store
+    });
+
+    cx.on_action(|_: &RebuildManifest, cx| {
+        let store = cx.global::<GlobalExtensionStore>().0.clone();
+        store
+            .update(cx, |store, cx| store.rebuild_manifest(cx))
+            .detach_and_log_err(cx);
     });
 
     cx.set_global(GlobalExtensionStore(store));
@@ -77,7 +92,6 @@ impl ExtensionStore {
         fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
-        cx: &mut AppContext,
     ) -> Self {
         Self {
             manifest: Manifest::default(),
@@ -94,7 +108,57 @@ impl ExtensionStore {
             .block(self.fs.load(&self.root_dir.join("manifest.json")))?;
         self.manifest = serde_json::from_str(&manifest)?;
 
-        // add languages to registry, load themes in background
+        for grammar in &self.manifest.grammars {
+            let mut grammar_path = self.root_dir.clone();
+            grammar_path.extend([
+                "extensions",
+                grammar.extension.as_str(),
+                "grammars",
+                &grammar.grammar_name,
+            ]);
+            grammar_path.set_extension("wasm");
+            self.language_registry
+                .register_grammar(grammar.grammar_name.clone(), grammar_path);
+        }
+
+        for language in &self.manifest.languages {
+            let mut language_path = self.root_dir.clone();
+            language_path.extend([
+                "extensions",
+                language.extension.as_str(),
+                "languages",
+                &language.language_dir,
+            ]);
+            self.language_registry.register_extension(
+                language_path.into(),
+                language.name.clone(),
+                language.matcher.clone(),
+                load_plugin_queries,
+            );
+        }
+
+        let fs = self.fs.clone();
+        let root_dir = self.root_dir.clone();
+        let theme_registry = self.theme_registry.clone();
+        let themes = self.manifest.themes_by_name.clone();
+        cx.background_executor()
+            .spawn(async move {
+                for theme in themes.values() {
+                    let mut theme_path = root_dir.clone();
+                    theme_path.extend([
+                        "extensions",
+                        theme.extension.as_str(),
+                        "themes",
+                        &theme.filename,
+                    ]);
+
+                    theme_registry
+                        .load_user_theme(&theme_path, fs.clone())
+                        .await
+                        .log_err();
+                }
+            })
+            .detach();
 
         Ok(())
     }
@@ -130,7 +194,7 @@ impl ExtensionStore {
                                     continue;
                                 };
 
-                                manifest.grammars.push(GrammarLocation {
+                                manifest.grammars.push(GrammarManifestEntry {
                                     extension: extension_name.into(),
                                     grammar_name: grammar_name.into(),
                                 });
@@ -147,20 +211,15 @@ impl ExtensionStore {
                                 else {
                                     continue;
                                 };
-                                let location = LanguageLocation {
-                                    extension: extension_name.into(),
-                                    language_dir: dir_name.into(),
-                                };
                                 let config = fs.load(&language_path.join("config.toml")).await?;
                                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
-                                for suffix in config.path_suffixes {
-                                    manifest
-                                        .languages_by_path_suffix
-                                        .insert(suffix, location.clone());
-                                }
-                                manifest
-                                    .languages_by_name
-                                    .insert(config.name.to_string(), location);
+
+                                manifest.languages.push(LanguageManifestEntry {
+                                    name: config.name.clone(),
+                                    extension: extension_name.into(),
+                                    language_dir: dir_name.into(),
+                                    matcher: config.matcher,
+                                });
                             }
                         }
 
@@ -196,11 +255,48 @@ impl ExtensionStore {
                     }
 
                     manifest.grammars.sort();
+                    manifest.languages.sort();
+
+                    fs.save(
+                        &root_dir.join("manifest.json"),
+                        &serde_json::to_string_pretty(&manifest)?.as_str().into(),
+                        Default::default(),
+                    )
+                    .await?;
 
                     anyhow::Ok(manifest)
                 })
                 .await?;
-            this.update(&mut cx, |this, cx| this.manifest = manifest)
+            this.update(&mut cx, |this, _| this.manifest = manifest)
         })
     }
+}
+
+fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
+    let mut result = LanguageQueries::default();
+    if let Some(entries) = std::fs::read_dir(root_path).log_err() {
+        for entry in entries {
+            let Some(entry) = entry.log_err() else {
+                continue;
+            };
+            let path = entry.path();
+            if let Some(remainder) = path.strip_prefix(root_path).ok().and_then(|p| p.to_str()) {
+                if !remainder.ends_with(".scm") {
+                    continue;
+                }
+                for (name, query) in QUERY_FILENAME_PREFIXES {
+                    if remainder.starts_with(name) {
+                        if let Some(contents) = std::fs::read_to_string(&path).log_err() {
+                            match query(&mut result) {
+                                None => *query(&mut result) = Some(contents.into()),
+                                Some(r) => r.to_mut().push_str(contents.as_ref()),
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    result
 }
