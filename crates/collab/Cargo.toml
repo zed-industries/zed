@@ -22,15 +22,15 @@ axum-extra = { version = "0.3", features = ["erased-json"] }
 base64 = "0.13"
 chrono.workspace = true
 clap = { version = "3.1", features = ["derive"], optional = true }
-clock = { path = "../clock" }
-collections = { path = "../collections" }
+clock.workspace = true
+collections.workspace = true
 dashmap = "5.4"
 envy = "0.4.2"
 futures.workspace = true
 hyper = "0.14"
 lazy_static.workspace = true
 lipsum = { version = "0.8", optional = true }
-live_kit_server = { path = "../live_kit_server" }
+live_kit_server.workspace = true
 log.workspace = true
 nanoid = "0.4"
 parking_lot.workspace = true
@@ -38,7 +38,7 @@ prometheus = "0.13"
 prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"], optional = true }
-rpc = { path = "../rpc" }
+rpc.workspace = true
 scrypt = "0.7"
 sea-orm = { version = "0.12.x", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 serde.workspace = true
@@ -47,7 +47,7 @@ serde_json.workspace = true
 sha-1 = "0.9"
 smallvec.workspace = true
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
-text = { path = "../text" }
+text.workspace = true
 time.workspace = true
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"
@@ -57,44 +57,44 @@ tower = "0.4"
 tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
-util = { path = "../util" }
+util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-release_channel = { path = "../release_channel" }
+release_channel.workspace = true
 async-trait.workspace = true
-audio = { path = "../audio" }
-call = { path = "../call", features = ["test-support"] }
-channel = { path = "../channel" }
-client = { path = "../client", features = ["test-support"] }
-collab_ui = { path = "../collab_ui", features = ["test-support"] }
-collections = { path = "../collections", features = ["test-support"] }
+audio.workspace = true
+call = { workspace = true, features = ["test-support"] }
+channel.workspace = true
+client = { workspace = true, features = ["test-support"] }
+collab_ui = { workspace = true, features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-file_finder = { path = "../file_finder" }
-fs = { path = "../fs", features = ["test-support"] }
-git = { path = "../git", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+file_finder.workspace = true
+fs = { workspace = true, features = ["test-support"] }
+git = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
-language = { path = "../language", features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 lazy_static.workspace = true
-live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-menu = { path = "../menu" }
-node_runtime = { path = "../node_runtime" }
-notifications = { path = "../notifications", features = ["test-support"] }
+live_kit_client = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
+menu.workspace = true
+node_runtime.workspace = true
+notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-project = { path = "../project", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
 sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
-settings = { path = "../settings", features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
 sqlx = { version = "0.7", features = ["sqlite"] }
-theme = { path = "../theme" }
+theme.workspace = true
 unindent.workspace = true
-util = { path = "../util" }
-workspace = { path = "../workspace", features = ["test-support"] }
+util.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
 
 [features]
 seed-support = ["clap", "lipsum", "reqwest"]

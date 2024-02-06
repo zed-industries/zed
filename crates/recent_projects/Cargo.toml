@@ -10,21 +10,21 @@ path = "src/recent_projects.rs"
 doctest = false
 
 [dependencies]
-editor = { path = "../editor" }
+editor.workspace = true
 futures.workspace = true
-fuzzy = {  path = "../fuzzy" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
+fuzzy.workspace = true
+gpui.workspace = true
+language.workspace = true
 ordered-float.workspace = true
-picker = { path = "../picker" }
+picker.workspace = true
 postage.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smol.workspace = true
-text = { path = "../text" }
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+text.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }

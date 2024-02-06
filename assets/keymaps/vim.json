@@ -502,18 +502,5 @@
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
     }
-  },
-  {
-    "context": "Dock",
-    "bindings": {
-      "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"],
-      "ctrl-w ctrl-h": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-w ctrl-l": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-w ctrl-k": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-w ctrl-j": ["workspace::ActivatePaneInDirection", "Down"]
-    }
   }
 ]

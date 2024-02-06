@@ -120,6 +120,7 @@ use ui::{
     Tooltip,
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::Toast;
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -374,6 +375,7 @@ pub struct Editor {
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
+    show_breadcrumbs: bool,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -851,7 +853,7 @@ impl CompletionsMenu {
         let selected_item = self.selected_item;
         let style = style.clone();
 
-        let multiline_docs = {
+        let multiline_docs = if show_completion_documentation {
             let mat = &self.matches[selected_item];
             let multiline_docs = match &self.completions.read()[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
@@ -882,6 +884,8 @@ impl CompletionsMenu {
                     // because that would move the cursor.
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             })
+        } else {
+            None
         };
 
         let list = uniform_list(
@@ -1448,6 +1452,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
+            show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
@@ -7260,10 +7265,6 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        let Some(workspace) = self.workspace() else {
-            return;
-        };
-        let pane = workspace.read(cx).active_pane().clone();
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
@@ -7281,6 +7282,11 @@ impl Editor {
                 let target = target_task.await.context("target resolution task")?;
                 if let Some(target) = target {
                     editor.update(&mut cx, |editor, cx| {
+                        let Some(workspace) = editor.workspace() else {
+                            return;
+                        };
+                        let pane = workspace.read(cx).active_pane().clone();
+
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
@@ -7321,7 +7327,7 @@ impl Editor {
         } else if !definitions.is_empty() {
             let replica_id = self.replica_id(cx);
             cx.spawn(|editor, mut cx| async move {
-                let (title, location_tasks) = editor
+                let (title, location_tasks, workspace) = editor
                     .update(&mut cx, |editor, cx| {
                         let title = definitions
                             .iter()
@@ -7349,7 +7355,7 @@ impl Editor {
                                 HoverLink::Url(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
-                        (title, location_tasks)
+                        (title, location_tasks, editor.workspace().clone())
                     })
                     .context("location tasks preparation")?;
 
@@ -7359,6 +7365,10 @@ impl Editor {
                     .filter_map(|location| location.transpose())
                     .collect::<Result<_>>()
                     .context("location tasks")?;
+
+                let Some(workspace) = workspace else {
+                    return Ok(());
+                };
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         Self::open_locations_in_multibuffer(
@@ -8345,21 +8355,37 @@ impl Editor {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
         let permalink = maybe!({
-            let project = self.project.clone()?;
+            let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
             let project = project.read(cx);
 
-            let worktree = project.visible_worktrees(cx).next()?;
+            let worktree = project
+                .visible_worktrees(cx)
+                .next()
+                .ok_or_else(|| anyhow!("no worktree"))?;
 
             let mut cwd = worktree.read(cx).abs_path().to_path_buf();
             cwd.push(".git");
 
-            let repo = project.fs().open_repo(&cwd)?;
-            let origin_url = repo.lock().remote_url("origin")?;
-            let sha = repo.lock().head_sha()?;
+            const REMOTE_NAME: &'static str = "origin";
+            let repo = project
+                .fs()
+                .open_repo(&cwd)
+                .ok_or_else(|| anyhow!("no Git repo"))?;
+            let origin_url = repo
+                .lock()
+                .remote_url(REMOTE_NAME)
+                .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+            let sha = repo
+                .lock()
+                .head_sha()
+                .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
-            let buffer = self.buffer().read(cx).as_singleton()?;
-            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-            let path = file.path().to_str().map(|path| path.to_string())?;
+            let path = maybe!({
+                let buffer = self.buffer().read(cx).as_singleton()?;
+                let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+                file.path().to_str().map(|path| path.to_string())
+            })
+            .ok_or_else(|| anyhow!("failed to determine file path"))?;
 
             let selections = self.selections.all::<Point>(cx);
             let selection = selections.iter().peekable().next();
@@ -8370,11 +8396,23 @@ impl Editor {
                 path: &path,
                 selection: selection.map(|selection| selection.range()),
             })
-            .log_err()
         });
 
-        if let Some(permalink) = permalink {
-            cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+        match permalink {
+            Ok(permalink) => {
+                cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+            }
+            Err(err) => {
+                let message = format!("Failed to copy permalink: {err}");
+
+                Err::<(), anyhow::Error>(err).log_err();
+
+                if let Some(workspace) = self.workspace() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                    })
+                }
+            }
         }
     }
 
@@ -8762,8 +8800,9 @@ impl Editor {
             )),
             cx,
         );
-        self.scroll_manager.vertical_scroll_margin =
-            EditorSettings::get_global(cx).vertical_scroll_margin;
+        let editor_settings = EditorSettings::get_global(cx);
+        self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
+        self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
         cx.notify();
     }
 

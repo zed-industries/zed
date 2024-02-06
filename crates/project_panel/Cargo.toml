@@ -11,33 +11,33 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-collections = { path = "../collections" }
-db = { path = "../db" }
-editor = { path = "../editor" }
+collections.workspace = true
+db.workspace = true
+editor.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
-menu = {  path = "../menu" }
+gpui.workspace = true
+menu.workspace = true
 postage.workspace = true
 pretty_assertions.workspace = true
-project = { path = "../project" }
+project.workspace = true
 schemars.workspace = true
-search = { path = "../search" }
+search.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smallvec.workspace = true
-theme = { path = "../theme" }
-ui = { path = "../ui" }
+theme.workspace = true
+ui.workspace = true
 unicase = "2.6"
-util = { path = "../util" }
-client = { path = "../client" }
-workspace = { path = "../workspace", package = "workspace" }
+util.workspace = true
+client.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
-workspace = { path = "../workspace", features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

@@ -127,7 +127,7 @@ impl Render for Toolbar {
                             h_flex()
                                 // We're using `flex_none` here to prevent some flickering that can occur when the
                                 // size of the left items container changes.
-                                .flex_none()
+                                .when_else(has_left_items, Div::flex_none, Div::flex_auto)
                                 .justify_end()
                                 .children(self.right_items().map(|item| item.to_any())),
                         )

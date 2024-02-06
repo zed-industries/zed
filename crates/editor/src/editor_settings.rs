@@ -10,6 +10,7 @@ pub struct EditorSettings {
     pub show_completion_documentation: bool,
     pub completion_documentation_secondary_query_debounce: u64,
     pub use_on_type_format: bool,
+    pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub vertical_scroll_margin: f32,
     pub relative_line_numbers: bool,
@@ -27,6 +28,12 @@ pub enum SeedQuerySetting {
     Selection,
     /// Never populate the search query
     Never,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct Toolbar {
+    pub breadcrumbs: bool,
+    pub quick_actions: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -86,6 +93,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub use_on_type_format: Option<bool>,
+    /// Toolbar related settings
+    pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
     pub scrollbar: Option<ScrollbarContent>,
 
@@ -108,6 +117,19 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub redact_private_values: Option<bool>,
+}
+
+// Toolbar related settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ToolbarContent {
+    /// Whether to display breadcrumbs in the editor toolbar.
+    ///
+    /// Default: true
+    pub breadcrumbs: Option<bool>,
+    /// Whether to display quik action buttons in the editor toolbar.
+    ///
+    /// Default: true
+    pub quick_actions: Option<bool>,
 }
 
 /// Scrollbar related settings

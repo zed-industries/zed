@@ -14,16 +14,16 @@ test-support = ["collections/test-support", "gpui/test-support", "rpc/test-suppo
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-collections = { path = "../collections" }
-db = { path = "../db" }
-gpui = { path = "../gpui" }
-util = { path = "../util" }
-release_channel = { path = "../release_channel" }
-rpc = { path = "../rpc" }
-text = { path = "../text" }
-settings = { path = "../settings" }
-feature_flags = { path = "../feature_flags" }
-sum_tree = { path = "../sum_tree" }
+collections.workspace = true
+db.workspace = true
+gpui.workspace = true
+util.workspace = true
+release_channel.workspace = true
+rpc.workspace = true
+text.workspace = true
+settings.workspace = true
+feature_flags.workspace = true
+sum_tree.workspace = true
 
 anyhow.workspace = true
 async-recursion = "0.3"
@@ -51,8 +51,8 @@ uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

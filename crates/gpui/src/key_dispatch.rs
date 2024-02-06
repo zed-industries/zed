@@ -62,16 +62,6 @@ use std::{
     rc::Rc,
 };
 
-/// KeymatchMode controls how keybindings are resolved in the case of conflicting pending keystrokes.
-/// When `Sequenced`, gpui will wait for 1s for sequences to complete.
-/// When `Immediate`, gpui will immediately resolve the keybinding.
-#[derive(Default, PartialEq)]
-pub enum KeymatchMode {
-    #[default]
-    Sequenced,
-    Immediate,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct DispatchNodeId(usize);
 
@@ -84,7 +74,6 @@ pub(crate) struct DispatchTree {
     keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Rc<RefCell<Keymap>>,
     action_registry: Rc<ActionRegistry>,
-    pub(crate) keymatch_mode: KeymatchMode,
 }
 
 #[derive(Default)]
@@ -116,7 +105,6 @@ impl DispatchTree {
             keystroke_matchers: FxHashMap::default(),
             keymap,
             action_registry,
-            keymatch_mode: KeymatchMode::Sequenced,
         }
     }
 
@@ -127,7 +115,6 @@ impl DispatchTree {
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
         self.keystroke_matchers.clear();
-        self.keymatch_mode = KeymatchMode::Sequenced;
     }
 
     pub fn push_node(
@@ -335,7 +322,7 @@ impl DispatchTree {
             .collect()
     }
 
-    // dispatch_key pushses the next keystroke into any key binding matchers.
+    // dispatch_key pushes the next keystroke into any key binding matchers.
     // any matching bindings are returned in the order that they should be dispatched:
     // * First by length of binding (so if you have a binding for "b" and "ab", the "ab" binding fires first)
     // * Secondly by depth in the tree (so if Editor has a binding for "b" and workspace a
@@ -364,6 +351,11 @@ impl DispatchTree {
                 .or_insert_with(|| KeystrokeMatcher::new(self.keymap.clone()));
 
             let result = keystroke_matcher.match_keystroke(keystroke, &context_stack);
+            if result.pending && !pending && !bindings.is_empty() {
+                context_stack.pop();
+                continue;
+            }
+
             pending = result.pending || pending;
             for new_binding in result.bindings {
                 match bindings
