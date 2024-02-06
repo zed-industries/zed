@@ -283,20 +283,11 @@ pub fn next_word_end(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayP
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
 
-    if point.column() < map.line_len(point.row()) {
-        *point.column_mut() += 1;
-    } else if point.row() < map.max_buffer_row() {
-        *point.row_mut() += 1;
-        *point.column_mut() = 0;
-    }
-
     find_boundary(
         map,
         point,
         FindRange::MultiLine,
-        |left, right| {
-            (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
-        },
+        |left, right| char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace(),
         false,
     )
 }
