@@ -229,15 +229,13 @@ impl Render for CollabTitlebarItem {
                                             .tooltip(|cx| Tooltip::text("Leave call", cx))
                                             .icon_size(IconSize::Small)
                                             .on_click(move |_, cx| {
-                                                ActiveCall::global(cx)
-                                                    .update(cx, |call, cx| {
-                                                        if let Some(room) = call.room() {
-                                                            room.update(cx, |room, cx| {
-                                                                room.disable_audio(cx)
-                                                            })
-                                                        }
-                                                    })
-                                                    .detach_and_log_err(cx);
+                                                ActiveCall::global(cx).update(cx, |call, cx| {
+                                                    if let Some(room) = call.room() {
+                                                        room.update(cx, |room, cx| {
+                                                            room.disable_audio(cx)
+                                                        })
+                                                    }
+                                                })
                                             }),
                                     )
                                     .pr_2(),
