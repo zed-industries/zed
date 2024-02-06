@@ -21,6 +21,13 @@ if [[ -n $apt ]]; then
   deps=(
     libasound2-dev
     libfontconfig-dev
+    libxcb-dev
+    alsa-base
+    cmake
+    fontconfig
+    libssl-dev
+    build-essential
+
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
