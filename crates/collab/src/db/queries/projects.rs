@@ -778,7 +778,7 @@ impl Database {
             let left_project = LeftProject {
                 id: project_id,
                 host_user_id: project.host_user_id,
-                host_connection_id: project.host_connection()?,
+                host_connection_id: Some(project.host_connection()?),
                 connection_ids,
             };
             Ok((room, left_project))

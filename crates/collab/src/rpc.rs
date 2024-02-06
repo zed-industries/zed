@@ -1691,7 +1691,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     tracing::info!(
         %project_id,
         host_user_id = %project.host_user_id,
-        host_connection_id = %project.host_connection_id,
+        host_connection_id = ?project.host_connection_id,
         "leave project"
     );
 
