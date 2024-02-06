@@ -77,7 +77,6 @@ pub struct TerminalView {
     terminal: Model<Terminal>,
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
-    has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
     context_menu: Option<(View<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
@@ -142,9 +141,6 @@ impl TerminalView {
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&terminal, move |this, _, event, cx| match event {
             Event::Wakeup => {
-                if !this.focus_handle.is_focused(cx) {
-                    this.has_new_content = true;
-                }
                 cx.notify();
                 cx.emit(Event::Wakeup);
                 cx.emit(ItemEvent::UpdateTab);
@@ -309,7 +305,6 @@ impl TerminalView {
         Self {
             terminal,
             workspace: workspace_handle,
-            has_new_content: true,
             has_bell: false,
             focus_handle,
             context_menu: None,
@@ -325,10 +320,6 @@ impl TerminalView {
 
     pub fn model(&self) -> &Model<Terminal> {
         &self.terminal
-    }
-
-    pub fn has_new_content(&self) -> bool {
-        self.has_new_content
     }
 
     pub fn has_bell(&self) -> bool {
@@ -688,7 +679,6 @@ impl TerminalView {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        self.has_new_content = false;
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
         cx.notify();
