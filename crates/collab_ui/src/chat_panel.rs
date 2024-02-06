@@ -8,7 +8,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, CursorStyle,
-    DismissEvent, ElementId, EventEmitter, Fill, FocusHandle, FocusableView, FontStyle, FontWeight,
+    DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
     HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
     Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
@@ -565,7 +565,7 @@ impl ChatPanel {
                     cx.handler_for(&this, move |this, cx| {
                         this.message_editor.update(cx, |editor, cx| {
                             editor.set_reply_to_message_id(message_id);
-                            editor.focus_handle(cx);
+                            editor.focus_handle(cx).focus(cx);
                         })
                     }),
                 )
