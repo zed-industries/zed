@@ -692,7 +692,7 @@ impl ProjectCollaborator {
 pub struct LeftProject {
     pub id: ProjectId,
     pub host_user_id: UserId,
-    pub host_connection_id: ConnectionId,
+    pub host_connection_id: Option<ConnectionId>,
     pub connection_ids: Vec<ConnectionId>,
 }
 
