@@ -326,7 +326,7 @@ impl LanguageServer {
 
             header_reader::read_headers(&mut stdout, &mut buffer)
                 .await
-                .expect("cannot read LSP message header");
+                .context("cannot read LSP message header")?;
 
             let headers = std::str::from_utf8(&buffer)?;
 
@@ -385,8 +385,6 @@ impl LanguageServer {
             // Don't starve the main thread when receiving lots of messages at once.
             smol::future::yield_now().await;
         }
-
-        Ok(())
     }
 
     async fn handle_stderr<Stderr>(

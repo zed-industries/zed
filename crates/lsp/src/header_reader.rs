@@ -38,7 +38,7 @@ impl<'a, R: ?Sized> HeaderReader<'a, R> {
         loop {
             let (done, used) = {
                 let available = futures::ready!(reader.as_mut().poll_fill_buf(cx))?;
-                if let Some(i) = find_delimeter(&available) {
+                if let Some(i) = find_delimiter(&available) {
                     buf.extend_from_slice(&available[..i + 5]);
                     (true, i + 5)
                 } else if buf.len() > 2
@@ -87,7 +87,7 @@ impl<R: AsyncBufRead + ?Sized + Unpin> Future for HeaderReader<'_, R> {
     }
 }
 
-fn find_delimeter(buf: &[u8]) -> Option<usize> {
+fn find_delimiter(buf: &[u8]) -> Option<usize> {
     if buf.len() < 4 {
         return None;
     }
@@ -104,7 +104,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_read_delimeters_only() {
+    async fn test_read_delimiters_only() {
         let mut buf = Vec::new();
         let mut reader = futures::io::Cursor::new(b"\r\n\r\n");
         let read = read_headers(&mut reader, &mut buf).await.unwrap();
