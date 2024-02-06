@@ -284,7 +284,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
 
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
-        char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace()
+        (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
             || right == '\n'
     })
 }
