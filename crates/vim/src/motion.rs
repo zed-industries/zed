@@ -784,7 +784,7 @@ pub(crate) fn next_word_start(
                 crossed_newline |= at_newline;
                 found
             },
-            true,
+            false,
         )
     }
     point
