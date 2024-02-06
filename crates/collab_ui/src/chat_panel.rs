@@ -563,8 +563,10 @@ impl ChatPanel {
                     "Reply to message",
                     None,
                     cx.handler_for(&this, move |this, cx| {
-                        this.message_editor
-                            .update(cx, |editor, _| editor.set_reply_to_message_id(message_id))
+                        this.message_editor.update(cx, |editor, cx| {
+                            editor.set_reply_to_message_id(message_id);
+                            editor.focus_handle(cx);
+                        })
                     }),
                 )
                 .when(can_delete_message, move |menu| {
