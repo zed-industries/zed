@@ -13,14 +13,14 @@ doctest = false
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }
+postage.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }
 text = { path = "../text" }
-workspace = { path = "../workspace" }
-postage.workspace = true
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
+workspace = { path = "../workspace" }
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

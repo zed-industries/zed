@@ -12,8 +12,8 @@ path = "src/install_cli.rs"
 test-support = []
 
 [dependencies]
-smol.workspace = true
 anyhow.workspace = true
-log.workspace = true
 gpui = { path = "../gpui" }
+log.workspace = true
+smol.workspace = true
 util = { path = "../util" }

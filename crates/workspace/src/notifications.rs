@@ -1,7 +1,7 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
-    AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter,
+    AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter, Global,
     PromptLevel, Render, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use std::{any::TypeId, ops::DerefMut};
@@ -38,6 +38,8 @@ impl From<&dyn NotificationHandle> for AnyView {
 pub(crate) struct NotificationTracker {
     notifications_sent: HashMap<TypeId, Vec<usize>>,
 }
+
+impl Global for NotificationTracker {}
 
 impl std::ops::Deref for NotificationTracker {
     type Target = HashMap<TypeId, Vec<usize>>;

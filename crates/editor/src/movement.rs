@@ -2,13 +2,11 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
-use gpui::{px, Pixels, TextSystem};
+use crate::{char_kind, scroll::ScrollAnchor, CharKind, EditorStyle, ToOffset, ToPoint};
+use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
 
 use std::{ops::Range, sync::Arc};
-
-use multi_buffer::Anchor;
 
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
@@ -22,11 +20,12 @@ pub enum FindRange {
 /// TextLayoutDetails encompasses everything we need to move vertically
 /// taking into account variable width characters.
 pub struct TextLayoutDetails {
-    pub(crate) text_system: Arc<TextSystem>,
+    pub(crate) text_system: Arc<WindowTextSystem>,
     pub(crate) editor_style: EditorStyle,
     pub(crate) rem_size: Pixels,
-    pub anchor: Anchor,
+    pub scroll_anchor: ScrollAnchor,
     pub visible_rows: Option<f32>,
+    pub vertical_scroll_margin: f32,
 }
 
 /// Returns a column to the left of the current point, wrapping
@@ -50,11 +49,10 @@ pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Displa
     map.clip_point(point, Bias::Left)
 }
 
-/// Returns a column to the right of the current point, wrapping
-/// to the next line if that point is at the end of line.
+/// Returns a column to the right of the current point, doing nothing
+// if that point is at the end of the line.
 pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let max_column = map.line_len(point.row());
-    if point.column() < max_column {
+    if point.column() < map.line_len(point.row()) {
         *point.column_mut() += 1;
     } else if point.row() < map.max_point().row() {
         *point.row_mut() += 1;

@@ -17,7 +17,7 @@ use time::UtcOffset;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, KeyBinding, Keymap,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
     TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
@@ -380,6 +380,11 @@ impl AppContext {
         })
     }
 
+    pub(crate) fn new_observer(&mut self, key: EntityId, value: Handler) -> Subscription {
+        let (subscription, activate) = self.observers.insert(key, value);
+        self.defer(move |_| activate());
+        subscription
+    }
     pub(crate) fn observe_internal<W, E>(
         &mut self,
         entity: &E,
@@ -391,7 +396,7 @@ impl AppContext {
     {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
-        let (subscription, activate) = self.observers.insert(
+        self.new_observer(
             entity_id,
             Box::new(move |cx| {
                 if let Some(handle) = E::upgrade_from(&handle) {
@@ -400,9 +405,7 @@ impl AppContext {
                     false
                 }
             }),
-        );
-        self.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Arrange for the given callback to be invoked whenever the given model or view emits an event of a given type.
@@ -423,6 +426,15 @@ impl AppContext {
         })
     }
 
+    pub(crate) fn new_subscription(
+        &mut self,
+        key: EntityId,
+        value: (TypeId, Listener),
+    ) -> Subscription {
+        let (subscription, activate) = self.event_listeners.insert(key, value);
+        self.defer(move |_| activate());
+        subscription
+    }
     pub(crate) fn subscribe_internal<T, E, Evt>(
         &mut self,
         entity: &E,
@@ -435,7 +447,7 @@ impl AppContext {
     {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
-        let (subscription, activate) = self.event_listeners.insert(
+        self.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -448,9 +460,7 @@ impl AppContext {
                     }
                 }),
             ),
-        );
-        self.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Returns handles to all open windows in the application.
@@ -652,27 +662,20 @@ impl AppContext {
                     }
                 }
             } else {
-                for window in self.windows.values() {
-                    if let Some(window) = window.as_ref() {
-                        if window.dirty {
-                            window.platform_window.invalidate();
-                        }
-                    }
-                }
-
                 #[cfg(any(test, feature = "test-support"))]
                 for window in self
                     .windows
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        (window.dirty || window.focus_invalidated).then_some(window.handle)
+                        window.dirty.get().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
                     self.update_window(window, |_, cx| cx.draw()).unwrap();
                 }
 
+                #[allow(clippy::collapsible_else_if)]
                 if self.pending_effects.is_empty() {
                     break;
                 }
@@ -749,7 +752,7 @@ impl AppContext {
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
-                window.dirty = true;
+                window.dirty.set(true);
             }
         }
     }
@@ -823,13 +826,13 @@ impl AppContext {
     }
 
     /// Check whether a global of the given type has been assigned.
-    pub fn has_global<G: 'static>(&self) -> bool {
+    pub fn has_global<G: Global>(&self) -> bool {
         self.globals_by_type.contains_key(&TypeId::of::<G>())
     }
 
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
     #[track_caller]
-    pub fn global<G: 'static>(&self) -> &G {
+    pub fn global<G: Global>(&self) -> &G {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -838,7 +841,7 @@ impl AppContext {
     }
 
     /// Access the global of the given type if a value has been assigned.
-    pub fn try_global<G: 'static>(&self) -> Option<&G> {
+    pub fn try_global<G: Global>(&self) -> Option<&G> {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -846,7 +849,7 @@ impl AppContext {
 
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
     #[track_caller]
-    pub fn global_mut<G: 'static>(&mut self) -> &mut G {
+    pub fn global_mut<G: Global>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -858,7 +861,7 @@ impl AppContext {
 
     /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
     /// yet been assigned.
-    pub fn default_global<G: 'static + Default>(&mut self) -> &mut G {
+    pub fn default_global<G: Global + Default>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -869,7 +872,7 @@ impl AppContext {
     }
 
     /// Sets the value of the global of the given type.
-    pub fn set_global<G: Any>(&mut self, global: G) {
+    pub fn set_global<G: Global>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
@@ -882,7 +885,7 @@ impl AppContext {
     }
 
     /// Remove the global of the given type from the app context. Does not notify global observers.
-    pub fn remove_global<G: Any>(&mut self) -> G {
+    pub fn remove_global<G: Global>(&mut self) -> G {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         *self
@@ -895,7 +898,7 @@ impl AppContext {
 
     /// Updates the global of the given type with a closure. Unlike `global_mut`, this method provides
     /// your closure with mutable access to the `AppContext` and the global simultaneously.
-    pub fn update_global<G: 'static, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
+    pub fn update_global<G: Global, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
         self.update(|cx| {
             let mut global = cx.lease_global::<G>();
             let result = f(&mut global, cx);
@@ -905,7 +908,7 @@ impl AppContext {
     }
 
     /// Register a callback to be invoked when a global of the given type is updated.
-    pub fn observe_global<G: 'static>(
+    pub fn observe_global<G: Global>(
         &mut self,
         mut f: impl FnMut(&mut Self) + 'static,
     ) -> Subscription {
@@ -921,7 +924,7 @@ impl AppContext {
     }
 
     /// Move the global of the given type to the stack.
-    pub(crate) fn lease_global<G: 'static>(&mut self) -> GlobalLease<G> {
+    pub(crate) fn lease_global<G: Global>(&mut self) -> GlobalLease<G> {
         GlobalLease::new(
             self.globals_by_type
                 .remove(&TypeId::of::<G>())
@@ -931,19 +934,28 @@ impl AppContext {
     }
 
     /// Restore the global of the given type after it is moved to the stack.
-    pub(crate) fn end_global_lease<G: 'static>(&mut self, lease: GlobalLease<G>) {
+    pub(crate) fn end_global_lease<G: Global>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, lease.global);
     }
 
+    pub(crate) fn new_view_observer(
+        &mut self,
+        key: TypeId,
+        value: NewViewListener,
+    ) -> Subscription {
+        let (subscription, activate) = self.new_view_observers.insert(key, value);
+        activate();
+        subscription
+    }
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
         &mut self,
         on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
     ) -> Subscription {
-        let (subscription, activate) = self.new_view_observers.insert(
+        self.new_view_observer(
             TypeId::of::<V>(),
             Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
                 any_view
@@ -953,9 +965,7 @@ impl AppContext {
                         on_new(view_state, cx);
                     })
             }),
-        );
-        activate();
-        subscription
+        )
     }
 
     /// Observe the release of a model or view. The callback is invoked after the model or view
@@ -987,9 +997,15 @@ impl AppContext {
         &mut self,
         f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
-        let (subscription, activate) = self.keystroke_observers.insert((), Box::new(f));
-        activate();
-        subscription
+        fn inner(
+            keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_observers.insert((), handler);
+            activate();
+            subscription
+        }
+        inner(&mut self.keystroke_observers, Box::new(f))
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
@@ -1293,12 +1309,12 @@ pub(crate) enum Effect {
 }
 
 /// Wraps a global variable value during `update_global` while the value has been moved to the stack.
-pub(crate) struct GlobalLease<G: 'static> {
+pub(crate) struct GlobalLease<G: Global> {
     global: Box<dyn Any>,
     global_type: PhantomData<G>,
 }
 
-impl<G: 'static> GlobalLease<G> {
+impl<G: Global> GlobalLease<G> {
     fn new(global: Box<dyn Any>) -> Self {
         GlobalLease {
             global,
@@ -1307,7 +1323,7 @@ impl<G: 'static> GlobalLease<G> {
     }
 }
 
-impl<G: 'static> Deref for GlobalLease<G> {
+impl<G: Global> Deref for GlobalLease<G> {
     type Target = G;
 
     fn deref(&self) -> &Self::Target {
@@ -1315,7 +1331,7 @@ impl<G: 'static> Deref for GlobalLease<G> {
     }
 }
 
-impl<G: 'static> DerefMut for GlobalLease<G> {
+impl<G: Global> DerefMut for GlobalLease<G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.global.downcast_mut().unwrap()
     }

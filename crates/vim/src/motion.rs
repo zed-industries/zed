@@ -23,6 +23,7 @@ pub enum Motion {
     Down { display_lines: bool },
     Up { display_lines: bool },
     Right,
+    Space,
     NextWordStart { ignore_punctuation: bool },
     NextWordEnd { ignore_punctuation: bool },
     PreviousWordStart { ignore_punctuation: bool },
@@ -124,6 +125,7 @@ actions!(
         Left,
         Backspace,
         Right,
+        Space,
         CurrentLine,
         StartOfParagraph,
         EndOfParagraph,
@@ -163,6 +165,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         )
     });
     workspace.register_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
+    workspace.register_action(|_: &mut Workspace, _: &Space, cx: _| motion(Motion::Space, cx));
     workspace.register_action(|_: &mut Workspace, action: &FirstNonWhitespace, cx: _| {
         motion(
             Motion::FirstNonWhitespace {
@@ -306,6 +309,7 @@ impl Motion {
             | Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | EndOfLineDownward
             | GoToColumn
@@ -332,6 +336,7 @@ impl Motion {
             | Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
@@ -370,6 +375,7 @@ impl Motion {
             Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | StartOfLineDownward
             | StartOfParagraph
@@ -412,6 +418,7 @@ impl Motion {
                 display_lines: true,
             } => up_display(map, point, goal, times, &text_layout_details),
             Right => (right(map, point, times), SelectionGoal::None),
+            Space => (space(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
                 next_word_start(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
@@ -506,9 +513,9 @@ impl Motion {
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
-            WindowTop => window_top(map, point, &text_layout_details),
+            WindowTop => window_top(map, point, &text_layout_details, times - 1),
             WindowMiddle => window_middle(map, point, &text_layout_details),
-            WindowBottom => window_bottom(map, point, &text_layout_details),
+            WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -610,6 +617,24 @@ fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Display
 fn backspace(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
         point = movement::left(map, point);
+    }
+    point
+}
+
+fn space(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+    for _ in 0..times {
+        point = wrapping_right(map, point);
+    }
+    point
+}
+
+fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+    let max_column = map.line_len(point.row()).saturating_sub(1);
+    if point.column() < max_column {
+        *point.column_mut() += 1;
+    } else if point.row() < map.max_point().row() {
+        *point.row_mut() += 1;
+        *point.column_mut() = 0;
     }
     point
 }
@@ -1019,11 +1044,32 @@ fn window_top(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,
+    mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
-    let first_visible_line = text_layout_details.anchor.to_display_point(map);
-    let new_col = point.column().min(map.line_len(first_visible_line.row()));
-    let new_point = DisplayPoint::new(first_visible_line.row(), new_col);
-    (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    let first_visible_line = text_layout_details
+        .scroll_anchor
+        .anchor
+        .to_display_point(map);
+
+    if first_visible_line.row() != 0 && text_layout_details.vertical_scroll_margin as usize > times
+    {
+        times = text_layout_details.vertical_scroll_margin.ceil() as usize;
+    }
+
+    if let Some(visible_rows) = text_layout_details.visible_rows {
+        let bottom_row = first_visible_line.row() + visible_rows as u32;
+        let new_row = (first_visible_line.row() + (times as u32)).min(bottom_row);
+        let new_col = point.column().min(map.line_len(first_visible_line.row()));
+
+        let new_point = DisplayPoint::new(new_row, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    } else {
+        let new_row = first_visible_line.row() + (times as u32);
+        let new_col = point.column().min(map.line_len(first_visible_line.row()));
+
+        let new_point = DisplayPoint::new(new_row, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
+    }
 }
 
 fn window_middle(
@@ -1032,7 +1078,10 @@ fn window_middle(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(map);
         let max_rows = (visible_rows as u32).min(map.max_buffer_row());
         let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
         let new_col = point.column().min(map.line_len(new_row));
@@ -1047,13 +1096,28 @@ fn window_bottom(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,
+    mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details.anchor.to_display_point(map);
-        let bottom_row = first_visible_line.row() + (visible_rows) as u32;
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(map);
+        let bottom_row = first_visible_line.row()
+            + (visible_rows + text_layout_details.scroll_anchor.offset.y - 1.).floor() as u32;
+        if bottom_row < map.max_buffer_row()
+            && text_layout_details.vertical_scroll_margin as usize > times
+        {
+            times = text_layout_details.vertical_scroll_margin.ceil() as usize;
+        }
         let bottom_row_capped = bottom_row.min(map.max_buffer_row());
-        let new_col = point.column().min(map.line_len(bottom_row_capped));
-        let new_point = DisplayPoint::new(bottom_row_capped, new_col);
+        let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_line.row() {
+            first_visible_line.row()
+        } else {
+            bottom_row_capped.saturating_sub(times as u32)
+        };
+        let new_col = point.column().min(map.line_len(new_row));
+        let new_point = DisplayPoint::new(new_row, new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
@@ -1277,6 +1341,18 @@ mod test {
           7 8 9
           "})
             .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9"})
+            .await;
+        cx.simulate_shared_keystrokes(["9", "shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 ˇ9"})
+            .await;
     }
 
     #[gpui::test]
@@ -1440,6 +1516,20 @@ mod test {
           4 5 6
           7 8 9
           ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["9", "shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 ˇ3
+          4 5 6
+          7 8 9
+          "})
             .await;
     }
 }

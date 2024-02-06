@@ -1,6 +1,10 @@
-(identifier) @variable
 (type_identifier) @type
-(field_identifier) @property
+(field_identifier) @variable.member
+
+(keyed_element
+  .
+  (literal_element
+    (identifier) @variable.member))
 
 (call_expression
   function: (identifier) @function)
@@ -14,6 +18,15 @@
 
 (method_declaration
   name: (field_identifier) @function.method)
+
+[
+  "("
+  ")"
+  "{"
+  "}"
+  "["
+  "]"
+] @punctuation.bracket
 
 [
   "--"

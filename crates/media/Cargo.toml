@@ -17,8 +17,8 @@ foreign-types = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9.3"
-objc = "0.2"
 metal = "0.21.0"
+objc = "0.2"
 
 [build-dependencies]
 bindgen = "0.65.1"

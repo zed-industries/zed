@@ -6,12 +6,11 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-fuzzy = { path = "../fuzzy"}
-fs = {path = "../fs"}
-gpui = {path = "../gpui"}
-picker = {path = "../picker"}
-util = {path = "../util"}
-ui = {path = "../ui"}
-workspace = { path = "../workspace" }
-
 anyhow.workspace = true
+fs = { path = "../fs" }
+fuzzy = {  path = "../fuzzy" }
+gpui = { path = "../gpui" }
+picker = { path = "../picker" }
+ui = { path = "../ui" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }

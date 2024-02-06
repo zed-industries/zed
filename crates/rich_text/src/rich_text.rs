@@ -13,6 +13,7 @@ use util::RangeExt;
 pub enum Highlight {
     Code,
     Id(HighlightId),
+    InlineCode(bool),
     Highlight(HighlightStyle),
     Mention,
     SelfMention,
@@ -47,7 +48,7 @@ pub struct Mention {
 }
 
 impl RichText {
-    pub fn element(&self, id: ElementId, cx: &mut WindowContext) -> AnyElement {
+    pub fn element(&self, id: ElementId, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
         let code_background = theme.colors().surface_background;
 
@@ -67,6 +68,23 @@ impl RichText {
                                 background_color: Some(code_background),
                                 ..id.style(theme.syntax()).unwrap_or_default()
                             },
+                            Highlight::InlineCode(link) => {
+                                if !*link {
+                                    HighlightStyle {
+                                        background_color: Some(code_background),
+                                        ..Default::default()
+                                    }
+                                } else {
+                                    HighlightStyle {
+                                        background_color: Some(code_background),
+                                        underline: Some(UnderlineStyle {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        }),
+                                        ..Default::default()
+                                    }
+                                }
+                            }
                             Highlight::Highlight(highlight) => *highlight,
                             Highlight::Mention => HighlightStyle {
                                 font_weight: Some(FontWeight::BOLD),
@@ -83,7 +101,12 @@ impl RichText {
         )
         .on_click(self.link_ranges.clone(), {
             let link_urls = self.link_urls.clone();
-            move |ix, cx| cx.open_url(&link_urls[ix])
+            move |ix, cx| {
+                let url = &link_urls[ix];
+                if url.starts_with("http") {
+                    cx.open_url(url);
+                }
+            }
         })
         .tooltip({
             let link_ranges = self.link_ranges.clone();
@@ -179,22 +202,14 @@ pub fn render_markdown_mut(
             }
             Event::Code(t) => {
                 text.push_str(t.as_ref());
-                if link_url.is_some() {
-                    highlights.push((
-                        prev_len..text.len(),
-                        Highlight::Highlight(HighlightStyle {
-                            underline: Some(UnderlineStyle {
-                                thickness: 1.0.into(),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        }),
-                    ));
-                }
+                let is_link = link_url.is_some();
+
                 if let Some(link_url) = link_url.clone() {
                     link_ranges.push(prev_len..text.len());
                     link_urls.push(link_url);
                 }
+
+                highlights.push((prev_len..text.len(), Highlight::InlineCode(is_link)))
             }
             Event::Start(tag) => match tag {
                 Tag::Paragraph => new_paragraph(text, &mut list_stack),
@@ -256,7 +271,7 @@ pub fn render_markdown_mut(
     }
 }
 
-pub fn render_markdown(
+pub fn render_rich_text(
     block: String,
     mentions: &[Mention],
     language_registry: &Arc<LanguageRegistry>,

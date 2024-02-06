@@ -1,4 +1,4 @@
-use gpui::{AppContext, Subscription, ViewContext};
+use gpui::{AppContext, Global, Subscription, ViewContext};
 
 #[derive(Default)]
 struct FeatureFlags {
@@ -11,6 +11,8 @@ impl FeatureFlags {
         self.staff || self.flags.iter().find(|f| f.as_str() == flag).is_some()
     }
 }
+
+impl Global for FeatureFlags {}
 
 pub trait FeatureFlag {
     const NAME: &'static str;

@@ -27,7 +27,7 @@ pub use schema::*;
 pub use settings::*;
 pub use styles::*;
 
-use gpui::{AppContext, AssetSource, Hsla, SharedString};
+use gpui::{AppContext, AssetSource, Hsla, SharedString, WindowAppearance};
 use serde::Deserialize;
 
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
@@ -41,6 +41,15 @@ impl Appearance {
         match self {
             Self::Light => true,
             Self::Dark => false,
+        }
+    }
+}
+
+impl From<WindowAppearance> for Appearance {
+    fn from(value: WindowAppearance) -> Self {
+        match value {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::Dark,
+            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::Light,
         }
     }
 }
@@ -60,7 +69,7 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
         LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
         LoadThemes::All(assets) => (assets, true),
     };
-    registry::init(assets, cx);
+    ThemeRegistry::set_global(assets, cx);
 
     if load_user_themes {
         ThemeRegistry::global(cx).load_bundled_themes();
