@@ -392,10 +392,11 @@ pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: Arc<str>,
     // The name of the grammar in a WASM bundle (experimental).
-    pub grammar_name: Option<Arc<str>>,
+    pub grammar: Option<Arc<str>>,
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     pub path_suffixes: Vec<String>,
     /// List of bracket types in a language.
+    #[serde(default)]
     pub brackets: BracketPairConfig,
     /// A regex pattern that determines whether the language should be assigned to a file or not.
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -506,7 +507,7 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: "".into(),
-            grammar_name: None,
+            grammar: None,
             path_suffixes: Default::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
@@ -955,7 +956,7 @@ impl LanguageRegistry {
                                         } => (grammar, (get_queries)(asset_dir)),
                                         AvailableGrammar::Wasm { path, get_queries } => {
                                             let grammar_name =
-                                                &language.config.grammar_name.as_ref().ok_or_else(
+                                                &language.config.grammar.as_ref().ok_or_else(
                                                     || anyhow!("missing grammar name"),
                                                 )?;
                                             let mut wasm_path = path.join(grammar_name.as_ref());

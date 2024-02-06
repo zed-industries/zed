@@ -130,6 +130,8 @@ fn main() {
 
         load_embedded_fonts(cx);
 
+        // let extension_store = cx.new_model(|cx| ExtensionStore::new(cx));
+
         let mut store = SettingsStore::default();
         store
             .set_default_settings(default_settings().as_ref(), cx)
@@ -171,6 +173,8 @@ fn main() {
             cx,
         );
         assistant::init(cx);
+
+        extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
 
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);

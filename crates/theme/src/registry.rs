@@ -263,10 +263,16 @@ impl ThemeRegistry {
         Ok(())
     }
 
-    /// Loads the user theme from the specified path and adds it to the registry.
-    pub async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+    pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
         let reader = fs.open_sync(&theme_path).await?;
         let theme = serde_json_lenient::from_reader(reader)?;
+
+        Ok(theme)
+    }
+
+    /// Loads the user theme from the specified path and adds it to the registry.
+    pub async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+        let theme = Self::read_user_theme(theme_path, fs).await?;
 
         self.insert_user_theme_families([theme]);
 
