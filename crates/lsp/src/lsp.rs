@@ -1,5 +1,3 @@
-mod header_reader;
-
 use log::warn;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
@@ -32,6 +30,8 @@ use std::{
 };
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
+
+const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
@@ -324,9 +324,7 @@ impl LanguageServer {
         loop {
             buffer.clear();
 
-            header_reader::read_headers(&mut stdout, &mut buffer)
-                .await
-                .context("cannot read LSP message header")?;
+            read_headers(&mut stdout, &mut buffer).await?;
 
             let headers = std::str::from_utf8(&buffer)?;
 
@@ -1225,6 +1223,26 @@ impl FakeLanguageServer {
     }
 }
 
+pub(self) async fn read_headers<Stdout>(
+    reader: &mut BufReader<Stdout>,
+    buffer: &mut Vec<u8>,
+) -> Result<()>
+where
+    Stdout: AsyncRead + Unpin + Send + 'static,
+{
+    loop {
+        if buffer.len() >= HEADER_DELIMITER.len()
+            && buffer[(buffer.len() - HEADER_DELIMITER.len())..] == HEADER_DELIMITER[..]
+        {
+            return Ok(());
+        }
+
+        if reader.read_until(b'\n', buffer).await? == 0 {
+            return Err(anyhow!("cannot read LSP message headers"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1297,5 +1315,29 @@ mod tests {
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_read_headers() {
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Length: 123\r\n\r\n" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(buf, b"Content-Length: 123\r\n\r\n");
+
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n{\"somecontent\":123}" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(
+            buf,
+            b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n"
+        );
+
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n{\"somecontent\":true}" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(
+            buf,
+            b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n"
+        );
     }
 }
