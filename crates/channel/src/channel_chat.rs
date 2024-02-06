@@ -249,7 +249,7 @@ impl ChannelChat {
                         before_message_id,
                     })
                     .await?;
-                let loaded_messages = Self::handle_loaded_messages(
+                Self::handle_loaded_messages(
                     this,
                     user_store,
                     rpc,
@@ -381,7 +381,6 @@ impl ChannelChat {
                     message_ids: missing_ancestors,
                 })
                 .await?;
-            dbg!(&response);
             Some(messages_from_proto(response.messages, &user_store, cx).await?)
         };
         this.update(cx, |this, cx| {
@@ -389,7 +388,6 @@ impl ChannelChat {
             this.loaded_all_messages = loaded_all_messages;
             this.insert_messages(loaded_messages, cx);
             if let Some(loaded_ancestors) = loaded_ancestors {
-                dbg!(&loaded_ancestors);
                 this.insert_messages(loaded_ancestors, cx);
             }
         })?;
@@ -414,7 +412,7 @@ impl ChannelChat {
                 )
                 .await?;
 
-                let pending_messages = this.update(&mut cx, |this, cx| {
+                let pending_messages = this.update(&mut cx, |this, _| {
                     this.pending_messages().cloned().collect::<Vec<_>>()
                 })?;
 
