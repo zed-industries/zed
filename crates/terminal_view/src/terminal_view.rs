@@ -311,7 +311,7 @@ impl TerminalView {
             workspace: workspace_handle,
             has_new_content: true,
             has_bell: false,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             context_menu: None,
             blink_state: true,
             blinking_on: false,
