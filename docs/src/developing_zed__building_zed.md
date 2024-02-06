@@ -11,7 +11,7 @@ git submodule update --init --recursive
 ## Dependencies
 
 - Install [Rust](https://www.rust-lang.org/tools/install)
-- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account, which is free.
+- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
 
 > Ensure you launch XCode after installing, and install the MacOS components, which is the default option.
 
