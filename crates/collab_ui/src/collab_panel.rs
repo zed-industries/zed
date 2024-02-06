@@ -175,6 +175,9 @@ enum ListEntry {
         depth: usize,
         has_children: bool,
     },
+    ChannelCall {
+        channel_id: ChannelId,
+    },
     ChannelNotes {
         channel_id: ChannelId,
     },
@@ -382,6 +385,7 @@ impl CollabPanel {
 
                 if query.is_empty() {
                     if let Some(channel_id) = room.channel_id() {
+                        self.entries.push(ListEntry::ChannelCall { channel_id });
                         self.entries.push(ListEntry::ChannelNotes { channel_id });
                         self.entries.push(ListEntry::ChannelChat { channel_id });
                     }
@@ -832,8 +836,6 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> ListItem {
         let user_id = user.id;
-        let is_current_user =
-            self.user_store.read(cx).current_user().map(|user| user.id) == Some(user_id);
         let tooltip = format!("Follow {}", user.github_login);
 
         let is_call_admin = ActiveCall::global(cx).read(cx).room().is_some_and(|room| {
@@ -846,12 +848,6 @@ impl CollabPanel {
             .selected(is_selected)
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
-            } else if is_current_user {
-                IconButton::new("leave-call", IconName::Exit)
-                    .style(ButtonStyle::Subtle)
-                    .on_click(move |_, cx| Self::leave_call(cx))
-                    .tooltip(|cx| Tooltip::text("Leave Call", cx))
-                    .into_any_element()
             } else if role == proto::ChannelRole::Guest {
                 Label::new("Guest").color(Color::Muted).into_any_element()
             } else {
@@ -953,12 +949,56 @@ impl CollabPanel {
         }
     }
 
+    fn render_channel_call(
+        &self,
+        channel_id: ChannelId,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let is_in_call = ActiveCall::global(cx)
+            .read(cx)
+            .room()
+            .is_some_and(|room| room.read(cx).is_connected_to_livekit());
+        ListItem::new("channel-call")
+            .selected(is_selected)
+            .start_slot(
+                h_flex()
+                    .gap_1()
+                    .child(render_tree_branch(false, true, cx))
+                    .child(IconButton::new(0, IconName::AudioOn)),
+            )
+            .when(is_in_call, |el| {
+                el.end_slot(
+                    IconButton::new(1, IconName::Exit)
+                        .style(ButtonStyle::Filled)
+                        .shape(ui::IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Leave call", cx))
+                        .on_click(cx.listener(|this, _, cx| this.leave_channel_call(cx))),
+                )
+            })
+            .when(!is_in_call, |el| {
+                el.tooltip(move |cx| Tooltip::text("Join audio call", cx))
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.join_channel_call(channel_id, cx);
+                    }))
+            })
+            .child(
+                div()
+                    .text_ui()
+                    .when(is_in_call, |el| el.font_weight(FontWeight::SEMIBOLD))
+                    .child("call"),
+            )
+    }
+
     fn render_channel_notes(
         &self,
         channel_id: ChannelId,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let channel_store = self.channel_store.read(cx);
+        let has_notes_notification = channel_store.has_channel_buffer_changed(channel_id);
+
         ListItem::new("channel-notes")
             .selected(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
@@ -970,7 +1010,14 @@ impl CollabPanel {
                     .child(render_tree_branch(false, true, cx))
                     .child(IconButton::new(0, IconName::File)),
             )
-            .child(Label::new("notes"))
+            .child(
+                div()
+                    .text_ui()
+                    .when(has_notes_notification, |el| {
+                        el.font_weight(FontWeight::SEMIBOLD)
+                    })
+                    .child("notes"),
+            )
             .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
     }
 
@@ -980,6 +1027,8 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let channel_store = self.channel_store.read(cx);
+        let has_messages_notification = channel_store.has_new_messages(channel_id);
         ListItem::new("channel-chat")
             .selected(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
@@ -991,7 +1040,14 @@ impl CollabPanel {
                     .child(render_tree_branch(false, false, cx))
                     .child(IconButton::new(0, IconName::MessageBubbles)),
             )
-            .child(Label::new("chat"))
+            .child(
+                div()
+                    .text_ui()
+                    .when(has_messages_notification, |el| {
+                        el.font_weight(FontWeight::SEMIBOLD)
+                    })
+                    .child("chat"),
+            )
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
     }
 
@@ -1420,6 +1476,9 @@ impl CollabPanel {
                     }
                     ListEntry::ChannelInvite(channel) => {
                         self.respond_to_channel_invite(channel.id, true, cx)
+                    }
+                    ListEntry::ChannelCall { channel_id } => {
+                        self.join_channel_call(*channel_id, cx)
                     }
                     ListEntry::ChannelNotes { channel_id } => {
                         self.open_channel_notes(*channel_id, cx)
@@ -1899,6 +1958,22 @@ impl CollabPanel {
         .detach_and_prompt_err("Failed to join channel", cx, |_, _| None)
     }
 
+    fn join_channel_call(&mut self, _channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
+            return;
+        };
+
+        room.update(cx, |room, cx| room.enable_audio(cx));
+    }
+
+    fn leave_channel_call(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
+            return;
+        };
+
+        room.update(cx, |room, cx| room.disable_audio(cx));
+    }
+
     fn join_channel_chat(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -2024,6 +2099,9 @@ impl CollabPanel {
             ListEntry::ParticipantScreen { peer_id, is_last } => self
                 .render_participant_screen(*peer_id, *is_last, is_selected, cx)
                 .into_any_element(),
+            ListEntry::ChannelCall { channel_id } => self
+                .render_channel_call(*channel_id, is_selected, cx)
+                .into_any_element(),
             ListEntry::ChannelNotes { channel_id } => self
                 .render_channel_notes(*channel_id, is_selected, cx)
                 .into_any_element(),
@@ -2089,7 +2167,6 @@ impl CollabPanel {
         is_collapsed: bool,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        let mut channel_link = None;
         let mut channel_tooltip_text = None;
         let mut channel_icon = None;
 
@@ -2100,13 +2177,12 @@ impl CollabPanel {
 
                     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
 
-                    channel_link = Some(channel.link());
                     (channel_icon, channel_tooltip_text) = match channel.visibility {
                         proto::ChannelVisibility::Public => {
-                            (Some("icons/public.svg"), Some("Copy public channel link."))
+                            (Some(IconName::Public), Some("Close Channel"))
                         }
                         proto::ChannelVisibility::Members => {
-                            (Some("icons/hash.svg"), Some("Copy private channel link."))
+                            (Some(IconName::Hash), Some("Close Channel"))
                         }
                     };
 
@@ -2128,17 +2204,10 @@ impl CollabPanel {
         };
 
         let button = match section {
-            Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link.clone();
-                IconButton::new("channel-link", IconName::Copy)
-                    .icon_size(IconSize::Small)
-                    .size(ButtonSize::None)
-                    .visible_on_hover("section-header")
-                    .on_click(move |_, cx| {
-                        let item = ClipboardItem::new(channel_link_copy.clone());
-                        cx.write_to_clipboard(item)
-                    })
-                    .tooltip(|cx| Tooltip::text("Copy channel link", cx))
+            Section::ActiveCall => channel_icon.map(|_| {
+                IconButton::new("channel-link", IconName::Close)
+                    .on_click(move |_, cx| Self::leave_call(cx))
+                    .tooltip(|cx| Tooltip::text("Close channel", cx))
                     .into_any_element()
             }),
             Section::Contacts => Some(
@@ -2172,6 +2241,9 @@ impl CollabPanel {
                         .on_toggle(cx.listener(move |this, _, cx| {
                             this.toggle_section_expanded(section, cx);
                         }))
+                })
+                .when_some(channel_icon, |el, channel_icon| {
+                    el.start_slot(Icon::new(channel_icon).color(Color::Muted))
                 })
                 .inset(true)
                 .end_slot::<AnyElement>(button)
@@ -2478,6 +2550,7 @@ impl CollabPanel {
                         }),
                     )
                     .on_click(cx.listener(move |this, _, cx| {
+                        this.join_channel(channel_id, cx);
                         this.open_channel_notes(channel_id, cx);
                         this.join_channel_chat(channel_id, cx);
                     }))
@@ -2496,61 +2569,24 @@ impl CollabPanel {
                         .color(Color::Muted),
                     )
                     .child(
-                        h_flex()
-                            .id(channel_id as usize)
-                            .child(Label::new(channel.name.clone()))
-                            .children(face_pile.map(|face_pile| face_pile.p_1())),
+                        h_flex().id(channel_id as usize).child(
+                            div()
+                                .text_ui()
+                                .when(has_messages_notification || has_notes_notification, |el| {
+                                    el.font_weight(FontWeight::SEMIBOLD)
+                                })
+                                .child(channel.name.clone()),
+                        ),
                     ),
             )
-            .child(
+            .children(face_pile.map(|face_pile| {
                 h_flex()
                     .absolute()
                     .right(rems(0.))
                     .z_index(1)
                     .h_full()
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap_1()
-                            .px_1()
-                            .child(
-                                IconButton::new("channel_chat", IconName::MessageBubbles)
-                                    .style(ButtonStyle::Filled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_messages_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.join_channel_chat(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel chat", cx))
-                                    .when(!has_messages_notification, |this| {
-                                        this.visible_on_hover("")
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("channel_notes", IconName::File)
-                                    .style(ButtonStyle::Filled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_notes_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.open_channel_notes(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel notes", cx))
-                                    .when(!has_notes_notification, |this| {
-                                        this.visible_on_hover("")
-                                    }),
-                            ),
-                    ),
-            )
+                    .child(face_pile.p_1())
+            }))
             .tooltip({
                 let channel_store = self.channel_store.clone();
                 move |cx| {
@@ -2754,6 +2790,14 @@ impl PartialEq for ListEntry {
                     return channel_1.id == channel_2.id;
                 }
             }
+            ListEntry::ChannelCall { channel_id } => {
+                if let ListEntry::ChannelCall {
+                    channel_id: other_id,
+                } = other
+                {
+                    return channel_id == other_id;
+                }
+            }
             ListEntry::ChannelNotes { channel_id } => {
                 if let ListEntry::ChannelNotes {
                     channel_id: other_id,
@@ -2852,7 +2896,7 @@ impl Render for JoinChannelTooltip {
                 .read(cx)
                 .channel_participants(self.channel_id);
 
-            div.child(Label::new("Join Channel"))
+            div.child(Label::new("Open Channel"))
                 .children(participants.iter().map(|participant| {
                     h_flex()
                         .gap_2()

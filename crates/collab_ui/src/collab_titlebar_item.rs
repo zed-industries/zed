@@ -185,7 +185,7 @@ impl Render for CollabTitlebarItem {
                         let is_local = project.is_local();
                         let is_shared = is_local && project.is_shared();
                         let is_muted = room.is_muted();
-                        let is_audio_enabled = room.audio_enabled().unwrap_or(false);
+                        let is_connected_to_livekit = room.is_connected_to_livekit();
                         let is_screen_sharing = room.is_screen_sharing();
                         let read_only = room.read_only();
 
@@ -220,11 +220,11 @@ impl Render for CollabTitlebarItem {
                                 )),
                             )
                         })
-                        .when(is_audio_enabled, |el| {
+                        .when(is_connected_to_livekit, |el| {
                             el.child(
                                 div()
                                     .child(
-                                        IconButton::new("leave-call", ui::IconName::AudioOff)
+                                        IconButton::new("leave-call", ui::IconName::Exit)
                                             .style(ButtonStyle::Subtle)
                                             .tooltip(|cx| Tooltip::text("Leave call", cx))
                                             .icon_size(IconSize::Small)
@@ -238,10 +238,10 @@ impl Render for CollabTitlebarItem {
                                                 })
                                             }),
                                     )
-                                    .pr_2(),
+                                    .pl_2(),
                             )
                         })
-                        .when(!read_only && is_audio_enabled, |this| {
+                        .when(!read_only && is_connected_to_livekit, |this| {
                             this.child(
                                 IconButton::new(
                                     "mute-microphone",
@@ -268,7 +268,7 @@ impl Render for CollabTitlebarItem {
                                 .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
                         })
-                        .when(!read_only && is_audio_enabled, |this| {
+                        .when(!read_only && is_connected_to_livekit, |this| {
                             this.child(
                                 IconButton::new("screen-share", ui::IconName::Screen)
                                     .style(ButtonStyle::Subtle)
