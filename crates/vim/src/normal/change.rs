@@ -106,19 +106,14 @@ fn expand_changed_word_selection(
             .unwrap_or_default();
 
         if in_word {
-            selection.end = movement::find_boundary(
-                map,
-                selection.end,
-                FindRange::MultiLine,
-                |left, right| {
+            selection.end =
+                movement::find_boundary(map, selection.end, FindRange::MultiLine, |left, right| {
                     let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
                     let right_kind =
                         coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
                     left_kind != right_kind && left_kind != CharKind::Whitespace
-                },
-                false,
-            );
+                });
             true
         } else {
             Motion::NextWordStart { ignore_punctuation }.expand_selection(

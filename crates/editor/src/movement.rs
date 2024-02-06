@@ -283,13 +283,10 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
 
-    find_boundary(
-        map,
-        point,
-        FindRange::MultiLine,
-        |left, right| char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace(),
-        false,
-    )
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace()
+            || right == '\n'
+    })
 }
 
 /// Returns a position of the next subword boundary, where a subword is defined as a run of
@@ -299,19 +296,13 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
 
-    find_boundary(
-        map,
-        point,
-        FindRange::MultiLine,
-        |left, right| {
-            let is_word_end =
-                (char_kind(&scope, left) != char_kind(&scope, right)) && !left.is_whitespace();
-            let is_subword_end =
-                left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
-            is_word_end || is_subword_end || right == '\n'
-        },
-        false,
-    )
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        let is_word_end =
+            (char_kind(&scope, left) != char_kind(&scope, right)) && !left.is_whitespace();
+        let is_subword_end =
+            left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+        is_word_end || is_subword_end || right == '\n'
+    })
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
@@ -405,8 +396,9 @@ pub fn find_preceding_boundary(
 /// Scans for a boundary following the given start point until a boundary is found, indicated by the
 /// given predicate returning true. The predicate is called with the character to the left and right
 /// of the candidate boundary location, and will be called with `\n` characters indicating the start
-/// or end of a line.
-pub fn find_boundary(
+/// or end of a line. The function supports optionally returning the point just before the boundary
+/// is found via return_point_before_boundary.
+pub fn find_boundary_point(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     find_range: FindRange,
@@ -435,6 +427,24 @@ pub fn find_boundary(
         prev_ch = Some(ch);
     }
     map.clip_point(offset.to_display_point(map), Bias::Right)
+}
+
+pub fn find_boundary(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    find_range: FindRange,
+    is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    return find_boundary_point(map, from, find_range, is_boundary, false);
+}
+
+pub fn find_boundary_exclusive(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    find_range: FindRange,
+    is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    return find_boundary_point(map, from, find_range, is_boundary, true);
 }
 
 /// Returns an iterator over the characters following a given offset in the [`DisplaySnapshot`].
@@ -780,7 +790,6 @@ mod tests {
                     display_points[0],
                     FindRange::MultiLine,
                     is_boundary,
-                    false
                 ),
                 display_points[1]
             );
