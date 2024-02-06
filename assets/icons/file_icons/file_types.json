@@ -25,6 +25,7 @@
         "doc": "document",
         "docx": "document",
         "eex": "elixir",
+        "elm": "elm",
         "erl": "erlang",
         "escript": "erlang",
         "eslintrc": "eslint",
@@ -154,6 +155,9 @@
         },
         "elixir": {
             "icon": "icons/file_icons/elixir.svg"
+        },
+        "elm": {
+            "icon": "icons/file_icons/elm.svg"
         },
         "erlang": {
             "icon": "icons/file_icons/erlang.svg"
