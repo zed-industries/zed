@@ -290,9 +290,15 @@ pub fn next_word_end(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayP
         *point.column_mut() = 0;
     }
 
-    find_boundary(map, point, FindRange::MultiLine, |left, right| {
-        (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
-    })
+    find_boundary(
+        map,
+        point,
+        FindRange::MultiLine,
+        |left, right| {
+            (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
+        },
+        false,
+    )
 }
 
 /// Returns a position of the next subword boundary, where a subword is defined as a run of
@@ -302,13 +308,19 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
 
-    find_boundary(map, point, FindRange::MultiLine, |left, right| {
-        let is_word_end =
-            (char_kind(&scope, left) != char_kind(&scope, right)) && !left.is_whitespace();
-        let is_subword_end =
-            left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end || right == '\n'
-    })
+    find_boundary(
+        map,
+        point,
+        FindRange::MultiLine,
+        |left, right| {
+            let is_word_end =
+                (char_kind(&scope, left) != char_kind(&scope, right)) && !left.is_whitespace();
+            let is_subword_end =
+                left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+            is_word_end || is_subword_end || right == '\n'
+        },
+        false,
+    )
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
@@ -408,6 +420,7 @@ pub fn find_boundary(
     from: DisplayPoint,
     find_range: FindRange,
     mut is_boundary: impl FnMut(char, char) -> bool,
+    return_before_boundary: bool,
 ) -> DisplayPoint {
     let mut offset = from.to_offset(&map, Bias::Right);
     let mut prev_offset = offset;
@@ -419,8 +432,11 @@ pub fn find_boundary(
         }
         if let Some(prev_ch) = prev_ch {
             if is_boundary(prev_ch, ch) {
-                // We want to return the point *before* the boundary
-                return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+                if return_before_boundary {
+                    return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+                } else {
+                    break;
+                }
             }
         }
         prev_offset = offset;
@@ -772,7 +788,8 @@ mod tests {
                     &snapshot,
                     display_points[0],
                     FindRange::MultiLine,
-                    is_boundary
+                    is_boundary,
+                    false
                 ),
                 display_points[1]
             );

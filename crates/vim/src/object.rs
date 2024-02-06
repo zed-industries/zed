@@ -221,10 +221,16 @@ fn in_word(
         },
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
-            != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
-    });
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        |left, right| {
+            coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
+                != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
+        },
+        false,
+    );
 
     Some(start..end)
 }
@@ -292,18 +298,24 @@ fn around_next_word(
     );
 
     let mut word_found = false;
-    let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
-        let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-        let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::MultiLine,
+        |left, right| {
+            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-        let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
+            let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
 
-        if right_kind != CharKind::Whitespace {
-            word_found = true;
-        }
+            if right_kind != CharKind::Whitespace {
+                word_found = true;
+            }
 
-        found
-    });
+            found
+        },
+        false,
+    );
 
     Some(start..end)
 }

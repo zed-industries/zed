@@ -768,18 +768,24 @@ pub(crate) fn next_word_start(
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
         let mut crossed_newline = false;
-        point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
-            let at_newline = right == '\n';
+        point = movement::find_boundary(
+            map,
+            point,
+            FindRange::MultiLine,
+            |left, right| {
+                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let at_newline = right == '\n';
 
-            let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
-                || at_newline && crossed_newline
-                || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+                let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                    || at_newline && crossed_newline
+                    || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
-            crossed_newline |= at_newline;
-            found
-        })
+                crossed_newline |= at_newline;
+                found
+            },
+            true,
+        )
     }
     point
 }
@@ -799,12 +805,18 @@ fn next_word_end(
             *point.column_mut() = 0;
         }
 
-        point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+        point = movement::find_boundary(
+            map,
+            point,
+            FindRange::MultiLine,
+            |left, right| {
+                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-            left_kind != right_kind && left_kind != CharKind::Whitespace
-        });
+                left_kind != right_kind && left_kind != CharKind::Whitespace
+            },
+            true,
+        );
         point = map.clip_point(point, Bias::Left);
     }
     point
@@ -966,10 +978,16 @@ fn find_forward(
 
     for _ in 0..times {
         found = false;
-        to = find_boundary(map, to, FindRange::SingleLine, |_, right| {
-            found = right == target;
-            found
-        });
+        to = find_boundary(
+            map,
+            to,
+            FindRange::SingleLine,
+            |_, right| {
+                found = right == target;
+                found
+            },
+            true,
+        );
     }
 
     if found {
