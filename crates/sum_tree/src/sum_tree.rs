@@ -4,6 +4,7 @@ mod tree_map;
 use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
 use std::marker::PhantomData;
+use std::mem;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
 pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
 
@@ -133,9 +134,72 @@ impl<T: Item> SumTree<T> {
         iter: I,
         cx: &<T::Summary as Summary>::Context,
     ) -> Self {
-        let mut tree = Self::new();
-        tree.extend(iter, cx);
-        tree
+        let mut nodes = Vec::new();
+        let mut current_leaf = Some(Node::Leaf {
+            summary: T::Summary::default(),
+            items: ArrayVec::new(),
+            item_summaries: ArrayVec::new(),
+        });
+        for item in iter {
+            let leaf = current_leaf.get_or_insert_with(|| Node::Leaf {
+                summary: T::Summary::default(),
+                items: ArrayVec::new(),
+                item_summaries: ArrayVec::new(),
+            });
+            let Node::Leaf {
+                summary,
+                items,
+                item_summaries,
+            } = leaf
+            else {
+                unreachable!()
+            };
+            let item_summary = item.summary();
+            <T::Summary as Summary>::add_summary(summary, &item_summary, cx);
+            item_summaries.push(item_summary);
+            items.push(item);
+
+            if items.len() == 2 * TREE_BASE {
+                nodes.extend(current_leaf.take());
+            }
+        }
+        nodes.extend(current_leaf.take());
+
+        let mut parent_nodes = Vec::new();
+        let mut height = 0;
+        while nodes.len() > 1 {
+            height += 1;
+            let mut current_parent_node = None;
+            for child_node in nodes.drain(..) {
+                let parent_node = current_parent_node.get_or_insert_with(|| Node::Internal {
+                    summary: T::Summary::default(),
+                    height,
+                    child_summaries: ArrayVec::new(),
+                    child_trees: ArrayVec::new(),
+                });
+                let Node::Internal {
+                    summary,
+                    child_summaries,
+                    child_trees,
+                    ..
+                } = parent_node
+                else {
+                    unreachable!()
+                };
+                let child_summary = child_node.summary();
+                <T::Summary as Summary>::add_summary(summary, child_summary, cx);
+                child_summaries.push(child_summary.clone());
+                child_trees.push(Self(Arc::new(child_node)));
+
+                if child_trees.len() == 2 * TREE_BASE {
+                    parent_nodes.extend(current_parent_node.take());
+                }
+            }
+            parent_nodes.extend(current_parent_node.take());
+            mem::swap(&mut nodes, &mut parent_nodes);
+        }
+
+        Self(Arc::new(nodes.pop().unwrap()))
     }
 
     #[allow(unused)]
@@ -251,39 +315,7 @@ impl<T: Item> SumTree<T> {
     where
         I: IntoIterator<Item = T>,
     {
-        let mut leaf: Option<Node<T>> = None;
-
-        for item in iter {
-            if leaf.is_some() && leaf.as_ref().unwrap().items().len() == 2 * TREE_BASE {
-                self.append(SumTree(Arc::new(leaf.take().unwrap())), cx);
-            }
-
-            if leaf.is_none() {
-                leaf = Some(Node::Leaf::<T> {
-                    summary: T::Summary::default(),
-                    items: ArrayVec::new(),
-                    item_summaries: ArrayVec::new(),
-                });
-            }
-
-            if let Some(Node::Leaf {
-                summary,
-                items,
-                item_summaries,
-            }) = leaf.as_mut()
-            {
-                let item_summary = item.summary();
-                <T::Summary as Summary>::add_summary(summary, &item_summary, cx);
-                items.push(item);
-                item_summaries.push(item_summary);
-            } else {
-                unreachable!()
-            }
-        }
-
-        if leaf.is_some() {
-            self.append(SumTree(Arc::new(leaf.take().unwrap())), cx);
-        }
+        self.append(Self::from_iter(iter, cx), cx);
     }
 
     pub fn push(&mut self, item: T, cx: &<T::Summary as Summary>::Context) {
