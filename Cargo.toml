@@ -92,6 +92,90 @@ default-members = ["crates/zed"]
 resolver = "2"
 
 [workspace.dependencies]
+activity_indicator = { path = "crates/activity_indicator" }
+ai = { path = "crates/ai" }
+assets = { path = "crates/assets" }
+assistant = { path = "crates/assistant" }
+audio = { path = "crates/audio" }
+auto_update = { path = "crates/auto_update" }
+breadcrumbs = { path = "crates/breadcrumbs" }
+call = { path = "crates/call" }
+channel = { path = "crates/channel" }
+cli = { path = "crates/cli" }
+client = { path = "crates/client" }
+clock = { path = "crates/clock" }
+collab = { path = "crates/collab" }
+collab_ui = { path = "crates/collab_ui" }
+collections = { path = "crates/collections" }
+color = { path = "crates/color" }
+command_palette = { path = "crates/command_palette" }
+copilot = { path = "crates/copilot" }
+copilot_ui = { path = "crates/copilot_ui" }
+db = { path = "crates/db" }
+diagnostics = { path = "crates/diagnostics" }
+editor = { path = "crates/editor" }
+feature_flags = { path = "crates/feature_flags" }
+feedback = { path = "crates/feedback" }
+file_finder = { path = "crates/file_finder" }
+fs = { path = "crates/fs" }
+fsevent = { path = "crates/fsevent" }
+fuzzy = { path = "crates/fuzzy" }
+git = { path = "crates/git" }
+go_to_line = { path = "crates/go_to_line" }
+gpui = { path = "crates/gpui" }
+gpui_macros = { path = "crates/gpui_macros" }
+install_cli = { path = "crates/install_cli" }
+journal = { path = "crates/journal" }
+language = { path = "crates/language" }
+language_selector = { path = "crates/language_selector" }
+language_tools = { path = "crates/language_tools" }
+live_kit_client = { path = "crates/live_kit_client" }
+live_kit_server = { path = "crates/live_kit_server" }
+lsp = { path = "crates/lsp" }
+markdown_preview = { path = "crates/markdown_preview" }
+media = { path = "crates/media" }
+menu = { path = "crates/menu" }
+multi_buffer = { path = "crates/multi_buffer" }
+node_runtime = { path = "crates/node_runtime" }
+notifications = { path = "crates/notifications" }
+outline = { path = "crates/outline" }
+picker = { path = "crates/picker" }
+plugin = { path = "crates/plugin" }
+plugin_macros = { path = "crates/plugin_macros" }
+prettier = { path = "crates/prettier" }
+project = { path = "crates/project" }
+project_panel = { path = "crates/project_panel" }
+project_symbols = { path = "crates/project_symbols" }
+quick_action_bar = { path = "crates/quick_action_bar" }
+recent_projects = { path = "crates/recent_projects" }
+release_channel = { path = "crates/release_channel" }
+rich_text = { path = "crates/rich_text" }
+rope = { path = "crates/rope" }
+rpc = { path = "crates/rpc" }
+search = { path = "crates/search" }
+semantic_index = { path = "crates/semantic_index" }
+settings = { path = "crates/settings" }
+snippet = { path = "crates/snippet" }
+sqlez = { path = "crates/sqlez" }
+sqlez_macros = { path = "crates/sqlez_macros" }
+story = { path = "crates/story" }
+storybook = { path = "crates/storybook" }
+sum_tree = { path = "crates/sum_tree" }
+terminal = { path = "crates/terminal" }
+terminal_view = { path = "crates/terminal_view" }
+text = { path = "crates/text" }
+theme = { path = "crates/theme" }
+theme_importer = { path = "crates/theme_importer" }
+theme_selector = { path = "crates/theme_selector" }
+ui = { path = "crates/ui" }
+util = { path = "crates/util" }
+vcs_menu = { path = "crates/vcs_menu" }
+vim = { path = "crates/vim" }
+welcome = { path = "crates/welcome" }
+workspace = { path = "crates/workspace" }
+zed = { path = "crates/zed" }
+zed_actions = { path = "crates/zed_actions" }
+
 anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-trait = "0.1"
@@ -157,7 +241,7 @@ tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = 
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
 tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskell", rev = "cf98de23e4285b8e6bcb57b050ef2326e2cc284b" }
-tree-sitter-hcl = {git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0"}
+tree-sitter-hcl = { git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0" }
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }

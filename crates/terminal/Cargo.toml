@@ -14,10 +14,10 @@ doctest = false
 # needed for "a few weeks" until alacritty 0.13.2 is out
 alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "2d2b894c3b869fadc78fce9d72cb5c8d2b764cac" }
 anyhow.workspace = true
-db = { path = "../db" }
+db.workspace = true
 dirs = "4.0.0"
 futures.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 itertools = "0.10"
 lazy_static.workspace = true
 libc = "0.2"
@@ -28,13 +28,13 @@ schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 shellexpand = "2.1.0"
 smallvec.workspace = true
 smol.workspace = true
-theme = { path = "../theme" }
+theme.workspace = true
 thiserror.workspace = true
-util = { path = "../util" }
+util.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

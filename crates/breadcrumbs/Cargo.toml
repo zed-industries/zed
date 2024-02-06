@@ -10,20 +10,20 @@ path = "src/breadcrumbs.rs"
 doctest = false
 
 [dependencies]
-collections = { path = "../collections" }
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
+collections.workspace = true
+editor.workspace = true
+gpui.workspace = true
 itertools = "0.10"
-language = { path = "../language" }
-outline = { path = "../outline" }
-project = { path = "../project" }
-search = { path = "../search" }
-settings = { path = "../settings" }
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-workspace = { path = "../workspace" }
+language.workspace = true
+outline.workspace = true
+project.workspace = true
+search.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

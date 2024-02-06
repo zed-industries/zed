@@ -14,22 +14,22 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-client = { path = "../client" }
-collections = { path = "../collections" }
-fs = { path = "../fs" }
+client.workspace = true
+collections.workspace = true
+fs.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
-language = { path = "../language" }
+gpui.workspace = true
+language.workspace = true
 log.workspace = true
-lsp = { path = "../lsp" }
-node_runtime = { path = "../node_runtime" }
+lsp.workspace = true
+node_runtime.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-util = { path = "../util" }
+util.workspace = true
 
 [dev-dependencies]
-fs = { path = "../fs",  features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
+fs = { workspace = true,  features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
