@@ -589,25 +589,28 @@ impl Render for ChatPanel {
                     )
                 }
             }))
-            .child(
-                h_flex()
-                    .when(!self.is_scrolled_to_bottom, |el| {
-                        el.border_t_1().border_color(cx.theme().colors().border)
-                    })
-                    .p_2()
-                    .map(|el| {
-                        if self.active_chat.is_some() {
-                            el.child(self.message_editor.clone())
-                        } else {
-                            el.child(
-                                div()
-                                    .rounded_md()
-                                    .h_6()
-                                    .w_full()
-                                    .bg(cx.theme().colors().editor_background),
-                            )
-                        }
-                    }),
+            .children(
+                Some(
+                    h_flex()
+                        .when(!self.is_scrolled_to_bottom, |el| {
+                            el.border_t_1().border_color(cx.theme().colors().border)
+                        })
+                        .p_2()
+                        .map(|el| {
+                            if self.active_chat.is_some() {
+                                el.child(self.message_editor.clone())
+                            } else {
+                                el.child(
+                                    div()
+                                        .rounded_md()
+                                        .h_6()
+                                        .w_full()
+                                        .bg(cx.theme().colors().editor_background),
+                                )
+                            }
+                        }),
+                )
+                .filter(|_| self.active_chat.is_some()),
             )
             .into_any()
     }
