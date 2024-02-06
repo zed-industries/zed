@@ -87,6 +87,7 @@
         "pptx": "document",
         "prettierignore": "prettier",
         "prettierrc": "prettier",
+        "prisma": "prisma",
         "profile": "terminal",
         "ps1": "terminal",
         "psd": "image",
@@ -192,6 +193,9 @@
         },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
+        },
+        "prisma": {
+            "icon": "icons/file_icons/prisma.svg"
         },
         "python": {
             "icon": "icons/file_icons/python.svg"
