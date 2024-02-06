@@ -217,7 +217,8 @@ CREATE TABLE IF NOT EXISTS "channel_messages" (
     "sender_id" INTEGER NOT NULL REFERENCES users (id),
     "body" TEXT NOT NULL,
     "sent_at" TIMESTAMP,
-    "nonce" BLOB NOT NULL
+    "nonce" BLOB NOT NULL,
+    "reply_to_message_id" INTEGER DEFAULT NULL
 );
 CREATE INDEX "index_channel_messages_on_channel_id" ON "channel_messages" ("channel_id");
 CREATE UNIQUE INDEX "index_channel_messages_on_sender_id_nonce" ON "channel_messages" ("sender_id", "nonce");
