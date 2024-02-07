@@ -257,7 +257,7 @@ fn main() {
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
-            //TODO: unblock this
+            //todo!(linux): unblock this
             #[cfg(not(target_os = "linux"))]
             upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);
@@ -919,6 +919,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     .detach();
 }
 
+//todo!(linux): Port fsevents to linux
 /// Spawns a background task to watch the themes directory for changes.
 #[cfg(target_os = "macos")]
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {

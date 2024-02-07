@@ -280,7 +280,8 @@ pub fn init(
         ],
     );
 
-    /// Produces a link error on linux due to duplicated `state_new` symbol
+    // Produces a link error on linux due to duplicated `state_new` symbol
+    // todo!(linux): Restore purescript
     #[cfg(not(target_os = "linux"))]
     language(
         "purescript",

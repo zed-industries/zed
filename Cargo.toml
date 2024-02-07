@@ -185,7 +185,7 @@ wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.
 split-debuginfo = "unpacked"
 debug = "limited"
 
-# TODO - Remove this
+# todo!(linux) - Remove this
 [profile.dev.package.blade-graphics]
 split-debuginfo = "off"
 debug = "full"

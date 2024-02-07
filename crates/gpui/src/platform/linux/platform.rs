@@ -170,14 +170,19 @@ impl Platform for LinuxPlatform {
         self.state.lock().quit_requested = true;
     }
 
+    //todo!(linux)
     fn restart(&self) {}
 
+    //todo!(linux)
     fn activate(&self, ignoring_other_apps: bool) {}
 
+    //todo!(linux)
     fn hide(&self) {}
 
+    //todo!(linux)
     fn hide_other_apps(&self) {}
 
+    //todo!(linux)
     fn unhide_other_apps(&self) {}
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -199,6 +204,7 @@ impl Platform for LinuxPlatform {
         )))
     }
 
+    //todo!(linux)
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
     }
@@ -324,6 +330,7 @@ impl Platform for LinuxPlatform {
         unimplemented!()
     }
 
+    //todo!(linux)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
 
     fn local_timezone(&self) -> UtcOffset {
@@ -334,14 +341,16 @@ impl Platform for LinuxPlatform {
         unimplemented!()
     }
 
+    //todo!(linux)
     fn set_cursor_style(&self, style: CursorStyle) {}
 
-    fn should_auto_hide_scrollbars(&self) -> bool {
-        false
-    }
+    //todo!(linux)
+    fn should_auto_hide_scrollbars(&self) -> bool {}
 
+    //todo!(linux)
     fn write_to_clipboard(&self, item: ClipboardItem) {}
 
+    //todo!(linux)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         None
     }

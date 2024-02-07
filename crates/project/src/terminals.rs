@@ -7,8 +7,8 @@ use terminal::{
     Terminal, TerminalBuilder,
 };
 
-#[cfg(target_os = "macos")]
-use std::os::unix::ffi::OsStrExt;
+// #[cfg(target_os = "macos")]
+// use std::os::unix::ffi::OsStrExt;
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModel<terminal::Terminal>>,

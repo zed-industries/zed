@@ -77,6 +77,7 @@ pub(crate) struct LinuxWindowState {
 #[derive(Clone)]
 pub(crate) struct LinuxWindow(pub(crate) Arc<LinuxWindowState>);
 
+//todo!(linux): Remove other RawWindowHandle implementation
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
     fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
         let mut wh = blade_rwh::XcbWindowHandle::empty();
@@ -287,10 +288,12 @@ impl PlatformWindow for LinuxWindow {
         self.0.inner.lock().scale_factor
     }
 
+    //todo!(linux)
     fn titlebar_height(&self) -> Pixels {
         unimplemented!()
     }
 
+    //todo!(linux)
     fn appearance(&self) -> WindowAppearance {
         unimplemented!()
     }
@@ -299,10 +302,12 @@ impl PlatformWindow for LinuxWindow {
         Rc::clone(&self.0.display)
     }
 
+    //todo!(linux)
     fn mouse_position(&self) -> Point<Pixels> {
         Point::default()
     }
 
+    //todo!(linux)
     fn modifiers(&self) -> crate::Modifiers {
         crate::Modifiers::default()
     }
@@ -311,12 +316,15 @@ impl PlatformWindow for LinuxWindow {
         self
     }
 
+    //todo!(linux)
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {}
 
+    //todo!(linux)
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         None
     }
 
+    //todo!(linux)
     fn prompt(
         &self,
         _level: crate::PromptLevel,
@@ -327,24 +335,36 @@ impl PlatformWindow for LinuxWindow {
         unimplemented!()
     }
 
+    //todo!(linux)
     fn activate(&self) {}
 
+    //todo!(linux)
     fn set_title(&mut self, title: &str) {}
 
+    //todo!(linux)
     fn set_edited(&mut self, edited: bool) {}
 
+    //todo!(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
+    // but it looks like the equivalent for Linux is GTK specific:
+    //
+    // https://docs.gtk.org/gtk3/signal.Entry.insert-emoji.html
+    //
+    // This API might need to change, or we might need to build an emoji picker into GPUI
     fn show_character_palette(&self) {
         unimplemented!()
     }
 
+    //todo!(linux)
     fn minimize(&self) {
         unimplemented!()
     }
 
+    //todo!(linux)
     fn zoom(&self) {
         unimplemented!()
     }
 
+    //todo!(linux)
     fn toggle_full_screen(&self) {
         unimplemented!()
     }
@@ -385,10 +405,12 @@ impl PlatformWindow for LinuxWindow {
         self.0.callbacks.lock().appearance_changed = Some(callback);
     }
 
+    //todo!(linux)
     fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
         unimplemented!()
     }
 
+    //todo!(linux)
     fn invalidate(&self) {}
 
     fn draw(&self, scene: &crate::Scene) {

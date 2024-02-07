@@ -411,7 +411,7 @@ impl BladeRenderer {
                     }
                     PrimitiveBatch::Paths(paths) => {
                         let mut encoder = pass.with(&self.pipelines.paths);
-                        //TODO: group by texture ID
+                        //todo!(linux): group by texture ID
                         for path in paths {
                             let tile = &self.path_tiles[&path.id];
                             let tex_info = self.atlas.get_texture_info(tile.texture_id);

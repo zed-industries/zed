@@ -90,7 +90,7 @@ impl PlatformDispatcher for LinuxDispatcher {
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
         self.main_sender.send(runnable).unwrap();
         // Send a message to the invisible window, forcing
-        // tha main loop to wake up and dispatch the runnable.
+        // the main loop to wake up and dispatch the runnable.
         self.xcb_connection.send_request(&x::SendEvent {
             propagate: false,
             destination: x::SendEventDest::Window(self.x_listener_window),
