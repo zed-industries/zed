@@ -15,10 +15,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeRegistry;
-use util::{
-    paths::{EXTENSIONS_DIR, EXTENSIONS_MANIFEST_PATH},
-    ResultExt,
-};
+use util::{paths::EXTENSIONS_DIR, ResultExt};
 
 #[cfg(test)]
 mod extension_store_test;
@@ -74,7 +71,6 @@ pub fn init(
     let store = cx.new_model(|cx| {
         let mut store = ExtensionStore::new(
             EXTENSIONS_DIR.clone(),
-            EXTENSIONS_MANIFEST_PATH.clone(),
             fs.clone(),
             language_registry.clone(),
             theme_registry,
@@ -97,7 +93,6 @@ pub fn init(
 impl ExtensionStore {
     pub fn new(
         extensions_dir: PathBuf,
-        manifest_path: PathBuf,
         fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
@@ -105,8 +100,8 @@ impl ExtensionStore {
     ) -> Self {
         let mut this = Self {
             manifest: Default::default(),
-            extensions_dir,
-            manifest_path,
+            extensions_dir: extensions_dir.join("installed"),
+            manifest_path: extensions_dir.join("manifest.json"),
             fs,
             language_registry,
             theme_registry,
