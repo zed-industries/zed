@@ -362,6 +362,7 @@ impl TerminalElement {
                 ..text_style.font()
             },
             underline,
+            strikethrough: None,
         };
 
         if let Some((style, range)) = hyperlink {
@@ -414,6 +415,7 @@ impl TerminalElement {
                 color: Some(theme.colors().link_text_hover),
                 wavy: false,
             }),
+            strikethrough: None,
             fade_out: None,
         };
 
@@ -427,6 +429,7 @@ impl TerminalElement {
             white_space: WhiteSpace::Normal,
             // These are going to be overridden per-cell
             underline: None,
+            strikethrough: None,
             color: theme.colors().text,
             font_weight: FontWeight::NORMAL,
         };
@@ -545,6 +548,7 @@ impl TerminalElement {
                             color: theme.colors().terminal_background,
                             background_color: None,
                             underline: Default::default(),
+                            strikethrough: None,
                         }],
                     )
                     .unwrap()

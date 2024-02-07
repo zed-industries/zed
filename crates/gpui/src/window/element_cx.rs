@@ -34,8 +34,8 @@ use crate::{
     InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
     Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
-    StackingOrder, Style, Surface, TextStyleRefinement, Underline, UnderlineStyle, Window,
-    WindowContext, SUBPIXEL_VARIANTS,
+    StackingOrder, StrikethroughStyle, Style, Surface, TextStyleRefinement, Underline,
+    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -754,6 +754,38 @@ impl<'a> ElementContext<'a> {
                 thickness: style.thickness.scale(scale_factor),
                 color: style.color.unwrap_or_default(),
                 wavy: style.wavy,
+            },
+        );
+    }
+
+    /// Paint a strikethrough into the scene for the next frame at the current z-index.
+    pub fn paint_strikethrough(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &StrikethroughStyle,
+    ) {
+        let scale_factor = self.scale_factor();
+        let height = style.thickness;
+        let bounds = Bounds {
+            origin,
+            size: size(width, height),
+        };
+        let content_mask = self.content_mask();
+        let view_id = self.parent_view_id();
+
+        let window = &mut *self.window;
+        window.next_frame.scene.insert(
+            &window.next_frame.z_index_stack,
+            Underline {
+                view_id: view_id.into(),
+                layer_id: 0,
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                thickness: style.thickness.scale(scale_factor),
+                color: style.color.unwrap_or_default(),
+                wavy: false,
             },
         );
     }
