@@ -17,15 +17,15 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-collections = { path = "../collections" }
+collections.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
-language = { path = "../language" }
+gpui.workspace = true
+language.workspace = true
 lazy_static.workspace = true
 pulldown-cmark.workspace = true
 smallvec.workspace = true
 smol.workspace = true
-sum_tree = { path = "../sum_tree" }
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-util = { path = "../util" }
+sum_tree.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true

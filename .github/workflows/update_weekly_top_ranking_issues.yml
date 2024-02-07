@@ -6,6 +6,7 @@ on:
 jobs:
     update_top_ranking_issues:
         runs-on: ubuntu-latest
+        if: github.repository_owner == 'zed-industries'
         steps:
             - uses: actions/checkout@v4
             - uses: actions/setup-python@v4

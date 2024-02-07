@@ -13,19 +13,19 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
+editor.workspace = true
+gpui.workspace = true
+language.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-menu = { path = "../menu" }
-project = { path = "../project" }
+menu.workspace = true
+project.workspace = true
 pulldown-cmark.workspace = true
-rich_text = { path = "../rich_text" }
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+rich_text.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }

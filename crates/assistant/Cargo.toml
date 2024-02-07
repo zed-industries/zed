@@ -10,44 +10,44 @@ path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
-ai = { path = "../ai" }
+ai.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
-client = { path = "../client" }
-collections = { path = "../collections" }
-editor = { path = "../editor" }
-fs = { path = "../fs" }
+client.workspace = true
+collections.workspace = true
+editor.workspace = true
+fs.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 indoc.workspace = true
 isahc.workspace = true
-language = { path = "../language" }
+language.workspace = true
 log.workspace = true
-menu = { path = "../menu" }
-multi_buffer = { path = "../multi_buffer" }
+menu.workspace = true
+multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
-project = { path = "../project" }
+project.workspace = true
 regex.workspace = true
 schemars.workspace = true
-search = { path = "../search" }
-semantic_index = { path = "../semantic_index" }
+search.workspace = true
+semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smol.workspace = true
-theme = { path = "../theme" }
+theme.workspace = true
 tiktoken-rs.workspace = true
-ui = { path = "../ui" }
-util = { path = "../util" }
+ui.workspace = true
+util.workspace = true
 uuid.workspace = true
-workspace = { path = "../workspace" }
+workspace.workspace = true
 
 [dev-dependencies]
-ai = { path = "../ai", features = ["test-support"] }
+ai = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 log.workspace = true
-project = { path = "../project", features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 rand.workspace = true

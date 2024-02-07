@@ -14,5 +14,5 @@ libsqlite3-sys = { version = "0.26", features = ["bundled"] }
 parking_lot.workspace = true
 smol.workspace = true
 thread_local = "1.1.4"
-util = { path = "../util" }
+util.workspace = true
 uuid.workspace = true

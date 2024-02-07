@@ -67,6 +67,7 @@ pub fn init(
     };
 
     language("bash", tree_sitter_bash::language(), vec![]);
+    language("beancount", tree_sitter_beancount::language(), vec![]);
     language(
         "c",
         tree_sitter_c::language(),
@@ -321,6 +322,8 @@ pub fn init(
         vec![Arc::new(uiua::UiuaLanguageServer {})],
     );
     language("proto", tree_sitter_proto::language(), vec![]);
+    language("terraform", tree_sitter_hcl::language(), vec![]);
+    language("hcl", tree_sitter_hcl::language(), vec![]);
 
     if let Ok(children) = std::fs::read_dir(&*PLUGINS_DIR) {
         for child in children {
