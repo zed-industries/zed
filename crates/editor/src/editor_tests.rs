@@ -15,7 +15,8 @@ use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry, Override, Point,
+    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageRegistry,
+    Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -5077,7 +5078,10 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5196,7 +5200,10 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5318,7 +5325,10 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             // Enable Prettier formatting for the same buffer, and ensure
             // LSP is called instead of Prettier.
             prettier_parser_name: Some("test_parser".to_string()),
@@ -7747,7 +7757,10 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "{".to_string(),
@@ -7859,7 +7872,10 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let mut language = Language::new(
         LanguageConfig {
             name: Arc::clone(&language_name),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -8086,7 +8102,10 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     let mut cx = EditorLspTestContext::new(
         Language::new(
             LanguageConfig {
-                path_suffixes: vec!["jsx".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["jsx".into()],
+                    ..Default::default()
+                },
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
@@ -8187,7 +8206,10 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },

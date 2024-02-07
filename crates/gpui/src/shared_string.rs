@@ -5,7 +5,7 @@ use util::arc_cow::ArcCow;
 
 /// A shared string is an immutable string that can be cheaply cloned in GPUI
 /// tasks. Essentially an abstraction over an `Arc<str>` and `&'static str`,
-#[derive(Deref, DerefMut, Eq, PartialEq, Hash, Clone)]
+#[derive(Deref, DerefMut, Eq, PartialEq, PartialOrd, Ord, Hash, Clone)]
 pub struct SharedString(ArcCow<'static, str>);
 
 impl Default for SharedString {

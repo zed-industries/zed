@@ -7,7 +7,7 @@ use crate::{
 use ai::test::FakeEmbeddingProvider;
 
 use gpui::{Task, TestAppContext};
-use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
+use language::{Language, LanguageConfig, LanguageMatcher, LanguageRegistry, ToOffset};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
@@ -1251,7 +1251,10 @@ fn js_lang() -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Javascript".into(),
-                path_suffixes: vec!["js".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["js".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_typescript::language_tsx()),
@@ -1343,7 +1346,10 @@ fn rust_lang() -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".into()],
+                    ..Default::default()
+                },
                 collapsed_placeholder: " /* ... */ ".to_string(),
                 ..Default::default()
             },
@@ -1393,7 +1399,10 @@ fn json_lang() -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "JSON".into(),
-                path_suffixes: vec!["json".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["json".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_json::language()),
@@ -1421,7 +1430,10 @@ fn toml_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "TOML".into(),
-            path_suffixes: vec!["toml".into()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["toml".into()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_toml::language()),
@@ -1433,7 +1445,10 @@ fn cpp_lang() -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "CPP".into(),
-                path_suffixes: vec!["cpp".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["cpp".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_cpp::language()),
@@ -1513,7 +1528,10 @@ fn lua_lang() -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Lua".into(),
-                path_suffixes: vec!["lua".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["lua".into()],
+                    ..Default::default()
+                },
                 collapsed_placeholder: "--[ ... ]--".to_string(),
                 ..Default::default()
             },
@@ -1542,7 +1560,10 @@ fn php_lang() -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "PHP".into(),
-                path_suffixes: vec!["php".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["php".into()],
+                    ..Default::default()
+                },
                 collapsed_placeholder: "/* ... */".into(),
                 ..Default::default()
             },
@@ -1597,7 +1618,10 @@ fn ruby_lang() -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Ruby".into(),
-                path_suffixes: vec!["rb".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rb".into()],
+                    ..Default::default()
+                },
                 collapsed_placeholder: "# ...".to_string(),
                 ..Default::default()
             },
@@ -1638,7 +1662,10 @@ fn elixir_lang() -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Elixir".into(),
-                path_suffixes: vec!["rs".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_elixir::language()),

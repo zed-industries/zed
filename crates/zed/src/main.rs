@@ -48,7 +48,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
     http::{self, HttpClient, ZedHttpClient},
-    paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR, PLUGINS_DIR},
+    paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt,
 };
 use uuid::Uuid;
@@ -173,6 +173,8 @@ fn main() {
             cx,
         );
         assistant::init(cx);
+
+        extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
 
         load_user_themes_in_background(fs.clone(), cx);
         #[cfg(target_os = "macos")]
@@ -982,20 +984,13 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     .detach()
 }
 
+#[cfg(debug_assertions)]
 async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
     let reload_debounce = Duration::from_millis(250);
 
-    let mut events = fs.watch(PLUGINS_DIR.as_ref(), reload_debounce).await;
-
-    #[cfg(debug_assertions)]
-    {
-        events = futures::stream::select(
-            events,
-            fs.watch("crates/zed/src/languages".as_ref(), reload_debounce)
-                .await,
-        )
-        .boxed();
-    }
+    let mut events = fs
+        .watch("crates/zed/src/languages".as_ref(), reload_debounce)
+        .await;
 
     while (events.next().await).is_some() {
         languages.reload();
@@ -1025,3 +1020,6 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
+
+#[cfg(not(debug_assertions))]
+async fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>) {}

@@ -21,6 +21,7 @@ members = [
     "crates/db",
     "crates/diagnostics",
     "crates/editor",
+    "crates/extension",
     "crates/feature_flags",
     "crates/feedback",
     "crates/file_finder",
@@ -30,11 +31,8 @@ members = [
     "crates/git",
     "crates/go_to_line",
     "crates/gpui",
-    "crates/gpui",
-    "crates/gpui_macros",
     "crates/gpui_macros",
     "crates/install_cli",
-    "crates/journal",
     "crates/journal",
     "crates/language",
     "crates/language_selector",
@@ -114,6 +112,7 @@ copilot_ui = { path = "crates/copilot_ui" }
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
+extension = { path = "crates/extension" }
 feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }

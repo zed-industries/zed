@@ -1,4 +1,5 @@
 name = "CSharp"
+grammar = "c_sharp"
 path_suffixes = ["cs"]
 line_comments = ["// "]
 autoclose_before = ";:.,=}])>"

@@ -1,4 +1,5 @@
 name = "Terraform"
+grammar = "terraform"
 path_suffixes = ["tf", "tfvars"]
 line_comments = ["# ", "// "]
 block_comment = ["/*", "*/"]
