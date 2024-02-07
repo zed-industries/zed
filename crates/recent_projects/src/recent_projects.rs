@@ -10,7 +10,7 @@ use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceLocation, WORKSPACE_DB};
 
@@ -139,7 +139,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
-        "Recent Projects...".into()
+        "Search recent Projects...".into()
     }
 
     fn match_count(&self) -> usize {
@@ -235,13 +235,16 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(
-                    v_flex()
-                        .child(highlighted_location.names)
-                        .when(self.render_paths, |this| {
-                            this.children(highlighted_location.paths)
-                        }),
-                ),
+                .child(h_flex().gap_2().child(highlighted_location.names).when(
+                    self.render_paths,
+                    |this| {
+                        this.children(highlighted_location.paths.into_iter().map(|path| {
+                            HighlightedLabel::new(path.text, path.highlight_positions)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                        }))
+                    },
+                )),
         )
     }
 }
