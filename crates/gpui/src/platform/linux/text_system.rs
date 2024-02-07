@@ -129,7 +129,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         let metrics = self.0.read().fonts[font_id.0].as_swash().metrics(&[]);
         Ok(Bounds {
             origin: point(0.0, 0.0), // do we need an origin?
-            size: size(metrics.max_width, metrics.ascent + metrics.descent), // this height is probably incorect
+            size: size(metrics.average_width, metrics.ascent + metrics.descent), // this height is probably incorect
         })
     }
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
