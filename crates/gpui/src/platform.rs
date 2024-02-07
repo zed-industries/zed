@@ -559,29 +559,30 @@ pub enum WindowBounds {
     Fixed(Bounds<GlobalPixels>),
 }
 
-/// The appearance of the window, as defined by the operating system
-/// On macOS, this corresponds to named [NSAppearance](https://developer.apple.com/documentation/appkit/nsappearance)
-/// values
+/// The appearance of the window, as defined by the operating system.
+///
+/// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
+/// values.
 #[derive(Copy, Clone, Debug)]
 pub enum WindowAppearance {
-    /// A light appearance
+    /// A light appearance.
     ///
-    /// on macOS, this corresponds to the `aqua` appearance
+    /// On macOS, this corresponds to the `aqua` appearance.
     Light,
 
-    /// A light appearance with vibrant colors
+    /// A light appearance with vibrant colors.
     ///
-    /// on macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance
+    /// On macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance.
     VibrantLight,
 
-    /// A dark appearance
+    /// A dark appearance.
     ///
-    /// on macOS, this corresponds to the `darkAqua` appearance
+    /// On macOS, this corresponds to the `darkAqua` appearance.
     Dark,
 
-    /// A dark appearance with vibrant colors
+    /// A dark appearance with vibrant colors.
     ///
-    /// on macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance
+    /// On macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance.
     VibrantDark,
 }
 
