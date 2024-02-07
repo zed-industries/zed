@@ -8,7 +8,6 @@ use editor::{actions::Cancel, scroll::Autoscroll, Editor};
 use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};
-use collections::{hash_map, HashMap};
 use gpui::{
     actions, div, overlay, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
@@ -23,7 +22,14 @@ use project::{
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, ffi::OsStr, ops::Range, path::Path, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::{hash_map, HashMap},
+    ffi::OsStr,
+    ops::Range,
+    path::Path,
+    sync::Arc,
+};
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
@@ -1693,13 +1699,15 @@ impl ClipboardEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::HashSet;
     use gpui::{TestAppContext, View, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
     use project::{project_settings::ProjectSettings, FakeFs};
     use serde_json::json;
     use settings::SettingsStore;
-    use std::path::{Path, PathBuf};
+    use std::{
+        collections::HashSet,
+        path::{Path, PathBuf},
+    };
     use workspace::AppState;
 
     #[gpui::test]
@@ -3501,7 +3509,7 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
         let mut result = Vec::new();
-        let mut project_entries = HashSet::default();
+        let mut project_entries = HashSet::new();
         let mut has_editor = false;
 
         panel.update(cx, |panel, cx| {

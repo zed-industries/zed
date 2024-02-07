@@ -8,7 +8,11 @@ license = "GPL-3.0-or-later"
 [features]
 default = []
 stories = ["dep:itertools", "dep:story"]
-test-support = ["gpui/test-support", "fs/test-support", "settings/test-support"]
+test-support = [
+    "gpui/test-support",
+    "fs/test-support",
+    "settings/test-support"
+]
 
 [lib]
 path = "src/theme.rs"
@@ -16,7 +20,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
 color.workspace = true
 derive_more.workspace = true
 fs.workspace = true

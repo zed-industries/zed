@@ -733,7 +733,6 @@ fn open_settings_file(
 mod tests {
     use super::*;
     use assets::Assets;
-    use collections::HashSet;
     use editor::{scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
@@ -743,7 +742,10 @@ mod tests {
     use project::{project_settings::ProjectSettings, Project, ProjectPath};
     use serde_json::json;
     use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
-    use std::path::{Path, PathBuf};
+    use std::{
+        collections::HashSet,
+        path::{Path, PathBuf},
+    };
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},

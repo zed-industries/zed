@@ -13,7 +13,7 @@ use crate::{
     SharedString, Size, UnderlineStyle,
 };
 use anyhow::anyhow;
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, FxHashMap, FxHashSet};
 use core::fmt;
 use derive_more::Deref;
 use itertools::Itertools;
@@ -42,10 +42,10 @@ pub(crate) const SUBPIXEL_VARIANTS: u8 = 4;
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
-    font_ids_by_font: RwLock<HashMap<Font, Result<FontId>>>,
-    font_metrics: RwLock<HashMap<FontId, FontMetrics>>,
-    raster_bounds: RwLock<HashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
-    wrapper_pool: Mutex<HashMap<FontIdWithSize, Vec<LineWrapper>>>,
+    font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
+    font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
+    raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
+    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
 }
@@ -447,7 +447,7 @@ impl WindowTextSystem {
         Ok(lines)
     }
 
-    pub(crate) fn finish_frame(&self, reused_views: &HashSet<EntityId>) {
+    pub(crate) fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
         self.line_layout_cache.finish_frame(reused_views)
     }
 
