@@ -102,3 +102,5 @@ as-raw-xcb-connection = "1"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "f35bc605154e210ab6190291235889b6ddad73f1" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "f35bc605154e210ab6190291235889b6ddad73f1" }
 bytemuck = "1"
+cosmic-text = "0.10.0"
+swash = "0.1.12"

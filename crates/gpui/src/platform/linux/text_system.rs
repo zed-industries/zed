@@ -1,20 +1,15 @@
-use crate::{point, size, FontStyle, FontWeight, Point};
+use crate::{point, size, FontStyle, FontWeight, Point, ShapedGlyph};
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
     Pixels, PlatformTextSystem, RenderGlyphParams, SharedString, Size,
 };
 use anyhow::anyhow;
+use anyhow::Ok;
 use anyhow::Result;
 use collections::HashMap;
-use font_kit::{
-    font::Font as FontKitFont,
-    handle::Handle,
-    hinting::HintingOptions,
-    loader::Loader,
-    metrics::Metrics,
-    properties::{Style as FontkitStyle, Weight as FontkitWeight},
-    source::SystemSource,
-    sources::mem::MemSource,
+use cosmic_text::fontdb::Query;
+use cosmic_text::{
+    Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont, FontSystem, SwashCache,
 };
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::rect::RectF;
@@ -27,9 +22,9 @@ use std::{borrow::Cow, sync::Arc};
 pub(crate) struct LinuxTextSystem(RwLock<LinuxTextSystemState>);
 
 struct LinuxTextSystemState {
-    memory_source: MemSource,
-    system_source: SystemSource,
-    fonts: Vec<FontKitFont>,
+    swash_cache: SwashCache,
+    font_system: FontSystem,
+    fonts: Vec<Arc<CosmicTextFont>>,
     font_selections: HashMap<Font, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
@@ -42,8 +37,8 @@ unsafe impl Sync for LinuxTextSystemState {}
 impl LinuxTextSystem {
     pub(crate) fn new() -> Self {
         Self(RwLock::new(LinuxTextSystemState {
-            memory_source: MemSource::empty(),
-            system_source: SystemSource::new(),
+            font_system: FontSystem::new(),
+            swash_cache: SwashCache::new(),
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
@@ -86,32 +81,56 @@ impl PlatformTextSystem for LinuxTextSystem {
                 lock.font_ids_by_family_name[&font.family].as_ref()
             };
 
-            let candidate_properties = candidates
-                .iter()
-                .map(|font_id| lock.fonts[font_id.0].properties())
-                .collect::<SmallVec<[_; 4]>>();
-
-            let ix = font_kit::matching::find_best_match(
-                &candidate_properties,
-                &font_kit::properties::Properties {
-                    style: font.style.into(),
+            let id = lock
+                .font_system
+                .db()
+                .query(&Query {
+                    families: &[Family::Name(&font.family)],
                     weight: font.weight.into(),
+                    style: font.style.into(),
                     stretch: Default::default(),
-                },
-            )?;
+                })
+                .unwrap();
+            println!("{:?}", id);
+            println!("{:?}", lock.fonts);
+            let font_id = if let Some(font_id) = lock.fonts.iter().position(|font| font.id() == id)
+            {
+                FontId(font_id)
+            } else {
+                // HACK: font isn't in fonts so add it there, this is because we query all the fonts in the db and maybe we haven't loaded it yet
+                let font_id = FontId(lock.fonts.len());
+                let font = lock.font_system.get_font(id).unwrap();
+                lock.fonts.push(font);
+                font_id
+            };
 
-            let font_id = candidates[ix];
             lock.font_selections.insert(font.clone(), font_id);
             Ok(font_id)
         }
     }
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        self.0.read().fonts[font_id.0].metrics().into()
+        let metrics = self.0.read().fonts[font_id.0].as_swash().metrics(&[]);
+        FontMetrics {
+            units_per_em: metrics.units_per_em as u32,
+            ascent: metrics.ascent,
+            descent: metrics.descent,
+            line_gap: metrics.leading,
+            underline_position: metrics.underline_offset,
+            underline_thickness: metrics.stroke_size,
+            cap_height: metrics.cap_height,
+            x_height: metrics.x_height,
+            bounding_box: Bounds {
+                origin: point(0.0, 0.0),
+                size: size(metrics.max_width, metrics.ascent + metrics.descent),
+            },
+        }
     }
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        Ok(self.0.read().fonts[font_id.0]
-            .typographic_bounds(glyph_id.0)?
-            .into())
+        let metrics = self.0.read().fonts[font_id.0].as_swash().metrics(&[]);
+        Ok(Bounds {
+            origin: point(0.0, 0.0),
+            size: size(metrics.max_width, metrics.ascent + metrics.descent),
+        })
     }
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
         self.0.read().advance(font_id, glyph_id)
@@ -120,17 +139,17 @@ impl PlatformTextSystem for LinuxTextSystem {
         self.0.read().glyph_for_char(font_id, ch)
     }
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        unimplemented!()
+        self.0.write().raster_bounds(params)
     }
     fn rasterize_glyph(
         &self,
         params: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        unimplemented!()
+        self.0.write().rasterize_glyph(params, raster_bounds)
     }
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        LineLayout::default() //TODO
+        self.0.write().layout_line(text, font_size, runs)
     }
     fn wrap_line(
         &self,
@@ -144,38 +163,35 @@ impl PlatformTextSystem for LinuxTextSystem {
 }
 impl LinuxTextSystemState {
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        let fonts = fonts
-            .into_iter()
-            .map(|bytes| match bytes {
+        // TODO: I think on mac we don't actually load at this point don't think we can do this here though
+        let db = self.font_system.db_mut();
+        for bytes in fonts {
+            match bytes {
                 Cow::Borrowed(embedded_font) => {
-                    let font = font_kit::loaders::freetype::Font::from_bytes(
-                        Arc::new(embedded_font.to_owned().into_iter().collect()),
-                        0,
-                    )
-                    .unwrap();
-                    Ok(font.handle().unwrap())
+                    db.load_font_data(embedded_font.to_vec());
                 }
-                Cow::Owned(bytes) => Ok(Handle::from_memory(Arc::new(bytes), 0)),
-            })
-            .collect::<Result<Vec<_>>>()?;
-        self.memory_source.add_fonts(fonts.into_iter())?;
+                Cow::Owned(bytes) => {
+                    db.load_font_data(bytes);
+                }
+            }
+        }
         Ok(())
     }
 
     fn load_family(
         &mut self,
         name: &SharedString,
-        features: FontFeatures,
+        _features: FontFeatures,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let mut font_ids = SmallVec::new();
         let family = self
-            .memory_source
-            .select_family_by_name(name.as_ref())
-            .or_else(|_| self.system_source.select_family_by_name(name.as_ref()))?;
-        for font in family.fonts() {
-            let mut font = font.load()?;
+            .font_system
+            .get_font_matches(Attrs::new().family(cosmic_text::Family::Name(name)));
+        for font in family.as_ref() {
+            let font = self.font_system.get_font(*font).unwrap();
             // open_type::apply_features(&mut font, features);
-            let Some(_) = font.glyph_for_char('m') else {
+            if font.as_swash().charmap().map('m') == 0 {
+                self.font_system.db_mut().remove_face(font.id());
                 continue;
             };
             // We've seen a number of panics in production caused by calling font.properties()
@@ -209,22 +225,41 @@ impl LinuxTextSystemState {
 
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);
-            let postscript_name = font.postscript_name().unwrap();
-            self.font_ids_by_postscript_name
-                .insert(postscript_name.clone(), font_id);
-            self.postscript_names_by_font_id
-                .insert(font_id, postscript_name);
+            // let postscript_name = font
+            //     .as_swash()
+            //     .instances()
+            //     .next()
+            //     .unwrap()
+            //     .postscript_name(None)
+            //     .unwrap();
+            // self.font_ids_by_postscript_name
+            //     .insert(postscript_name.to_string(), font_id);
+            // self.postscript_names_by_font_id
+            //     .insert(font_id, postscript_name.to_string());
             self.fonts.push(font);
         }
         Ok(font_ids)
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        Ok(self.fonts[font_id.0].advance(glyph_id.0)?.into())
+        let width = self.fonts[font_id.0]
+            .as_swash()
+            .glyph_metrics(&[])
+            .advance_width(glyph_id.0 as u16);
+        let height = self.fonts[font_id.0]
+            .as_swash()
+            .glyph_metrics(&[])
+            .advance_height(glyph_id.0 as u16);
+        Ok(Size { width, height })
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.fonts[font_id.0].glyph_for_char(ch).map(GlyphId)
+        let glyph_id = self.fonts[font_id.0].as_swash().charmap().map(ch);
+        if glyph_id == 0 {
+            None
+        } else {
+            Some(GlyphId(glyph_id.into()))
+        }
     }
 
     // fn id_for_native_font(&mut self, requested_font: Fre) -> FontId {
@@ -253,242 +288,120 @@ impl LinuxTextSystemState {
             })
     }
 
-    fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+    fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
         let scale = Transform2F::from_scale(params.scale_factor);
-        Ok(font
-            .raster_bounds(
-                params.glyph_id.0,
-                params.font_size.into(),
-                scale,
-                HintingOptions::None,
-                font_kit::canvas::RasterizationOptions::GrayscaleAa,
-            )?
-            .into())
+        let font_system = &mut self.font_system;
+        let image = self
+            .swash_cache
+            .get_image(
+                font_system,
+                CacheKey::new(
+                    font.id(),
+                    params.glyph_id.0 as u16,
+                    params.font_size.into(),
+                    (0.0, 0.0),
+                )
+                .0,
+            )
+            .clone()
+            .unwrap();
+        Ok(Bounds {
+            origin: point(image.placement.left.into(), image.placement.top.into()),
+            size: size(image.placement.width.into(), image.placement.height.into()),
+        })
     }
 
-    // fn rasterize_glyph(
-    //     &self,
-    //     params: &RenderGlyphParams,
-    //     glyph_bounds: Bounds<DevicePixels>,
-    // ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-    //     if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
-    //         Err(anyhow!("glyph bounds are empty"))
-    //     } else {
-    //         // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
-    //         let mut bitmap_size = glyph_bounds.size;
-    //         if params.subpixel_variant.x > 0 {
-    //             bitmap_size.width += DevicePixels(1);
-    //         }
-    //         if params.subpixel_variant.y > 0 {
-    //             bitmap_size.height += DevicePixels(1);
-    //         }
-    //         let bitmap_size = bitmap_size;
+    fn rasterize_glyph(
+        &mut self,
+        params: &RenderGlyphParams,
+        glyph_bounds: Bounds<DevicePixels>,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+        if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
+            Err(anyhow!("glyph bounds are empty"))
+        } else {
+            // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
+            let mut bitmap_size = glyph_bounds.size;
+            if params.subpixel_variant.x > 0 {
+                bitmap_size.width += DevicePixels(1);
+            }
+            if params.subpixel_variant.y > 0 {
+                bitmap_size.height += DevicePixels(1);
+            }
+            let bitmap_size = bitmap_size;
+            let font = &self.fonts[params.font_id.0];
+            let font_system = &mut self.font_system;
+            let image = self
+                .swash_cache
+                .get_image(
+                    font_system,
+                    CacheKey::new(
+                        font.id(),
+                        params.glyph_id.0 as u16,
+                        params.font_size.into(),
+                        (0.0, 0.0),
+                    )
+                    .0,
+                )
+                .clone()
+                .unwrap();
 
-    //         let mut bytes;
-    //         let cx;
-    //         if params.is_emoji {
-    //             bytes = vec![0; bitmap_size.width.0 as usize * 4 * bitmap_size.height.0 as usize];
-    //             cx = CGContext::create_bitmap_context(
-    //                 Some(bytes.as_mut_ptr() as *mut _),
-    //                 bitmap_size.width.0 as usize,
-    //                 bitmap_size.height.0 as usize,
-    //                 8,
-    //                 bitmap_size.width.0 as usize * 4,
-    //                 &CGColorSpace::create_device_rgb(),
-    //                 kCGImageAlphaPremultipliedLast,
-    //             );
-    //         } else {
-    //             bytes = vec![0; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
-    //             cx = CGContext::create_bitmap_context(
-    //                 Some(bytes.as_mut_ptr() as *mut _),
-    //                 bitmap_size.width.0 as usize,
-    //                 bitmap_size.height.0 as usize,
-    //                 8,
-    //                 bitmap_size.width.0 as usize,
-    //                 &CGColorSpace::create_device_gray(),
-    //                 kCGImageAlphaOnly,
-    //             );
-    //         }
+            Ok((bitmap_size, image.data))
+        }
+    }
 
-    //         // Move the origin to bottom left and account for scaling, this
-    //         // makes drawing text consistent with the font-kit's raster_bounds.
-    //         cx.translate(
-    //             -glyph_bounds.origin.x.0 as CGFloat,
-    //             (glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) as CGFloat,
-    //         );
-    //         cx.scale(
-    //             params.scale_factor as CGFloat,
-    //             params.scale_factor as CGFloat,
-    //         );
-
-    //         let subpixel_shift = params
-    //             .subpixel_variant
-    //             .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
-    //         cx.set_allows_font_subpixel_positioning(true);
-    //         cx.set_should_subpixel_position_fonts(true);
-    //         cx.set_allows_font_subpixel_quantization(false);
-    //         cx.set_should_subpixel_quantize_fonts(false);
-    //         self.fonts[params.font_id.0]
-    //             .native_font()
-    //             .clone_with_font_size(f32::from(params.font_size) as CGFloat)
-    //             .draw_glyphs(
-    //                 &[params.glyph_id.0 as CGGlyph],
-    //                 &[CGPoint::new(
-    //                     (subpixel_shift.x / params.scale_factor) as CGFloat,
-    //                     (subpixel_shift.y / params.scale_factor) as CGFloat,
-    //                 )],
-    //                 cx,
-    //             );
-
-    //         if params.is_emoji {
-    //             // Convert from RGBA with premultiplied alpha to BGRA with straight alpha.
-    //             for pixel in bytes.chunks_exact_mut(4) {
-    //                 pixel.swap(0, 2);
-    //                 let a = pixel[3] as f32 / 255.;
-    //                 pixel[0] = (pixel[0] as f32 / a) as u8;
-    //                 pixel[1] = (pixel[1] as f32 / a) as u8;
-    //                 pixel[2] = (pixel[2] as f32 / a) as u8;
-    //             }
-    //         }
-
-    //         Ok((bitmap_size, bytes))
-    //     }
-    // }
-
-    // fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
-    //     // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
-    //     let mut string = CFMutableAttributedString::new();
-    //     {
-    //         string.replace_str(&CFString::new(text), CFRange::init(0, 0));
-    //         let utf16_line_len = string.char_len() as usize;
-
-    //         let mut ix_converter = StringIndexConverter::new(text);
-    //         for run in font_runs {
-    //             let utf8_end = ix_converter.utf8_ix + run.len;
-    //             let utf16_start = ix_converter.utf16_ix;
-
-    //             if utf16_start >= utf16_line_len {
-    //                 break;
-    //             }
-
-    //             ix_converter.advance_to_utf8_ix(utf8_end);
-    //             let utf16_end = cmp::min(ix_converter.utf16_ix, utf16_line_len);
-
-    //             let cf_range =
-    //                 CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
-
-    //             let font: &FontKitFont = &self.fonts[run.font_id.0];
-    //             unsafe {
-    //                 string.set_attribute(
-    //                     cf_range,
-    //                     kCTFontAttributeName,
-    //                     &font.native_font().clone_with_font_size(font_size.into()),
-    //                 );
-    //             }
-
-    //             if utf16_end == utf16_line_len {
-    //                 break;
-    //             }
-    //         }
-    //     }
-
-    //     // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
-    //     let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
-
-    //     let mut runs = Vec::new();
-    //     for run in line.glyph_runs().into_iter() {
-    //         let attributes = run.attributes().unwrap();
-    //         let font = unsafe {
-    //             attributes
-    //                 .get(kCTFontAttributeName)
-    //                 .downcast::<CTFont>()
-    //                 .unwrap()
-    //         };
-    //         let font_id = self.id_for_native_font(font);
-
-    //         let mut ix_converter = StringIndexConverter::new(text);
-    //         let mut glyphs = SmallVec::new();
-    //         for ((glyph_id, position), glyph_utf16_ix) in run
-    //             .glyphs()
-    //             .iter()
-    //             .zip(run.positions().iter())
-    //             .zip(run.string_indices().iter())
-    //         {
-    //             let glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
-    //             ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
-    //             glyphs.push(ShapedGlyph {
-    //                 id: GlyphId(*glyph_id as u32),
-    //                 position: point(position.x as f32, position.y as f32).map(px),
-    //                 index: ix_converter.utf8_ix,
-    //                 is_emoji: self.is_emoji(font_id),
-    //             });
-    //         }
-
-    //         runs.push(ShapedRun { font_id, glyphs })
-    //     }
-
-    //     let typographic_bounds = line.get_typographic_bounds();
-    //     LineLayout {
-    //         runs,
-    //         font_size,
-    //         width: typographic_bounds.width.into(),
-    //         ascent: typographic_bounds.ascent.into(),
-    //         descent: typographic_bounds.descent.into(),
-    //         len: text.len(),
-    //     }
-    // }
-
-    // fn wrap_line(
-    //     &self,
-    //     text: &str,
-    //     font_id: FontId,
-    //     font_size: Pixels,
-    //     width: Pixels,
-    // ) -> Vec<usize> {
-    //     let mut string = CFMutableAttributedString::new();
-    //     string.replace_str(&CFString::new(text), CFRange::init(0, 0));
-    //     let cf_range = CFRange::init(0, text.encode_utf16().count() as isize);
-    //     let font = &self.fonts[font_id.0];
-    //     unsafe {
-    //         string.set_attribute(
-    //             cf_range,
-    //             kCTFontAttributeName,
-    //             &font.native_font().clone_with_font_size(font_size.into()),
-    //         );
-
-    //         let typesetter = CTTypesetterCreateWithAttributedString(string.as_concrete_TypeRef());
-    //         let mut ix_converter = StringIndexConverter::new(text);
-    //         let mut break_indices = Vec::new();
-    //         while ix_converter.utf8_ix < text.len() {
-    //             let utf16_len = CTTypesetterSuggestLineBreak(
-    //                 typesetter,
-    //                 ix_converter.utf16_ix as isize,
-    //                 width.into(),
-    //             ) as usize;
-    //             ix_converter.advance_to_utf16_ix(ix_converter.utf16_ix + utf16_len);
-    //             if ix_converter.utf8_ix >= text.len() {
-    //                 break;
-    //             }
-    //             break_indices.push(ix_converter.utf8_ix);
-    //         }
-    //         break_indices
-    //     }
-    // }
-}
-
-impl From<Metrics> for FontMetrics {
-    fn from(metrics: Metrics) -> Self {
-        FontMetrics {
-            units_per_em: metrics.units_per_em,
-            ascent: metrics.ascent,
-            descent: metrics.descent,
-            line_gap: metrics.line_gap,
-            underline_position: metrics.underline_position,
-            underline_thickness: metrics.underline_thickness,
-            cap_height: metrics.cap_height,
-            x_height: metrics.x_height,
-            bounding_box: metrics.bounding_box.into(),
+    fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+        let mut attrs_list = AttrsList::new(Attrs::new());
+        let mut offs = 0;
+        for run in font_runs {
+            let font = &self.fonts[run.font_id.0];
+            let font = self.font_system.db().face(font.id()).unwrap();
+            attrs_list.add_span(
+                offs..run.len,
+                Attrs::new()
+                    .family(Family::Name(&font.families.first().unwrap().0))
+                    .stretch(font.stretch)
+                    .style(font.style)
+                    .weight(font.weight),
+            );
+            offs += run.len;
+        }
+        let mut line = BufferLine::new(text, attrs_list, cosmic_text::Shaping::Advanced);
+        let layout = line.layout(
+            &mut self.font_system,
+            font_size.0,
+            f32::MAX,
+            cosmic_text::Wrap::None,
+        );
+        let mut runs = Vec::new();
+        let layout = layout.first().unwrap();
+        for glyph in &layout.glyphs {
+            let font_id = glyph.font_id;
+            let font_id = FontId(
+                self.fonts
+                    .iter()
+                    .position(|font| font.id() == font_id)
+                    .unwrap(),
+            );
+            let mut glyphs = SmallVec::new();
+            glyphs.insert(
+                0,
+                ShapedGlyph {
+                    id: GlyphId(glyph.glyph_id as u32),
+                    position: point(glyph.x.into(), glyph.y.into()),
+                    index: glyph.start,
+                    is_emoji: self.is_emoji(font_id),
+                },
+            );
+            runs.push(crate::ShapedRun { font_id, glyphs });
+        }
+        LineLayout {
+            font_size,
+            width: layout.w.into(),
+            ascent: layout.max_ascent.into(),
+            descent: layout.max_descent.into(),
+            runs,
+            len: text.len(),
         }
     }
 }
@@ -538,18 +451,18 @@ impl From<Vector2F> for Size<f32> {
     }
 }
 
-impl From<FontWeight> for FontkitWeight {
+impl From<FontWeight> for cosmic_text::Weight {
     fn from(value: FontWeight) -> Self {
-        FontkitWeight(value.0)
+        cosmic_text::Weight(value.0 as u16)
     }
 }
 
-impl From<FontStyle> for FontkitStyle {
+impl From<FontStyle> for cosmic_text::Style {
     fn from(style: FontStyle) -> Self {
         match style {
-            FontStyle::Normal => FontkitStyle::Normal,
-            FontStyle::Italic => FontkitStyle::Italic,
-            FontStyle::Oblique => FontkitStyle::Oblique,
+            FontStyle::Normal => cosmic_text::Style::Normal,
+            FontStyle::Italic => cosmic_text::Style::Italic,
+            FontStyle::Oblique => cosmic_text::Style::Oblique,
         }
     }
 }
