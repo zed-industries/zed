@@ -450,6 +450,13 @@ impl TerminalElement {
             let mut size = bounds.size.clone();
             size.width -= gutter;
 
+            // https://github.com/zed-industries/zed/issues/2750
+            // if the terminal is one column wide, rendering 🦀
+            // causes alacritty to misbehave.
+            if size.width < cell_width * 2.0 {
+                size.width = cell_width * 2.0;
+            }
+
             TerminalSize::new(line_height, cell_width, size)
         };
 
