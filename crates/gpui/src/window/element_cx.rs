@@ -71,7 +71,7 @@ pub(crate) struct Frame {
     pub(crate) reused_views: FxHashSet<EntityId>,
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: collections::FxHashMap<String, Bounds<Pixels>>,
+    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
 }
 
 impl Frame {

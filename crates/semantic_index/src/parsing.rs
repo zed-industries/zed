@@ -3,6 +3,7 @@ use ai::{
     models::TruncationDirection,
 };
 use anyhow::{anyhow, Result};
+use collections::HashSet;
 use language::{Grammar, Language};
 use rusqlite::{
     types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
@@ -12,7 +13,6 @@ use sha1::{Digest, Sha1};
 use std::{
     borrow::Cow,
     cmp::{self, Reverse},
-    collections::HashSet,
     ops::Range,
     path::Path,
     sync::Arc,
@@ -267,7 +267,7 @@ impl CodeContextRetriever {
 
         let mut spans = Vec::new();
         let mut collapsed_ranges_within = Vec::new();
-        let mut parsed_name_ranges = HashSet::new();
+        let mut parsed_name_ranges = HashSet::default();
         for (i, context_match) in matches.iter().enumerate() {
             // Items which are collapsible but not embeddable have no item range
             let item_range = if let Some(item_range) = context_match.item_range.clone() {
