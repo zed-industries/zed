@@ -834,8 +834,8 @@ impl LanguageRegistry {
     }
 
     /// Clear out the given languages and reload them from scratch.
-    pub fn reload_languages(&self, languages: &HashSet<Arc<str>>) {
-        self.state.write().reload_languages(languages);
+    pub fn reload_languages(&self, languages: &[Arc<str>], grammars: &[Arc<str>]) {
+        self.state.write().reload_languages(languages, grammars);
     }
 
     pub fn register(
@@ -1357,9 +1357,11 @@ impl LanguageRegistryState {
         *self.subscription.0.borrow_mut() = ();
     }
 
-    fn reload_languages(&mut self, languages: &HashSet<Arc<str>>) {
-        self.languages
-            .retain(|language| !languages.contains(&language.config.name));
+    fn reload_languages(&mut self, languages: &[Arc<str>], grammars: &[Arc<str>]) {
+        self.languages.retain(|language| {
+            !languages.contains(&language.config.name)
+                && language.grammar.map_or(true, |g| !grammars.contains(&g))
+        });
         self.version += 1;
         self.reload_count += 1;
         for language in &mut self.available_languages {

@@ -188,19 +188,30 @@ impl ExtensionStore {
         let events_task = cx.background_executor().spawn(async move {
             let mut events = fs.watch(&extensions_dir, Duration::from_millis(250)).await;
             while let Some(events) = events.next().await {
-                let mut changed_languages = HashSet::default();
-                let mut changed_themes = HashSet::default();
+                let mut changed_grammars = Vec::default();
+                let mut changed_languages = Vec::default();
+                let mut changed_themes = Vec::default();
 
                 {
                     let manifest = manifest.read();
                     for event in events {
+                        for (grammar_name, grammar) in &manifest.grammars {
+                            let mut grammar_path = extensions_dir.clone();
+                            grammar_path
+                                .extend([grammar.extension.as_ref(), grammar.path.as_path()]);
+                            if event.path.starts_with(&grammar_path) || event.path == grammar_path
+                            {
+                                changed_grammars.push(grammar_name.clone());
+                            }
+                        }
+
                         for (language_name, language) in &manifest.languages {
                             let mut language_path = extensions_dir.clone();
                             language_path
                                 .extend([language.extension.as_ref(), language.path.as_path()]);
                             if event.path.starts_with(&language_path) || event.path == language_path
                             {
-                                changed_languages.insert(language_name.clone());
+                                changed_languages.push(language_name.clone());
                             }
                         }
 
@@ -208,13 +219,13 @@ impl ExtensionStore {
                             let mut theme_path = extensions_dir.clone();
                             theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
                             if event.path.starts_with(&theme_path) || event.path == theme_path {
-                                changed_themes.insert(theme_path.clone());
+                                changed_themes.push(theme_path.clone());
                             }
                         }
                     }
                 }
 
-                language_registry.reload_languages(&changed_languages);
+                language_registry.reload_languages(&changed_languages, &changed_grammars);
 
                 for theme_path in &changed_themes {
                     theme_registry
