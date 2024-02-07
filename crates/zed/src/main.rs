@@ -11,6 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
+#[cfg(target_os = "macos")]
 use fsevent::StreamFlags;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
@@ -176,6 +177,7 @@ fn main() {
         extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
 
         load_user_themes_in_background(fs.clone(), cx);
+        #[cfg(target_os = "macos")]
         watch_themes(fs.clone(), cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
@@ -258,6 +260,8 @@ fn main() {
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
+            //todo!(linux): unblock this
+            #[cfg(not(target_os = "linux"))]
             upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);
             let urls = collect_url_args();
@@ -931,7 +935,9 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
+//todo!(linux): Port fsevents to linux
 /// Spawns a background task to watch the themes directory for changes.
+#[cfg(target_os = "macos")]
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     cx.spawn(|cx| async move {
         let mut events = fs

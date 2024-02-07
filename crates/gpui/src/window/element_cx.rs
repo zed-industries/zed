@@ -23,6 +23,7 @@ use std::{
 use anyhow::Result;
 use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
+#[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 use util::post_inc;
@@ -34,8 +35,8 @@ use crate::{
     InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
     Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
-    StackingOrder, StrikethroughStyle, Style, Surface, TextStyleRefinement, Underline,
-    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
+    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
+    Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -676,6 +677,7 @@ impl<'a> ElementContext<'a> {
                     corner_radii: corner_radii.scale(scale_factor),
                     color: shadow.color,
                     blur_radius: shadow.blur_radius.scale(scale_factor),
+                    pad: 0,
                 },
             );
         }
@@ -751,8 +753,8 @@ impl<'a> ElementContext<'a> {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
-                thickness: style.thickness.scale(scale_factor),
                 color: style.color.unwrap_or_default(),
+                thickness: style.thickness.scale(scale_factor),
                 wavy: style.wavy,
             },
         );
@@ -904,6 +906,7 @@ impl<'a> ElementContext<'a> {
                     content_mask,
                     tile,
                     grayscale: false,
+                    pad: 0,
                 },
             );
         }
@@ -988,12 +991,14 @@ impl<'a> ElementContext<'a> {
                 corner_radii,
                 tile,
                 grayscale,
+                pad: 0,
             },
         );
         Ok(())
     }
 
     /// Paint a surface into the scene for the next frame at the current z-index.
+    #[cfg(target_os = "macos")]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
@@ -1002,7 +1007,7 @@ impl<'a> ElementContext<'a> {
         let window = &mut *self.window;
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
-            Surface {
+            crate::Surface {
                 view_id: view_id.into(),
                 layer_id: 0,
                 order: 0,

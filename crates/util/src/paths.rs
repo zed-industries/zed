@@ -9,18 +9,59 @@ use serde::{Deserialize, Serialize};
 lazy_static::lazy_static! {
     pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
     pub static ref CONFIG_DIR: PathBuf = HOME.join(".config").join("zed");
-    pub static ref CONVERSATIONS_DIR: PathBuf = HOME.join(".config/zed/conversations");
-    pub static ref EMBEDDINGS_DIR: PathBuf = HOME.join(".config/zed/embeddings");
-    pub static ref THEMES_DIR: PathBuf = HOME.join(".config/zed/themes");
-    pub static ref LOGS_DIR: PathBuf = HOME.join("Library/Logs/Zed");
-    pub static ref SUPPORT_DIR: PathBuf = HOME.join("Library/Application Support/Zed");
-    pub static ref EXTENSIONS_DIR: PathBuf = HOME.join("Library/Application Support/Zed/extensions");
-    pub static ref LANGUAGES_DIR: PathBuf = HOME.join("Library/Application Support/Zed/languages");
-    pub static ref COPILOT_DIR: PathBuf = HOME.join("Library/Application Support/Zed/copilot");
-    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = HOME.join("Library/Application Support/Zed/prettier");
-    pub static ref DB_DIR: PathBuf = HOME.join("Library/Application Support/Zed/db");
-    pub static ref CRASHES_DIR: PathBuf = HOME.join("Library/Logs/DiagnosticReports");
-    pub static ref CRASHES_RETIRED_DIR: PathBuf = HOME.join("Library/Logs/DiagnosticReports/Retired");
+    pub static ref CONVERSATIONS_DIR: PathBuf = CONFIG_DIR.join("conversations");
+    pub static ref EMBEDDINGS_DIR: PathBuf = CONFIG_DIR.join("embeddings");
+    pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
+    pub static ref LOGS_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Logs/Zed")
+    } else {
+        CONFIG_DIR.join("logs")
+    };
+    pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Application Support/Zed")
+    } else {
+        CONFIG_DIR.join("support")
+    };
+    pub static ref EXTENSIONS_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Application Support/Zed")
+    } else {
+        CONFIG_DIR.join("extensions")
+    };
+    pub static ref PLUGINS_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Application Support/Zed/plugins")
+    } else {
+        CONFIG_DIR.join("plugins")
+    };
+    pub static ref LANGUAGES_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Application Support/Zed/languages")
+    } else {
+        CONFIG_DIR.join("languages")
+    };
+    pub static ref COPILOT_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Application Support/Zed/copilot")
+    } else {
+        CONFIG_DIR.join("copilot")
+    };
+    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Application Support/Zed/prettier")
+    } else {
+        CONFIG_DIR.join("prettier")
+    };
+    pub static ref DB_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Application Support/Zed/db")
+    } else {
+        CONFIG_DIR.join("db")
+    };
+    pub static ref CRASHES_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Logs/DiagnosticReports")
+    } else {
+        CONFIG_DIR.join("crashes")
+    };
+    pub static ref CRASHES_RETIRED_DIR: PathBuf = if cfg!(target_os="macos") {
+        HOME.join("Library/Logs/DiagnosticReports/Retired")
+    } else {
+        CRASHES_DIR.join("retired")
+    };
     pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
     pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
     pub static ref LAST_USERNAME: PathBuf = CONFIG_DIR.join("last-username.txt");
