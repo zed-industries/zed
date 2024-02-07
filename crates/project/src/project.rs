@@ -3985,7 +3985,7 @@ impl Project {
                 range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Right);
                 if range.start == range.end && range.end.column > 0 {
                     range.start.column -= 1;
-                    range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Left);
+                    range.start = snapshot.clip_point_utf16(Unclipped(range.start), Bias::Left);
                 }
             }
 
