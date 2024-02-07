@@ -1170,9 +1170,6 @@ fn previous_word_end(
         point = find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
             let left_kind = coerce_punctuation(char_kind(&scope, left), false);
             let right_kind = coerce_punctuation(char_kind(&scope, right), false);
-            if left_kind != right_kind {
-                println!("{} != {}", left, right);
-            }
             left_kind != right_kind
         });
         point = movement::previous_word_start(map, point);
