@@ -238,11 +238,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .child(h_flex().gap_2().child(highlighted_location.names).when(
                     self.render_paths,
                     |this| {
-                        this.children(highlighted_location.paths.into_iter().map(|path| {
-                            HighlightedLabel::new(path.text, path.highlight_positions)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                        }))
+                        this.child(
+                            v_flex().children(highlighted_location.paths.into_iter().map(|path| {
+                                HighlightedLabel::new(path.text, path.highlight_positions)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                            })),
+                        )
                     },
                 )),
         )
