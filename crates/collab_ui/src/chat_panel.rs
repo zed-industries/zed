@@ -70,7 +70,7 @@ struct SerializedChatPanel {
     width: Option<Pixels>,
 }
 
-actions!(chat_panel, [ToggleFocus]);
+actions!(chat_panel, [ToggleFocus, CloseReplyPreview]);
 
 impl ChatPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
@@ -719,6 +719,11 @@ impl ChatPanel {
             Ok(())
         })
     }
+
+    fn close_reply_preview(&mut self, _: &CloseReplyPreview, cx: &mut ViewContext<Self>) {
+        self.message_editor
+            .update(cx, |editor, _| editor.clear_reply_to_message_id());
+    }
 }
 
 impl Render for ChatPanel {
@@ -726,6 +731,7 @@ impl Render for ChatPanel {
         let reply_to_message_id = self.message_editor.read(cx).reply_to_message_id();
 
         v_flex()
+            .key_context("ChatPanel")
             .track_focus(&self.focus_handle)
             .full()
             .on_action(cx.listener(Self::send))
@@ -810,10 +816,15 @@ impl Render for ChatPanel {
                             .child(
                                 IconButton::new("close-reply-preview", IconName::Close)
                                     .shape(ui::IconButtonShape::Square)
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.message_editor.update(cx, |editor, _| {
-                                            editor.clear_reply_to_message_id()
-                                        });
+                                    .tooltip(|cx| {
+                                        Tooltip::for_action(
+                                            "Close reply preview",
+                                            &CloseReplyPreview,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(move |_, _, cx| {
+                                        cx.dispatch_action(CloseReplyPreview.boxed_clone())
                                     })),
                             ),
                     )
@@ -822,6 +833,8 @@ impl Render for ChatPanel {
             .children(
                 Some(
                     h_flex()
+                        .key_context("MessageEditor")
+                        .on_action(cx.listener(ChatPanel::close_reply_preview))
                         .when(
                             !self.is_scrolled_to_bottom && reply_to_message_id.is_none(),
                             |el| el.border_t_1().border_color(cx.theme().colors().border),
