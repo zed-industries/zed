@@ -1370,7 +1370,7 @@ impl LanguageRegistryState {
         *self.subscription.0.borrow_mut() = ();
     }
 
-    /// Mark the given language a having been loaded, so that the
+    /// Mark the given language as having been loaded, so that the
     /// language registry won't try to load it again.
     fn mark_language_loaded(&mut self, id: AvailableLanguageId) {
         for language in &mut self.available_languages {
