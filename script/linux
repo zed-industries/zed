@@ -3,10 +3,17 @@
 # if not on Linux, do nothing
 [[ $(uname) == "Linux" ]] || exit 0
 
-# Copy settings and keymap to the user's home directory if they don't exist
+# Copy assets to the user's home directory if they don't exist
 mkdir -p "$HOME/.config/zed"
+
+mkdir -p "$HOME/.config/zed/plugins"
+
+mkdir -p "$HOME/.config/zed/themes"
+cp -ruL ./assets/themes/*/*.json "$HOME/.config/zed/themes"
+
 test -f "$HOME/.config/zed/settings.json" ||
   cp -uL ./assets/settings/initial_user_settings.json "$HOME/.config/zed/settings.json"
+
 test -f "$HOME/.config/zed/keymap.json" ||
   cp -uL ./assets/keymaps/default.json "$HOME/.config/zed/keymap.json"
 
@@ -21,13 +28,7 @@ if [[ -n $apt ]]; then
   deps=(
     libasound2-dev
     libfontconfig-dev
-    libxcb-dev
-    alsa-base
-    cmake
-    fontconfig
-    libssl-dev
-    build-essential
-
+    vulkan-validationlayers*
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -40,6 +41,7 @@ if [[ -n $dnf ]]; then
   deps=(
     alsa-lib-devel
     fontconfig-devel
+    vulkan-validation-layers
   )
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
@@ -52,6 +54,7 @@ if [[ -n $pacman ]]; then
   deps=(
     alsa-lib
     fontconfig
+    vulkan-validation-layers
   )
   $maysudo "$pacman" -S --noconfirm "${deps[@]}"
   exit 0
