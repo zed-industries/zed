@@ -562,14 +562,23 @@ impl CollabTitlebarItem {
     }
 
     fn window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
-        let project = if cx.is_window_active() {
-            Some(self.project.clone())
-        } else {
-            None
-        };
-        ActiveCall::global(cx)
-            .update(cx, |call, cx| call.set_location(project.as_ref(), cx))
-            .detach_and_log_err(cx);
+        if cx.is_window_active() {
+            ActiveCall::global(cx)
+                .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
+                .detach_and_log_err(cx);
+            return;
+        }
+
+        if cx.active_window().is_none() {
+            ActiveCall::global(cx)
+                .update(cx, |call, cx| call.set_location(None, cx))
+                .detach_and_log_err(cx);
+        }
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.update_active_view_for_followers(cx);
+            })
+            .ok();
     }
 
     fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {

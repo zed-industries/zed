@@ -26,50 +26,50 @@ test-support = [
 anyhow.workspace = true
 async-broadcast = "0.4"
 async-trait.workspace = true
-clock = { path = "../clock" }
-collections = { path = "../collections" }
+clock.workspace = true
+collections.workspace = true
 futures.workspace = true
-fuzzy = { path = "../fuzzy" }
-git = { path = "../git" }
+fuzzy.workspace = true
+git.workspace = true
 globset.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-lsp = { path = "../lsp" }
+lsp.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand = { workspace = true, optional = true }
 regex.workspace = true
-rpc = { path = "../rpc" }
+rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 similar = "1.3"
 smallvec.workspace = true
 smol.workspace = true
-sum_tree = { path = "../sum_tree" }
-text = { path = "../text" }
-theme = { path = "../theme" }
+sum_tree.workspace = true
+text.workspace = true
+theme.workspace = true
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 pulldown-cmark.workspace = true
 tree-sitter.workspace = true
 unicase = "2.6"
-util = { path = "../util" }
+util.workspace = true
 
 [dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-collections = { path = "../collections", features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
-lsp = { path = "../lsp", features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
 rand.workspace = true
-settings = { path = "../settings", features = ["test-support"] }
-text = { path = "../text", features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+text = { workspace = true, features = ["test-support"] }
 tree-sitter-elixir.workspace = true
 tree-sitter-embedded-template.workspace = true
 tree-sitter-heex.workspace = true
@@ -81,4 +81,4 @@ tree-sitter-ruby.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
-util = { path = "../util", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

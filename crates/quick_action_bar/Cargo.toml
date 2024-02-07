@@ -10,14 +10,15 @@ path = "src/quick_action_bar.rs"
 doctest = false
 
 [dependencies]
-assistant = { path = "../assistant" }
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-search = { path = "../search" }
-ui = { path = "../ui" }
-workspace = { path = "../workspace" }
+assistant.workspace = true
+editor.workspace = true
+gpui.workspace = true
+search.workspace = true
+settings.workspace = true
+ui.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

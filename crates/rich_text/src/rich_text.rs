@@ -13,6 +13,7 @@ use util::RangeExt;
 pub enum Highlight {
     Code,
     Id(HighlightId),
+    InlineCode(bool),
     Highlight(HighlightStyle),
     Mention,
     SelfMention,
@@ -67,6 +68,23 @@ impl RichText {
                                 background_color: Some(code_background),
                                 ..id.style(theme.syntax()).unwrap_or_default()
                             },
+                            Highlight::InlineCode(link) => {
+                                if !*link {
+                                    HighlightStyle {
+                                        background_color: Some(code_background),
+                                        ..Default::default()
+                                    }
+                                } else {
+                                    HighlightStyle {
+                                        background_color: Some(code_background),
+                                        underline: Some(UnderlineStyle {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        }),
+                                        ..Default::default()
+                                    }
+                                }
+                            }
                             Highlight::Highlight(highlight) => *highlight,
                             Highlight::Mention => HighlightStyle {
                                 font_weight: Some(FontWeight::BOLD),
@@ -184,22 +202,14 @@ pub fn render_markdown_mut(
             }
             Event::Code(t) => {
                 text.push_str(t.as_ref());
-                if link_url.is_some() {
-                    highlights.push((
-                        prev_len..text.len(),
-                        Highlight::Highlight(HighlightStyle {
-                            underline: Some(UnderlineStyle {
-                                thickness: 1.0.into(),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        }),
-                    ));
-                }
+                let is_link = link_url.is_some();
+
                 if let Some(link_url) = link_url.clone() {
                     link_ranges.push(prev_len..text.len());
                     link_urls.push(link_url);
                 }
+
+                highlights.push((prev_len..text.len(), Highlight::InlineCode(is_link)))
             }
             Event::Start(tag) => match tag {
                 Tag::Paragraph => new_paragraph(text, &mut list_stack),

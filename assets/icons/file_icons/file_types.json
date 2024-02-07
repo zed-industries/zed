@@ -25,6 +25,7 @@
         "doc": "document",
         "docx": "document",
         "eex": "elixir",
+        "elm": "elm",
         "erl": "erlang",
         "escript": "erlang",
         "eslintrc": "eslint",
@@ -69,6 +70,8 @@
         "mdb": "storage",
         "mdf": "storage",
         "mdx": "document",
+        "ml": "ocaml",
+        "mli": "ocaml",
         "mp3": "audio",
         "mp4": "video",
         "myd": "storage",
@@ -85,6 +88,7 @@
         "pptx": "document",
         "prettierignore": "prettier",
         "prettierrc": "prettier",
+        "prisma": "prisma",
         "profile": "terminal",
         "ps1": "terminal",
         "psd": "image",
@@ -116,8 +120,8 @@
         "xlsx": "document",
         "xml": "template",
         "xrl": "erlang",
-        "yaml": "yaml",
-        "yml": "yaml",
+        "yaml": "settings",
+        "yml": "settings",
         "yrl": "erlang",
         "zlogin": "terminal",
         "zsh": "terminal",
@@ -152,6 +156,9 @@
         "elixir": {
             "icon": "icons/file_icons/elixir.svg"
         },
+        "elm": {
+            "icon": "icons/file_icons/elm.svg"
+        },
         "erlang": {
             "icon": "icons/file_icons/erlang.svg"
         },
@@ -179,17 +186,20 @@
         "log": {
             "icon": "icons/file_icons/info.svg"
         },
+        "ocaml": {
+          "icon": "icons/file_icons/ocaml.svg"
+        },
         "phoenix": {
             "icon": "icons/file_icons/phoenix.svg"
         },
         "php": {
             "icon": "icons/file_icons/php.svg"
         },
-        "yaml": {
-            "icon": "icons/file_icons/yaml.svg"
-        },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
+        },
+        "prisma": {
+            "icon": "icons/file_icons/prisma.svg"
         },
         "python": {
             "icon": "icons/file_icons/python.svg"

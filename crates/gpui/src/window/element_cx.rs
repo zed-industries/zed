@@ -32,11 +32,11 @@ use crate::{
     prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
     Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
     EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyContext, KeyEvent, KeymatchMode, LayoutId, MonochromeSprite,
-    MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
-    StackingContext, StackingOrder, Style, TextStyleRefinement, Underline, UnderlineStyle, Window,
-    WindowContext, SUBPIXEL_VARIANTS,
+    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
+    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
+    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
+    Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -72,7 +72,7 @@ pub(crate) struct Frame {
     pub(crate) reused_views: FxHashSet<EntityId>,
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: collections::FxHashMap<String, Bounds<Pixels>>,
+    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
 }
 
 impl Frame {
@@ -760,6 +760,38 @@ impl<'a> ElementContext<'a> {
         );
     }
 
+    /// Paint a strikethrough into the scene for the next frame at the current z-index.
+    pub fn paint_strikethrough(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &StrikethroughStyle,
+    ) {
+        let scale_factor = self.scale_factor();
+        let height = style.thickness;
+        let bounds = Bounds {
+            origin,
+            size: size(width, height),
+        };
+        let content_mask = self.content_mask();
+        let view_id = self.parent_view_id();
+
+        let window = &mut *self.window;
+        window.next_frame.scene.insert(
+            &window.next_frame.z_index_stack,
+            Underline {
+                view_id: view_id.into(),
+                layer_id: 0,
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                thickness: style.thickness.scale(scale_factor),
+                color: style.color.unwrap_or_default(),
+                wavy: false,
+            },
+        );
+    }
+
     /// Paints a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
     ///
     /// The y component of the origin is the baseline of the glyph.
@@ -1146,15 +1178,6 @@ impl<'a> ElementContext<'a> {
                 )),
             })
         }
-    }
-
-    /// keymatch mode immediate instructs GPUI to prefer shorter action bindings.
-    /// In the case that you have a keybinding of `"cmd-k": "terminal::Clear"` and
-    /// `"cmd-k left": "workspace::MoveLeft"`, GPUI will by default wait for 1s after
-    /// you type cmd-k to see if you're going to type left.
-    /// This is problematic in the terminal
-    pub fn keymatch_mode_immediate(&mut self) {
-        self.window.next_frame.dispatch_tree.keymatch_mode = KeymatchMode::Immediate;
     }
 
     /// Register a mouse event listener on the window for the next frame. The type of event

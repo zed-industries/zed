@@ -11,7 +11,9 @@ git submodule update --init --recursive
 ## Dependencies
 
 - Install [Rust](https://www.rust-lang.org/tools/install)
-- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store
+- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
+
+> Ensure you launch XCode after installing, and install the MacOS components, which is the default option.
 
 - Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
 
@@ -74,7 +76,7 @@ error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/zed)`*
 xcrun: error: unable to find utility "metal", not a developer tool or in PATH
 ```
 
-Try `xcode-select --switch /Applications/Xcode.app/Contents/Developer`
+Try `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`
 
 ### Cargo errors claiming that a dependency is using unstable features
 

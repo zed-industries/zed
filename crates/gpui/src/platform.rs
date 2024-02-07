@@ -75,6 +75,9 @@ pub(crate) trait Platform: 'static {
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
 
+    /// Returns the appearance of the application's windows.
+    fn window_appearance(&self) -> WindowAppearance;
+
     fn set_display_link_output_callback(
         &self,
         display_id: DisplayId,
@@ -183,7 +186,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
-    fn invalidate(&self);
     fn draw(&self, scene: &Scene);
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
@@ -569,29 +571,30 @@ pub enum WindowBounds {
     Fixed(Bounds<GlobalPixels>),
 }
 
-/// The appearance of the window, as defined by the operating system
-/// On macOS, this corresponds to named [NSAppearance](https://developer.apple.com/documentation/appkit/nsappearance)
-/// values
+/// The appearance of the window, as defined by the operating system.
+///
+/// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
+/// values.
 #[derive(Copy, Clone, Debug)]
 pub enum WindowAppearance {
-    /// A light appearance
+    /// A light appearance.
     ///
-    /// on macOS, this corresponds to the `aqua` appearance
+    /// On macOS, this corresponds to the `aqua` appearance.
     Light,
 
-    /// A light appearance with vibrant colors
+    /// A light appearance with vibrant colors.
     ///
-    /// on macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance
+    /// On macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance.
     VibrantLight,
 
-    /// A dark appearance
+    /// A dark appearance.
     ///
-    /// on macOS, this corresponds to the `darkAqua` appearance
+    /// On macOS, this corresponds to the `darkAqua` appearance.
     Dark,
 
-    /// A dark appearance with vibrant colors
+    /// A dark appearance with vibrant colors.
     ///
-    /// on macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance
+    /// On macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance.
     VibrantDark,
 }
 

@@ -20,73 +20,74 @@ test-support = [
     "util/test-support",
     "workspace/test-support",
     "tree-sitter-rust",
-    "tree-sitter-typescript"
+    "tree-sitter-typescript",
 ]
 
 [dependencies]
 aho-corasick = "1.1"
 anyhow.workspace = true
-client = { path = "../client" }
-clock = { path = "../clock" }
-collections = { path = "../collections" }
+client.workspace = true
+clock.workspace = true
+collections.workspace = true
 convert_case = "0.6.0"
-copilot = { path = "../copilot" }
-db = { path = "../db" }
+copilot.workspace = true
+db.workspace = true
 futures.workspace = true
-fuzzy = {  path = "../fuzzy" }
-git = { path = "../git" }
-gpui = { path = "../gpui" }
+fuzzy.workspace = true
+git.workspace = true
+gpui.workspace = true
 indoc = "1.0.4"
 itertools = "0.10"
-language = { path = "../language" }
+language.workspace = true
 lazy_static.workspace = true
+linkify = "0.10.0"
 log.workspace = true
-lsp = { path = "../lsp" }
-multi_buffer = { path = "../multi_buffer" }
+lsp.workspace = true
+multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-project = { path = "../project" }
+project.workspace = true
 rand.workspace = true
-rich_text = { path = "../rich_text" }
-rpc = { path = "../rpc" }
+rich_text.workspace = true
+rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
-snippet = { path = "../snippet" }
-sqlez = { path = "../sqlez" }
-sum_tree = { path = "../sum_tree" }
-text = { path = "../text" }
-theme = { path = "../theme" }
+snippet.workspace = true
+sqlez.workspace = true
+sum_tree.workspace = true
+text.workspace = true
+theme.workspace = true
 tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
-ui = { path = "../ui" }
+ui.workspace = true
 url.workspace = true
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-copilot = { path = "../copilot", features = ["test-support"] }
+copilot = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-multi_buffer = { path = "../multi_buffer", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-release_channel = { path = "../release_channel" }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
+multi_buffer = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
 rand.workspace = true
-settings = { path = "../settings", features = ["test-support"] }
-text = { path = "../text", features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+text = { workspace = true, features = ["test-support"] }
 tree-sitter-html.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter.workspace = true
 unindent.workspace = true
-util = { path = "../util", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

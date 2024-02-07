@@ -1168,7 +1168,7 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{InlayHighlights, TextHighlights},
-        link_go_to_definition::InlayHighlight,
+        hover_links::InlayHighlight,
         InlayId, MultiBuffer,
     };
     use gpui::AppContext;

@@ -798,23 +798,14 @@ fn next_word_end(
             *point.row_mut() += 1;
             *point.column_mut() = 0;
         }
-        point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-            left_kind != right_kind && left_kind != CharKind::Whitespace
-        });
+        point =
+            movement::find_boundary_exclusive(map, point, FindRange::MultiLine, |left, right| {
+                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-        // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
-        // we have backtracked already
-        if !map
-            .chars_at(point)
-            .nth(1)
-            .map(|(c, _)| c == '\n')
-            .unwrap_or(true)
-        {
-            *point.column_mut() = point.column().saturating_sub(1);
-        }
+                left_kind != right_kind && left_kind != CharKind::Whitespace
+            });
         point = map.clip_point(point, Bias::Left);
     }
     point
@@ -1044,9 +1035,17 @@ fn window_top(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,
-    times: usize,
+    mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
-    let first_visible_line = text_layout_details.anchor.to_display_point(map);
+    let first_visible_line = text_layout_details
+        .scroll_anchor
+        .anchor
+        .to_display_point(map);
+
+    if first_visible_line.row() != 0 && text_layout_details.vertical_scroll_margin as usize > times
+    {
+        times = text_layout_details.vertical_scroll_margin.ceil() as usize;
+    }
 
     if let Some(visible_rows) = text_layout_details.visible_rows {
         let bottom_row = first_visible_line.row() + visible_rows as u32;
@@ -1070,7 +1069,10 @@ fn window_middle(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(map);
         let max_rows = (visible_rows as u32).min(map.max_buffer_row());
         let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
         let new_col = point.column().min(map.line_len(new_row));
@@ -1085,11 +1087,20 @@ fn window_bottom(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,
-    times: usize,
+    mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details.anchor.to_display_point(map);
-        let bottom_row = first_visible_line.row() + (visible_rows) as u32;
+        let first_visible_line = text_layout_details
+            .scroll_anchor
+            .anchor
+            .to_display_point(map);
+        let bottom_row = first_visible_line.row()
+            + (visible_rows + text_layout_details.scroll_anchor.offset.y - 1.).floor() as u32;
+        if bottom_row < map.max_buffer_row()
+            && text_layout_details.vertical_scroll_margin as usize > times
+        {
+            times = text_layout_details.vertical_scroll_margin.ceil() as usize;
+        }
         let bottom_row_capped = bottom_row.min(map.max_buffer_row());
         let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_line.row() {
             first_visible_line.row()
@@ -1263,6 +1274,15 @@ mod test {
         cx.assert_shared_state("oneˇ two three four").await;
         cx.simulate_shared_keystrokes([","]).await;
         cx.assert_shared_state("one two thˇree four").await;
+    }
+
+    #[gpui::test]
+    async fn test_next_word_end_newline_last_char(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"something(ˇfoo)"};
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"something(fooˇ)"}).await;
     }
 
     #[gpui::test]

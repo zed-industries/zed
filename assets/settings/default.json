@@ -104,8 +104,17 @@
   "show_whitespaces": "selection",
   // Settings related to calls in Zed
   "calls": {
-    // Join calls with the microphone muted by default
-    "mute_on_join": false
+    // Join calls with the microphone live by default
+    "mute_on_join": false,
+    // Share your project when you are the first to join a channel
+    "share_on_join": true
+  },
+  // Toolbar related settings
+  "toolbar": {
+    // Whether to show breadcrumbs.
+    "breadcrumbs": true,
+    // Whether to show quick action buttons.
+    "quick_actions": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -127,8 +136,12 @@
     // Whether to show selections in the scrollbar.
     "selections": true,
     // Whether to show symbols selections in the scrollbar.
-    "symbols_selections": true
+    "symbols_selections": true,
+    // Whether to show diagnostic indicators in the scrollbar.
+    "diagnostics": true
   },
+  // The number of lines to keep above/below the cursor when scrolling.
+  "vertical_scroll_margin": 3,
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -485,6 +498,9 @@
     "JavaScript": {
       "tab_size": 2
     },
+    "Terraform": {
+      "tab_size": 2
+    },
     "TypeScript": {
       "tab_size": 2
     },
@@ -495,6 +511,12 @@
       "tab_size": 2
     },
     "JSON": {
+      "tab_size": 2
+    },
+    "OCaml": {
+      "tab_size": 2
+    },
+    "OCaml Interface": {
       "tab_size": 2
     }
   },
