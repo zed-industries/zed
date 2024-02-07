@@ -12,7 +12,7 @@ use cocoa::{
         CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowStyleMask, NSWindowTitleVisibility,
+        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -248,6 +248,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.add_method(
         sel!(windowDidResize:),
         window_did_resize as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidChangeOcclusionState:),
+        window_did_change_occlusion_state as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
         sel!(windowWillEnterFullScreen:),
@@ -1329,6 +1333,23 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         drop(lock);
         callback(event);
         window_state.lock().event_callback = Some(callback);
+    }
+}
+
+extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.lock();
+    unsafe {
+        if lock
+            .native_window
+            .occlusionState()
+            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+        {
+            lock.display_link =
+                start_display_link(lock.native_window.screen(), lock.native_view.as_ptr());
+        } else {
+            lock.display_link = nil;
+        }
     }
 }
 
