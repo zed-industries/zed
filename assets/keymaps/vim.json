@@ -284,7 +284,8 @@
       "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w n": ["workspace::NewFileInDirection", "Up"],
-      "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"]
+      "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"],
+      "-": "pane::RevealInProjectPanel"
     }
   },
   {

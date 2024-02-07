@@ -61,8 +61,8 @@ use gpui::{
     DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
     ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView,
-    WhiteSpace, WindowContext,
+    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
+    WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -120,6 +120,7 @@ use ui::{
     Tooltip,
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::Toast;
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -7906,7 +7907,7 @@ impl Editor {
                 .insert_blocks(
                     diagnostic_group.iter().map(|entry| {
                         let diagnostic = entry.diagnostic.clone();
-                        let message_height = diagnostic.message.lines().count() as u8;
+                        let message_height = diagnostic.message.matches('\n').count() as u8 + 1;
                         BlockProperties {
                             style: BlockStyle::Fixed,
                             position: buffer.anchor_after(entry.range.start),
@@ -8354,21 +8355,37 @@ impl Editor {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
         let permalink = maybe!({
-            let project = self.project.clone()?;
+            let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
             let project = project.read(cx);
 
-            let worktree = project.visible_worktrees(cx).next()?;
+            let worktree = project
+                .visible_worktrees(cx)
+                .next()
+                .ok_or_else(|| anyhow!("no worktree"))?;
 
             let mut cwd = worktree.read(cx).abs_path().to_path_buf();
             cwd.push(".git");
 
-            let repo = project.fs().open_repo(&cwd)?;
-            let origin_url = repo.lock().remote_url("origin")?;
-            let sha = repo.lock().head_sha()?;
+            const REMOTE_NAME: &'static str = "origin";
+            let repo = project
+                .fs()
+                .open_repo(&cwd)
+                .ok_or_else(|| anyhow!("no Git repo"))?;
+            let origin_url = repo
+                .lock()
+                .remote_url(REMOTE_NAME)
+                .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+            let sha = repo
+                .lock()
+                .head_sha()
+                .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
-            let buffer = self.buffer().read(cx).as_singleton()?;
-            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-            let path = file.path().to_str().map(|path| path.to_string())?;
+            let path = maybe!({
+                let buffer = self.buffer().read(cx).as_singleton()?;
+                let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+                file.path().to_str().map(|path| path.to_string())
+            })
+            .ok_or_else(|| anyhow!("failed to determine file path"))?;
 
             let selections = self.selections.all::<Point>(cx);
             let selection = selections.iter().peekable().next();
@@ -8379,11 +8396,23 @@ impl Editor {
                 path: &path,
                 selection: selection.map(|selection| selection.range()),
             })
-            .log_err()
         });
 
-        if let Some(permalink) = permalink {
-            cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+        match permalink {
+            Ok(permalink) => {
+                cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+            }
+            Err(err) => {
+                let message = format!("Failed to copy permalink: {err}");
+
+                Err::<(), anyhow::Error>(err).log_err();
+
+                if let Some(workspace) = self.workspace() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                    })
+                }
+            }
         }
     }
 
@@ -9466,6 +9495,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 background_color: None,
                 underline: None,
+                strikethrough: None,
                 white_space: WhiteSpace::Normal,
             },
 
@@ -9479,6 +9509,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 background_color: None,
                 underline: None,
+                strikethrough: None,
                 white_space: WhiteSpace::Normal,
             },
         };
@@ -9685,7 +9716,14 @@ impl ViewInputHandler for Editor {
             } else {
                 this.highlight_text::<InputComposition>(
                     marked_ranges.clone(),
-                    HighlightStyle::default(), // todo!() this.style(cx).composition_mark,
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
                     cx,
                 );
             }

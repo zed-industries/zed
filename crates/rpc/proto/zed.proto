@@ -1122,6 +1122,7 @@ message SendChannelMessage {
     string body = 2;
     Nonce nonce = 3;
     repeated ChatMention mentions = 4;
+    optional uint64 reply_to_message_id = 5;
 }
 
 message RemoveChannelMessage {
@@ -1173,6 +1174,7 @@ message ChannelMessage {
     uint64 sender_id = 4;
     Nonce nonce = 5;
     repeated ChatMention mentions = 6;
+    optional uint64 reply_to_message_id = 7;
 }
 
 message ChatMention {

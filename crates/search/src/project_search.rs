@@ -1632,6 +1632,7 @@ impl ProjectSearchBar {
             line_height: relative(1.3).into(),
             background_color: None,
             underline: None,
+            strikethrough: None,
             white_space: WhiteSpace::Normal,
         };
 

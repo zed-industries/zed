@@ -1073,6 +1073,7 @@ impl EditorElement {
                                                         font: self.style.text.font(),
                                                         color: self.style.background,
                                                         background_color: None,
+                                                        strikethrough: None,
                                                         underline: None,
                                                     }],
                                                 )
@@ -1713,6 +1714,7 @@ impl EditorElement {
                     color: Hsla::default(),
                     background_color: None,
                     underline: None,
+                    strikethrough: None,
                 }],
             )
             .unwrap();
@@ -1849,6 +1851,7 @@ impl EditorElement {
                         color,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     };
                     let shaped_line = cx
                         .text_system()
@@ -1906,6 +1909,7 @@ impl EditorElement {
                         color: placeholder_color,
                         background_color: None,
                         underline: Default::default(),
+                        strikethrough: None,
                     };
                     cx.text_system()
                         .shape_line(line.to_string().into(), font_size, &[run])
@@ -2321,6 +2325,7 @@ impl EditorElement {
                         color: cx.theme().colors().editor_invisible,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     }],
                 )
                 .unwrap();
@@ -2335,6 +2340,7 @@ impl EditorElement {
                         color: cx.theme().colors().editor_invisible,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     }],
                 )
                 .unwrap();
@@ -2868,6 +2874,7 @@ impl LineWithInvisibles {
                         color: text_style.color,
                         background_color: text_style.background_color,
                         underline: text_style.underline,
+                        strikethrough: text_style.strikethrough,
                     });
 
                     if editor_mode == EditorMode::Full {
@@ -3281,6 +3288,7 @@ fn layout_line(
             color: Hsla::default(),
             background_color: None,
             underline: None,
+            strikethrough: None,
         }],
     )
 }

@@ -25,6 +25,7 @@
         "doc": "document",
         "docx": "document",
         "eex": "elixir",
+        "elm": "elm",
         "erl": "erlang",
         "escript": "erlang",
         "eslintrc": "eslint",
@@ -87,6 +88,7 @@
         "pptx": "document",
         "prettierignore": "prettier",
         "prettierrc": "prettier",
+        "prisma": "prisma",
         "profile": "terminal",
         "ps1": "terminal",
         "psd": "image",
@@ -154,6 +156,9 @@
         "elixir": {
             "icon": "icons/file_icons/elixir.svg"
         },
+        "elm": {
+            "icon": "icons/file_icons/elm.svg"
+        },
         "erlang": {
             "icon": "icons/file_icons/erlang.svg"
         },
@@ -192,6 +197,9 @@
         },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
+        },
+        "prisma": {
+            "icon": "icons/file_icons/prisma.svg"
         },
         "python": {
             "icon": "icons/file_icons/python.svg"

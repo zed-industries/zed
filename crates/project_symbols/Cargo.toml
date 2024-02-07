@@ -11,29 +11,29 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-editor = { path = "../editor" }
-fuzzy = {   path = "../fuzzy" }
-gpui = { path = "../gpui" }
+editor.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
 ordered-float.workspace = true
-picker = { path = "../picker" }
+picker.workspace = true
 postage.workspace = true
-project = { path = "../project" }
+project.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smol.workspace = true
-text = { path = "../text" }
-theme = { path = "../theme" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+text.workspace = true
+theme.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-release_channel = { path = "../release_channel" }
-settings = { path = "../settings", features = ["test-support"] }
-theme = { path = "../theme", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

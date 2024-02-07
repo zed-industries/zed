@@ -75,6 +75,7 @@ impl RunnablesPanel {
             background_color: None,
             underline: None,
             white_space: WhiteSpace::Normal,
+            strikethrough: None,
         };
 
         EditorElement::new(

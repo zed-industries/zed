@@ -34,6 +34,7 @@ pub struct MessageEditor {
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
     channel_id: Option<ChannelId>,
+    reply_to_message_id: Option<u64>,
 }
 
 struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
@@ -112,7 +113,20 @@ impl MessageEditor {
             channel_id: None,
             mentions: Vec::new(),
             mentions_task: None,
+            reply_to_message_id: None,
         }
+    }
+
+    pub fn reply_to_message_id(&self) -> Option<u64> {
+        self.reply_to_message_id
+    }
+
+    pub fn set_reply_to_message_id(&mut self, reply_to_message_id: u64) {
+        self.reply_to_message_id = Some(reply_to_message_id);
+    }
+
+    pub fn clear_reply_to_message_id(&mut self) {
+        self.reply_to_message_id = None;
     }
 
     pub fn set_channel(
@@ -172,8 +186,13 @@ impl MessageEditor {
 
             editor.clear(cx);
             self.mentions.clear();
+            let reply_to_message_id = std::mem::take(&mut self.reply_to_message_id);
 
-            MessageParams { text, mentions }
+            MessageParams {
+                text,
+                mentions,
+                reply_to_message_id,
+            }
         })
     }
 
@@ -341,6 +360,7 @@ impl Render for MessageEditor {
             line_height: relative(1.3).into(),
             background_color: None,
             underline: None,
+            strikethrough: None,
             white_space: WhiteSpace::Normal,
         };
 
@@ -424,6 +444,7 @@ mod tests {
                 MessageParams {
                     text,
                     mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
+                    reply_to_message_id: None
                 }
             );
         });

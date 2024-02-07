@@ -112,7 +112,7 @@ impl_actions!(
         MoveUpByLines,
         MoveDownByLines,
         SelectUpByLines,
-        SelectDownByLines,
+        SelectDownByLines
     ]
 );
 

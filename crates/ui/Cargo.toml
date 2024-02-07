@@ -12,16 +12,16 @@ path = "src/ui.rs"
 [dependencies]
 anyhow.workspace = true
 chrono = "0.4"
-gpui = { path = "../gpui" }
+gpui.workspace = true
 itertools = { version = "0.11.0", optional = true }
-menu = { path = "../menu" }
+menu.workspace = true
 rand = "0.8"
 serde.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smallvec.workspace = true
-story = { path = "../story", optional = true }
+story = { workspace = true, optional = true }
 strum = { version = "0.25.0", features = ["derive"] }
-theme = { path = "../theme" }
+theme.workspace = true
 
 [features]
 default = []

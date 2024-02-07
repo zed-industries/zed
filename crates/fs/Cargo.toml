@@ -9,11 +9,11 @@ license = "GPL-3.0-or-later"
 path = "src/fs.rs"
 
 [dependencies]
-collections = { path = "../collections" }
-rope = { path = "../rope" }
-text = { path = "../text" }
-util = { path = "../util" }
-sum_tree = { path = "../sum_tree" }
+collections.workspace = true
+rope.workspace = true
+text.workspace = true
+util.workspace = true
+sum_tree.workspace = true
 
 anyhow.workspace = true
 async-trait.workspace = true
@@ -31,16 +31,16 @@ log.workspace = true
 libc = "0.2"
 time.workspace = true
 
-gpui = { path = "../gpui", optional = true}
+gpui = { workspace = true, optional = true}
 
 [target.'cfg(target_os = "macos")'.dependencies]
-fsevent = { path = "../fsevent" }
+fsevent.workspace = true
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "6.1.1"
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 
 [features]
 test-support = ["gpui/test-support"]

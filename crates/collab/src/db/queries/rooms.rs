@@ -862,7 +862,7 @@ impl Database {
                                 id: collaborator.project_id,
                                 host_user_id: Default::default(),
                                 connection_ids: Default::default(),
-                                host_connection_id: Default::default(),
+                                host_connection_id: None,
                             });
 
                     let collaborator_connection_id = collaborator.connection();
@@ -872,7 +872,7 @@ impl Database {
 
                     if collaborator.is_host {
                         left_project.host_user_id = collaborator.user_id;
-                        left_project.host_connection_id = collaborator_connection_id;
+                        left_project.host_connection_id = Some(collaborator_connection_id);
                     }
                 }
                 drop(collaborators);
