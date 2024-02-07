@@ -1,5 +1,5 @@
 use crate::{px, EntityId, FontId, GlyphId, Pixels, PlatformTextSystem, Point, Size};
-use collections::{FxHashMap, FxHashSet};
+use collections::{HashMap, HashSet};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -277,10 +277,10 @@ impl WrappedLineLayout {
 
 pub(crate) struct LineLayoutCache {
     view_stack: Mutex<Vec<EntityId>>,
-    previous_frame: Mutex<FxHashMap<CacheKey, Arc<LineLayout>>>,
-    current_frame: RwLock<FxHashMap<CacheKey, Arc<LineLayout>>>,
-    previous_frame_wrapped: Mutex<FxHashMap<CacheKey, Arc<WrappedLineLayout>>>,
-    current_frame_wrapped: RwLock<FxHashMap<CacheKey, Arc<WrappedLineLayout>>>,
+    previous_frame: Mutex<HashMap<CacheKey, Arc<LineLayout>>>,
+    current_frame: RwLock<HashMap<CacheKey, Arc<LineLayout>>>,
+    previous_frame_wrapped: Mutex<HashMap<CacheKey, Arc<WrappedLineLayout>>>,
+    current_frame_wrapped: RwLock<HashMap<CacheKey, Arc<WrappedLineLayout>>>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
 }
 
@@ -296,7 +296,7 @@ impl LineLayoutCache {
         }
     }
 
-    pub fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
+    pub fn finish_frame(&self, reused_views: &HashSet<EntityId>) {
         debug_assert_eq!(self.view_stack.lock().len(), 0);
 
         let mut prev_frame = self.previous_frame.lock();
