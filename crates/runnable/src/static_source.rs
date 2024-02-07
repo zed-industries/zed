@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use postage::watch;
+use gpui::{AppContext, Context, Model, Subscription};
 use serde::Deserialize;
 use util::ResultExt;
 
@@ -14,11 +13,16 @@ use futures::channel::mpsc::UnboundedReceiver;
 
 pub struct StaticSource {
     id: SourceId,
+    // This is gonna come into play later once we tackle handling multiple instances of a single runnable (spawning multiple runnables from a single static runnable definition).
+    #[allow(unused)]
     definitions: Model<TrackedFile<RunnableProvider>>,
     runnables: Vec<RunnablePebble>,
     _subscription: Subscription,
 }
 
+/// A Wrapper around deserializable T that keeps track of it's contents
+/// via a provided channel. Once T value changes, the observers of TrackedFile are
+/// notified.
 pub struct TrackedFile<T> {
     parsed_contents: T,
 }
@@ -106,28 +110,5 @@ impl Source for Model<StaticSource> {
         cx: &'a AppContext,
     ) -> anyhow::Result<Box<dyn Iterator<Item = crate::RunnablePebble> + 'a>> {
         Ok(Box::new(self.read(cx).runnables.iter().cloned()))
-        // let tasks: Vec<_> = self
-        //     .definitions
-        //     .read(cx)
-        //     .get()
-        //     .tasks
-        //     .iter()
-        //     .cloned()
-        //     .collect();
-        // Ok(Box::new(tasks.into_iter().map(|def| {
-        //     let runner = StaticRunner::new(def);
-        //     let source_id = self.id;
-        //     let display_name = runner.name();
-        //     let runnable_id = runner.id();
-        //     let state = cx.new_model(|_| RunState::NotScheduled(Box::new(runner)));
-        //     crate::RunnablePebble {
-        //         metadata: crate::RunnableLens {
-        //             source_id,
-        //             runnable_id,
-        //             display_name,
-        //         },
-        //         state,
-        //     }
-        // })))
     }
 }

@@ -22,9 +22,7 @@ use assets::Assets;
 use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
-use project::Project;
 use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
-use runnable::static_runnable_file::RunnableProvider;
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,

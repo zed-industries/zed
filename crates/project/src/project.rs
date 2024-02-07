@@ -59,8 +59,7 @@ use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 
 use rpc::{ErrorCode, ErrorExt as _};
-use runnable::static_source::StaticSource;
-use runnable_inventory::Inventory;
+pub use runnable_inventory::Inventory;
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};

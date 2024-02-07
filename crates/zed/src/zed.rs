@@ -22,7 +22,7 @@ use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
-use runnable::{static_runnable_file::RunnableProvider, RunState, RunnablePebble};
+use runnable::static_runnable_file::RunnableProvider;
 use runnables_panel::RunnablesPanel;
 use search::project_search::ProjectSearchBar;
 use serde_derive::{Deserialize, Serialize};
@@ -212,7 +212,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                let runnables_panel = RunnablesPanel::new(workspace.project().clone(), cx);
+                let runnables_panel = RunnablesPanel::new(
+                    workspace.project().read(cx).runnable_inventory().clone(),
+                    cx,
+                );
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
@@ -394,7 +397,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         return;
                     };
                     cx.spawn(|_, _| async move {
-                        dbg!(handle.await);
+                        let _ = dbg!(handle.await);
                     })
                     .detach();
                 });

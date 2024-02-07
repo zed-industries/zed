@@ -4,17 +4,17 @@ use std::path::PathBuf;
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    actions, div, list, px, red, relative, rems, AppContext, EventEmitter, FocusHandle,
-    FocusableView, FontStyle, FontWeight, IntoElement, ListAlignment, ListState, Model,
-    ParentElement as _, Render, SharedString, Styled as _, TextStyle, View, ViewContext,
-    VisualContext as _, WhiteSpace, WindowContext,
+    actions, div, list, px, relative, rems, AppContext, EventEmitter, FocusHandle, FocusableView,
+    FontStyle, FontWeight, IntoElement, ListAlignment, ListState, Model, ParentElement as _,
+    Render, SharedString, Styled as _, TextStyle, View, ViewContext, VisualContext as _,
+    WhiteSpace, WindowContext,
 };
-use project::Project;
+use project::Inventory;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{
-    h_flex, v_flex, ActiveTheme, Button, Clickable, FluentBuilder, Icon, IconButton, IconName,
-    Label, List, ListItem, StyledExt,
+    v_flex, ActiveTheme, Button, Clickable, FluentBuilder, Icon, IconButton, IconName, ListItem,
+    StyledExt,
 };
 use workspace::{
     dock::{Panel, PanelEvent},
@@ -36,11 +36,11 @@ pub struct RunnablesPanel {
     filter_editor: View<Editor>,
     focus_handle: FocusHandle,
     // todo: po: should this be weak?
-    project: Model<Project>,
+    inventory: Model<Inventory>,
 }
 
 impl RunnablesPanel {
-    pub fn new(project: Model<Project>, cx: &mut WindowContext<'_>) -> View<Self> {
+    pub fn new(inventory: Model<Inventory>, cx: &mut WindowContext<'_>) -> View<Self> {
         cx.new_view(|cx| {
             let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -50,7 +50,7 @@ impl RunnablesPanel {
             Self {
                 focus_handle: cx.focus_handle(),
                 filter_editor,
-                project,
+                inventory,
             }
         })
     }
@@ -145,9 +145,7 @@ impl Panel for RunnablesPanel {
 impl Render for RunnablesPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let runnables: Vec<_> = self
-            .project
-            .read(cx)
-            .runnable_inventory()
+            .inventory
             .read(cx)
             .list_runnables(&PathBuf::new(), cx)
             .collect();
@@ -195,8 +193,6 @@ impl Render for RunnablesPanel {
                         )
                     })
                     .into_any_element()
-                //runnables[index]
-                //div().child("XD").into_any_element()
             },
         );
         v_flex()
@@ -212,7 +208,5 @@ impl Render for RunnablesPanel {
                             .child(self.render_filter_input(&self.filter_editor, cx)),
                     ),
             )
-        // h_flex().bg(red()).w_full().h_full().min_w(px(400.))
-        // .child("Hey there little man")
     }
 }

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use runnable::{ExecutionResult, Runnable, RunnableId, RunnablePebble, Source, TaskHandle};
+use runnable::{RunnablePebble, Source};
 
 struct SourceInInventory {
     source: Model<Box<dyn Source>>,
@@ -20,7 +20,7 @@ impl Inventory {
     }
     pub fn add_source(&mut self, source: impl Source + 'static, cx: &mut ModelContext<Self>) {
         let source: Model<Box<dyn Source>> = cx.new_model(|_| Box::new(source) as Box<dyn Source>);
-        let _subscription = cx.observe(&source, |inventory, source, cx| {
+        let _subscription = cx.observe(&source, |_, _, cx| {
             cx.notify();
         });
         let source = SourceInInventory {
