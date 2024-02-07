@@ -1,4 +1,5 @@
 name = "Svelte"
+grammar = "svelte"
 path_suffixes = ["svelte"]
 block_comment = ["<!-- ", " -->"]
 autoclose_before = ";:.,=}])>"

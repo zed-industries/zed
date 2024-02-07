@@ -35,7 +35,7 @@ mod tests {
     use super::*;
     use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use indoc::indoc;
-    use language::{BracketPair, BracketPairConfig, Language, LanguageConfig};
+    use language::{BracketPair, BracketPairConfig, Language, LanguageConfig, LanguageMatcher};
 
     #[gpui::test]
     async fn test_matching_bracket_highlights(cx: &mut gpui::TestAppContext) {
@@ -45,7 +45,10 @@ mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Rust".into(),
-                    path_suffixes: vec!["rs".to_string()],
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["rs".to_string()],
+                        ..Default::default()
+                    },
                     brackets: BracketPairConfig {
                         pairs: vec![
                             BracketPair {

@@ -1,4 +1,5 @@
 name = "Markdown"
+grammar = "markdown"
 path_suffixes = ["md", "mdx"]
 word_characters = ["-"]
 brackets = [

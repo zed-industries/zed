@@ -2560,6 +2560,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
+name = "extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "parking_lot 0.11.2",
+ "serde",
+ "serde_json",
+ "theme",
+ "toml",
+ "util",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3969,6 +3987,7 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
+ "toml",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
@@ -10327,6 +10346,7 @@ dependencies = [
  "diagnostics",
  "editor",
  "env_logger",
+ "extension",
  "feature_flags",
  "feedback",
  "file_finder",
