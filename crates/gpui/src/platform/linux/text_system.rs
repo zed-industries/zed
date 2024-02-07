@@ -29,7 +29,6 @@ struct LinuxTextSystemState {
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
-// todo!(linux): Double check this
 unsafe impl Send for LinuxTextSystemState {}
 unsafe impl Sync for LinuxTextSystemState {}
 
@@ -55,52 +54,33 @@ impl Default for LinuxTextSystem {
 
 #[allow(unused)]
 impl PlatformTextSystem for LinuxTextSystem {
-    // todo!(linux)
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        Ok(())
+        Ok(()) //TODO
     }
-
-    // todo!(linux)
     fn all_font_names(&self) -> Vec<String> {
         Vec::new()
     }
-
-    // todo!(linux)
     fn all_font_families(&self) -> Vec<String> {
         Vec::new()
     }
-
-    // todo!(linux)
     fn font_id(&self, descriptor: &Font) -> Result<FontId> {
-        Ok(FontId(0))
+        Ok(FontId(0)) //TODO
     }
-
-    // todo!(linux)
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
         unimplemented!()
     }
-
-    // todo!(linux)
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         unimplemented!()
     }
-
-    // todo!(linux)
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
         unimplemented!()
     }
-
-    // todo!(linux)
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
         None
     }
-
-    // todo!(linux)
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         unimplemented!()
     }
-
-    // todo!(linux)
     fn rasterize_glyph(
         &self,
         params: &RenderGlyphParams,
@@ -108,13 +88,9 @@ impl PlatformTextSystem for LinuxTextSystem {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         unimplemented!()
     }
-
-    // todo!(linux)
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         LineLayout::default() //TODO
     }
-
-    // todo!(linux)
     fn wrap_line(
         &self,
         text: &str,
