@@ -139,7 +139,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
-        "Search recent Projects...".into()
+        "Search recent projects...".into()
     }
 
     fn match_count(&self) -> usize {
