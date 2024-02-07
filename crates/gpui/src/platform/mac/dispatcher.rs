@@ -51,7 +51,7 @@ impl PlatformDispatcher for MacDispatcher {
     fn dispatch(&self, runnable: Runnable, _: Option<TaskLabel>) {
         unsafe {
             dispatch_async_f(
-                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0),
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0),
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline),
             );
