@@ -33,6 +33,20 @@ pub struct ThemeSettings {
     pub theme_overrides: Option<ThemeStyleContent>,
 }
 
+impl ThemeSettings {
+    pub fn reload_current_theme(cx: &mut AppContext) {
+        let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+        if let Some(theme_selection) = theme_settings.theme_selection.clone() {
+            let theme_name = theme_selection.theme(*SystemAppearance::global(cx));
+
+            if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
+                ThemeSettings::override_global(theme_settings, cx);
+            }
+        }
+    }
+}
+
 /// The appearance of the system.
 #[derive(Debug, Clone, Copy, Deref)]
 pub struct SystemAppearance(pub Appearance);

@@ -14,7 +14,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use theme::ThemeRegistry;
+use theme::{ThemeRegistry, ThemeSettings};
 use util::{paths::EXTENSIONS_DIR, ResultExt};
 
 #[cfg(test)]
@@ -27,7 +27,7 @@ pub struct ExtensionStore {
     manifest_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
-    _watch_extensions_dir: Task<()>,
+    _watch_extensions_dir: [Task<()>; 2],
 }
 
 struct GlobalExtensionStore(Model<ExtensionStore>);
@@ -103,7 +103,7 @@ impl ExtensionStore {
             fs,
             language_registry,
             theme_registry,
-            _watch_extensions_dir: Task::ready(()),
+            _watch_extensions_dir: [Task::ready(()), Task::ready(())],
         };
         this._watch_extensions_dir = this.watch_extensions_dir(cx);
         this.load(cx);
@@ -176,30 +176,71 @@ impl ExtensionStore {
         *self.manifest.write() = manifest;
     }
 
-    fn watch_extensions_dir(&self, cx: &mut ModelContext<Self>) -> Task<()> {
+    fn watch_extensions_dir(&self, cx: &mut ModelContext<Self>) -> [Task<()>; 2] {
         let manifest = self.manifest.clone();
         let fs = self.fs.clone();
         let language_registry = self.language_registry.clone();
+        let theme_registry = self.theme_registry.clone();
         let extensions_dir = self.extensions_dir.clone();
-        cx.background_executor().spawn(async move {
-            let mut changed_languages = HashSet::default();
+
+        let (reload_theme_tx, mut reload_theme_rx) = futures::channel::mpsc::unbounded();
+
+        let events_task = cx.background_executor().spawn(async move {
             let mut events = fs.watch(&extensions_dir, Duration::from_millis(250)).await;
             while let Some(events) = events.next().await {
-                changed_languages.clear();
-                let manifest = manifest.read();
-                for event in events {
-                    for (language_name, language) in &manifest.languages {
-                        let mut language_path = extensions_dir.clone();
-                        language_path
-                            .extend([language.extension.as_ref(), language.path.as_path()]);
-                        if event.path.starts_with(&language_path) || event.path == language_path {
-                            changed_languages.insert(language_name.clone());
+                let mut changed_languages = HashSet::default();
+                let mut changed_themes = HashSet::default();
+
+                {
+                    let manifest = manifest.read();
+                    for event in events {
+                        for (language_name, language) in &manifest.languages {
+                            let mut language_path = extensions_dir.clone();
+                            language_path
+                                .extend([language.extension.as_ref(), language.path.as_path()]);
+                            if event.path.starts_with(&language_path) || event.path == language_path
+                            {
+                                changed_languages.insert(language_name.clone());
+                            }
+                        }
+
+                        for (_theme_name, theme) in &manifest.themes {
+                            let mut theme_path = extensions_dir.clone();
+                            theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
+                            if event.path.starts_with(&theme_path) || event.path == theme_path {
+                                changed_themes.insert(theme_path.clone());
+                            }
                         }
                     }
                 }
+
                 language_registry.reload_languages(&changed_languages);
+
+                for theme_path in &changed_themes {
+                    theme_registry
+                        .load_user_theme(&theme_path, fs.clone())
+                        .await
+                        .log_err();
+                }
+
+                if !changed_themes.is_empty() {
+                    reload_theme_tx.unbounded_send(()).ok();
+                }
             }
-        })
+        });
+
+        let reload_theme_task = cx.spawn(|_, cx| async move {
+            while let Some(_) = reload_theme_rx.next().await {
+                if cx
+                    .update(|cx| ThemeSettings::reload_current_theme(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        [events_task, reload_theme_task]
     }
 
     pub fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
