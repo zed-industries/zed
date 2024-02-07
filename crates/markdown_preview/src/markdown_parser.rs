@@ -63,6 +63,24 @@ impl<'a> MarkdownParser<'a> {
         return self.peek(0);
     }
 
+    fn is_text_like(event: &Event) -> bool {
+        match event {
+            Event::Text(_)
+            // Represent an inline code block
+            | Event::Code(_)
+            | Event::Html(_)
+            | Event::FootnoteReference(_)
+            | Event::Start(Tag::Link(_, _, _))
+            | Event::Start(Tag::Emphasis)
+            | Event::Start(Tag::Strong)
+            | Event::Start(Tag::Strikethrough)
+            | Event::Start(Tag::Image(_, _, _)) => {
+                return true;
+            }
+            _ => return false,
+        }
+    }
+
     fn parse_document(mut self) -> Self {
         while !self.eof() {
             if let Some(block) = self.parse_block() {
@@ -419,22 +437,16 @@ impl<'a> MarkdownParser<'a> {
                     }
 
                     if let Some(next) = self.current() {
-                        match next.0 {
-                            // This is a plain list item.
-                            // For example `- some text` or `1. [Docs](./docs.md)`
-                            Event::Text(_)
-                            | Event::Start(Tag::Link(_, _, _))
-                            | Event::Start(Tag::Image(_, _, _)) => {
-                                let text = self.parse_text(false);
-                                let block = ParsedMarkdownElement::Paragraph(text);
+                        // This is a plain list item.
+                        // For example `- some text` or `1. [Docs](./docs.md)`
+                        if MarkdownParser::is_text_like(&next.0) {
+                            let text = self.parse_text(false);
+                            let block = ParsedMarkdownElement::Paragraph(text);
+                            current_list_items.push(Box::new(block));
+                        } else {
+                            let block = self.parse_block();
+                            if let Some(block) = block {
                                 current_list_items.push(Box::new(block));
-                            }
-
-                            _ => {
-                                let block = self.parse_block();
-                                if let Some(block) = block {
-                                    current_list_items.push(Box::new(block));
-                                }
                             }
                         }
                     }
@@ -848,6 +860,29 @@ Some other content
                     ],
                 ),],
                 0..96,
+            ),]
+        );
+    }
+
+    #[test]
+    fn test_list_with_leading_text() {
+        let parsed = parse(
+            "\
+* `code`
+* **bold**
+* [link](https://example.com)
+",
+        );
+
+        assert_eq!(
+            parsed.children,
+            vec![list(
+                vec![
+                    list_item(1, Unordered, vec![p("code", 0..9)],),
+                    list_item(1, Unordered, vec![p("bold", 9..20)]),
+                    list_item(1, Unordered, vec![p("link", 20..50)],)
+                ],
+                0..50,
             ),]
         );
     }

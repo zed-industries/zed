@@ -19,13 +19,13 @@ pub enum ParsedMarkdownElement {
 impl ParsedMarkdownElement {
     pub fn source_range(&self) -> Range<usize> {
         match self {
-            ParsedMarkdownElement::Heading(heading) => heading.source_range.clone(),
-            ParsedMarkdownElement::List(list) => list.source_range.clone(),
-            ParsedMarkdownElement::Table(table) => table.source_range.clone(),
-            ParsedMarkdownElement::BlockQuote(block_quote) => block_quote.source_range.clone(),
-            ParsedMarkdownElement::CodeBlock(code_block) => code_block.source_range.clone(),
-            ParsedMarkdownElement::Paragraph(text) => text.source_range.clone(),
-            ParsedMarkdownElement::HorizontalRule(range) => range.clone(),
+            Self::Heading(heading) => heading.source_range.clone(),
+            Self::List(list) => list.source_range.clone(),
+            Self::Table(table) => table.source_range.clone(),
+            Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
+            Self::CodeBlock(code_block) => code_block.source_range.clone(),
+            Self::Paragraph(text) => text.source_range.clone(),
+            Self::HorizontalRule(range) => range.clone(),
         }
     }
 }
