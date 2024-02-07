@@ -2866,7 +2866,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         "/some/path",
         LanguageConfig {
             name: "Rust".into(),
-            grammar: "rust".into(),
+            grammar: Some("rust".into()),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..Default::default()

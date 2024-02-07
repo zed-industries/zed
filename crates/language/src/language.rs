@@ -393,7 +393,7 @@ pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: Arc<str>,
     // The name of the grammar in a WASM bundle (experimental).
-    pub grammar: Arc<str>,
+    pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
     #[serde(flatten)]
     pub matcher: LanguageMatcher,
@@ -534,7 +534,7 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: "".into(),
-            grammar: "".into(),
+            grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
@@ -1059,10 +1059,13 @@ impl LanguageRegistry {
                                         }
                                     };
 
-                                    let grammar =
-                                        this.get_or_load_grammar(config.grammar.clone()).await?;
+                                    let grammar = if let Some(grammar) = config.grammar.clone() {
+                                        Some(this.get_or_load_grammar(grammar).await?)
+                                    } else {
+                                        None
+                                    };
 
-                                    Language::new(config, Some(grammar))
+                                    Language::new(config, grammar)
                                         .with_lsp_adapters(language.lsp_adapters)
                                         .await
                                         .with_queries(queries)
@@ -2264,7 +2267,7 @@ mod tests {
             "/JSON",
             LanguageConfig {
                 name: "JSON".into(),
-                grammar: "json".into(),
+                grammar: Some("json".into()),
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["json".into()],
                     ..Default::default()
@@ -2278,7 +2281,7 @@ mod tests {
             "/rust",
             LanguageConfig {
                 name: "Rust".into(),
-                grammar: "rust".into(),
+                grammar: Some("rust".into()),
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["rs".into()],
                     ..Default::default()
