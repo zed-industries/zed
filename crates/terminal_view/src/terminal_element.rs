@@ -340,7 +340,7 @@ impl TerminalElement {
             wavy: flags.contains(Flags::UNDERCURL),
         });
 
-        let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
+        let weight = if flags.intersects(Flags::BOLD) {
             FontWeight::BOLD
         } else {
             FontWeight::NORMAL
