@@ -3,9 +3,9 @@ use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
     Pixels, PlatformTextSystem, RenderGlyphParams, SharedString, Size,
 };
-use anyhow::anyhow;
 use anyhow::Ok;
 use anyhow::Result;
+use anyhow::{anyhow, Context};
 use collections::HashMap;
 use cosmic_text::fontdb::Query;
 use cosmic_text::{
@@ -36,8 +36,12 @@ unsafe impl Sync for LinuxTextSystemState {}
 
 impl LinuxTextSystem {
     pub(crate) fn new() -> Self {
+        let mut font_system = FontSystem::new();
+        // HACK: use actual better fallback
+        font_system.db_mut().load_system_fonts();
+        font_system.db_mut().load_fonts_dir("assets/fonts");
         Self(RwLock::new(LinuxTextSystemState {
-            font_system: FontSystem::new(),
+            font_system,
             swash_cache: SwashCache::new(),
             fonts: Vec::new(),
             font_selections: HashMap::default(),
@@ -90,7 +94,7 @@ impl PlatformTextSystem for LinuxTextSystem {
                     style: font.style.into(),
                     stretch: Default::default(),
                 })
-                .unwrap();
+                .context("no font")?;
             println!("{:?}", id);
             println!("{:?}", lock.fonts);
             let font_id = if let Some(font_id) = lock.fonts.iter().position(|font| font.id() == id)
@@ -113,7 +117,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         FontMetrics {
             units_per_em: metrics.units_per_em as u32,
             ascent: metrics.ascent,
-            descent: metrics.descent,
+            descent: metrics.descent - 1000.0, // HACK: extremly hacky but this means text doesn't get cut off, something to do with gutter padding in the editor
             line_gap: metrics.leading,
             underline_position: metrics.underline_offset,
             underline_thickness: metrics.stroke_size,
@@ -126,10 +130,16 @@ impl PlatformTextSystem for LinuxTextSystem {
         }
     }
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        let metrics = self.0.read().fonts[font_id.0].as_swash().metrics(&[]);
+        let lock = self.0.read();
+        let metrics = lock.fonts[font_id.0].as_swash().metrics(&[]);
+        let glyph_metrics = lock.fonts[font_id.0].as_swash().glyph_metrics(&[]);
+        let glyph_id = glyph_id.0 as u16;
         Ok(Bounds {
             origin: point(0.0, 0.0), // do we need an origin?
-            size: size(metrics.average_width, metrics.ascent + metrics.descent), // this height is probably incorect
+            size: size(
+                glyph_metrics.advance_width(glyph_id),
+                glyph_metrics.advance_height(glyph_id),
+            ), // this height is probably incorect
         })
     }
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
@@ -310,7 +320,10 @@ impl LinuxTextSystemState {
             .unwrap();
         Ok(Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
-            size: size(image.placement.width.into(), image.placement.height.into()),
+            size: size(
+                (image.placement.width).into(),
+                image.placement.height.into(),
+            ),
         })
     }
 
@@ -392,7 +405,7 @@ impl LinuxTextSystemState {
             // this is definetly wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
             glyphs.push(ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
-                position: point(glyph.x.into(), glyph.y.into()),
+                position: point((glyph.x).into(), glyph.y.into()),
                 index: glyph.start,
                 is_emoji: self.is_emoji(font_id),
             });
