@@ -307,7 +307,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 #[derive(Debug)]
 enum ImeInput {
     None,
-    Pending {
+    ReplaceTextInRange {
         text: String,
         range: Option<Range<usize>>,
     },
@@ -1146,7 +1146,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let last_replace_text_in_range = lock.last_replace_text_in_range.take();
         let ime_input = lock.ime_input.take().unwrap();
         match ime_input {
-            ImeInput::Pending { text, range } => {
+            ImeInput::ReplaceTextInRange { text, range } => {
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
 
@@ -1621,7 +1621,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         let window_state = get_window_state(this);
         let mut state = window_state.lock();
         if let Some(ime_input) = state.ime_input.as_mut() {
-            *ime_input = ImeInput::Pending {
+            *ime_input = ImeInput::ReplaceTextInRange {
                 text: text.to_string(),
                 range: replacement_range,
             };
