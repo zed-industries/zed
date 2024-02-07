@@ -7530,6 +7530,7 @@ name = "sqlez"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "futures 0.3.28",
  "indoc",
  "lazy_static",
@@ -8105,6 +8106,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "collections",
  "db",
  "dirs 4.0.0",
  "futures 0.3.28",
@@ -8200,6 +8202,7 @@ name = "theme"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "color",
  "derive_more",
  "fs",
@@ -9343,6 +9346,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "backtrace",
+ "collections",
  "dirs 3.0.2",
  "futures 0.3.28",
  "git2",

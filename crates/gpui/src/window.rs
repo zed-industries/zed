@@ -10,7 +10,7 @@ use crate::{
     WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::FxHashSet;
+use collections::HashSet;
 use derive_more::{Deref, DerefMut};
 use futures::{
     channel::{mpsc, oneshot},
@@ -259,7 +259,7 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
-    pub(crate) dirty_views: FxHashSet<EntityId>,
+    pub(crate) dirty_views: HashSet<EntityId>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     focus_lost_listeners: SubscriberSet<(), AnyObserver>,
@@ -428,7 +428,7 @@ impl Window {
             element_id_stack: GlobalElementId::default(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
-            dirty_views: FxHashSet::default(),
+            dirty_views: HashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),

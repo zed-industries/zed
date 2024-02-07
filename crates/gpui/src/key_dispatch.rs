@@ -53,7 +53,7 @@ use crate::{
     Action, ActionRegistry, DispatchPhase, ElementContext, EntityId, FocusId, KeyBinding,
     KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, WindowContext,
 };
-use collections::FxHashMap;
+use collections::HashMap;
 use smallvec::{smallvec, SmallVec};
 use std::{
     any::{Any, TypeId},
@@ -69,9 +69,9 @@ pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
     nodes: Vec<DispatchNode>,
-    focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
-    view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
-    keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
+    focusable_node_ids: HashMap<FocusId, DispatchNodeId>,
+    view_node_ids: HashMap<EntityId, DispatchNodeId>,
+    keystroke_matchers: HashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Rc<RefCell<Keymap>>,
     action_registry: Rc<ActionRegistry>,
 }
@@ -100,9 +100,9 @@ impl DispatchTree {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
             nodes: Vec::new(),
-            focusable_node_ids: FxHashMap::default(),
-            view_node_ids: FxHashMap::default(),
-            keystroke_matchers: FxHashMap::default(),
+            focusable_node_ids: HashMap::default(),
+            view_node_ids: HashMap::default(),
+            keystroke_matchers: HashMap::default(),
             keymap,
             action_registry,
         }

@@ -21,7 +21,7 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{FxHashMap, FxHashSet};
+use collections::{HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
@@ -53,8 +53,8 @@ pub(crate) struct TooltipRequest {
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
-    pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
-    pub(crate) mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
+    pub(crate) element_states: HashMap<GlobalElementId, ElementStateBox>,
+    pub(crate) mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
@@ -65,13 +65,13 @@ pub(crate) struct Frame {
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
     pub(crate) tooltip_request: Option<TooltipRequest>,
-    pub(crate) cursor_styles: FxHashMap<EntityId, CursorStyle>,
+    pub(crate) cursor_styles: HashMap<EntityId, CursorStyle>,
     pub(crate) requested_cursor_style: Option<CursorStyle>,
     pub(crate) view_stack: Vec<EntityId>,
-    pub(crate) reused_views: FxHashSet<EntityId>,
+    pub(crate) reused_views: HashSet<EntityId>,
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: collections::FxHashMap<String, Bounds<Pixels>>,
+    pub(crate) debug_bounds: collections::HashMap<String, Bounds<Pixels>>,
 }
 
 impl Frame {
@@ -79,8 +79,8 @@ impl Frame {
         Frame {
             focus: None,
             window_active: false,
-            element_states: FxHashMap::default(),
-            mouse_listeners: FxHashMap::default(),
+            element_states: HashMap::default(),
+            mouse_listeners: HashMap::default(),
             dispatch_tree,
             scene: Scene::default(),
             depth_map: Vec::new(),
@@ -91,13 +91,13 @@ impl Frame {
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
             tooltip_request: None,
-            cursor_styles: FxHashMap::default(),
+            cursor_styles: HashMap::default(),
             requested_cursor_style: None,
             view_stack: Vec::new(),
-            reused_views: FxHashSet::default(),
+            reused_views: HashSet::default(),
 
             #[cfg(any(test, feature = "test-support"))]
-            debug_bounds: FxHashMap::default(),
+            debug_bounds: HashMap::default(),
         }
     }
 

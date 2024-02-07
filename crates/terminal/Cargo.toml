@@ -13,6 +13,7 @@ doctest = false
 [dependencies]
 alacritty_terminal = "0.22.0"
 anyhow.workspace = true
+collections.workspace = true
 db.workspace = true
 dirs = "4.0.0"
 futures.workspace = true
