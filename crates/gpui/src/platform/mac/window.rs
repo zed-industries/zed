@@ -1169,8 +1169,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                         if let Some(ime_text) = ime_text.as_ref() {
                             handled = true;
                             with_input_handler(this, |input_handler| {
-                                input_handler
-                                    .replace_text_in_range(ime_replacement_range, &ime_text)
+                                input_handler.replace_text_in_range(ime_replacement_range, ime_text)
                             });
                         } else if !is_composing && is_held {
                             if let Some(last_insert_text) = ime_text {
