@@ -48,6 +48,18 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
+      - name: Ensure fresh merge
+        run: |
+          git checkout -B temp
+          git merge -q origin/main -m "merge main into temp"
+
+      - uses: bufbuild/buf-setup-action@v1
+      - uses: bufbuild/buf-breaking-action@v1
+        with:
+            input: "crates/rpc/proto/"
+            against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=crates/rpc/proto/"
+
+
   tests:
     name: Run tests
     runs-on:

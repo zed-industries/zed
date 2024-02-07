@@ -23,8 +23,3 @@ runs:
         export SQUAWK_GITHUB_TOKEN=${{ github.token }}
         . ./script/squawk
 
-    - uses: bufbuild/buf-setup-action@v1
-    - uses: bufbuild/buf-breaking-action@v1
-      with:
-        input: "crates/rpc/proto/"
-        against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=crates/rpc/proto/"
