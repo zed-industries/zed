@@ -31,6 +31,7 @@ mod purescript;
 mod python;
 mod ruby;
 mod rust;
+mod solidity;
 mod svelte;
 mod tailwind;
 mod toml;
@@ -104,6 +105,7 @@ pub fn init(
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
+        ("solidity", tree_sitter_solidity::language()),
         ("svelte", tree_sitter_svelte::language()),
         ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
@@ -248,6 +250,12 @@ pub fn init(
     language(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
+    );
+    language(
+        "solidity",
+        vec![Arc::new(solidity::SolidityLspAdapter::new(
+            node_runtime.clone(),
+        ))],
     );
     language(
         "svelte",

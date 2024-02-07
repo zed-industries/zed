@@ -14,6 +14,8 @@ extend-exclude = [
     # Editor and file finder rely on partial typing and custom in-string syntax
     "crates/file_finder/src/file_finder_tests.rs",
     "crates/editor/src/editor_tests.rs",
+    # Typo in original tree-sitter grammar that propagates to our integration
+    "crates/zed/src/languages/solidity/highlights.scm",
 ]
 
 [default]

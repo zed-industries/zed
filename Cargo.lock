@@ -9313,6 +9313,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-solidity"
+version = "0.0.3"
+source = "git+https://github.com/parmanuxyz/tree-sitter-solidity?rev=ae2d0d99322a8e83a30a0ac6a2ccce326e07d411#ae2d0d99322a8e83a30a0ac6a2ccce326e07d411"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-svelte"
 version = "0.10.2"
 source = "git+https://github.com/Himujjal/tree-sitter-svelte?rev=697bb515471871e85ff799ea57a76298a71a9cca#697bb515471871e85ff799ea57a76298a71a9cca"
@@ -10707,6 +10716,7 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",
+ "tree-sitter-solidity",
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
