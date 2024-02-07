@@ -105,6 +105,8 @@ pub struct LanguageSettings {
     pub use_autoclose: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
+    // Controls how the editor handles the autoclosed characters.
+    pub always_handle_autoclosed_character: bool,
 }
 
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
@@ -236,6 +238,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
     pub code_actions_on_format: Option<HashMap<String, bool>>,
+    // Controls how the editor handles the autoclosed characters.
+    // When set to `false`(default), skipping over and auto-removing of the closing characters
+    // happen only for auto-inserted characters.
+    // Otherwise(when `true`), the closing charcaters are always skipped over and auto-removed
+    // no matter how they were inserted.
+    ///
+    /// Default: false
+    pub always_handle_autoclosed_character: Option<bool>,
 }
 
 /// The contents of the GitHub Copilot settings.
@@ -602,6 +612,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
+    merge(
+        &mut settings.always_handle_autoclosed_character,
+        src.always_handle_autoclosed_character,
+    );
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
     merge(

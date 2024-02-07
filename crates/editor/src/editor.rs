@@ -430,6 +430,7 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
+    always_handle_autoclosed_character: bool,
     auto_replace_emoji_shortcode: bool,
     custom_context_menu: Option<
         Box<
@@ -1557,6 +1558,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
+            always_handle_autoclosed_character: false,
             auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
@@ -1847,6 +1849,13 @@ impl Editor {
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
+    }
+
+    pub fn set_always_handle_autoclosed_character(
+        &mut self,
+        always_handle_autoclosed_character: bool,
+    ) {
+        self.always_handle_autoclosed_character = always_handle_autoclosed_character;
     }
 
     pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
@@ -2432,16 +2441,23 @@ impl Editor {
                 // bracket of any of this language's bracket pairs.
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
+                let mut is_bracket_pair_end = false;
                 if !text.is_empty() {
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
-                        if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
+                        if !pair.close {
+                            continue;
+                        }
+
+                        if enabled && pair.start.ends_with(text.as_ref()) {
                             bracket_pair = Some(pair.clone());
                             is_bracket_pair_start = true;
                             break;
-                        } else if pair.end.as_str() == text.as_ref() {
+                        }
+                        if pair.end.as_str() == text.as_ref() {
                             bracket_pair = Some(pair.clone());
+                            is_bracket_pair_end = true;
                             break;
                         }
                     }
@@ -2503,6 +2519,23 @@ impl Editor {
                                     .push((selection.map(|_| anchor), region.pair.end.len()));
                                 continue;
                             }
+                        }
+
+                        let always_handle_autoclosed_character = self
+                            .always_handle_autoclosed_character
+                            && snapshot
+                                .settings_at(selection.start, cx)
+                                .always_handle_autoclosed_character;
+                        if always_handle_autoclosed_character
+                            && is_bracket_pair_end
+                            && snapshot.contains_str_at(selection.end, text.as_ref())
+                        {
+                            // Otherwise, when `always_handle_autoclosed_character` is set to `true
+                            // and the inserted text is a closing bracket and the selection is followed
+                            // by the closing bracket then move the selection past the closing bracket.
+                            let anchor = snapshot.anchor_after(selection.end);
+                            new_selections.push((selection.map(|_| anchor), text.len()));
+                            continue;
                         }
                     }
                     // If an opening bracket is 1 character long and is typed while
@@ -3026,21 +3059,55 @@ impl Editor {
         let buffer = self.buffer.read(cx).read(cx);
         let mut new_selections = Vec::new();
         for (mut selection, region) in self.selections_with_autoclose_regions(selections, &buffer) {
-            if let (Some(region), true) = (region, selection.is_empty()) {
-                let mut range = region.range.to_offset(&buffer);
-                if selection.start == range.start {
-                    if range.start >= region.pair.start.len() {
-                        range.start -= region.pair.start.len();
-                        if buffer.contains_str_at(range.start, &region.pair.start) {
-                            if buffer.contains_str_at(range.end, &region.pair.end) {
-                                range.end += region.pair.end.len();
-                                selection.start = range.start;
-                                selection.end = range.end;
+            if selection.is_empty() {
+                let mut try_handle_autclosed_character = true;
+                if let Some(region) = region {
+                    let mut range = region.range.to_offset(&buffer);
+                    if selection.start == range.start {
+                        if range.start >= region.pair.start.len() {
+                            range.start -= region.pair.start.len();
+                            if buffer.contains_str_at(range.start, &region.pair.start) {
+                                if buffer.contains_str_at(range.end, &region.pair.end) {
+                                    range.end += region.pair.end.len();
+                                    selection.start = range.start;
+                                    selection.end = range.end;
+                                    try_handle_autclosed_character = false;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if try_handle_autclosed_character {
+                    let always_handle_autoclosed_character = self
+                        .always_handle_autoclosed_character
+                        && buffer
+                            .settings_at(selection.start, cx)
+                            .always_handle_autoclosed_character;
+
+                    if always_handle_autoclosed_character {
+                        if let Some(scope) = buffer.language_scope_at(selection.start) {
+                            for (pair, enabled) in scope.brackets() {
+                                if !enabled || !pair.close {
+                                    continue;
+                                }
+
+                                if buffer.contains_str_at(selection.start, &pair.end) {
+                                    let pair_start_len = pair.start.len();
+                                    if buffer.contains_str_at(
+                                        selection.start - pair_start_len,
+                                        &pair.start,
+                                    ) {
+                                        selection.start -= pair_start_len;
+                                        selection.end += pair.end.len();
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+
             new_selections.push(selection);
         }
 
