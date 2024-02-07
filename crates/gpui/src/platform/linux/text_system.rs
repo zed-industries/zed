@@ -122,14 +122,14 @@ impl PlatformTextSystem for LinuxTextSystem {
             bounding_box: Bounds {
                 origin: point(0.0, 0.0),
                 size: size(metrics.max_width, metrics.ascent + metrics.descent),
-            },
+            }, // most probably incorrect
         }
     }
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         let metrics = self.0.read().fonts[font_id.0].as_swash().metrics(&[]);
         Ok(Bounds {
-            origin: point(0.0, 0.0),
-            size: size(metrics.max_width, metrics.ascent + metrics.descent),
+            origin: point(0.0, 0.0), // do we need an origin?
+            size: size(metrics.max_width, metrics.ascent + metrics.descent), // this height is probably incorect
         })
     }
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
@@ -151,6 +151,7 @@ impl PlatformTextSystem for LinuxTextSystem {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, runs)
     }
+    // looks like this isnt used anywhere
     fn wrap_line(
         &self,
         text: &str,
@@ -288,6 +289,7 @@ impl LinuxTextSystemState {
             })
     }
 
+    // both raster functions have problems because I am not sure this is the correct mapping from cosmic text to gpui system
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
         let scale = Transform2F::from_scale(params.scale_factor);
@@ -350,10 +352,12 @@ impl LinuxTextSystemState {
         }
     }
 
+    // HACK: This is all very incorrect, and maybe we should be using Buffer
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         let mut attrs_list = AttrsList::new(Attrs::new());
         let mut offs = 0;
         for run in font_runs {
+            // need to be doing utf properly
             let font = &self.fonts[run.font_id.0];
             let font = self.font_system.db().face(font.id()).unwrap();
             attrs_list.add_span(
@@ -370,10 +374,11 @@ impl LinuxTextSystemState {
         let layout = line.layout(
             &mut self.font_system,
             font_size.0,
-            f32::MAX,
+            f32::MAX, // we don't have a width cause this should technically not be wrapped I believe
             cosmic_text::Wrap::None,
         );
         let mut runs = Vec::new();
+        // what I think can happen is layout returns possibly multiple lines which means we should be probably working with it higher up in the text rendering
         let layout = layout.first().unwrap();
         for glyph in &layout.glyphs {
             let font_id = glyph.font_id;
@@ -384,15 +389,13 @@ impl LinuxTextSystemState {
                     .unwrap(),
             );
             let mut glyphs = SmallVec::new();
-            glyphs.insert(
-                0,
-                ShapedGlyph {
-                    id: GlyphId(glyph.glyph_id as u32),
-                    position: point(glyph.x.into(), glyph.y.into()),
-                    index: glyph.start,
-                    is_emoji: self.is_emoji(font_id),
-                },
-            );
+            // this is definetly wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
+            glyphs.push(ShapedGlyph {
+                id: GlyphId(glyph.glyph_id as u32),
+                position: point(glyph.x.into(), glyph.y.into()),
+                index: glyph.start,
+                is_emoji: self.is_emoji(font_id),
+            });
             runs.push(crate::ShapedRun { font_id, glyphs });
         }
         LineLayout {
