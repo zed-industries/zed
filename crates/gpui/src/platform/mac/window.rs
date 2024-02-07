@@ -303,10 +303,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 
     decl.register()
 }
+
 #[derive(Debug)]
 enum ImeInput {
     None,
-    Inserted,
     Pending {
         text: String,
         range: Option<Range<usize>>,
@@ -1133,7 +1133,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         // Send the event to the input context for IME handling, unless the `fn` modifier is
         // being pressed.
-        // this will call back into `insert_text`, et.al.
+        // this will call back into `insert_text`, et.al. which update state.ime_input
         if !fn_modifier {
             unsafe {
                 let input_context: id = msg_send![this, inputContext];
@@ -1146,9 +1146,6 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let last_replace_text_in_range = lock.last_replace_text_in_range.take();
         let ime_input = lock.ime_input.take().unwrap();
         match ime_input {
-            ImeInput::Inserted => {
-                handled = true;
-            }
             ImeInput::Pending { text, range } => {
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
@@ -1661,7 +1658,7 @@ extern "C" fn set_marked_text(
             .unwrap();
 
         if let Some(ime_input) = window_state.lock().ime_input.as_mut() {
-            *ime_input = ImeInput::Inserted;
+            *ime_input = ImeInput::None;
         }
 
         with_input_handler(this, |input_handler| {
