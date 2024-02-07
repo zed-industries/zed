@@ -80,13 +80,14 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let language_registry = Arc::new(LanguageRegistry::test());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
 
-    let store = cx.new_model(|_| {
+    let store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             PathBuf::from("/the-extension-manifest-path.json"),
             fs,
             language_registry,
             theme_registry,
+            cx,
         )
     });
 

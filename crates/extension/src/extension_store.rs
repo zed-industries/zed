@@ -30,6 +30,7 @@ pub struct ExtensionStore {
     manifest_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
+    _watch_extensions_dir: Task<()>,
 }
 
 struct GlobalExtensionStore(Model<ExtensionStore>);
@@ -78,37 +79,9 @@ pub fn init(
             fs.clone(),
             language_registry.clone(),
             theme_registry,
+            cx,
         );
         store.load(cx).log_err();
-        let manifest = store.manifest.clone();
-        cx.background_executor()
-            .spawn(async move {
-                let mut events = fs.watch(&*EXTENSIONS_DIR, Duration::from_millis(250)).await;
-
-                let mut changed_languages = HashSet::default();
-                while let Some(events) = events.next().await {
-                    let manifest = manifest.read();
-                    for event in events {
-                        for language in &manifest.languages {
-                            let mut language_path = EXTENSIONS_DIR.clone();
-                            language_path.extend([
-                                &language.extension,
-                                "languages",
-                                &language.language_dir,
-                            ]);
-                            if event.path.starts_with(&language_path) || event.path == language_path
-                            {
-                                changed_languages.insert(language.name.clone());
-                            }
-                        }
-                    }
-
-                    language_registry.reload_languages(&changed_languages);
-                }
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
         store
     });
 
@@ -129,15 +102,19 @@ impl ExtensionStore {
         fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self {
+        let mut this = Self {
             manifest: Default::default(),
             extensions_dir,
             manifest_path,
             fs,
             language_registry,
             theme_registry,
-        }
+            _watch_extensions_dir: Task::ready(()),
+        };
+        this._watch_extensions_dir = this.watch_extensions_dir(cx);
+        this
     }
 
     pub fn load(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
@@ -193,6 +170,35 @@ impl ExtensionStore {
 
         *self.manifest.write() = manifest;
         Ok(())
+    }
+
+    fn watch_extensions_dir(&self, cx: &mut ModelContext<Self>) -> Task<()> {
+        let manifest = self.manifest.clone();
+        let fs = self.fs.clone();
+        let language_registry = self.language_registry.clone();
+        let extensions_dir = self.extensions_dir.clone();
+        cx.background_executor().spawn(async move {
+            let mut changed_languages = HashSet::default();
+            let mut events = fs.watch(&extensions_dir, Duration::from_millis(250)).await;
+            while let Some(events) = events.next().await {
+                changed_languages.clear();
+                let manifest = manifest.read();
+                for event in events {
+                    for language in &manifest.languages {
+                        let mut language_path = extensions_dir.clone();
+                        language_path.extend([
+                            &language.extension,
+                            "languages",
+                            &language.language_dir,
+                        ]);
+                        if event.path.starts_with(&language_path) || event.path == language_path {
+                            changed_languages.insert(language.name.clone());
+                        }
+                    }
+                }
+                language_registry.reload_languages(&changed_languages);
+            }
+        })
     }
 
     pub fn rebuild_manifest(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
