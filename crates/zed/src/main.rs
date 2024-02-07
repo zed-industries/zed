@@ -130,8 +130,6 @@ fn main() {
 
         load_embedded_fonts(cx);
 
-        // let extension_store = cx.new_model(|cx| ExtensionStore::new(cx));
-
         let mut store = SettingsStore::default();
         store
             .set_default_settings(default_settings().as_ref(), cx)

@@ -1,4 +1,4 @@
-use crate::{ExtensionStore, GrammarManifestEntry, LanguageManifestEntry, ThemeLocation};
+use crate::{ExtensionStore, GrammarManifestEntry, LanguageManifestEntry, ThemeManifestEntry};
 use fs::FakeFs;
 use gpui::{Context, TestAppContext};
 use language::{LanguageMatcher, LanguageRegistry};
@@ -100,67 +100,88 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         let manifest = store.manifest.read();
         assert_eq!(
             manifest.grammars,
-            &[
-                GrammarManifestEntry {
-                    extension: "zed-ruby".into(),
-                    grammar_name: "embedded_template".into(),
-                },
-                GrammarManifestEntry {
-                    extension: "zed-ruby".into(),
-                    grammar_name: "ruby".into(),
-                },
-            ],
+            [
+                (
+                    "embedded_template".into(),
+                    GrammarManifestEntry {
+                        extension: "zed-ruby".into(),
+                        path: "grammars/embedded_template.wasm".into(),
+                    }
+                ),
+                (
+                    "ruby".into(),
+                    GrammarManifestEntry {
+                        extension: "zed-ruby".into(),
+                        path: "grammars/ruby.wasm".into(),
+                    }
+                ),
+            ]
+            .into_iter()
+            .collect(),
         );
         assert_eq!(
             manifest.languages,
-            &[
-                LanguageManifestEntry {
-                    extension: "zed-ruby".into(),
-                    language_dir: "erb".into(),
-                    name: "ERB".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["erb".into()],
-                        first_line_pattern: None,
+            [
+                (
+                    "ERB".into(),
+                    LanguageManifestEntry {
+                        extension: "zed-ruby".into(),
+                        path: "languages/erb".into(),
+                        matcher: LanguageMatcher {
+                            path_suffixes: vec!["erb".into()],
+                            first_line_pattern: None,
+                        }
                     }
-                },
-                LanguageManifestEntry {
-                    extension: "zed-ruby".into(),
-                    language_dir: "ruby".into(),
-                    name: "Ruby".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["rb".into()],
-                        first_line_pattern: None,
+                ),
+                (
+                    "Ruby".into(),
+                    LanguageManifestEntry {
+                        extension: "zed-ruby".into(),
+                        path: "languages/ruby".into(),
+                        matcher: LanguageMatcher {
+                            path_suffixes: vec!["rb".into()],
+                            first_line_pattern: None,
+                        }
+                    },
+                )
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert_eq!(
+            manifest.themes,
+            [
+                (
+                    "Monokai Dark".into(),
+                    ThemeManifestEntry {
+                        extension: "zed-monokai".into(),
+                        path: "themes/monokai.json".into(),
                     }
-                },
-            ],
-        );
-        assert_eq!(
-            manifest.themes_by_name.get("Monokai Dark"),
-            Some(&ThemeLocation {
-                extension: "zed-monokai".into(),
-                filename: "monokai.json".into(),
-            })
-        );
-        assert_eq!(
-            manifest.themes_by_name.get("Monokai Light"),
-            Some(&ThemeLocation {
-                extension: "zed-monokai".into(),
-                filename: "monokai.json".into(),
-            })
-        );
-        assert_eq!(
-            manifest.themes_by_name.get("Monokai Pro Dark"),
-            Some(&ThemeLocation {
-                extension: "zed-monokai".into(),
-                filename: "monokai-pro.json".into(),
-            })
-        );
-        assert_eq!(
-            manifest.themes_by_name.get("Monokai Pro Light"),
-            Some(&ThemeLocation {
-                extension: "zed-monokai".into(),
-                filename: "monokai-pro.json".into(),
-            })
+                ),
+                (
+                    "Monokai Light".into(),
+                    ThemeManifestEntry {
+                        extension: "zed-monokai".into(),
+                        path: "themes/monokai.json".into(),
+                    }
+                ),
+                (
+                    "Monokai Pro Dark".into(),
+                    ThemeManifestEntry {
+                        extension: "zed-monokai".into(),
+                        path: "themes/monokai-pro.json".into(),
+                    }
+                ),
+                (
+                    "Monokai Pro Light".into(),
+                    ThemeManifestEntry {
+                        extension: "zed-monokai".into(),
+                        path: "themes/monokai-pro.json".into(),
+                    }
+                )
+            ]
+            .into_iter()
+            .collect(),
         );
     })
 }

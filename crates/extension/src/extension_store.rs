@@ -37,31 +37,30 @@ struct GlobalExtensionStore(Model<ExtensionStore>);
 
 impl Global for GlobalExtensionStore {}
 
+#[derive(Deserialize, Serialize, Default)]
+pub struct Manifest {
+    pub grammars: HashMap<String, GrammarManifestEntry>,
+    pub languages: HashMap<Arc<str>, LanguageManifestEntry>,
+    pub themes: HashMap<String, ThemeManifestEntry>,
+}
+
 #[derive(PartialEq, Eq, Debug, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct GrammarManifestEntry {
     extension: String,
-    grammar_name: String,
+    path: PathBuf,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
 pub struct LanguageManifestEntry {
     extension: String,
-    language_dir: String,
-    name: Arc<str>,
+    path: PathBuf,
     matcher: LanguageMatcher,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
-pub struct ThemeLocation {
+pub struct ThemeManifestEntry {
     extension: String,
-    filename: String,
-}
-
-#[derive(Deserialize, Serialize, Default)]
-pub struct Manifest {
-    pub grammars: Vec<GrammarManifestEntry>,
-    pub languages: Vec<LanguageManifestEntry>,
-    pub themes_by_name: HashMap<String, ThemeLocation>,
+    path: PathBuf,
 }
 
 actions!(extensions, [RebuildManifest]);
@@ -123,28 +122,19 @@ impl ExtensionStore {
             .block(self.fs.load(&self.manifest_path))?;
         let manifest: Manifest = serde_json::from_str(&manifest)?;
 
-        for grammar in &manifest.grammars {
+        for (grammar_name, grammar) in &manifest.grammars {
             let mut grammar_path = self.extensions_dir.clone();
-            grammar_path.extend([
-                grammar.extension.as_str(),
-                "grammars",
-                &grammar.grammar_name,
-            ]);
-            grammar_path.set_extension("wasm");
+            grammar_path.extend([grammar.extension.as_ref(), grammar.path.as_path()]);
             self.language_registry
-                .register_grammar(grammar.grammar_name.clone(), grammar_path);
+                .register_grammar(grammar_name.clone(), grammar_path);
         }
 
-        for language in &manifest.languages {
+        for (language_name, language) in &manifest.languages {
             let mut language_path = self.extensions_dir.clone();
-            language_path.extend([
-                language.extension.as_str(),
-                "languages",
-                &language.language_dir,
-            ]);
+            language_path.extend([language.extension.as_ref(), language.path.as_path()]);
             self.language_registry.register_extension(
                 language_path.into(),
-                language.name.clone(),
+                language_name.clone(),
                 language.matcher.clone(),
                 load_plugin_queries,
             );
@@ -153,12 +143,12 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let root_dir = self.extensions_dir.clone();
         let theme_registry = self.theme_registry.clone();
-        let themes = manifest.themes_by_name.clone();
+        let themes = manifest.themes.clone();
         cx.background_executor()
             .spawn(async move {
                 for theme in themes.values() {
                     let mut theme_path = root_dir.clone();
-                    theme_path.extend([theme.extension.as_str(), "themes", &theme.filename]);
+                    theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
 
                     theme_registry
                         .load_user_theme(&theme_path, fs.clone())
@@ -184,15 +174,12 @@ impl ExtensionStore {
                 changed_languages.clear();
                 let manifest = manifest.read();
                 for event in events {
-                    for language in &manifest.languages {
+                    for (language_name, language) in &manifest.languages {
                         let mut language_path = extensions_dir.clone();
-                        language_path.extend([
-                            &language.extension,
-                            "languages",
-                            &language.language_dir,
-                        ]);
+                        language_path
+                            .extend([language.extension.as_ref(), language.path.as_path()]);
                         if event.path.starts_with(&language_path) || event.path == language_path {
-                            changed_languages.insert(language.name.clone());
+                            changed_languages.insert(language_name.clone());
                         }
                     }
                 }
@@ -225,16 +212,23 @@ impl ExtensionStore {
                         {
                             while let Some(grammar_path) = grammar_paths.next().await {
                                 let grammar_path = grammar_path?;
+                                let Ok(relative_path) = grammar_path.strip_prefix(&extension_dir)
+                                else {
+                                    continue;
+                                };
                                 let Some(grammar_name) =
                                     grammar_path.file_stem().and_then(OsStr::to_str)
                                 else {
                                     continue;
                                 };
 
-                                manifest.grammars.push(GrammarManifestEntry {
-                                    extension: extension_name.into(),
-                                    grammar_name: grammar_name.into(),
-                                });
+                                manifest.grammars.insert(
+                                    grammar_name.into(),
+                                    GrammarManifestEntry {
+                                        extension: extension_name.into(),
+                                        path: relative_path.into(),
+                                    },
+                                );
                             }
                         }
 
@@ -243,20 +237,21 @@ impl ExtensionStore {
                         {
                             while let Some(language_path) = language_paths.next().await {
                                 let language_path = language_path?;
-                                let Some(dir_name) =
-                                    language_path.file_name().and_then(OsStr::to_str)
+                                let Ok(relative_path) = language_path.strip_prefix(&extension_dir)
                                 else {
                                     continue;
                                 };
                                 let config = fs.load(&language_path.join("config.toml")).await?;
                                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
-                                manifest.languages.push(LanguageManifestEntry {
-                                    name: config.name.clone(),
-                                    extension: extension_name.into(),
-                                    language_dir: dir_name.into(),
-                                    matcher: config.matcher,
-                                });
+                                manifest.languages.insert(
+                                    config.name.clone(),
+                                    LanguageManifestEntry {
+                                        extension: extension_name.into(),
+                                        path: relative_path.into(),
+                                        matcher: config.matcher,
+                                    },
+                                );
                             }
                         }
 
@@ -265,8 +260,7 @@ impl ExtensionStore {
                         {
                             while let Some(theme_path) = theme_paths.next().await {
                                 let theme_path = theme_path?;
-                                let Some(theme_filename) =
-                                    theme_path.file_name().and_then(OsStr::to_str)
+                                let Ok(relative_path) = theme_path.strip_prefix(&extension_dir)
                                 else {
                                     continue;
                                 };
@@ -280,19 +274,16 @@ impl ExtensionStore {
                                 };
 
                                 for theme in theme_family.themes {
-                                    let location = ThemeLocation {
+                                    let location = ThemeManifestEntry {
                                         extension: extension_name.into(),
-                                        filename: theme_filename.into(),
+                                        path: relative_path.into(),
                                     };
 
-                                    manifest.themes_by_name.insert(theme.name, location);
+                                    manifest.themes.insert(theme.name, location);
                                 }
                             }
                         }
                     }
-
-                    manifest.grammars.sort();
-                    manifest.languages.sort();
 
                     fs.save(
                         &manifest_path,
