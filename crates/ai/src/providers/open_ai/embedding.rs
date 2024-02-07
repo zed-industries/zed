@@ -134,7 +134,7 @@ impl OpenAiEmbeddingProvider {
         spans: Vec<&str>,
         request_timeout: u64,
     ) -> Result<Response<AsyncBody>> {
-        let request = Request::post("https://api.openai.com/v1/embeddings")
+        let request = Request::post(format!("{OPEN_AI_API_URL}/embeddings"))
             .redirect_policy(isahc::config::RedirectPolicy::Follow)
             .timeout(Duration::from_secs(request_timeout))
             .header("Content-Type", "application/json")
