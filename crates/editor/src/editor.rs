@@ -61,8 +61,8 @@ use gpui::{
     DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
     ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView,
-    WhiteSpace, WindowContext,
+    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
+    WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -9714,7 +9714,14 @@ impl ViewInputHandler for Editor {
             } else {
                 this.highlight_text::<InputComposition>(
                     marked_ranges.clone(),
-                    HighlightStyle::default(), // todo!() this.style(cx).composition_mark,
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
                     cx,
                 );
             }
