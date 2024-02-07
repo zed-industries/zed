@@ -324,12 +324,12 @@ impl LinuxTextSystemState {
         } else {
             // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
             let mut bitmap_size = glyph_bounds.size;
-            if params.subpixel_variant.x > 0 {
-                bitmap_size.width += DevicePixels(1);
-            }
-            if params.subpixel_variant.y > 0 {
-                bitmap_size.height += DevicePixels(1);
-            }
+            // if params.subpixel_variant.x > 0 {
+            //     bitmap_size.width += DevicePixels(1);
+            // }
+            // if params.subpixel_variant.y > 0 {
+            //     bitmap_size.height += DevicePixels(1);
+            // }
             let bitmap_size = bitmap_size;
             let font = &self.fonts[params.font_id.0];
             let font_system = &mut self.font_system;
