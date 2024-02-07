@@ -4,8 +4,8 @@ mod util;
 mod vscode;
 
 use std::fs::File;
-use std::path::PathBuf;
 use std::io::Write;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -76,6 +76,8 @@ struct Args {
     #[arg(long)]
     warn_on_missing: bool,
 
+    /// The path to write the output to.
+    #[arg(long, short)]
     output: Option<PathBuf>,
 
     #[command(subcommand)]
