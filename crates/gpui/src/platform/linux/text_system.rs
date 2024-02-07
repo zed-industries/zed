@@ -309,7 +309,7 @@ impl LinuxTextSystemState {
             .clone()
             .unwrap();
         Ok(Bounds {
-            origin: point(image.placement.left.into(), image.placement.top.into()),
+            origin: point(image.placement.left.into(), (-image.placement.top).into()),
             size: size(image.placement.width.into(), image.placement.height.into()),
         })
     }
