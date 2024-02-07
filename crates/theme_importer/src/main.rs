@@ -5,6 +5,7 @@ mod vscode;
 
 use std::fs::File;
 use std::path::PathBuf;
+use std::io::Write;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -74,6 +75,8 @@ struct Args {
     /// Whether to warn when values are missing from the theme.
     #[arg(long)]
     warn_on_missing: bool,
+
+    output: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -146,7 +149,12 @@ fn main() -> Result<()> {
 
     let theme_json = serde_json::to_string_pretty(&theme).unwrap();
 
-    println!("{}", theme_json);
+    if let Some(output) = args.output {
+        let mut file = File::create(output)?;
+        file.write_all(theme_json.as_bytes())?;
+    } else {
+        println!("{}", theme_json);
+    }
 
     log::info!("Done!");
 
