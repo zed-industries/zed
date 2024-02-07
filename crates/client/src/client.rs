@@ -10,7 +10,6 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
-use collections::HashMap;
 use futures::{
     channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt,
     TryFutureExt as _, TryStreamExt,
@@ -30,6 +29,7 @@ use serde_json;
 use settings::{Settings, SettingsStore};
 use std::{
     any::TypeId,
+    collections::HashMap,
     convert::TryFrom,
     fmt::Write as _,
     future::Future,

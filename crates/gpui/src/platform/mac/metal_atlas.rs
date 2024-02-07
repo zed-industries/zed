@@ -3,7 +3,7 @@ use crate::{
     Point, Size,
 };
 use anyhow::Result;
-use collections::HashMap;
+use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
 use metal::Device;
@@ -53,7 +53,7 @@ struct MetalAtlasState {
     monochrome_textures: Vec<MetalAtlasTexture>,
     polychrome_textures: Vec<MetalAtlasTexture>,
     path_textures: Vec<MetalAtlasTexture>,
-    tiles_by_key: HashMap<AtlasKey, AtlasTile>,
+    tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
 }
 
 impl PlatformAtlas for MetalAtlas {

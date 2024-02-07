@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
@@ -64,7 +64,7 @@ impl ThemeRegistry {
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
         let registry = Self {
             state: RwLock::new(ThemeRegistryState {
-                themes: HashMap::default(),
+                themes: HashMap::new(),
             }),
             assets,
         };

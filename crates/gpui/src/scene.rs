@@ -2,7 +2,7 @@ use crate::{
     point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, EntityId, Hsla, Pixels,
     Point, ScaledPixels, StackingOrder,
 };
-use collections::{BTreeMap, HashSet};
+use collections::{BTreeMap, FxHashSet};
 use std::{fmt::Debug, iter::Peekable, slice};
 
 // Exported to metal
@@ -159,7 +159,7 @@ impl Scene {
         layer_id
     }
 
-    pub fn reuse_views(&mut self, views: &HashSet<EntityId>, prev_scene: &mut Self) {
+    pub fn reuse_views(&mut self, views: &FxHashSet<EntityId>, prev_scene: &mut Self) {
         for shadow in prev_scene.shadows.drain(..) {
             if views.contains(&shadow.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&shadow.layer_id];

@@ -5,13 +5,13 @@ use client::{
     user::{User, UserStore},
     Client, Subscription, TypedEnvelope, UserId,
 };
-use collections::HashSet;
 use futures::lock::Mutex;
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use rand::prelude::*;
 use std::{
+    collections::HashSet,
     ops::{ControlFlow, Range},
     sync::Arc,
 };

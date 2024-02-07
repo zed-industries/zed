@@ -7,7 +7,6 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
 futures.workspace = true
 indoc.workspace = true
 lazy_static.workspace = true

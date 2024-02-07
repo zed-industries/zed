@@ -1,5 +1,4 @@
-use collections::HashMap;
-use std::{cmp::Ordering, ops::Range};
+use std::{cmp::Ordering, collections::HashMap, ops::Range};
 
 /// Construct a string and a list of offsets within that string using a single
 /// string containing embedded position markers.
