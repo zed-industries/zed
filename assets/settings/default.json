@@ -109,6 +109,13 @@
     // Share your project when you are the first to join a channel
     "share_on_join": true
   },
+  // Toolbar related settings
+  "toolbar": {
+    // Whether to show breadcrumbs.
+    "breadcrumbs": true,
+    // Whether to show quick action buttons.
+    "quick_actions": true
+  },
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor.
@@ -133,6 +140,8 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  // The number of lines to keep above/below the cursor when scrolling.
+  "vertical_scroll_margin": 3,
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -489,6 +498,9 @@
     "JavaScript": {
       "tab_size": 2
     },
+    "Terraform": {
+      "tab_size": 2
+    },
     "TypeScript": {
       "tab_size": 2
     },
@@ -499,6 +511,12 @@
       "tab_size": 2
     },
     "JSON": {
+      "tab_size": 2
+    },
+    "OCaml": {
+      "tab_size": 2
+    },
+    "OCaml Interface": {
       "tab_size": 2
     }
   },

@@ -31,11 +31,11 @@ use crate::{
     prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
     Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
     EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyContext, KeyEvent, KeymatchMode, LayoutId, MonochromeSprite,
-    MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
-    StackingContext, StackingOrder, Style, Surface, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
+    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
+    StackingOrder, Style, Surface, TextStyleRefinement, Underline, UnderlineStyle, Window,
+    WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -1141,15 +1141,6 @@ impl<'a> ElementContext<'a> {
                 )),
             })
         }
-    }
-
-    /// keymatch mode immediate instructs GPUI to prefer shorter action bindings.
-    /// In the case that you have a keybinding of `"cmd-k": "terminal::Clear"` and
-    /// `"cmd-k left": "workspace::MoveLeft"`, GPUI will by default wait for 1s after
-    /// you type cmd-k to see if you're going to type left.
-    /// This is problematic in the terminal
-    pub fn keymatch_mode_immediate(&mut self) {
-        self.window.next_frame.dispatch_tree.keymatch_mode = KeymatchMode::Immediate;
     }
 
     /// Register a mouse event listener on the window for the next frame. The type of event

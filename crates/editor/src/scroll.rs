@@ -6,13 +6,14 @@ use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
-    Anchor, DisplayPoint, Editor, EditorEvent, EditorMode, InlayHintRefreshReason,
+    Anchor, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, InlayHintRefreshReason,
     MultiBufferSnapshot, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
-use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext};
+use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
+use settings::Settings;
 use std::{
     cmp::Ordering,
     time::{Duration, Instant},
@@ -21,7 +22,6 @@ use util::ResultExt;
 use workspace::{ItemId, WorkspaceId};
 
 pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
-pub const VERTICAL_SCROLL_MARGIN: f32 = 3.;
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
@@ -128,7 +128,7 @@ impl OngoingScroll {
 }
 
 pub struct ScrollManager {
-    vertical_scroll_margin: f32,
+    pub(crate) vertical_scroll_margin: f32,
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
     autoscroll_request: Option<(Autoscroll, bool)>,
@@ -140,9 +140,9 @@ pub struct ScrollManager {
 }
 
 impl ScrollManager {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut WindowContext) -> Self {
         ScrollManager {
-            vertical_scroll_margin: VERTICAL_SCROLL_MARGIN,
+            vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
             autoscroll_request: None,

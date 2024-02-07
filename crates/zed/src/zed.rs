@@ -353,7 +353,7 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
             let quick_action_bar =
-                cx.new_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
+                cx.new_view(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, cx);
             let diagnostic_editor_controls = cx.new_view(|_| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, cx);

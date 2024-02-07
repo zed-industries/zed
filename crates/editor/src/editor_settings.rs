@@ -10,7 +10,9 @@ pub struct EditorSettings {
     pub show_completion_documentation: bool,
     pub completion_documentation_secondary_query_debounce: u64,
     pub use_on_type_format: bool,
+    pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
+    pub vertical_scroll_margin: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub redact_private_values: bool,
@@ -26,6 +28,12 @@ pub enum SeedQuerySetting {
     Selection,
     /// Never populate the search query
     Never,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct Toolbar {
+    pub breadcrumbs: bool,
+    pub quick_actions: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -85,8 +93,15 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub use_on_type_format: Option<bool>,
+    /// Toolbar related settings
+    pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
     pub scrollbar: Option<ScrollbarContent>,
+
+    /// The number of lines to keep above/below the cursor when auto-scrolling.
+    ///
+    /// Default: 3.
+    pub vertical_scroll_margin: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false
@@ -102,6 +117,19 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub redact_private_values: Option<bool>,
+}
+
+// Toolbar related settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ToolbarContent {
+    /// Whether to display breadcrumbs in the editor toolbar.
+    ///
+    /// Default: true
+    pub breadcrumbs: Option<bool>,
+    /// Whether to display quik action buttons in the editor toolbar.
+    ///
+    /// Default: true
+    pub quick_actions: Option<bool>,
 }
 
 /// Scrollbar related settings
