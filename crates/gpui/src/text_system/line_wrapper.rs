@@ -225,7 +225,7 @@ mod tests {
                 font: font("Helvetica"),
                 color: Default::default(),
                 underline: Default::default(),
-                strikethrough: Default::default(),
+                strikethrough: None,
                 background_color: None,
             };
             let bold = TextRun {
@@ -233,7 +233,7 @@ mod tests {
                 font: font("Helvetica").bold(),
                 color: Default::default(),
                 underline: Default::default(),
-                strikethrough: Default::default(),
+                strikethrough: None,
                 background_color: None,
             };
 

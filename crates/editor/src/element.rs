@@ -1909,7 +1909,7 @@ impl EditorElement {
                         color: placeholder_color,
                         background_color: None,
                         underline: Default::default(),
-                        strikethrough: Default::default(),
+                        strikethrough: None,
                     };
                     cx.text_system()
                         .shape_line(line.to_string().into(), font_size, &[run])

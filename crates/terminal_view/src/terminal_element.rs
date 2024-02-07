@@ -548,7 +548,7 @@ impl TerminalElement {
                             color: theme.colors().terminal_background,
                             background_color: None,
                             underline: Default::default(),
-                            strikethrough: Default::default(),
+                            strikethrough: None,
                         }],
                     )
                     .unwrap()
