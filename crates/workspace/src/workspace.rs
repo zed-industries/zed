@@ -855,8 +855,6 @@ impl Workspace {
                     let workspace_id = workspace_id.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
-                        SystemAppearance::init_for_window(cx);
-
                         cx.new_view(|cx| {
                             Workspace::new(workspace_id, project_handle, app_state, cx)
                         })

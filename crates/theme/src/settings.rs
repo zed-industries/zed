@@ -4,7 +4,7 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext, WindowContext,
+    ViewContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -49,17 +49,17 @@ struct GlobalSystemAppearance(SystemAppearance);
 impl Global for GlobalSystemAppearance {}
 
 impl SystemAppearance {
+    /// Initializes the [`SystemAppearance`] for the application.
+    pub fn init(cx: &mut AppContext) {
+        *cx.default_global::<GlobalSystemAppearance>() =
+            GlobalSystemAppearance(SystemAppearance(cx.window_appearance().into()));
+    }
+
     /// Returns the global [`SystemAppearance`].
     ///
     /// Inserts a default [`SystemAppearance`] if one does not yet exist.
     pub(crate) fn default_global(cx: &mut AppContext) -> Self {
         cx.default_global::<GlobalSystemAppearance>().0
-    }
-
-    /// Initializes the [`SystemAppearance`] for the current window.
-    pub fn init_for_window(cx: &mut WindowContext) {
-        *cx.default_global::<GlobalSystemAppearance>() =
-            GlobalSystemAppearance(SystemAppearance(cx.appearance().into()));
     }
 
     /// Returns the global [`SystemAppearance`].
