@@ -64,7 +64,7 @@ impl PlatformTextSystem for LinuxTextSystem {
     }
 
     fn all_font_names(&self) -> Vec<String> {
-        Vec::new()
+        self.0.read().font_system.db().faces().map(|face| face.post_script_name.clone()).collect()
     }
 
     fn all_font_families(&self) -> Vec<String> {
