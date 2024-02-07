@@ -5,8 +5,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use futures::Stream;
 use gpui::{BackgroundExecutor, ImageSource};
 use live_kit_server::{proto, token};
-#[cfg(target_os = "macos")]
-use media::core_video::CVImageBuffer;
+
 use parking_lot::Mutex;
 use postage::watch;
 use std::{
