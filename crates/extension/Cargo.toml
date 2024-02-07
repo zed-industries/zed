@@ -15,6 +15,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 theme.workspace = true

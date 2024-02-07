@@ -11,69 +11,67 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let fs = FakeFs::new(cx.executor());
 
     fs.insert_tree(
-        "/the-extension-path",
+        "/the-extension-dir",
         json!({
-            "extensions": {
-                "zed-monokai": {
-                    "themes": {
-                        "monokai.json": r#"{
-                            "name": "Monokai",
-                            "author": "Someone",
-                            "themes": [
-                                {
-                                    "name": "Monokai Dark",
-                                    "appearance": "dark",
-                                    "style": {}
-                                },
-                                {
-                                    "name": "Monokai Light",
-                                    "appearance": "light",
-                                    "style": {}
-                                }
-                            ]
-                        }"#,
-                        "monokai-pro.json": r#"{
-                            "name": "Monokai Pro",
-                            "author": "Someone",
-                            "themes": [
-                                {
-                                    "name": "Monokai Pro Dark",
-                                    "appearance": "dark",
-                                    "style": {}
-                                },
-                                {
-                                    "name": "Monokai Pro Light",
-                                    "appearance": "light",
-                                    "style": {}
-                                }
-                            ]
-                        }"#,
+            "zed-monokai": {
+                "themes": {
+                    "monokai.json": r#"{
+                        "name": "Monokai",
+                        "author": "Someone",
+                        "themes": [
+                            {
+                                "name": "Monokai Dark",
+                                "appearance": "dark",
+                                "style": {}
+                            },
+                            {
+                                "name": "Monokai Light",
+                                "appearance": "light",
+                                "style": {}
+                            }
+                        ]
+                    }"#,
+                    "monokai-pro.json": r#"{
+                        "name": "Monokai Pro",
+                        "author": "Someone",
+                        "themes": [
+                            {
+                                "name": "Monokai Pro Dark",
+                                "appearance": "dark",
+                                "style": {}
+                            },
+                            {
+                                "name": "Monokai Pro Light",
+                                "appearance": "light",
+                                "style": {}
+                            }
+                        ]
+                    }"#,
+                }
+            },
+            "zed-ruby": {
+                "grammars": {
+                    "ruby.wasm": "",
+                    "embedded_template.wasm": "",
+                },
+                "languages": {
+                    "ruby": {
+                        "config.toml": r#"
+                            name = "Ruby"
+                            grammar = "ruby"
+                            path_suffixes = ["rb"]
+                        "#,
+                        "highlights.scm": "",
+                    },
+                    "erb": {
+                        "config.toml": r#"
+                            name = "ERB"
+                            grammar = "embedded_template"
+                            path_suffixes = ["erb"]
+                        "#,
+                        "highlights.scm": "",
                     }
                 },
-                "zed-ruby": {
-                    "grammars": {
-                        "ruby.wasm": "",
-                        "embedded_template.wasm": "",
-                    },
-                    "languages": {
-                        "ruby": {
-                            "config.toml": r#"
-                                name = "Ruby"
-                                grammar = "ruby"
-                                path_suffixes = ["rb"]
-                            "#,
-                            "highlights.scm": "",
-                        },
-                        "erb": {
-                            "config.toml": r#"
-                                name = "ERB"
-                                grammar = "embedded_template"
-                                path_suffixes = ["erb"]
-                            "#,
-                            "highlights.scm": "",
-                        }
-                    },
-                }
             }
         }),
     )
@@ -84,7 +82,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     let store = cx.new_model(|_| {
         ExtensionStore::new(
-            PathBuf::from("/the-extension-path"),
+            PathBuf::from("/the-extension-dir"),
+            PathBuf::from("/the-extension-manifest-path.json"),
             fs,
             language_registry,
             theme_registry,
@@ -97,7 +96,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         .unwrap();
 
     store.read_with(cx, |store, _| {
-        let manifest = &store.manifest;
+        let manifest = store.manifest.read();
         assert_eq!(
             manifest.grammars,
             &[

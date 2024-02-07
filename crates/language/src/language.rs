@@ -20,7 +20,7 @@ pub mod markdown;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
@@ -747,6 +747,7 @@ struct AvailableLanguage {
 
 enum AvailableGrammar {
     Loaded(tree_sitter::Language),
+    Loading(Vec<oneshot::Sender<Result<tree_sitter::Language>>>),
     Unloaded(PathBuf),
 }
 
@@ -832,6 +833,11 @@ impl LanguageRegistry {
         self.state.write().reload();
     }
 
+    /// Clear out the given languages and reload them from scratch.
+    pub fn reload_languages(&self, languages: &HashSet<Arc<str>>) {
+        self.state.write().reload_languages(languages);
+    }
+
     pub fn register(
         &self,
         asset_dir: &'static str,
@@ -861,14 +867,26 @@ impl LanguageRegistry {
         get_queries: fn(&Path) -> LanguageQueries,
     ) {
         let state = &mut *self.state.write();
+        let source = AvailableLanguageSource::Extension {
+            path,
+            get_queries,
+            matcher,
+        };
+        for existing_language in &mut state.available_languages {
+            if existing_language.name == name
+                && matches!(
+                    existing_language.source,
+                    AvailableLanguageSource::Extension { .. }
+                )
+            {
+                existing_language.source = source;
+                return;
+            }
+        }
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
             name,
-            source: AvailableLanguageSource::Extension {
-                path,
-                get_queries,
-                matcher,
-            },
+            source,
             lsp_adapters: Vec::new(),
             loaded: false,
         });
@@ -1014,10 +1032,9 @@ impl LanguageRegistry {
                 })
                 .cloned()
             {
-                let txs = state
-                    .loading_languages
-                    .entry(language.id)
-                    .or_insert_with(|| {
+                match state.loading_languages.entry(language.id) {
+                    hash_map::Entry::Occupied(mut entry) => entry.get_mut().push(tx),
+                    hash_map::Entry::Vacant(entry) => {
                         let this = self.clone();
                         executor
                             .spawn(async move {
@@ -1042,46 +1059,8 @@ impl LanguageRegistry {
                                         }
                                     };
 
-                                    let grammar = {
-                                        let mut state = this.state.upgradable_read();
-                                        let available_grammar = state
-                                            .grammars
-                                            .get(config.grammar.as_ref())
-                                            .ok_or_else(|| {
-                                                anyhow!("no such grammar {}", config.grammar)
-                                            })?;
-
-                                        match available_grammar {
-                                            AvailableGrammar::Loaded(grammar) => grammar.clone(),
-                                            AvailableGrammar::Unloaded(wasm_path) => {
-                                                let wasm_bytes = std::fs::read(&wasm_path)?;
-                                                let grammar_name = wasm_path
-                                                    .file_stem()
-                                                    .and_then(OsStr::to_str)
-                                                    .ok_or_else(|| {
-                                                        anyhow!("invalid grammar filename")
-                                                    })?;
-                                                let grammar = PARSER.with(|parser| {
-                                                    let mut parser = parser.borrow_mut();
-                                                    let mut store =
-                                                        parser.take_wasm_store().unwrap();
-                                                    let grammar = store
-                                                        .load_language(&grammar_name, &wasm_bytes);
-                                                    parser.set_wasm_store(store).unwrap();
-                                                    grammar
-                                                })?;
-
-                                                state.with_upgraded(|state| {
-                                                    state.grammars.insert(
-                                                        config.grammar.to_string(),
-                                                        AvailableGrammar::Loaded(grammar.clone()),
-                                                    )
-                                                });
-
-                                                grammar
-                                            }
-                                        }
-                                    };
+                                    let grammar =
+                                        this.get_or_load_grammar(config.grammar.clone()).await?;
 
                                     Language::new(config, Some(grammar))
                                         .with_lsp_adapters(language.lsp_adapters)
@@ -1120,15 +1099,73 @@ impl LanguageRegistry {
                                 };
                             })
                             .detach();
-
-                        Vec::new()
-                    });
-                txs.push(tx);
+                        entry.insert(vec![tx]);
+                    }
+                }
             } else {
                 let _ = tx.send(Err(anyhow!("language not found")));
             }
         } else {
             let _ = tx.send(Err(anyhow!("executor does not exist")));
+        }
+
+        rx.unwrap()
+    }
+
+    fn get_or_load_grammar(
+        self: &Arc<Self>,
+        name: Arc<str>,
+    ) -> UnwrapFuture<oneshot::Receiver<Result<tree_sitter::Language>>> {
+        let (tx, rx) = oneshot::channel();
+        let mut state = self.state.write();
+
+        if let Some(grammar) = state.grammars.get_mut(name.as_ref()) {
+            match grammar {
+                AvailableGrammar::Loaded(grammar) => {
+                    tx.send(Ok(grammar.clone())).ok();
+                }
+                AvailableGrammar::Loading(txs) => {
+                    txs.push(tx);
+                }
+                AvailableGrammar::Unloaded(wasm_path) => {
+                    if let Some(executor) = &self.executor {
+                        let this = self.clone();
+                        let wasm_path = wasm_path.clone();
+                        executor
+                            .spawn(async move {
+                                let wasm_bytes = std::fs::read(&wasm_path)?;
+                                let grammar_name = wasm_path
+                                    .file_stem()
+                                    .and_then(OsStr::to_str)
+                                    .ok_or_else(|| anyhow!("invalid grammar filename"))?;
+                                let grammar = PARSER.with(|parser| {
+                                    let mut parser = parser.borrow_mut();
+                                    let mut store = parser.take_wasm_store().unwrap();
+                                    let grammar = store.load_language(&grammar_name, &wasm_bytes);
+                                    parser.set_wasm_store(store).unwrap();
+                                    grammar
+                                })?;
+
+                                if let Some(AvailableGrammar::Loading(txs)) =
+                                    this.state.write().grammars.insert(
+                                        name.to_string(),
+                                        AvailableGrammar::Loaded(grammar.clone()),
+                                    )
+                                {
+                                    for tx in txs {
+                                        tx.send(Ok(grammar.clone())).ok();
+                                    }
+                                }
+
+                                anyhow::Ok(())
+                            })
+                            .detach();
+                        *grammar = AvailableGrammar::Loading(vec![tx]);
+                    }
+                }
+            }
+        } else {
+            tx.send(Err(anyhow!("no such grammar {}", name))).ok();
         }
 
         rx.unwrap()
@@ -1313,6 +1350,19 @@ impl LanguageRegistryState {
         self.reload_count += 1;
         for language in &mut self.available_languages {
             language.loaded = false;
+        }
+        *self.subscription.0.borrow_mut() = ();
+    }
+
+    fn reload_languages(&mut self, languages: &HashSet<Arc<str>>) {
+        self.languages
+            .retain(|language| !languages.contains(&language.config.name));
+        self.version += 1;
+        self.reload_count += 1;
+        for language in &mut self.available_languages {
+            if languages.contains(&language.name) {
+                language.loaded = false;
+            }
         }
         *self.subscription.0.borrow_mut() = ();
     }

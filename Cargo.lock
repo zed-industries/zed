@@ -2568,6 +2568,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "language",
+ "parking_lot 0.11.2",
  "serde",
  "serde_json",
  "theme",
