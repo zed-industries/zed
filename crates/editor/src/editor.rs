@@ -8772,6 +8772,10 @@ impl Editor {
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed => cx.emit(EditorEvent::Reparsed),
+            multi_buffer::Event::LanguageChanged => {
+                cx.emit(EditorEvent::Reparsed);
+                cx.notify();
+            }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
             multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {

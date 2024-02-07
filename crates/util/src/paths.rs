@@ -23,14 +23,9 @@ lazy_static::lazy_static! {
         CONFIG_DIR.join("support")
     };
     pub static ref EXTENSIONS_DIR: PathBuf = if cfg!(target_os="macos") {
-        HOME.join("Library/Application Support/Zed")
+        HOME.join("Library/Application Support/Zed/extensions")
     } else {
         CONFIG_DIR.join("extensions")
-    };
-    pub static ref PLUGINS_DIR: PathBuf = if cfg!(target_os="macos") {
-        HOME.join("Library/Application Support/Zed/plugins")
-    } else {
-        CONFIG_DIR.join("plugins")
     };
     pub static ref LANGUAGES_DIR: PathBuf = if cfg!(target_os="macos") {
         HOME.join("Library/Application Support/Zed/languages")
