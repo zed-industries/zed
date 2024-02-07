@@ -47,6 +47,7 @@ pub enum Motion {
     WindowTop,
     WindowMiddle,
     WindowBottom,
+    PreviousWordEnd,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -141,6 +142,7 @@ actions!(
         WindowTop,
         WindowMiddle,
         WindowBottom,
+        PreviousWordEnd,
     ]
 );
 
@@ -263,6 +265,9 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, &WindowBottom, cx: _| {
         motion(Motion::WindowBottom, cx)
     });
+    workspace.register_action(|_: &mut Workspace, &PreviousWordEnd, cx: _| {
+        motion(Motion::PreviousWordEnd, cx)
+    });
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
@@ -301,6 +306,7 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | PreviousWordEnd
             | EndOfParagraph => true,
             EndOfLine { .. }
             | NextWordEnd { .. }
@@ -351,6 +357,7 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | PreviousWordEnd
             | NextLineStart => false,
         }
     }
@@ -371,6 +378,7 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | PreviousWordEnd
             | NextLineStart => true,
             Left
             | Backspace
@@ -516,6 +524,10 @@ impl Motion {
             WindowTop => window_top(map, point, &text_layout_details, times - 1),
             WindowMiddle => window_middle(map, point, &text_layout_details),
             WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
+            PreviousWordEnd => (
+                previous_word_end(map, point, &text_layout_details, times),
+                SelectionGoal::None,
+            ),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -1147,6 +1159,29 @@ fn window_bottom(
     }
 }
 
+fn previous_word_end(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    _text_layout_details: &TextLayoutDetails,
+    times: usize,
+) -> DisplayPoint {
+    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    for _ in 0..times {
+        point = find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
+            let left_kind = coerce_punctuation(char_kind(&scope, left), false);
+            let right_kind = coerce_punctuation(char_kind(&scope, right), false);
+            if left_kind != right_kind {
+                println!("{} != {}", left, right);
+            }
+            left_kind != right_kind
+        });
+        point = movement::previous_word_start(map, point);
+        point = movement::next_word_end(map, point);
+        point = movement::left(map, point);
+    }
+    point
+}
+
 #[cfg(test)]
 mod test {
 
@@ -1562,6 +1597,84 @@ mod test {
           4 5 6
           7 8 9
           "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_previous_word_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        456 5ˇ67 678
+        789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+        123 234 345
+        45ˇ6 567 678
+        789 890 901
+        "})
+            .await;
+
+        // Test times
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        456 5ˇ67 678
+        789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["4", "g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+        12ˇ3 234 345
+        456 567 678
+        789 890 901
+        "})
+            .await;
+
+        // With punctuation
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        4;5.6 :5ˇ67 678
+        789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 234 345
+          4;5.6 ˇ:567 678
+          789 890 901
+        "})
+            .await;
+
+        // With punctuation and count
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        4;5.6 :5ˇ67 678
+        789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["5", "g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 234 345
+          4ˇ;5.6 :567 678
+          789 890 901
+        "})
+            .await;
+
+        // With punctuation and count across lines
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        4;5.6 :5ˇ67 678
+        789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["8", "g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 23ˇ4 345
+          4;5.6 :567 678
+          789 890 901
+        "})
             .await;
     }
 }
