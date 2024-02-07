@@ -14,34 +14,34 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 bitflags = "2.4.1"
-client = { path = "../client" }
-db = { path = "../db" }
-editor = { path = "../editor" }
+client.workspace = true
+db.workspace = true
+editor.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 human_bytes = "0.4.1"
 isahc.workspace = true
-language = { path = "../language" }
+language.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-menu = { path = "../menu" }
+menu.workspace = true
 postage.workspace = true
-project = { path = "../project" }
+project.workspace = true
 regex.workspace = true
-release_channel = { path = "../release_channel" }
+release_channel.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
-theme = { path = "../theme" }
+theme.workspace = true
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-ui = { path = "../ui" }
+ui.workspace = true
 urlencoding = "2.1.2"
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }

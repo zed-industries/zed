@@ -19,24 +19,24 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-channel = { path = "../channel" }
-client = { path = "../client" }
-clock = { path = "../clock" }
-collections = { path = "../collections" }
-db = { path = "../db" }
-feature_flags = { path = "../feature_flags" }
-gpui = { path = "../gpui" }
-rpc = { path = "../rpc" }
-settings = { path = "../settings" }
-sum_tree = { path = "../sum_tree" }
-text = { path = "../text" }
+channel.workspace = true
+client.workspace = true
+clock.workspace = true
+collections.workspace = true
+db.workspace = true
+feature_flags.workspace = true
+gpui.workspace = true
+rpc.workspace = true
+settings.workspace = true
+sum_tree.workspace = true
+text.workspace = true
 time.workspace = true
-util = { path = "../util" }
+util.workspace = true
 
 [dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

@@ -5967,6 +5967,6 @@ async fn test_cmd_k_left(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.simulate_keystrokes("left");
     workspace.update(cx, |workspace, cx| {
-        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 3);
+        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
     });
 }

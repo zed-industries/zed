@@ -16,6 +16,7 @@ env:
 jobs:
     style:
         name: Check formatting and Clippy lints
+        if: github.repository_owner == 'zed-industries'
         runs-on:
             - self-hosted
             - test
@@ -32,6 +33,7 @@ jobs:
 
     tests:
         name: Run tests
+        if: github.repository_owner == 'zed-industries'
         runs-on:
             - self-hosted
             - test
@@ -48,6 +50,7 @@ jobs:
 
     bundle:
         name: Bundle app
+        if: github.repository_owner == 'zed-industries'
         runs-on:
             - self-hosted
             - bundle
@@ -62,7 +65,7 @@ jobs:
             ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
         steps:
             - name: Install Node
-              uses: actions/setup-node@v3
+              uses: actions/setup-node@v4
               with:
                   node-version: "18"
 

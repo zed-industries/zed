@@ -23,28 +23,28 @@ test-support = [
 anyhow.workspace = true
 async-compression.workspace = true
 async-tar = "0.4.2"
-collections = { path = "../collections" }
+collections.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
-language = { path = "../language" }
+gpui.workspace = true
+language.workspace = true
 log.workspace = true
-lsp = { path = "../lsp" }
-node_runtime = { path = "../node_runtime" }
+lsp.workspace = true
+node_runtime.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smol.workspace = true
-theme = { path = "../theme" }
-util = { path = "../util" }
+theme.workspace = true
+util.workspace = true
 
 [dev-dependencies]
-clock = { path = "../clock" }
-collections = { path = "../collections", features = ["test-support"] }
-fs = { path = "../fs", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
+clock.workspace = true
+collections = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

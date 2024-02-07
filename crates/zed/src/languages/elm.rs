@@ -1,9 +1,13 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
+use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use project::project_settings::ProjectSettings;
+use serde_json::Value;
+use settings::Settings;
 use smol::fs;
 use std::{
     any::Any,
@@ -13,6 +17,7 @@ use std::{
 };
 use util::ResultExt;
 
+const SERVER_NAME: &'static str = "elm-language-server";
 const SERVER_PATH: &'static str = "node_modules/@elm-tooling/elm-language-server/out/node/index.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -32,7 +37,7 @@ impl ElmLspAdapter {
 #[async_trait]
 impl LspAdapter for ElmLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("elm-language-server".into())
+        LanguageServerName(SERVER_NAME.into())
     }
 
     fn short_name(&self) -> &'static str {
@@ -87,6 +92,27 @@ impl LspAdapter for ElmLspAdapter {
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &*self.node).await
+    }
+
+    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+        // elm-language-server expects workspace didChangeConfiguration notification
+        // params to be the same as lsp initialization_options
+        let override_options = ProjectSettings::get_global(cx)
+            .lsp
+            .get(SERVER_NAME)
+            .and_then(|s| s.initialization_options.clone())
+            .unwrap_or_default();
+
+        match override_options.clone().as_object_mut() {
+            Some(op) => {
+                // elm-language-server requests workspace configuration
+                // for the `elmLS` section, so we have to nest
+                // another copy of initialization_options there
+                op.insert("elmLS".into(), override_options);
+                serde_json::to_value(op).unwrap_or_default()
+            }
+            None => override_options,
+        }
     }
 }
 

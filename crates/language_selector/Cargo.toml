@@ -11,17 +11,17 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-editor = { path = "../editor" }
-fuzzy = {  path = "../fuzzy" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-picker = { path = "../picker" }
-project = { path = "../project" }
-settings = { path = "../settings" }
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+editor.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+language.workspace = true
+picker.workspace = true
+project.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }

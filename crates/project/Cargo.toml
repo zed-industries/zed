@@ -25,62 +25,62 @@ aho-corasick = "1.1"
 anyhow.workspace = true
 async-trait.workspace = true
 backtrace = "0.3"
-client = { path = "../client" }
-clock = { path = "../clock" }
-collections = { path = "../collections" }
-copilot = { path = "../copilot" }
-db = { path = "../db" }
-fs = { path = "../fs" }
-fsevent = { path = "../fsevent" }
+client.workspace = true
+clock.workspace = true
+collections.workspace = true
+copilot.workspace = true
+db.workspace = true
+fs.workspace = true
+fsevent.workspace = true
 futures.workspace = true
-fuzzy = {  path = "../fuzzy" }
-git = { path = "../git" }
+fuzzy.workspace = true
+git.workspace = true
 globset.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 ignore = "0.4"
 itertools = "0.10"
-language = { path = "../language" }
+language.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-lsp = { path = "../lsp" }
-node_runtime = { path = "../node_runtime" }
+lsp.workspace = true
+node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-prettier = { path = "../prettier" }
+prettier.workspace = true
 rand.workspace = true
 regex.workspace = true
-rpc = { path = "../rpc" }
+rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 sha2 = "0.10"
 similar = "1.3"
 smol.workspace = true
-sum_tree = { path = "../sum_tree" }
-terminal = { path = "../terminal" }
-text = { path = "../text" }
+sum_tree.workspace = true
+terminal.workspace = true
+text.workspace = true
 thiserror.workspace = true
 toml.workspace = true
-util = { path = "../util" }
+util.workspace = true
 
 [dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-collections = { path = "../collections", features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
-db = { path = "../db", features = ["test-support"] }
+db = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-fs = { path = "../fs",  features = ["test-support"] }
+fs = { workspace = true,  features = ["test-support"] }
 git2.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-release_channel = { path = "../release_channel" }
-lsp = { path = "../lsp", features = ["test-support"] }
-prettier = { path = "../prettier", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
+lsp = { workspace = true, features = ["test-support"] }
+prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 unindent.workspace = true
-util = { path = "../util", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

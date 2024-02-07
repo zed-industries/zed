@@ -6,11 +6,12 @@ use client::{
     Client, Subscription, TypedEnvelope, UserId,
 };
 use futures::lock::Mutex;
-use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
+use gpui::{
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
+};
 use rand::prelude::*;
 use std::{
     collections::HashSet,
-    mem,
     ops::{ControlFlow, Range},
     sync::Arc,
 };
@@ -26,6 +27,7 @@ pub struct ChannelChat {
     loaded_all_messages: bool,
     last_acknowledged_id: Option<u64>,
     next_pending_message_id: usize,
+    first_loaded_message_id: Option<u64>,
     user_store: Model<UserStore>,
     rpc: Arc<Client>,
     outgoing_messages_lock: Arc<Mutex<()>>,
@@ -37,6 +39,7 @@ pub struct ChannelChat {
 pub struct MessageParams {
     pub text: String,
     pub mentions: Vec<(Range<usize>, UserId)>,
+    pub reply_to_message_id: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -47,12 +50,22 @@ pub struct ChannelMessage {
     pub sender: Arc<User>,
     pub nonce: u128,
     pub mentions: Vec<(Range<usize>, UserId)>,
+    pub reply_to_message_id: Option<u64>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChannelMessageId {
     Saved(u64),
     Pending(usize),
+}
+
+impl Into<Option<u64>> for ChannelMessageId {
+    fn into(self) -> Option<u64> {
+        match self {
+            ChannelMessageId::Saved(id) => Some(id),
+            ChannelMessageId::Pending(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -96,28 +109,35 @@ impl ChannelChat {
         let response = client
             .request(proto::JoinChannelChat { channel_id })
             .await?;
-        let messages = messages_from_proto(response.messages, &user_store, &mut cx).await?;
-        let loaded_all_messages = response.done;
 
-        Ok(cx.new_model(|cx| {
+        let handle = cx.new_model(|cx| {
             cx.on_release(Self::release).detach();
-            let mut this = Self {
+            Self {
                 channel_id: channel.id,
-                user_store,
+                user_store: user_store.clone(),
                 channel_store,
-                rpc: client,
+                rpc: client.clone(),
                 outgoing_messages_lock: Default::default(),
                 messages: Default::default(),
                 acknowledged_message_ids: Default::default(),
-                loaded_all_messages,
+                loaded_all_messages: false,
                 next_pending_message_id: 0,
                 last_acknowledged_id: None,
                 rng: StdRng::from_entropy(),
+                first_loaded_message_id: None,
                 _subscription: subscription.set_model(&cx.handle(), &mut cx.to_async()),
-            };
-            this.insert_messages(messages, cx);
-            this
-        })?)
+            }
+        })?;
+        Self::handle_loaded_messages(
+            handle.downgrade(),
+            user_store,
+            client,
+            response.messages,
+            response.done,
+            &mut cx,
+        )
+        .await?;
+        Ok(handle)
     }
 
     fn release(&mut self, _: &mut AppContext) {
@@ -166,6 +186,7 @@ impl ChannelChat {
                     timestamp: OffsetDateTime::now_utc(),
                     mentions: message.mentions.clone(),
                     nonce,
+                    reply_to_message_id: message.reply_to_message_id,
                 },
                 &(),
             ),
@@ -183,6 +204,7 @@ impl ChannelChat {
                 body: message.text,
                 nonce: Some(nonce.into()),
                 mentions: mentions_to_proto(&message.mentions),
+                reply_to_message_id: message.reply_to_message_id,
             });
             let response = request.await?;
             drop(outgoing_message_guard);
@@ -227,12 +249,16 @@ impl ChannelChat {
                         before_message_id,
                     })
                     .await?;
-                let loaded_all_messages = response.done;
-                let messages = messages_from_proto(response.messages, &user_store, &mut cx).await?;
-                this.update(&mut cx, |this, cx| {
-                    this.loaded_all_messages = loaded_all_messages;
-                    this.insert_messages(messages, cx);
-                })?;
+                Self::handle_loaded_messages(
+                    this,
+                    user_store,
+                    rpc,
+                    response.messages,
+                    response.done,
+                    &mut cx,
+                )
+                .await?;
+
                 anyhow::Ok(())
             }
             .log_err()
@@ -240,9 +266,14 @@ impl ChannelChat {
     }
 
     pub fn first_loaded_message_id(&mut self) -> Option<u64> {
-        self.messages.first().and_then(|message| match message.id {
-            ChannelMessageId::Saved(id) => Some(id),
-            ChannelMessageId::Pending(_) => None,
+        self.first_loaded_message_id
+    }
+
+    /// Load a message by its id, if it's already stored locally.
+    pub fn find_loaded_message(&self, id: u64) -> Option<&ChannelMessage> {
+        self.messages.iter().find(|message| match message.id {
+            ChannelMessageId::Saved(message_id) => message_id == id,
+            ChannelMessageId::Pending(_) => false,
         })
     }
 
@@ -304,6 +335,66 @@ impl ChannelChat {
         }
     }
 
+    async fn handle_loaded_messages(
+        this: WeakModel<Self>,
+        user_store: Model<UserStore>,
+        rpc: Arc<Client>,
+        proto_messages: Vec<proto::ChannelMessage>,
+        loaded_all_messages: bool,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let loaded_messages = messages_from_proto(proto_messages, &user_store, cx).await?;
+
+        let first_loaded_message_id = loaded_messages.first().map(|m| m.id);
+        let loaded_message_ids = this.update(cx, |this, _| {
+            let mut loaded_message_ids: HashSet<u64> = HashSet::default();
+            for message in loaded_messages.iter() {
+                if let Some(saved_message_id) = message.id.into() {
+                    loaded_message_ids.insert(saved_message_id);
+                }
+            }
+            for message in this.messages.iter() {
+                if let Some(saved_message_id) = message.id.into() {
+                    loaded_message_ids.insert(saved_message_id);
+                }
+            }
+            loaded_message_ids
+        })?;
+
+        let missing_ancestors = loaded_messages
+            .iter()
+            .filter_map(|message| {
+                if let Some(ancestor_id) = message.reply_to_message_id {
+                    if !loaded_message_ids.contains(&ancestor_id) {
+                        return Some(ancestor_id);
+                    }
+                }
+                None
+            })
+            .collect::<Vec<_>>();
+
+        let loaded_ancestors = if missing_ancestors.is_empty() {
+            None
+        } else {
+            let response = rpc
+                .request(proto::GetChannelMessagesById {
+                    message_ids: missing_ancestors,
+                })
+                .await?;
+            Some(messages_from_proto(response.messages, &user_store, cx).await?)
+        };
+        this.update(cx, |this, cx| {
+            this.first_loaded_message_id = first_loaded_message_id.and_then(|msg_id| msg_id.into());
+            this.loaded_all_messages = loaded_all_messages;
+            this.insert_messages(loaded_messages, cx);
+            if let Some(loaded_ancestors) = loaded_ancestors {
+                this.insert_messages(loaded_ancestors, cx);
+            }
+        })?;
+
+        Ok(())
+    }
+
     pub fn rejoin(&mut self, cx: &mut ModelContext<Self>) {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
@@ -311,28 +402,17 @@ impl ChannelChat {
         cx.spawn(move |this, mut cx| {
             async move {
                 let response = rpc.request(proto::JoinChannelChat { channel_id }).await?;
-                let messages = messages_from_proto(response.messages, &user_store, &mut cx).await?;
-                let loaded_all_messages = response.done;
+                Self::handle_loaded_messages(
+                    this.clone(),
+                    user_store.clone(),
+                    rpc.clone(),
+                    response.messages,
+                    response.done,
+                    &mut cx,
+                )
+                .await?;
 
-                let pending_messages = this.update(&mut cx, |this, cx| {
-                    if let Some((first_new_message, last_old_message)) =
-                        messages.first().zip(this.messages.last())
-                    {
-                        if first_new_message.id > last_old_message.id {
-                            let old_messages = mem::take(&mut this.messages);
-                            cx.emit(ChannelChatEvent::MessagesUpdated {
-                                old_range: 0..old_messages.summary().count,
-                                new_count: 0,
-                            });
-                            this.loaded_all_messages = loaded_all_messages;
-                        }
-                    }
-
-                    this.insert_messages(messages, cx);
-                    if loaded_all_messages {
-                        this.loaded_all_messages = loaded_all_messages;
-                    }
-
+                let pending_messages = this.update(&mut cx, |this, _| {
                     this.pending_messages().cloned().collect::<Vec<_>>()
                 })?;
 
@@ -342,6 +422,7 @@ impl ChannelChat {
                         body: pending_message.body,
                         mentions: mentions_to_proto(&pending_message.mentions),
                         nonce: Some(pending_message.nonce.into()),
+                        reply_to_message_id: pending_message.reply_to_message_id,
                     });
                     let response = request.await?;
                     let message = ChannelMessage::from_proto(
@@ -553,6 +634,7 @@ impl ChannelMessage {
                 .nonce
                 .ok_or_else(|| anyhow!("nonce is required"))?
                 .into(),
+            reply_to_message_id: message.reply_to_message_id,
         })
     }
 
@@ -642,6 +724,7 @@ impl<'a> From<&'a str> for MessageParams {
         Self {
             text: value.into(),
             mentions: Vec::new(),
+            reply_to_message_id: None,
         }
     }
 }

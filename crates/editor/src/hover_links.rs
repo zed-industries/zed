@@ -394,10 +394,6 @@ pub fn show_link_definition(
         return;
     };
 
-    let Some(project) = editor.project.clone() else {
-        return;
-    };
-
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -419,6 +415,7 @@ pub fn show_link_definition(
     } else {
         editor.hide_hovered_link(cx)
     }
+    let project = editor.project.clone();
 
     let snapshot = snapshot.buffer_snapshot.clone();
     hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
@@ -436,7 +433,7 @@ pub fn show_link_definition(
                             )
                         })
                         .ok()
-                    } else {
+                    } else if let Some(project) = project {
                         // query the LSP for definition info
                         project
                             .update(&mut cx, |project, cx| match preferred_kind {
@@ -468,6 +465,8 @@ pub fn show_link_definition(
                                     definition_result.into_iter().map(HoverLink::Text).collect(),
                                 )
                             })
+                    } else {
+                        None
                     }
                 }
                 TriggerPoint::InlayHint(highlight, lsp_location, server_id) => Some((

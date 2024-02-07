@@ -863,6 +863,3 @@ impl PathVertex<Pixels> {
         }
     }
 }
-
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct AtlasId(pub(crate) usize);
