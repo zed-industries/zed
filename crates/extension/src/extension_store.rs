@@ -60,7 +60,7 @@ pub struct ThemeManifestEntry {
     path: PathBuf,
 }
 
-actions!(extensions, [RebuildManifest]);
+actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
@@ -80,7 +80,7 @@ pub fn init(
         store
     });
 
-    cx.on_action(|_: &RebuildManifest, cx| {
+    cx.on_action(|_: &ReloadExtensions, cx| {
         let store = cx.global::<GlobalExtensionStore>().0.clone();
         store
             .update(cx, |store, cx| store.rebuild_manifest(cx))
@@ -117,13 +117,17 @@ impl ExtensionStore {
             .block(self.fs.load(&self.manifest_path))?;
         let manifest: Manifest = serde_json::from_str(&manifest)?;
 
+        self.manifest_updated(manifest, cx)?;
+        Ok(())
+    }
+
+    fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) -> Result<()> {
         for (grammar_name, grammar) in &manifest.grammars {
             let mut grammar_path = self.extensions_dir.clone();
             grammar_path.extend([grammar.extension.as_ref(), grammar.path.as_path()]);
             self.language_registry
                 .register_grammar(grammar_name.clone(), grammar_path);
         }
-
         for (language_name, language) in &manifest.languages {
             let mut language_path = self.extensions_dir.clone();
             language_path.extend([language.extension.as_ref(), language.path.as_path()]);
@@ -134,7 +138,6 @@ impl ExtensionStore {
                 load_plugin_queries,
             );
         }
-
         let fs = self.fs.clone();
         let root_dir = self.extensions_dir.clone();
         let theme_registry = self.theme_registry.clone();
@@ -152,7 +155,6 @@ impl ExtensionStore {
                 }
             })
             .detach();
-
         *self.manifest.write() = manifest;
         Ok(())
     }
@@ -290,7 +292,7 @@ impl ExtensionStore {
                     anyhow::Ok(manifest)
                 })
                 .await?;
-            this.update(&mut cx, |this, _| *this.manifest.write() = manifest)
+            this.update(&mut cx, |this, cx| this.manifest_updated(manifest, cx))?
         })
     }
 }
