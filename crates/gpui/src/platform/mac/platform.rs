@@ -3,7 +3,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem,
     MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowOptions,
+    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowAppearance,
+    WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -503,6 +504,14 @@ impl Platform for MacPlatform {
             self.foreground_executor(),
             instance_buffer_pool,
         ))
+    }
+
+    fn window_appearance(&self) -> WindowAppearance {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let appearance: id = msg_send![app, effectiveAppearance];
+            WindowAppearance::from_native(appearance)
+        }
     }
 
     fn set_display_link_output_callback(

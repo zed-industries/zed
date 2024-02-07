@@ -1,7 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
     Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow,
-    WindowOptions,
+    WindowAppearance, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -176,6 +176,10 @@ impl Platform for TestPlatform {
             self.active_display.clone(),
         );
         Box::new(window)
+    }
+
+    fn window_appearance(&self) -> WindowAppearance {
+        WindowAppearance::Light
     }
 
     fn set_display_link_output_callback(

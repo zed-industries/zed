@@ -14,6 +14,7 @@ use smol::future::FutureExt;
 pub use test_context::*;
 use time::UtcOffset;
 
+use crate::WindowAppearance;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
@@ -520,6 +521,11 @@ impl AppContext {
     /// Returns the list of currently active displays.
     pub fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.platform.displays()
+    }
+
+    /// Returns the appearance of the application's windows.
+    pub fn window_appearance(&self) -> WindowAppearance {
+        self.platform.window_appearance()
     }
 
     /// Writes data to the platform clipboard.

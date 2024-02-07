@@ -67,6 +67,9 @@ pub(crate) trait Platform: 'static {
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
 
+    /// Returns the appearance of the application's windows.
+    fn window_appearance(&self) -> WindowAppearance;
+
     fn set_display_link_output_callback(
         &self,
         display_id: DisplayId,
