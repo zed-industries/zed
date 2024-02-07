@@ -11,7 +11,7 @@ use futures::future::{BoxFuture, Shared};
 pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, Abortable};
 use futures::FutureExt;
-use gpui::{AppContext, AsyncAppContext, Model, Task};
+use gpui::{AppContext, AsyncAppContext, EntityId, Model, Task};
 pub use static_runner::StaticRunner;
 use std::error::Error;
 use std::path::Path;
@@ -133,7 +133,7 @@ impl RunnableLens {
 
 #[derive(Clone)]
 pub struct RunnablePebble {
-    metadata: RunnableLens,
+    metadata: Arc<RunnableLens>,
     state: Model<RunState>,
 }
 
@@ -198,7 +198,17 @@ impl RunnablePebble {
             None
         }
     }
+    pub fn cancel_handle(&self, cx: &AppContext) -> Option<AbortHandle> {
+        if let RunState::Scheduled(state) = self.state.read(cx) {
+            Some(state.termination_handle())
+        } else {
+            None
+        }
+    }
     pub fn metadata(&self) -> &RunnableLens {
         &self.metadata
+    }
+    pub fn id(&self) -> EntityId {
+        self.state.entity_id()
     }
 }

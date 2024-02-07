@@ -156,7 +156,7 @@ pub struct Project {
     default_prettier: DefaultPrettier,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
-    runnables: runnable_inventory::Inventory,
+    runnables: Model<runnable_inventory::Inventory>,
 }
 
 pub enum LanguageServerToQuery {
@@ -594,7 +594,7 @@ impl Project {
                 .detach();
             let copilot_lsp_subscription =
                 Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
-            let runnables = Inventory::default();
+            let runnables = Inventory::new(cx);
 
             Self {
                 worktrees: Vec::new(),
@@ -752,7 +752,7 @@ impl Project {
                 default_prettier: DefaultPrettier::default(),
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
-                runnables: Inventory::default(),
+                runnables: Inventory::new(cx),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1034,11 +1034,7 @@ impl Project {
         }
         cx.notify();
     }
-
-    pub fn runnable_inventory_mut(&mut self) -> &mut Inventory {
-        &mut self.runnables
-    }
-    pub fn runnable_inventory(&self) -> &Inventory {
+    pub fn runnable_inventory(&self) -> &Model<Inventory> {
         &self.runnables
     }
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {

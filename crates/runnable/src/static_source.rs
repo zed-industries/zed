@@ -73,16 +73,17 @@ impl StaticSource {
                         let runnable_id = runner.id();
                         let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
                         crate::RunnablePebble {
-                            metadata: crate::RunnableLens {
+                            metadata: Arc::new(crate::RunnableLens {
                                 source_id,
                                 runnable_id,
                                 display_name,
-                            },
+                            }),
                             state,
                         }
                     })
                     .collect();
                 this.runnables = runnables;
+                cx.notify();
             });
             Self {
                 id: next_source_id(),

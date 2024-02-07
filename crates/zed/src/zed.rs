@@ -176,8 +176,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx,
             );
             let source = runnable::static_source::StaticSource::new(tracked_file, cx);
-            project.update(cx, |project, _| {
-                project.runnable_inventory_mut().add_source(source)
+            project.update(cx, |project, cx| {
+                project
+                    .runnable_inventory()
+                    .update(cx, |this, cx| this.add_source(source, cx))
             });
         }
         cx.spawn(|workspace_handle, mut cx| async move {
@@ -210,7 +212,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                let runnables_panel = RunnablesPanel::new(cx);
+                let runnables_panel = RunnablesPanel::new(workspace.project().clone(), cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
@@ -380,6 +382,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 this.project().update(cx, |this, cx| {
                     let Some(runnable) = this
                         .runnable_inventory()
+                        .read(cx)
                         .list_runnables(&std::path::PathBuf::from(""), cx)
                         .find(|runnable| runnable.metadata().display_name() == action.name)
                     else {

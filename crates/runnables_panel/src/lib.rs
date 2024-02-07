@@ -1,15 +1,21 @@
 mod runnables_settings;
 
+use std::path::PathBuf;
+
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     actions, div, list, px, red, relative, rems, AppContext, EventEmitter, FocusHandle,
-    FocusableView, FontStyle, FontWeight, IntoElement, ListAlignment, ListState,
-    ParentElement as _, Render, Styled as _, TextStyle, View, ViewContext, VisualContext as _,
-    WhiteSpace, WindowContext,
+    FocusableView, FontStyle, FontWeight, IntoElement, ListAlignment, ListState, Model,
+    ParentElement as _, Render, SharedString, Styled as _, TextStyle, View, ViewContext,
+    VisualContext as _, WhiteSpace, WindowContext,
 };
+use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{h_flex, v_flex, ActiveTheme, List, StyledExt};
+use ui::{
+    h_flex, v_flex, ActiveTheme, Button, Clickable, FluentBuilder, Icon, IconButton, IconName,
+    Label, List, ListItem, StyledExt,
+};
 use workspace::{
     dock::{Panel, PanelEvent},
     Workspace,
@@ -29,20 +35,22 @@ pub fn init(cx: &mut AppContext) {
 pub struct RunnablesPanel {
     filter_editor: View<Editor>,
     focus_handle: FocusHandle,
+    // todo: po: should this be weak?
+    project: Model<Project>,
 }
 
 impl RunnablesPanel {
-    pub fn new(cx: &mut WindowContext<'_>) -> View<Self> {
+    pub fn new(project: Model<Project>, cx: &mut WindowContext<'_>) -> View<Self> {
         cx.new_view(|cx| {
             let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
             });
-
             Self {
                 focus_handle: cx.focus_handle(),
                 filter_editor,
+                project,
             }
         })
     }
@@ -136,10 +144,61 @@ impl Panel for RunnablesPanel {
 
 impl Render for RunnablesPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let runnables: Vec<_> = self
+            .project
+            .read(cx)
+            .runnable_inventory()
+            .read(cx)
+            .list_runnables(&PathBuf::new(), cx)
+            .collect();
+
         //let list = List::new().empty_message("There are no runnables");
-        let state = ListState::new(2, ListAlignment::Top, px(2.), |index, cx| {
-            div().child("XD").into_any_element()
-        });
+        let state = ListState::new(
+            runnables.len(),
+            ListAlignment::Top,
+            px(2.),
+            move |index, cx| {
+                let runnable = runnables[index].clone();
+                let result = runnable.result(cx);
+                let cancelable = runnable.cancel_handle(cx).filter(|_| result.is_none());
+                ListItem::new(("Runnables", runnable.id()))
+                    .child(
+                        Button::new(
+                            ("Runnable trigger", runnable.id()),
+                            SharedString::from(runnable.metadata().display_name().to_owned()),
+                        )
+                        .on_click({
+                            let runnable = runnable.clone();
+                            move |_, cx| {
+                                runnable.schedule(cx).ok();
+                            }
+                        }),
+                    )
+                    .when_some(result, |this, result| {
+                        let succeeded = result.is_ok();
+                        let icon = if succeeded {
+                            IconName::Check
+                        } else {
+                            IconName::AtSign
+                        };
+                        this.start_slot(Icon::new(icon))
+                    })
+                    .when_some(cancelable, |this, cancel_token| {
+                        this.end_slot(
+                            IconButton::new(
+                                ("Runnable cancel button", runnable.id()),
+                                IconName::XCircle,
+                            )
+                            .on_click(move |_, _| {
+                                cancel_token.abort();
+                            }),
+                        )
+                    })
+                    .into_any_element()
+                //runnables[index]
+                //div().child("XD").into_any_element()
+            },
+        );
         v_flex()
             .size_full()
             //.child(list(self.list_state.clone()).full())
