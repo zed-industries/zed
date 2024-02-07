@@ -19,7 +19,7 @@ test-support = [
     "collections/test-support",
     "gpui/test-support",
     "live_kit_server",
-    #"nanoid",
+    "nanoid",
 ]
 
 [dependencies]
