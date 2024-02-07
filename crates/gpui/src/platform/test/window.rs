@@ -291,10 +291,6 @@ impl PlatformWindow for TestWindow {
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         Some(self)
     }
-
-    fn invalidate(&self) {
-        unimplemented!()
-    }
 }
 
 pub(crate) struct TestAtlasState {

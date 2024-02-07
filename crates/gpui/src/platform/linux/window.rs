@@ -410,9 +410,6 @@ impl PlatformWindow for LinuxWindow {
         unimplemented!()
     }
 
-    //todo!(linux)
-    fn invalidate(&self) {}
-
     fn draw(&self, scene: &crate::Scene) {
         let mut inner = self.0.inner.lock();
         inner.renderer.draw(scene);
