@@ -126,6 +126,7 @@ fn main() {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
 
+        SystemAppearance::init(cx);
         OpenListener::set_global(listener.clone(), cx);
 
         load_embedded_fonts(cx);
