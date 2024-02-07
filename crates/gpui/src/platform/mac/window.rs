@@ -534,14 +534,12 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            let display_link = start_display_link(native_window.screen(), native_view);
-
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
-                display_link,
+                display_link: nil,
                 renderer: MetalRenderer::new(instance_buffer_pool),
                 kind: options.kind,
                 request_frame_callback: None,
