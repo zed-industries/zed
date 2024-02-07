@@ -345,7 +345,9 @@ impl Platform for LinuxPlatform {
     fn set_cursor_style(&self, style: CursorStyle) {}
 
     //todo!(linux)
-    fn should_auto_hide_scrollbars(&self) -> bool {}
+    fn should_auto_hide_scrollbars(&self) -> bool {
+        unimplemented!()
+    }
 
     //todo!(linux)
     fn write_to_clipboard(&self, item: ClipboardItem) {}
@@ -364,6 +366,10 @@ impl Platform for LinuxPlatform {
     }
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+        unimplemented!()
+    }
+
+    fn window_appearance(&self) -> crate::WindowAppearance {
         unimplemented!()
     }
 }
