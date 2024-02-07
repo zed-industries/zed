@@ -34,6 +34,10 @@ pub struct ThemeSettings {
 }
 
 impl ThemeSettings {
+    /// Reloads the current theme.
+    ///
+    /// Reads the [`ThemeSettings`] to know which theme should be loaded,
+    /// taking into account the current [`SystemAppearance`].
     pub fn reload_current_theme(cx: &mut AppContext) {
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
 
