@@ -11,8 +11,7 @@ doctest = false
 
 
 [dependencies]
-# needed for "a few weeks" until alacritty 0.13.2 is out
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "2d2b894c3b869fadc78fce9d72cb5c8d2b764cac" }
+alacritty_terminal = "0.22.0"
 anyhow.workspace = true
 db = { path = "../db" }
 dirs = "4.0.0"
