@@ -194,7 +194,9 @@ impl ThemeRegistry {
     }
 
     pub fn list_names(&self, _staff: bool) -> Vec<SharedString> {
-        self.state.read().themes.keys().cloned().collect()
+        let mut names = self.state.read().themes.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        names
     }
 
     pub fn list(&self, _staff: bool) -> Vec<ThemeMeta> {

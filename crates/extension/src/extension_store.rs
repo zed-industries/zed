@@ -69,21 +69,19 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     let store = cx.new_model(|cx| {
-        let mut store = ExtensionStore::new(
+        ExtensionStore::new(
             EXTENSIONS_DIR.clone(),
             fs.clone(),
             language_registry.clone(),
             theme_registry,
             cx,
-        );
-        store.load(cx).log_err();
-        store
+        )
     });
 
     cx.on_action(|_: &ReloadExtensions, cx| {
         let store = cx.global::<GlobalExtensionStore>().0.clone();
         store
-            .update(cx, |store, cx| store.rebuild_manifest(cx))
+            .update(cx, |store, cx| store.reload(cx))
             .detach_and_log_err(cx);
     });
 
@@ -108,20 +106,40 @@ impl ExtensionStore {
             _watch_extensions_dir: Task::ready(()),
         };
         this._watch_extensions_dir = this.watch_extensions_dir(cx);
+        this.load(cx);
         this
     }
 
-    pub fn load(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
-        let manifest = cx
-            .background_executor()
-            .block(self.fs.load(&self.manifest_path))?;
-        let manifest: Manifest = serde_json::from_str(&manifest)?;
+    pub fn load(&mut self, cx: &mut ModelContext<Self>) {
+        let (manifest_content, manifest_metadata, extensions_metadata) =
+            cx.background_executor().block(async {
+                futures::join!(
+                    self.fs.load(&self.manifest_path),
+                    self.fs.metadata(&self.manifest_path),
+                    self.fs.metadata(&self.extensions_dir),
+                )
+            });
 
-        self.manifest_updated(manifest, cx)?;
-        Ok(())
+        if let Some(manifest_content) = manifest_content.log_err() {
+            if let Some(manifest) = serde_json::from_str(&manifest_content).log_err() {
+                self.manifest_updated(manifest, cx);
+            }
+        }
+
+        let should_reload = if let (Ok(Some(manifest_metadata)), Ok(Some(extensions_metadata))) =
+            (manifest_metadata, extensions_metadata)
+        {
+            extensions_metadata.mtime > manifest_metadata.mtime
+        } else {
+            true
+        };
+
+        if should_reload {
+            self.reload(cx).detach_and_log_err(cx);
+        }
     }
 
-    fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) -> Result<()> {
+    fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) {
         for (grammar_name, grammar) in &manifest.grammars {
             let mut grammar_path = self.extensions_dir.clone();
             grammar_path.extend([grammar.extension.as_ref(), grammar.path.as_path()]);
@@ -156,7 +174,6 @@ impl ExtensionStore {
             })
             .detach();
         *self.manifest.write() = manifest;
-        Ok(())
     }
 
     fn watch_extensions_dir(&self, cx: &mut ModelContext<Self>) -> Task<()> {
@@ -185,7 +202,7 @@ impl ExtensionStore {
         })
     }
 
-    pub fn rebuild_manifest(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let fs = self.fs.clone();
         let extensions_dir = self.extensions_dir.clone();
         let manifest_path = self.manifest_path.clone();
@@ -292,7 +309,7 @@ impl ExtensionStore {
                     anyhow::Ok(manifest)
                 })
                 .await?;
-            this.update(&mut cx, |this, cx| this.manifest_updated(manifest, cx))?
+            this.update(&mut cx, |this, cx| this.manifest_updated(manifest, cx))
         })
     }
 }
