@@ -299,6 +299,10 @@ impl BladeRenderer {
         self.viewport_size = size;
     }
 
+    pub fn viewport_size(&self) -> gpu::Extent {
+        self.viewport_size
+    }
+
     pub fn atlas(&self) -> &Arc<BladeAtlas> {
         &self.atlas
     }

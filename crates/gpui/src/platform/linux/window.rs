@@ -31,26 +31,30 @@ struct Callbacks {
 
 struct LinuxWindowInner {
     bounds: Bounds<i32>,
-    title_height: i32,
-    border_width: i32,
     scale_factor: f32,
     renderer: BladeRenderer,
 }
 
 impl LinuxWindowInner {
-    fn render_extent(&self) -> gpu::Extent {
-        gpu::Extent {
-            width: (self.bounds.size.width - 2 * self.border_width) as u32,
-            height: (self.bounds.size.height - 2 * self.border_width - self.title_height) as u32,
-            depth: 1,
+    fn content_size(&self) -> Size<Pixels> {
+        let size = self.renderer.viewport_size();
+        Size {
+            width: size.width.into(),
+            height: size.height.into(),
         }
     }
-    fn content_size(&self) -> Size<Pixels> {
-        let extent = self.render_extent();
-        Size {
-            width: extent.width.into(),
-            height: extent.height.into(),
-        }
+}
+
+fn query_render_extent(xcb_connection: &xcb::Connection, x_window: x::Window) -> gpu::Extent {
+    let cookie = xcb_connection.send_request(&x::GetGeometry {
+        drawable: x::Drawable::Window(x_window),
+    });
+    let reply = xcb_connection.wait_for_reply(cookie).unwrap();
+    println!("Got geometry {:?}", reply);
+    gpu::Extent {
+        width: reply.width() as u32,
+        height: reply.height() as u32,
+        depth: 1,
     }
 }
 
@@ -143,7 +147,6 @@ impl LinuxWindowState {
             },
             WindowBounds::Fixed(bounds) => bounds.map(|p| p.0 as i32),
         };
-        let border_width = 0i32;
 
         xcb_connection.send_request(&x::CreateWindow {
             depth: x::COPY_FROM_PARENT as u8,
@@ -153,7 +156,7 @@ impl LinuxWindowState {
             y: bounds.origin.y as i16,
             width: bounds.size.width as u16,
             height: bounds.size.height as u16,
-            border_width: border_width as u16,
+            border_width: 0,
             class: x::WindowClass::InputOutput,
             visual: screen.root_visual(),
             value_list: &xcb_values,
@@ -183,6 +186,10 @@ impl LinuxWindowState {
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
 
+        //Warning: it looks like this reported size is immediately invalidated
+        // on some platforms, followed by a "ConfigureNotify" event.
+        let gpu_extent = query_render_extent(&xcb_connection, x_window);
+
         let raw = RawWindow {
             connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                 xcb_connection,
@@ -204,12 +211,6 @@ impl LinuxWindowState {
             .unwrap(),
         );
 
-        let gpu_extent = gpu::Extent {
-            width: bounds.size.width as u32,
-            height: bounds.size.height as u32,
-            depth: 1,
-        };
-
         Self {
             xcb_connection: Arc::clone(xcb_connection),
             display: Rc::new(LinuxDisplay::new(xcb_connection, x_screen_index)),
@@ -218,8 +219,6 @@ impl LinuxWindowState {
             callbacks: Mutex::new(Callbacks::default()),
             inner: Mutex::new(LinuxWindowInner {
                 bounds,
-                title_height: 0, //TODO
-                border_width,
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
             }),
@@ -254,9 +253,9 @@ impl LinuxWindowState {
             let mut inner = self.inner.lock();
             let old_bounds = mem::replace(&mut inner.bounds, bounds);
             do_move = old_bounds.origin != bounds.origin;
-            if old_bounds.size != bounds.size {
-                let extent = inner.render_extent();
-                inner.renderer.resize(extent);
+            let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
+            if inner.renderer.viewport_size() != gpu_size {
+                inner.renderer.resize(gpu_size);
                 resize_args = Some((inner.content_size(), inner.scale_factor));
             }
         }
