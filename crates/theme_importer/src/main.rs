@@ -135,7 +135,7 @@ fn main() -> Result<()> {
         .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
     let theme_metadata = ThemeMetadata {
-        name: "".to_string(),
+        name: vscode_theme.name.clone().unwrap_or("".to_string()),
         appearance: ThemeAppearanceJson::Dark,
         file_name: "".to_string(),
     };
