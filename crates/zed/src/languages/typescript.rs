@@ -249,7 +249,7 @@ impl LspAdapter for EsLintLspAdapter {
         let release =
             latest_github_release("microsoft/vscode-eslint", true, delegate.http_client()).await?;
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: release.tarball_url,
         }))
     }

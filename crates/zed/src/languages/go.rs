@@ -46,11 +46,11 @@ impl super::LspAdapter for GoLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release("golang/tools", false, delegate.http_client()).await?;
-        let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
+        let version: Option<String> = release.tag_name.strip_prefix("gopls/v").map(str::to_string);
         if version.is_none() {
             log::warn!(
                 "couldn't infer gopls version from github release name '{}'",
-                release.name
+                release.tag_name
             );
         }
         Ok(Box::new(version) as Box<_>)
