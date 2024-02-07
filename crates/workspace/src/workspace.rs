@@ -687,15 +687,7 @@ impl Workspace {
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
-                let mut theme_settings = ThemeSettings::get_global(cx).clone();
-
-                if let Some(theme_selection) = theme_settings.theme_selection.clone() {
-                    let theme_name = theme_selection.theme(window_appearance.into());
-
-                    if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
-                        ThemeSettings::override_global(theme_settings, cx);
-                    }
-                }
+                ThemeSettings::reload_current_theme(cx);
             }),
             cx.observe(&left_dock, |this, _, cx| {
                 this.serialize_workspace(cx);

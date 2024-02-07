@@ -918,16 +918,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                     }
                 }
                 theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(|cx| {
-                    let mut theme_settings = ThemeSettings::get_global(cx).clone();
-                    if let Some(theme_selection) = theme_settings.theme_selection.clone() {
-                        let theme_name = theme_selection.theme(*SystemAppearance::global(cx));
-
-                        if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
-                            ThemeSettings::override_global(theme_settings, cx);
-                        }
-                    }
-                })?;
+                cx.update(|cx| ThemeSettings::reload_current_theme(cx))?;
             }
             anyhow::Ok(())
         }
@@ -958,23 +949,8 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                             .await
                             .log_err()
                         {
-                            cx.update(|cx| {
-                                let mut theme_settings = ThemeSettings::get_global(cx).clone();
-
-                                if let Some(theme_selection) =
-                                    theme_settings.theme_selection.clone()
-                                {
-                                    let theme_name =
-                                        theme_selection.theme(*SystemAppearance::global(cx));
-
-                                    if let Some(_theme) =
-                                        theme_settings.switch_theme(&theme_name, cx)
-                                    {
-                                        ThemeSettings::override_global(theme_settings, cx);
-                                    }
-                                }
-                            })
-                            .log_err();
+                            cx.update(|cx| ThemeSettings::reload_current_theme(cx))
+                                .log_err();
                         }
                     }
                 }
