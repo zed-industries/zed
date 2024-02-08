@@ -330,6 +330,8 @@ impl EditorElement {
         register_action(view, cx, Editor::context_menu_next);
         register_action(view, cx, Editor::context_menu_last);
         register_action(view, cx, Editor::display_cursor_names);
+        register_action(view, cx, Editor::unique_lines_case_insensitive);
+        register_action(view, cx, Editor::unique_lines_case_sensitive);
     }
 
     fn register_key_listeners(
