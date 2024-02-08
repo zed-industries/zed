@@ -119,7 +119,7 @@ jobs:
             run: script/clippy
 
           - name: Build Zed
-            run: cargo build --workspace
+            run: cargo build -p zed
     bundle:
         name: Bundle app
         runs-on:
