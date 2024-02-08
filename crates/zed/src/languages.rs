@@ -114,6 +114,7 @@ pub fn init(
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
         ("zig", tree_sitter_zig::language()),
+        ("dart", tree_sitter_dart::language()),
     ]);
 
     let language = |name: &'static str, adapters| {
@@ -290,11 +291,7 @@ pub fn init(
     language("terraform", vec![]);
     language("terraform-vars", vec![]);
     language("hcl", vec![]);
-    language(
-        "dart",
-        tree_sitter_dart::language(),
-        vec![Arc::new(dart::DartLanguageServer {})],
-    );
+    language("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 }
 
 #[cfg(any(test, feature = "test-support"))]
