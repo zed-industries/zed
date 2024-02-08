@@ -64,6 +64,7 @@ pub fn init(
     DenoSettings::register(cx);
 
     languages.add_grammars([
+        ("astro", tree_sitter_astro::language()),
         ("bash", tree_sitter_bash::language()),
         ("beancount", tree_sitter_beancount::language()),
         ("c", tree_sitter_c::language()),
@@ -119,6 +120,13 @@ pub fn init(
         languages.register(name, load_config(name), adapters, load_queries)
     };
 
+    language(
+        "astro",
+        vec![
+            Arc::new(astro::AstroLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
+    );
     language("bash", vec![]);
     language("beancount", vec![]);
     language("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
@@ -254,14 +262,6 @@ pub fn init(
         "svelte",
         vec![
             Arc::new(svelte::SvelteLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
-    );
-    language(
-        "astro",
-        tree_sitter_astro::language(),
-        vec![
-            Arc::new(astro::AstroLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
