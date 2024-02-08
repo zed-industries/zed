@@ -1,4 +1,5 @@
 name = "Prisma"
+grammar = "prisma"
 path_suffixes = ["prisma"]
 line_comments = ["// "]
 brackets = [

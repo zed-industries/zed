@@ -284,13 +284,20 @@ pub fn init(
     language("nu", vec![Arc::new(nu::NuLanguageServer {})]);
     language("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
     language("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
-    language("vue", vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))]);
+    language(
+        "vue",
+        vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))],
+    );
     language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language("proto", vec![]);
     language("terraform", vec![]);
     language("hcl", vec![]);
-    language("prisma", vec![Arc::new(prisma::PrismaLspAdapter::new( node_runtime.clone()))]);
-
+    language(
+        "prisma",
+        vec![Arc::new(prisma::PrismaLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
 }
 
 #[cfg(any(test, feature = "test-support"))]
