@@ -95,6 +95,21 @@ jobs:
               clean: false
               submodules: "recursive"
 
+          - name: Install Rust toolchain
+            uses: dtolnay/rust-toolchain@stable
+
+          - name: Cache crates
+            uses: actions/cache@v3
+            with:
+                path: |
+                  ~/.cargo/bin/
+                  ~/.cargo/registry/index/
+                  ~/.cargo/registry/cache/
+                  ~/.cargo/git/db/
+                  target/
+                key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+                restore-keys: ${{ runner.os }}-cargo-
+
           - name: configure linux
             shell: bash -euxo pipefail {0}
             run: script/linux
