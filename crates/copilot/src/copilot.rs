@@ -979,7 +979,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         let release =
             latest_github_release("zed-industries/copilot", true, false, http.clone()).await?;
 
-        let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.name));
+        let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.tag_name));
 
         fs::create_dir_all(version_dir).await?;
         let server_path = version_dir.join(SERVER_PATH);

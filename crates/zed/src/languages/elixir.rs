@@ -112,13 +112,8 @@ impl LspAdapter for ElixirLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let http = delegate.http_client();
         let release = latest_github_release("elixir-lsp/elixir-ls", true, false, http).await?;
-        let version_name = release
-            .name
-            .strip_prefix("Release ")
-            .context("Elixir-ls release name does not start with prefix")?
-            .to_owned();
 
-        let asset_name = format!("elixir-ls-{version_name}.zip");
+        let asset_name = format!("elixir-ls-{}.zip", &release.tag_name);
         let asset = release
             .assets
             .iter()
@@ -126,7 +121,7 @@ impl LspAdapter for ElixirLspAdapter {
             .ok_or_else(|| anyhow!("no asset found matching {asset_name:?}"))?;
 
         let version = GitHubLspBinaryVersion {
-            name: version_name,
+            name: release.tag_name.clone(),
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
@@ -321,7 +316,7 @@ impl LspAdapter for NextLspAdapter {
         let release =
             latest_github_release("elixir-tools/next-ls", true, false, delegate.http_client())
                 .await?;
-        let version = release.name;
+        let version = release.tag_name;
         let asset_name = format!("next_ls_{platform}");
         let asset = release
             .assets

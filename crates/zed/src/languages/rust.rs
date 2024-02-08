@@ -45,7 +45,7 @@ impl LspAdapter for RustLspAdapter {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         }))
     }

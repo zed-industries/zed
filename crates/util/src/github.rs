@@ -11,7 +11,7 @@ pub struct GitHubLspBinaryVersion {
 
 #[derive(Deserialize, Debug)]
 pub struct GithubRelease {
-    pub name: String,
+    pub tag_name: String,
     #[serde(rename = "prerelease")]
     pub pre_release: bool,
     pub assets: Vec<GithubReleaseAsset>,
@@ -58,9 +58,10 @@ pub async fn latest_github_release(
     let releases = match serde_json::from_slice::<Vec<GithubRelease>>(body.as_slice()) {
         Ok(releases) => releases,
 
-        Err(_) => {
+        Err(err) => {
+            log::error!("Error deserializing: {:?}", err);
             log::error!(
-                "Error deserializing GitHub API response text: {:?}",
+                "GitHub API response text: {:?}",
                 String::from_utf8_lossy(body.as_slice())
             );
             return Err(anyhow!("error deserializing latest release"));
