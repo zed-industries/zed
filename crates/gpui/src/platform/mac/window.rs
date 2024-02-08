@@ -1,10 +1,11 @@
 use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
-    Bounds, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
+    Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
+    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
+    WindowOptions,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -16,11 +17,11 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSDefaultRunLoopMode, NSDictionary, NSFastEnumeration,
-        NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger,
+        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSPoint, NSRect,
+        NSSize, NSString, NSUInteger,
     },
 };
-use core_graphics::display::CGRect;
+use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
 use foreign_types::ForeignTypeRef;
 use futures::channel::oneshot;
@@ -50,6 +51,7 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
+use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -168,7 +170,6 @@ unsafe fn build_classes() {
             sel!(displayLayer:),
             display_layer as extern "C" fn(&Object, Sel, id),
         );
-        decl.add_method(sel!(step:), step as extern "C" fn(&Object, Sel, id));
 
         decl.add_protocol(Protocol::get("NSTextInputClient").unwrap());
         decl.add_method(
@@ -330,7 +331,7 @@ struct MacWindowState {
     executor: ForegroundExecutor,
     native_window: id,
     native_view: NonNull<Object>,
-    display_link: id,
+    display_link: Option<DisplayLink>,
     renderer: MetalRenderer,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
@@ -400,6 +401,21 @@ impl MacWindowState {
                 origin.x += button_spacing;
             }
         }
+    }
+
+    fn start_display_link(&mut self) {
+        self.stop_display_link();
+        let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
+        if let Some(mut display_link) =
+            DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()
+        {
+            display_link.start().log_err();
+            self.display_link = Some(display_link);
+        }
+    }
+
+    fn stop_display_link(&mut self) {
+        self.display_link = None;
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -506,11 +522,8 @@ impl MacWindow {
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
-                let device_description = NSScreen::deviceDescription(screen);
-                let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
-                let screen_number = device_description.objectForKey_(screen_number_key);
-                let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
-                if screen_number as u32 == display.id().0 {
+                let display_id = display_id_for_screen(screen);
+                if display_id == display.id().0 {
                     target_screen = screen;
                     break;
                 }
@@ -539,7 +552,7 @@ impl MacWindow {
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
-                display_link: nil,
+                display_link: None,
                 renderer: MetalRenderer::new(instance_buffer_pool),
                 kind: options.kind,
                 request_frame_callback: None,
@@ -695,19 +708,11 @@ impl MacWindow {
     }
 }
 
-unsafe fn start_display_link(native_screen: id, native_view: id) -> id {
-    let display_link: id =
-        msg_send![native_screen, displayLinkWithTarget: native_view selector: sel!(step:)];
-    let main_run_loop: id = msg_send![class!(NSRunLoop), mainRunLoop];
-    let _: () = msg_send![display_link, addToRunLoop: main_run_loop forMode: NSDefaultRunLoopMode];
-    display_link
-}
-
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
         let window = this.native_window;
-        this.display_link = nil;
+        this.display_link.take();
         this.executor
             .spawn(async move {
                 unsafe {
@@ -1336,17 +1341,16 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
 
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
+    let lock = &mut *window_state.lock();
     unsafe {
         if lock
             .native_window
             .occlusionState()
             .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
         {
-            lock.display_link =
-                start_display_link(lock.native_window.screen(), lock.native_view.as_ptr());
+            lock.start_display_link();
         } else {
-            lock.display_link = nil;
+            lock.stop_display_link();
         }
     }
 }
@@ -1387,14 +1391,7 @@ extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
 extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    unsafe {
-        let screen = lock.native_window.screen();
-        if screen == nil {
-            lock.display_link = nil;
-        } else {
-            lock.display_link = start_display_link(screen, lock.native_view.as_ptr());
-        }
-    }
+    lock.start_display_link();
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
@@ -1540,26 +1537,27 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     if let Some(mut callback) = lock.request_frame_callback.take() {
+        lock.renderer.set_presents_with_transaction(true);
+        lock.stop_display_link();
         drop(lock);
         callback();
-        window_state.lock().request_frame_callback = Some(callback);
+
+        let mut lock = window_state.lock();
+        lock.request_frame_callback = Some(callback);
+        lock.renderer.set_presents_with_transaction(false);
+        lock.start_display_link();
     }
 }
 
-extern "C" fn step(this: &Object, _: Sel, display_link: id) {
-    let window_state = unsafe { get_window_state(this) };
+unsafe extern "C" fn step(view: *mut c_void) {
+    let view = view as id;
+    let window_state = unsafe { get_window_state(&*view) };
     let mut lock = window_state.lock();
 
-    if lock.display_link == display_link {
-        if let Some(mut callback) = lock.request_frame_callback.take() {
-            drop(lock);
-            callback();
-            window_state.lock().request_frame_callback = Some(callback);
-        }
-    } else {
-        unsafe {
-            let _: () = msg_send![display_link, invalidate];
-        }
+    if let Some(mut callback) = lock.request_frame_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().request_frame_callback = Some(callback);
     }
 }
 
@@ -1881,4 +1879,12 @@ where
     } else {
         None
     }
+}
+
+unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
+    let device_description = NSScreen::deviceDescription(screen);
+    let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+    let screen_number = device_description.objectForKey_(screen_number_key);
+    let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
+    screen_number as CGDirectDisplayID
 }

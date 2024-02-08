@@ -2,7 +2,7 @@
 //! an origin at the bottom left of the main display.
 mod dispatcher;
 mod display;
-mod display_linker;
+mod display_link;
 mod events;
 mod metal_atlas;
 mod metal_renderer;
@@ -23,7 +23,7 @@ use std::ops::Range;
 
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
-pub(crate) use display_linker::*;
+pub(crate) use display_link::*;
 pub(crate) use metal_atlas::*;
 pub(crate) use platform::*;
 pub(crate) use text_system::*;
