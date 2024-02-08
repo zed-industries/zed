@@ -194,6 +194,7 @@ gpui::actions!(
         NewlineBelow,
         NextScreen,
         OpenExcerpts,
+        OpenPermalinkToLine,
         Outdent,
         PageDown,
         PageUp,
