@@ -347,7 +347,7 @@ impl TerminalElement {
                 thickness: Pixels::from(1.0),
             });
 
-        let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
+        let weight = if flags.intersects(Flags::BOLD) {
             FontWeight::BOLD
         } else {
             FontWeight::NORMAL
