@@ -34,7 +34,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use util::{measure, ResultExt};
 
@@ -273,7 +273,6 @@ pub struct Window {
     appearance_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
-    pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
@@ -338,13 +337,10 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
         let active = Rc::new(Cell::new(false));
-        let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
-            let active = active.clone();
-            let last_input_timestamp = last_input_timestamp.clone();
             move || {
                 if dirty.get() {
                     measure("frame duration", || {
@@ -355,13 +351,6 @@ impl Window {
                             })
                             .log_err();
                     })
-                }
-                // Keep presenting the current scene for 1 extra second since the
-                // last input to prevent the display from underclocking the refresh rate.
-                else if active.get()
-                    && last_input_timestamp.get().elapsed() < Duration::from_secs(1)
-                {
-                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
             }
         }));
@@ -442,7 +431,6 @@ impl Window {
             appearance_observers: SubscriberSet::new(),
             active,
             dirty,
-            last_input_timestamp,
             refreshing: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
@@ -1123,7 +1111,6 @@ impl<'a> WindowContext<'a> {
 
     /// Dispatch a mouse or keyboard event on the window.
     pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
-        self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
         self.app.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
