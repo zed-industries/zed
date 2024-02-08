@@ -27,8 +27,7 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter,
-    Model, ModelContext, Task, WeakModel,
+    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter, Model, ModelContext, PromptLevel, Task, WeakModel
 };
 use itertools::Itertools;
 use language::{
@@ -217,6 +216,7 @@ enum ProjectClientState {
 /// A prompt requested by LSP server.
 #[derive(Clone, Debug)]
 pub struct LanguageServerPromptRequest {
+    pub level: PromptLevel,
     pub message: String,
     pub actions: Vec<MessageActionItem>,
     response_channel: Sender<MessageActionItem>,
@@ -3138,6 +3138,11 @@ impl Project {
                         if let Some(actions) = params.actions {
                             let (tx, mut rx) = smol::channel::bounded(1);
                             let request = LanguageServerPromptRequest {
+                                level: match params.typ {
+                                    lsp::MessageType::ERROR   => PromptLevel::Critical,
+                                    lsp::MessageType::WARNING => PromptLevel::Warning,
+                                    _                         => PromptLevel::Info,
+                                },
                                 message: params.message,
                                 actions,
                                 response_channel: tx,
