@@ -80,6 +80,19 @@ jobs:
             - name: Build other binaries
               run: cargo build --workspace --bins --all-features
 
+    build_linux:
+        name: Build Linux
+        runs-on: ubuntu-latest
+        steps:
+          - name: Checkout repo
+            uses: actions/checkout@v4
+            with:
+              clean: false
+              submodules: "recursive"
+
+          - name: Build Zed
+            run: cargo build --workspace
+
     bundle:
         name: Bundle app
         runs-on:
