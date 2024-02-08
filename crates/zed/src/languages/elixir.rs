@@ -111,7 +111,7 @@ impl LspAdapter for ElixirLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let http = delegate.http_client();
-        let release = latest_github_release("elixir-lsp/elixir-ls", false, http).await?;
+        let release = latest_github_release("elixir-lsp/elixir-ls", false, false, http).await?;
         let version_name = release
             .name
             .strip_prefix("Release ")
@@ -314,7 +314,8 @@ impl LspAdapter for NextLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
-            latest_github_release("elixir-tools/next-ls", false, delegate.http_client()).await?;
+            latest_github_release("elixir-tools/next-ls", false, false, delegate.http_client())
+                .await?;
         let version = release.name.clone();
         let platform = match consts::ARCH {
             "x86_64" => "darwin_amd64",

@@ -28,7 +28,8 @@ impl LspAdapter for ZlsAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("zigtools/zls", false, delegate.http_client()).await?;
+        let release =
+            latest_github_release("zigtools/zls", false, false, delegate.http_client()).await?;
         let asset_name = format!("zls-{}-macos.tar.gz", ARCH);
         let asset = release
             .assets
