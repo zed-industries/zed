@@ -231,7 +231,6 @@ impl Platform for LinuxPlatform {
         Box::new(LinuxWindow(window_ptr))
     }
 
-
     fn open_url(&self, url: &str) {
         unimplemented!()
     }
