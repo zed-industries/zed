@@ -8393,7 +8393,7 @@ impl Editor {
         }
     }
 
-    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> anyhow::Result<url::Url> {
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
         let permalink = maybe!({
