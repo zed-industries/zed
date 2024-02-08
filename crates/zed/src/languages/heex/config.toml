@@ -1,4 +1,5 @@
 name = "HEEX"
+grammar = "heex"
 path_suffixes = ["heex"]
 autoclose_before = ">})"
 brackets = [

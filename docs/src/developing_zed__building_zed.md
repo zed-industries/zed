@@ -11,25 +11,27 @@ git submodule update --init --recursive
 ## Dependencies
 
 - Install [Rust](https://www.rust-lang.org/tools/install)
-- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store
+- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
+
+> Ensure you launch XCode after installing, and install the MacOS components, which is the default option.
 
 - Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
 
-    ```bash
-    xcode-select --install
-    ```
+  ```bash
+  xcode-select --install
+  ```
 
 - Ensure that the Xcode command line tools are using your newly installed copy of Xcode:
 
-    ```
-    sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-    ```
+  ```
+  sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+  ```
 
 * Install the Rust wasm toolchain:
 
-    ```bash
-    rustup target add wasm32-wasi
-    ```
+  ```bash
+  rustup target add wasm32-wasi
+  ```
 
 ## Backend Dependencies
 
@@ -38,9 +40,9 @@ If you are developing collaborative features of Zed, you'll need to install the 
 - Install [Postgres](https://postgresapp.com)
 - Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
 
-    ```bash
-    brew install livekit foreman
-    ```
+  ```bash
+  brew install livekit foreman
+  ```
 
 ## Building Zed from Source
 
@@ -74,7 +76,7 @@ error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/zed)`*
 xcrun: error: unable to find utility "metal", not a developer tool or in PATH
 ```
 
-Try `xcode-select --switch /Applications/Xcode.app/Contents/Developer`
+Try `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`
 
 ### Cargo errors claiming that a dependency is using unstable features
 

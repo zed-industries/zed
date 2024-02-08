@@ -22,6 +22,8 @@ use workspace::{
     SplitDirection, Workspace,
 };
 
+use super::TestClient;
+
 #[gpui::test(iterations = 10)]
 async fn test_basic_following(
     cx_a: &mut TestAppContext,
@@ -1905,7 +1907,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
     // Client A opens the notes for channel 1.
     let channel_notes_1_a = cx_a
-        .update(|cx| ChannelView::open(channel_1_id, workspace_a.clone(), cx))
+        .update(|cx| ChannelView::open(channel_1_id, None, workspace_a.clone(), cx))
         .await
         .unwrap();
     channel_notes_1_a.update(cx_a, |notes, cx| {
@@ -1951,7 +1953,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
     //  Client A opens the notes for channel 2.
     let channel_notes_2_a = cx_a
-        .update(|cx| ChannelView::open(channel_2_id, workspace_a.clone(), cx))
+        .update(|cx| ChannelView::open(channel_2_id, None, workspace_a.clone(), cx))
         .await
         .unwrap();
     channel_notes_2_a.update(cx_a, |notes, cx| {
@@ -1994,5 +1996,84 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             workspace.active_item(cx).expect("no active item").item_id(),
             channel_notes_2_b.entity_id()
         );
+    });
+}
+
+async fn join_channel(
+    channel_id: u64,
+    client: &TestClient,
+    cx: &mut TestAppContext,
+) -> anyhow::Result<()> {
+    cx.update(|cx| workspace::join_channel(channel_id, client.app_state.clone(), None, cx))
+        .await
+}
+
+async fn share_workspace(
+    workspace: &View<Workspace>,
+    cx: &mut VisualTestContext,
+) -> anyhow::Result<u64> {
+    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+    cx.read(ActiveCall::global)
+        .update(cx, |call, cx| call.share_project(project, cx))
+        .await
+}
+
+#[gpui::test]
+async fn test_following_to_channel_notes_other_workspace(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let (_, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
+
+    let mut cx_a2 = cx_a.clone();
+    let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
+    join_channel(channel, &client_a, cx_a).await.unwrap();
+    share_workspace(&workspace_a, cx_a).await.unwrap();
+
+    // a opens 1.txt
+    cx_a.simulate_keystrokes("cmd-p 1 enter");
+    cx_a.run_until_parked();
+    workspace_a.update(cx_a, |workspace, cx| {
+        let editor = workspace.active_item(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
+    });
+
+    // b joins channel and is following a
+    join_channel(channel, &client_b, cx_b).await.unwrap();
+    cx_b.run_until_parked();
+    let (workspace_b, cx_b) = client_b.active_workspace(cx_b);
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
+    });
+
+    // a opens a second workspace and the channel notes
+    let (workspace_a2, cx_a2) = client_a.build_test_workspace(&mut cx_a2).await;
+    cx_a2.update(|cx| cx.activate_window());
+    cx_a2
+        .update(|cx| ChannelView::open(channel, None, workspace_a2, cx))
+        .await
+        .unwrap();
+    cx_a2.run_until_parked();
+
+    // b should follow a to the channel notes
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item_as::<ChannelView>(cx).unwrap();
+        assert_eq!(editor.read(cx).channel(cx).unwrap().id, channel);
+    });
+
+    // a returns to the shared project
+    cx_a.update(|cx| cx.activate_window());
+    cx_a.run_until_parked();
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        let editor = workspace.active_item(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
+    });
+
+    // b should follow a back
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
     });
 }

@@ -4,16 +4,17 @@ mod util;
 mod vscode;
 
 use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
-use json_comments::StripComments;
 use log::LevelFilter;
+use schemars::schema_for;
 use serde::Deserialize;
 use simplelog::{TermLogger, TerminalMode};
-use theme::{Appearance, AppearanceContent};
+use theme::{Appearance, AppearanceContent, ThemeFamilyContent};
 
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
@@ -74,6 +75,19 @@ struct Args {
     /// Whether to warn when values are missing from the theme.
     #[arg(long)]
     warn_on_missing: bool,
+
+    /// The path to write the output to.
+    #[arg(long, short)]
+    output: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Prints the JSON schema for a theme.
+    PrintSchema,
 }
 
 fn main() -> Result<()> {
@@ -97,6 +111,21 @@ fn main() -> Result<()> {
     TermLogger::init(LevelFilter::Trace, log_config, TerminalMode::Mixed)
         .expect("could not initialize logger");
 
+    if let Some(command) = args.command {
+        match command {
+            Command::PrintSchema => {
+                let theme_family_schema = schema_for!(ThemeFamilyContent);
+
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&theme_family_schema).unwrap()
+                );
+
+                return Ok(());
+            }
+        }
+    }
+
     let theme_file_path = args.theme_path;
 
     let theme_file = match File::open(&theme_file_path) {
@@ -107,12 +136,11 @@ fn main() -> Result<()> {
         }
     };
 
-    let theme_without_comments = StripComments::new(theme_file);
-    let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_without_comments)
+    let vscode_theme: VsCodeTheme = serde_json_lenient::from_reader(theme_file)
         .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
     let theme_metadata = ThemeMetadata {
-        name: "".to_string(),
+        name: vscode_theme.name.clone().unwrap_or("".to_string()),
         appearance: ThemeAppearanceJson::Dark,
         file_name: "".to_string(),
     };
@@ -123,7 +151,12 @@ fn main() -> Result<()> {
 
     let theme_json = serde_json::to_string_pretty(&theme).unwrap();
 
-    println!("{}", theme_json);
+    if let Some(output) = args.output {
+        let mut file = File::create(output)?;
+        file.write_all(theme_json.as_bytes())?;
+    } else {
+        println!("{}", theme_json);
+    }
 
     log::info!("Done!");
 

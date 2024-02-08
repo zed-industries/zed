@@ -1,5 +1,6 @@
 pub mod file_associations;
 mod project_panel_settings;
+use client::{ErrorCode, ErrorExt};
 use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
@@ -7,6 +8,7 @@ use editor::{actions::Cancel, scroll::Autoscroll, Editor};
 use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};
+use collections::{hash_map, HashMap};
 use gpui::{
     actions, div, overlay, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
@@ -21,20 +23,14 @@ use project::{
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Ordering,
-    collections::{hash_map, HashMap},
-    ffi::OsStr,
-    ops::Range,
-    path::Path,
-    sync::Arc,
-};
+use std::{cmp::Ordering, ffi::OsStr, ops::Range, path::Path, sync::Arc};
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
+    notifications::DetachAndPromptErr,
     Workspace,
 };
 
@@ -101,6 +97,7 @@ pub struct EntryDetails {
     is_processing: bool,
     is_cut: bool,
     git_status: Option<GitFileStatus>,
+    is_dotenv: bool,
 }
 
 actions!(
@@ -258,19 +255,39 @@ impl ProjectPanel {
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                         if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            let file_path = entry.path.clone();
+                            let worktree_id = worktree.read(cx).id();
+                            let entry_id = entry.id;
+
                             workspace
                                 .open_path(
                                     ProjectPath {
-                                        worktree_id: worktree.read(cx).id(),
-                                        path: entry.path.clone(),
+                                        worktree_id,
+                                        path: file_path.clone(),
                                     },
                                     None,
                                     focus_opened_item,
                                     cx,
                                 )
-                                .detach_and_log_err(cx);
-                            if !focus_opened_item {
-                                if let Some(project_panel) = project_panel.upgrade() {
+                                .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
+                                    match e.error_code() {
+                                        ErrorCode::UnsharedItem => Some(format!(
+                                            "{} is not shared by the host. This could be because it has been marked as `private`",
+                                            file_path.display()
+                                        )),
+                                        _ => None,
+                                    }
+                                });
+
+                            if let Some(project_panel) = project_panel.upgrade() {
+                                // Always select the entry, regardless of whether it is opened or not.
+                                project_panel.update(cx, |project_panel, _| {
+                                    project_panel.selection = Some(Selection {
+                                        worktree_id,
+                                        entry_id
+                                    });
+                                });
+                                if !focus_opened_item {
                                     let focus_handle = project_panel.read(cx).focus_handle.clone();
                                     cx.focus(&focus_handle);
                                 }
@@ -1137,6 +1154,7 @@ impl ProjectPanel {
                         is_symlink: false,
                         is_ignored: false,
                         is_external: false,
+                        is_private: false,
                         git_status: entry.git_status,
                     });
                 }
@@ -1298,6 +1316,7 @@ impl ProjectPanel {
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                         git_status: status,
+                        is_dotenv: entry.is_private,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1674,15 +1693,13 @@ impl ClipboardEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use collections::HashSet;
     use gpui::{TestAppContext, View, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
     use project::{project_settings::ProjectSettings, FakeFs};
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{
-        collections::HashSet,
-        path::{Path, PathBuf},
-    };
+    use std::path::{Path, PathBuf};
     use workspace::AppState;
 
     #[gpui::test]
@@ -3484,7 +3501,7 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
         let mut result = Vec::new();
-        let mut project_entries = HashSet::new();
+        let mut project_entries = HashSet::default();
         let mut has_editor = false;
 
         panel.update(cx, |panel, cx| {

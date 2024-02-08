@@ -30,6 +30,7 @@ use mappings::mouse::{
     scroll_report,
 };
 
+use collections::{HashMap, VecDeque};
 use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -39,7 +40,6 @@ use util::truncate_and_trailoff;
 
 use std::{
     cmp::{self, min},
-    collections::{HashMap, VecDeque},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
     os::unix::prelude::AsRawFd,
@@ -86,6 +86,15 @@ pub enum Event {
     Open(MaybeNavigationTarget),
 }
 
+#[derive(Clone, Debug)]
+pub struct PathLikeTarget {
+    /// File system path, absolute or relative, existing or not.
+    /// Might have line and column number(s) attached as `file.rs:1:23`
+    pub maybe_path: String,
+    /// Current working directory of the terminal
+    pub terminal_dir: Option<PathBuf>,
+}
+
 /// A string inside terminal, potentially useful as a URI that can be opened.
 #[derive(Clone, Debug)]
 pub enum MaybeNavigationTarget {
@@ -93,7 +102,7 @@ pub enum MaybeNavigationTarget {
     Url(String),
     /// File system path, absolute or relative, existing or not.
     /// Might have line and column number(s) attached as `file.rs:1:23`
-    PathLike(String),
+    PathLike(PathLikeTarget),
 }
 
 #[derive(Clone)]
@@ -364,7 +373,7 @@ impl TerminalBuilder {
             pty,
             pty_options.hold,
             false,
-        );
+        )?;
 
         //Kick things off
         let pty_tx = event_loop.channel();
@@ -626,6 +635,12 @@ impl Terminal {
         }
     }
 
+    fn get_cwd(&self) -> Option<PathBuf> {
+        self.foreground_process_info
+            .as_ref()
+            .map(|info| info.cwd.clone())
+    }
+
     ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
@@ -800,7 +815,10 @@ impl Terminal {
                             let target = if is_url {
                                 MaybeNavigationTarget::Url(maybe_url_or_path)
                             } else {
-                                MaybeNavigationTarget::PathLike(maybe_url_or_path)
+                                MaybeNavigationTarget::PathLike(PathLikeTarget {
+                                    maybe_path: maybe_url_or_path,
+                                    terminal_dir: self.get_cwd(),
+                                })
                             };
                             cx.emit(Event::Open(target));
                         } else {
@@ -852,7 +870,10 @@ impl Terminal {
         let navigation_target = if is_url {
             MaybeNavigationTarget::Url(word)
         } else {
-            MaybeNavigationTarget::PathLike(word)
+            MaybeNavigationTarget::PathLike(PathLikeTarget {
+                maybe_path: word,
+                terminal_dir: self.get_cwd(),
+            })
         };
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
     }

@@ -383,6 +383,9 @@ pub trait File: Send + Sync {
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self) -> rpc::proto::File;
+
+    /// Return whether Zed considers this to be a private file.
+    fn is_private(&self) -> bool;
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
@@ -403,6 +406,11 @@ pub trait LocalFile: File {
         mtime: SystemTime,
         cx: &mut AppContext,
     );
+
+    /// Returns true if the file should not be shared with collaborators.
+    fn is_private(&self, _: &AppContext) -> bool {
+        false
+    }
 }
 
 /// The auto-indent behavior associated with an editing operation.
@@ -750,6 +758,7 @@ impl Buffer {
 
     /// Assign a language to the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+        self.parse_count += 1;
         self.syntax_map.lock().clear();
         self.language = language;
         self.reparse(cx);
@@ -2877,6 +2886,43 @@ impl BufferSnapshot {
         })
     }
 
+    /// Returns anchor ranges for any matches of the redaction query.
+    /// The buffer can be associated with multiple languages, and the redaction query associated with each
+    /// will be run on the relevant section of the buffer.
+    pub fn redacted_ranges<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar
+                .redactions_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
+
+        let configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.redactions_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            let redacted_range = syntax_matches
+                .peek()
+                .and_then(|mat| {
+                    configs[mat.grammar_index].and_then(|config| {
+                        mat.captures
+                            .iter()
+                            .find(|capture| capture.index == config.redaction_capture_ix)
+                    })
+                })
+                .map(|mat| mat.node.byte_range());
+            syntax_matches.advance();
+            redacted_range
+        })
+    }
+
     /// Returns selections for remote peers intersecting the given range.
     #[allow(clippy::type_complexity)]
     pub fn remote_selections_in_range(
@@ -2946,6 +2992,11 @@ impl BufferSnapshot {
         range: Range<Anchor>,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_intersecting_range_rev(range, self)
+    }
+
+    /// Returns if the buffer contains any diagnostics.
+    pub fn has_diagnostics(&self) -> bool {
+        !self.diagnostics.is_empty()
     }
 
     /// Returns all the diagnostics intersecting the given range.

@@ -42,6 +42,7 @@
       "shift-alt-up": "editor::MoveLineUp",
       "shift-alt-down": "editor::MoveLineDown",
       "cmd-alt-l": "editor::Format",
+      "shift-f6": "editor::Rename",
       "cmd-[": "pane::GoBack",
       "cmd-]": "pane::GoForward",
       "alt-f7": "editor::FindAllReferences",
@@ -81,9 +82,17 @@
     }
   },
   {
+    "context": "Pane",
+    "bindings": {
+      "cmd-alt-left": "pane::GoBack",
+      "cmd-alt-right": "pane::GoForward"
+    }
+  },
+  {
     "context": "ProjectPanel",
     "bindings": {
-      "enter": "project_panel::Open"
+      "enter": "project_panel::Open",
+      "shift-f6": "project_panel::Rename"
     }
   }
 ]

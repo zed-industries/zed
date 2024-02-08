@@ -11,6 +11,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
+#[cfg(target_os = "macos")]
+use fsevent::StreamFlags;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
@@ -18,6 +20,7 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
+use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
@@ -39,8 +42,9 @@ use std::{
         Arc,
     },
     thread,
+    time::Duration,
 };
-use theme::{ActiveTheme, ThemeRegistry, ThemeSettings};
+use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
     http::{self, HttpClient, ZedHttpClient},
@@ -55,6 +59,9 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
     OpenRequest,
 };
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() {
     menu::init();
@@ -115,11 +122,12 @@ fn main() {
     });
 
     app.run(move |cx| {
-        ReleaseChannel::init(cx);
+        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
 
+        SystemAppearance::init(cx);
         OpenListener::set_global(listener.clone(), cx);
 
         load_embedded_fonts(cx);
@@ -166,35 +174,11 @@ fn main() {
         );
         assistant::init(cx);
 
-        // TODO: Should we be loading the themes in a different spot?
-        cx.spawn({
-            let fs = fs.clone();
-            |cx| async move {
-                if let Some(theme_registry) =
-                    cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
-                {
-                    if let Some(()) = theme_registry
-                        .load_user_themes(&paths::THEMES_DIR.clone(), fs)
-                        .await
-                        .log_err()
-                    {
-                        cx.update(|cx| {
-                            let mut theme_settings = ThemeSettings::get_global(cx).clone();
+        extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
 
-                            if let Some(requested_theme) = theme_settings.requested_theme.clone() {
-                                if let Some(_theme) =
-                                    theme_settings.switch_theme(&requested_theme, cx)
-                                {
-                                    ThemeSettings::override_global(theme_settings, cx);
-                                }
-                            }
-                        })
-                        .log_err();
-                    }
-                }
-            }
-        })
-        .detach();
+        load_user_themes_in_background(fs.clone(), cx);
+        #[cfg(target_os = "macos")]
+        watch_themes(fs.clone(), cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
@@ -269,12 +253,15 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
+        markdown_preview::init(cx);
         welcome::init(cx);
 
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
+            //todo!(linux): unblock this
+            #[cfg(not(target_os = "linux"))]
             upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);
             let urls = collect_url_args();
@@ -334,7 +321,10 @@ fn main() {
                 })
                 .detach_and_log_err(cx);
             }
-            Ok(Some(OpenRequest::OpenChannelNotes { channel_id })) => {
+            Ok(Some(OpenRequest::OpenChannelNotes {
+                channel_id,
+                heading,
+            })) => {
                 triggered_authentication = true;
                 let app_state = app_state.clone();
                 let client = client.clone();
@@ -343,11 +333,11 @@ fn main() {
                     let _ = authenticate(client, &cx).await;
                     let workspace_window =
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                    let _ = workspace_window
-                        .update(&mut cx, |_, cx| {
-                            ChannelView::open(channel_id, cx.view().clone(), cx)
-                        })?
-                        .await?;
+                    let workspace = workspace_window.root_view(&cx)?;
+                    cx.update_window(workspace_window.into(), |_, cx| {
+                        ChannelView::open(channel_id, heading, workspace, cx)
+                    })?
+                    .await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -389,16 +379,19 @@ fn main() {
                         })
                         .log_err();
                     }
-                    OpenRequest::OpenChannelNotes { channel_id } => {
+                    OpenRequest::OpenChannelNotes {
+                        channel_id,
+                        heading,
+                    } => {
                         let app_state = app_state.clone();
                         let open_notes_task = cx.spawn(|mut cx| async move {
                             let workspace_window =
                                 workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                            let _ = workspace_window
-                                .update(&mut cx, |_, cx| {
-                                    ChannelView::open(channel_id, cx.view().clone(), cx)
-                                })?
-                                .await?;
+                            let workspace = workspace_window.root_view(&cx)?;
+                            cx.update_window(workspace_window.into(), |_, cx| {
+                                ChannelView::open(channel_id, heading, workspace, cx)
+                            })?
+                            .await?;
                             anyhow::Ok(())
                         });
                         cx.update(|cx| open_notes_task.detach_and_log_err(cx))
@@ -485,6 +478,7 @@ fn init_paths() {
 fn init_logger() {
     if stdout_is_a_pty() {
         Builder::new()
+            .parse_default_env()
             .format(|buf, record| {
                 use env_logger::fmt::Color;
 
@@ -603,9 +597,13 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             std::process::exit(-1);
         }
 
-        let app_version = client::ZED_APP_VERSION
-            .or(app_metadata.app_version)
-            .map_or("dev".to_string(), |v| v.to_string());
+        let app_version = if let Some(version) = app_metadata.app_version {
+            version.to_string()
+        } else {
+            option_env!("CARGO_PKG_VERSION")
+                .unwrap_or("dev")
+                .to_string()
+        };
 
         let backtrace = Backtrace::new();
         let mut backtrace = backtrace
@@ -634,7 +632,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: app_version.clone(),
+            app_version: app_version.to_string(),
             release_channel: RELEASE_CHANNEL.display_name().into(),
             os_name: app_metadata.os_name.into(),
             os_version: app_metadata
@@ -820,7 +818,7 @@ async fn load_login_shell_environment() -> Result<()> {
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
     let output = Command::new(&shell)
-        .args(["-lic", &format!("echo {marker} && /usr/bin/env -0")])
+        .args(["-l", "-i", "-c", &format!("echo {marker}; /usr/bin/env -0")])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;
@@ -894,26 +892,89 @@ fn load_embedded_fonts(cx: &AppContext) {
         .unwrap();
 }
 
+/// Spawns a background task to load the user themes from the themes directory.
+fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    cx.spawn({
+        let fs = fs.clone();
+        |cx| async move {
+            if let Some(theme_registry) =
+                cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+            {
+                let themes_dir = paths::THEMES_DIR.as_ref();
+                match fs
+                    .metadata(themes_dir)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|m| m.is_dir)
+                {
+                    Some(is_dir) => {
+                        anyhow::ensure!(is_dir, "Themes dir path {themes_dir:?} is not a directory")
+                    }
+                    None => {
+                        fs.create_dir(themes_dir).await.with_context(|| {
+                            format!("Failed to create themes dir at path {themes_dir:?}")
+                        })?;
+                    }
+                }
+                theme_registry.load_user_themes(themes_dir, fs).await?;
+                cx.update(|cx| ThemeSettings::reload_current_theme(cx))?;
+            }
+            anyhow::Ok(())
+        }
+    })
+    .detach_and_log_err(cx);
+}
+
+//todo!(linux): Port fsevents to linux
+/// Spawns a background task to watch the themes directory for changes.
+#[cfg(target_os = "macos")]
+fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    cx.spawn(|cx| async move {
+        let mut events = fs
+            .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
+            .await;
+
+        while let Some(events) = events.next().await {
+            for event in events {
+                if event.flags.contains(StreamFlags::ITEM_REMOVED) {
+                    // Theme was removed, don't need to reload.
+                    // We may want to remove the theme from the registry, in this case.
+                } else {
+                    if let Some(theme_registry) =
+                        cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                    {
+                        if let Some(()) = theme_registry
+                            .load_user_theme(&event.path, fs.clone())
+                            .await
+                            .log_err()
+                        {
+                            cx.update(|cx| ThemeSettings::reload_current_theme(cx))
+                                .log_err();
+                        }
+                    }
+                }
+            }
+        }
+    })
+    .detach()
+}
+
 #[cfg(debug_assertions)]
-async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) -> Option<()> {
-    use std::time::Duration;
+async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
+    let reload_debounce = Duration::from_millis(250);
 
     let mut events = fs
-        .watch(
-            "crates/zed/src/languages".as_ref(),
-            Duration::from_millis(100),
-        )
+        .watch("crates/zed/src/languages".as_ref(), reload_debounce)
         .await;
+
     while (events.next().await).is_some() {
         languages.reload();
     }
-    Some(())
 }
 
 #[cfg(debug_assertions)]
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
-    use std::time::Duration;
-
     cx.spawn(|cx| async move {
         let mut events = fs
             .watch(
@@ -934,9 +995,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 }
 
 #[cfg(not(debug_assertions))]
-async fn watch_languages(_: Arc<dyn fs::Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
-    None
-}
+fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
 
 #[cfg(not(debug_assertions))]
-fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
+async fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>) {}

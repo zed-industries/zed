@@ -25,8 +25,8 @@ mod wrap_map;
 
 use crate::EditorStyle;
 use crate::{
-    link_go_to_definition::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt,
-    InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    hover_links::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt, InlayId,
+    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
@@ -586,8 +586,9 @@ impl DisplaySnapshot {
             text_system,
             editor_style,
             rem_size,
-            anchor: _,
+            scroll_anchor: _,
             visible_rows: _,
+            vertical_scroll_margin: _,
         }: &TextLayoutDetails,
     ) -> Arc<LineLayout> {
         let mut runs = Vec::new();
@@ -1002,7 +1003,7 @@ pub mod tests {
     use gpui::{div, font, observe, px, AppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
-        Buffer, Language, LanguageConfig, SelectionGoal,
+        Buffer, Language, LanguageConfig, LanguageMatcher, SelectionGoal,
     };
     use project::Project;
     use rand::{prelude::*, Rng};
@@ -1452,7 +1453,10 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    path_suffixes: vec![".test".to_string()],
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec![".test".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -1539,7 +1543,10 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    path_suffixes: vec![".test".to_string()],
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec![".test".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -1607,7 +1614,10 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    path_suffixes: vec![".test".to_string()],
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec![".test".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),

@@ -25,11 +25,11 @@ use project::{
 };
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 
+use collections::HashSet;
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     any::{Any, TypeId},
-    collections::HashSet,
     mem,
     ops::{Not, Range},
     path::PathBuf,
@@ -955,7 +955,7 @@ impl ProjectSearchView {
             semantic_state: None,
             semantic_permissioned: None,
             search_options: options,
-            panels_with_errors: HashSet::new(),
+            panels_with_errors: HashSet::default(),
             active_match_index: None,
             query_editor_was_focused: false,
             included_files_editor,
@@ -1632,6 +1632,7 @@ impl ProjectSearchBar {
             line_height: relative(1.3).into(),
             background_color: None,
             underline: None,
+            strikethrough: None,
             white_space: WhiteSpace::Normal,
         };
 

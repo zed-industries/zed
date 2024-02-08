@@ -172,22 +172,24 @@ pub fn generate_content_prompt(
 
 #[cfg(test)]
 pub(crate) mod tests {
-
     use super::*;
-    use std::sync::Arc;
-
     use gpui::{AppContext, Context};
     use indoc::indoc;
     use language::{
-        language_settings, tree_sitter_rust, Buffer, BufferId, Language, LanguageConfig, Point,
+        language_settings, tree_sitter_rust, Buffer, BufferId, Language, LanguageConfig,
+        LanguageMatcher, Point,
     };
     use settings::SettingsStore;
+    use std::sync::Arc;
 
     pub(crate) fn rust_lang() -> Language {
         Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),

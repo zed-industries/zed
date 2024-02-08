@@ -10,51 +10,51 @@ path = "src/semantic_index.rs"
 doctest = false
 
 [dependencies]
-ai = { path = "../ai" }
+ai.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-collections = { path = "../collections" }
+collections.workspace = true
 futures.workspace = true
 globset.workspace = true
-gpui = { path = "../gpui" }
-language = { path = "../language" }
+gpui.workspace = true
+language.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 ndarray = { version = "0.15.0" }
 ordered-float.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-project = { path = "../project" }
+project.workspace = true
 rand.workspace = true
-release_channel = { path = "../release_channel" }
-rpc = { path = "../rpc" }
+release_channel.workspace = true
+rpc.workspace = true
 rusqlite.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 sha1 = "0.10.5"
 smol.workspace = true
 tiktoken-rs.workspace = true
 tree-sitter.workspace = true
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-ai = { path = "../ai", features = ["test-support"] }
-client = { path = "../client" }
-collections = { path = "../collections", features = ["test-support"] }
+ai = { workspace = true, features = ["test-support"] }
+client.workspace = true
+collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-node_runtime = { path = "../node_runtime" }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+node_runtime.workspace = true
 pretty_assertions.workspace = true
-project = { path = "../project", features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
-rpc = { path = "../rpc", features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
 rust-embed.workspace = true
-settings = { path = "../settings", features = ["test-support"]}
+settings = { workspace = true, features = ["test-support"]}
 tempfile.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-elixir.workspace = true
@@ -66,4 +66,4 @@ tree-sitter-rust.workspace = true
 tree-sitter-toml.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
-workspace = { path = "../workspace", features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

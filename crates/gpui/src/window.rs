@@ -2,12 +2,12 @@ use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
     AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
-    KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds,
-    WindowOptions,
+    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
+    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
+    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
+    WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::hash_map::Entry,
     fmt::{Debug, Display},
     future::Future,
@@ -34,7 +34,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::{measure, ResultExt};
 
@@ -251,6 +251,7 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    text_system: Arc<WindowTextSystem>,
     pub(crate) rem_size: Pixels,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
@@ -268,17 +269,17 @@ pub struct Window {
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
-    active: bool,
-    pub(crate) dirty: bool,
+    appearance: WindowAppearance,
+    appearance_observers: SubscriberSet<(), AnyObserver>,
+    active: Rc<Cell<bool>>,
+    pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) focus_invalidated: bool,
 }
 
 #[derive(Default, Debug)]
@@ -290,10 +291,6 @@ struct PendingInput {
 }
 
 impl PendingInput {
-    fn is_noop(&self) -> bool {
-        self.bindings.is_empty() && (self.keystrokes.iter().all(|k| k.ime_key.is_none()))
-    }
-
     fn input(&self) -> String {
         self.keystrokes
             .iter()
@@ -337,13 +334,35 @@ impl Window {
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
+        let appearance = platform_window.appearance();
+        let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        let dirty = Rc::new(Cell::new(true));
+        let active = Rc::new(Cell::new(false));
+        let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
+            let dirty = dirty.clone();
+            let active = active.clone();
+            let last_input_timestamp = last_input_timestamp.clone();
             move || {
-                measure("frame duration", || {
-                    handle.update(&mut cx, |_, cx| cx.draw()).log_err();
-                })
+                if dirty.get() {
+                    measure("frame duration", || {
+                        handle
+                            .update(&mut cx, |_, cx| {
+                                cx.draw();
+                                cx.present();
+                            })
+                            .log_err();
+                    })
+                }
+                // Keep presenting the current scene for 1 extra second since the
+                // last input to prevent the display from underclocking the refresh rate.
+                else if active.get()
+                    && last_input_timestamp.get().elapsed() < Duration::from_secs(1)
+                {
+                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
+                }
             }
         }));
         platform_window.on_resize(Box::new({
@@ -362,12 +381,20 @@ impl Window {
                     .log_err();
             }
         }));
+        platform_window.on_appearance_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, cx| cx.appearance_changed())
+                    .log_err();
+            }
+        }));
         platform_window.on_active_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
                 handle
                     .update(&mut cx, |_, cx| {
-                        cx.window.active = active;
+                        cx.window.active.set(active);
                         cx.window
                             .activation_observers
                             .clone()
@@ -393,6 +420,7 @@ impl Window {
             platform_window,
             display_id,
             sprite_atlas,
+            text_system,
             rem_size: px(16.),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
@@ -410,18 +438,24 @@ impl Window {
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
-            active: false,
-            dirty: false,
+            appearance,
+            appearance_observers: SubscriberSet::new(),
+            active,
+            dirty,
+            last_input_timestamp,
             refreshing: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
             pending_input: None,
-
-            #[cfg(any(test, feature = "test-support"))]
-            focus_invalidated: false,
         }
+    }
+    fn new_focus_listener(
+        &mut self,
+        value: AnyWindowFocusListener,
+    ) -> (Subscription, impl FnOnce()) {
+        self.focus_listeners.insert((), value)
     }
 }
 
@@ -472,7 +506,7 @@ impl<'a> WindowContext<'a> {
     pub fn refresh(&mut self) {
         if !self.window.drawing {
             self.window.refreshing = true;
-            self.window.dirty = true;
+            self.window.dirty.set(true);
         }
     }
 
@@ -505,12 +539,6 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .clear_pending_keystrokes();
-
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.window.focus_invalidated = true;
-        }
-
         self.refresh();
     }
 
@@ -528,6 +556,11 @@ impl<'a> WindowContext<'a> {
     pub fn disable_focus(&mut self) {
         self.blur();
         self.window.focus_enabled = false;
+    }
+
+    /// Accessor for the text system.
+    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+        &self.window.text_system
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -608,7 +641,7 @@ impl<'a> WindowContext<'a> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.event_listeners.insert(
+        self.app.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -626,9 +659,7 @@ impl<'a> WindowContext<'a> {
                         .unwrap_or(false)
                 }),
             ),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
@@ -734,6 +765,20 @@ impl<'a> WindowContext<'a> {
         self.window.bounds
     }
 
+    fn appearance_changed(&mut self) {
+        self.window.appearance = self.window.platform_window.appearance();
+
+        self.window
+            .appearance_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
+    }
+
+    /// Returns the appearance of the current window.
+    pub fn appearance(&self) -> WindowAppearance {
+        self.window.appearance
+    }
+
     /// Returns the size of the drawable area within the window.
     pub fn viewport_size(&self) -> Size<Pixels> {
         self.window.viewport_size
@@ -741,7 +786,7 @@ impl<'a> WindowContext<'a> {
 
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
-        self.window.active
+        self.window.active.get()
     }
 
     /// Toggle zoom on the window.
@@ -927,15 +972,11 @@ impl<'a> WindowContext<'a> {
         &self.window.next_frame.z_index_stack
     }
 
-    /// Draw pixels to the display for this window based on the contents of its scene.
+    /// Produces a new frame and assigns it to `rendered_frame`. To actually show
+    /// the contents of the new [Scene], use [present].
     pub(crate) fn draw(&mut self) {
-        self.window.dirty = false;
+        self.window.dirty.set(false);
         self.window.drawing = true;
-
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.window.focus_invalidated = false;
-        }
 
         if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
         {
@@ -1001,7 +1042,7 @@ impl<'a> WindowContext<'a> {
                 self.window.focus,
             );
         self.window.next_frame.focus = self.window.focus;
-        self.window.next_frame.window_active = self.window.active;
+        self.window.next_frame.window_active = self.window.active.get();
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
@@ -1070,16 +1111,19 @@ impl<'a> WindowContext<'a> {
                 .clone()
                 .retain(&(), |listener| listener(&event, self));
         }
-
-        self.window
-            .platform_window
-            .draw(&self.window.rendered_frame.scene);
         self.window.refreshing = false;
         self.window.drawing = false;
     }
 
+    fn present(&self) {
+        self.window
+            .platform_window
+            .draw(&self.window.rendered_frame.scene);
+    }
+
     /// Dispatch a mouse or keyboard event on the window.
     pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
+        self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
         self.app.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
@@ -1243,20 +1287,11 @@ impl<'a> WindowContext<'a> {
             .dispatch_path(node_id);
 
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            let KeymatchResult {
-                bindings,
-                mut pending,
-            } = self
+            let KeymatchResult { bindings, pending } = self
                 .window
                 .rendered_frame
                 .dispatch_tree
                 .dispatch_key(&key_down_event.keystroke, &dispatch_path);
-
-            if self.window.rendered_frame.dispatch_tree.keymatch_mode == KeymatchMode::Immediate
-                && !bindings.is_empty()
-            {
-                pending = false;
-            }
 
             if pending {
                 let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
@@ -1272,22 +1307,17 @@ impl<'a> WindowContext<'a> {
                     currently_pending.bindings.push(binding);
                 }
 
-                // for vim compatibility, we also should check "is input handler enabled"
-                if !currently_pending.is_noop() {
-                    currently_pending.timer = Some(self.spawn(|mut cx| async move {
-                        cx.background_executor.timer(Duration::from_secs(1)).await;
-                        cx.update(move |cx| {
-                            cx.clear_pending_keystrokes();
-                            let Some(currently_pending) = cx.window.pending_input.take() else {
-                                return;
-                            };
-                            cx.replay_pending_input(currently_pending)
-                        })
-                        .log_err();
-                    }));
-                } else {
-                    currently_pending.timer = None;
-                }
+                currently_pending.timer = Some(self.spawn(|mut cx| async move {
+                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    cx.update(move |cx| {
+                        cx.clear_pending_keystrokes();
+                        let Some(currently_pending) = cx.window.pending_input.take() else {
+                            return;
+                        };
+                        cx.replay_pending_input(currently_pending)
+                    })
+                    .log_err();
+                }));
                 self.window.pending_input = Some(currently_pending);
 
                 self.propagate_event = false;
@@ -1315,8 +1345,21 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        self.dispatch_key_down_up_event(event, &dispatch_path);
+        if !self.propagate_event {
+            return;
+        }
+
+        self.dispatch_keystroke_observers(event, None);
+    }
+
+    fn dispatch_key_down_up_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) {
         // Capture phase
-        for node_id in &dispatch_path {
+        for node_id in dispatch_path {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
 
             for key_listener in node.key_listeners.clone() {
@@ -1342,8 +1385,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-
-        self.dispatch_keystroke_observers(event, None);
     }
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
@@ -1375,6 +1416,24 @@ impl<'a> WindowContext<'a> {
         self.propagate_event = true;
         for binding in currently_pending.bindings {
             self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+            if !self.propagate_event {
+                return;
+            }
+        }
+
+        let dispatch_path = self
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .dispatch_path(node_id);
+
+        for keystroke in currently_pending.keystrokes {
+            let event = KeyDownEvent {
+                keystroke,
+                is_held: false,
+            };
+
+            self.dispatch_key_down_up_event(&event, &dispatch_path);
             if !self.propagate_event {
                 return;
             }
@@ -1692,13 +1751,15 @@ impl VisualContext for WindowContext<'_> {
         let entity = build_view_state(&mut cx);
         cx.entities.insert(slot, entity);
 
-        cx.new_view_observers
-            .clone()
-            .retain(&TypeId::of::<V>(), |observer| {
-                let any_view = AnyView::from(view.clone());
-                (observer)(any_view, self);
+        // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
+        fn notify_observers(cx: &mut WindowContext, tid: TypeId, view: AnyView) {
+            cx.new_view_observers.clone().retain(&tid, |observer| {
+                let any_view = view.clone();
+                (observer)(any_view, cx);
                 true
             });
+        }
+        notify_observers(self, TypeId::of::<V>(), AnyView::from(view.clone()));
 
         view
     }
@@ -1900,7 +1961,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.observers.insert(
+        self.app.new_observer(
             entity_id,
             Box::new(move |cx| {
                 window_handle
@@ -1914,9 +1975,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     })
                     .unwrap_or(false)
             }),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Subscribe to events emitted by another model or view.
@@ -1936,7 +1995,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.event_listeners.insert(
+        self.app.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -1954,9 +2013,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                         .unwrap_or(false)
                 }),
             ),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Register a callback to be invoked when the view is released.
@@ -2023,7 +2080,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
 
         if !self.window.drawing {
-            self.window_cx.window.dirty = true;
+            self.window_cx.window.dirty.set(true);
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,
             });
@@ -2058,6 +2115,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
+    /// Registers a callback to be invoked when the window appearance changes.
+    pub fn observe_window_appearance(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.appearance_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
     /// Register a listener to be called when the given focus handle receives focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus(
@@ -2067,9 +2138,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.last() != Some(&focus_id)
                         && event.current_focus_path.last() == Some(&focus_id)
@@ -2078,9 +2148,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
-        self.app.defer(move |_| activate());
+            }));
+        self.app.defer(|_| activate());
         subscription
     }
 
@@ -2093,9 +2162,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if !event.previous_focus_path.contains(&focus_id)
                         && event.current_focus_path.contains(&focus_id)
@@ -2104,8 +2172,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
@@ -2119,9 +2186,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.last() == Some(&focus_id)
                         && event.current_focus_path.last() != Some(&focus_id)
@@ -2130,8 +2196,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
@@ -2162,9 +2227,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.contains(&focus_id)
                         && !event.current_focus_path.contains(&focus_id)
@@ -2173,8 +2237,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
@@ -2489,7 +2552,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
         cx.windows
             .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active))
+            .and_then(|window| window.as_ref().map(|window| window.active.get()))
     }
 }
 

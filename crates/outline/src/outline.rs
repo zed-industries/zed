@@ -282,6 +282,7 @@ impl PickerDelegate for OutlineViewDelegate {
             line_height: relative(1.).into(),
             background_color: None,
             underline: None,
+            strikethrough: None,
             white_space: WhiteSpace::Normal,
         };
 

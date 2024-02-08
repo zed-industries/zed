@@ -445,7 +445,7 @@ impl Copilot {
                     )
                     .detach();
 
-                let server = server.initialize(Default::default()).await?;
+                let server = cx.update(|cx| server.initialize(None, cx))?.await?;
 
                 let status = server
                     .request::<request::CheckStatus>(request::CheckStatusParams {
@@ -1250,6 +1250,10 @@ mod tests {
 
         fn worktree_id(&self) -> usize {
             0
+        }
+
+        fn is_private(&self) -> bool {
+            false
         }
     }
 
