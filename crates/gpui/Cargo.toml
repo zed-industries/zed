@@ -99,6 +99,6 @@ flume = "0.11"
 xcb = { version = "1.3", features = ["as-raw-xcb-connection"] }
 as-raw-xcb-connection = "1"
 #TODO: use these on all platforms
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "f35bc605154e210ab6190291235889b6ddad73f1" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "f35bc605154e210ab6190291235889b6ddad73f1" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "26bc5e8b9ef67b4f2970eb95888db733eace98f3" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "26bc5e8b9ef67b4f2970eb95888db733eace98f3" }
 bytemuck = "1"

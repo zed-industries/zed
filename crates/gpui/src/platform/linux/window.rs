@@ -50,7 +50,6 @@ fn query_render_extent(xcb_connection: &xcb::Connection, x_window: x::Window) ->
         drawable: x::Drawable::Window(x_window),
     });
     let reply = xcb_connection.wait_for_reply(cookie).unwrap();
-    println!("Got geometry {:?}", reply);
     gpu::Extent {
         width: reply.width() as u32,
         height: reply.height() as u32,
