@@ -64,7 +64,6 @@ impl DisplayLink {
     }
 
     pub fn start(&mut self) -> Result<()> {
-        println!("starting display link");
         unsafe {
             dispatch_resume(crate::dispatch_sys::dispatch_object_t {
                 _ds: self.frame_requests,
@@ -75,7 +74,6 @@ impl DisplayLink {
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        println!("stopping display link");
         unsafe {
             dispatch_suspend(crate::dispatch_sys::dispatch_object_t {
                 _ds: self.frame_requests,

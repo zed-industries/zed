@@ -1390,11 +1390,7 @@ extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
 extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    unsafe {
-        let screen = lock.native_window.screen();
-        let display_id = display_id_for_screen(screen);
-        lock.start_display_link();
-    }
+    lock.start_display_link();
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
