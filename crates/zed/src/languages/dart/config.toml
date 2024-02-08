@@ -1,4 +1,5 @@
 name = "Dart"
+grammar = "dart"
 path_suffixes = ["dart"]
 line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
