@@ -111,19 +111,19 @@ impl LspAdapter for ElixirLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let http = delegate.http_client();
-        let release = latest_github_release("elixir-lsp/elixir-ls", false, http).await?;
+        let release = latest_github_release("elixir-lsp/elixir-ls", true, false, http).await?;
         let version_name = release
             .name
             .strip_prefix("Release ")
             .context("Elixir-ls release name does not start with prefix")?
             .to_owned();
 
-        let asset_name = format!("elixir-ls-{}.zip", &version_name);
+        let asset_name = format!("elixir-ls-{version_name}.zip");
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            .ok_or_else(|| anyhow!("no asset found matching {asset_name:?}"))?;
 
         let version = GitHubLspBinaryVersion {
             name: version_name,
@@ -313,20 +313,21 @@ impl LspAdapter for NextLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("elixir-tools/next-ls", false, delegate.http_client()).await?;
-        let version = release.name.clone();
         let platform = match consts::ARCH {
             "x86_64" => "darwin_amd64",
             "aarch64" => "darwin_arm64",
             other => bail!("Running on unsupported platform: {other}"),
         };
-        let asset_name = format!("next_ls_{}", platform);
+        let release =
+            latest_github_release("elixir-tools/next-ls", true, false, delegate.http_client())
+                .await?;
+        let version = release.name;
+        let asset_name = format!("next_ls_{platform}");
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            .with_context(|| format!("no asset found matching {asset_name:?}"))?;
         let version = GitHubLspBinaryVersion {
             name: version,
             url: asset.browser_download_url.clone(),
