@@ -12,10 +12,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
-use futures::{
-    channel::{mpsc, oneshot},
-    StreamExt,
-};
+use futures::channel::oneshot;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -23,7 +20,6 @@ use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
     cell::{Cell, RefCell},
-    collections::hash_map::Entry,
     fmt::{Debug, Display},
     future::Future,
     hash::{Hash, Hasher},
@@ -243,6 +239,8 @@ impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 /// Emitted by implementers of [`ManagedView`] to indicate the view should be dismissed, such as when a view is presented as a modal.
 pub struct DismissEvent;
 
+type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
+
 // Holds the state for a specific window.
 #[doc(hidden)]
 pub struct Window {
@@ -259,6 +257,7 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
@@ -338,14 +337,27 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
         let active = Rc::new(Cell::new(false));
+        let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
             let active = active.clone();
+            let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move || {
+                let next_frame_callbacks = next_frame_callbacks.take();
+                if !next_frame_callbacks.is_empty() {
+                    handle
+                        .update(&mut cx, |_, cx| {
+                            for callback in next_frame_callbacks {
+                                callback(cx);
+                            }
+                        })
+                        .log_err();
+                }
+
                 if dirty.get() {
                     measure("frame duration", || {
                         handle
@@ -428,6 +440,7 @@ impl Window {
             element_id_stack: GlobalElementId::default(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            next_frame_callbacks,
             dirty_views: FxHashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
@@ -670,57 +683,7 @@ impl<'a> WindowContext<'a> {
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
-        let handle = self.window.handle;
-        let display_id = self.window.display_id;
-
-        let mut frame_consumers = std::mem::take(&mut self.app.frame_consumers);
-        if let Entry::Vacant(e) = frame_consumers.entry(display_id) {
-            let (tx, mut rx) = mpsc::unbounded::<()>();
-            self.platform.set_display_link_output_callback(
-                display_id,
-                Box::new(move || _ = tx.unbounded_send(())),
-            );
-
-            let consumer_task = self.app.spawn(|cx| async move {
-                while rx.next().await.is_some() {
-                    cx.update(|cx| {
-                        for callback in cx
-                            .next_frame_callbacks
-                            .get_mut(&display_id)
-                            .unwrap()
-                            .drain(..)
-                            .collect::<SmallVec<[_; 32]>>()
-                        {
-                            callback(cx);
-                        }
-                    })
-                    .ok();
-
-                    // Flush effects, then stop the display link if no new next_frame_callbacks have been added.
-
-                    cx.update(|cx| {
-                        if cx.next_frame_callbacks.is_empty() {
-                            cx.platform.stop_display_link(display_id);
-                        }
-                    })
-                    .ok();
-                }
-            });
-            e.insert(consumer_task);
-        }
-        debug_assert!(self.app.frame_consumers.is_empty());
-        self.app.frame_consumers = frame_consumers;
-
-        if self.next_frame_callbacks.is_empty() {
-            self.platform.start_display_link(display_id);
-        }
-
-        self.next_frame_callbacks
-            .entry(display_id)
-            .or_default()
-            .push(Box::new(move |cx: &mut AppContext| {
-                cx.update_window(handle, |_root_view, cx| callback(cx)).ok();
-            }));
+        RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
