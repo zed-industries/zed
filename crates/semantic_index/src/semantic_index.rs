@@ -92,7 +92,7 @@ pub fn init(
 
     cx.spawn(move |cx| async move {
         let embedding_provider = OpenAiEmbeddingProvider::new(
-            // TODO: We should read it from config, but I'm not sure whether to reuse assistant settings or not
+            // TODO: We should read it from config, but I'm not sure whether to reuse `openai_api_url` in assistant settings or not
             OPEN_AI_API_URL.to_string(),
             http_client,
             cx.background_executor().clone(),

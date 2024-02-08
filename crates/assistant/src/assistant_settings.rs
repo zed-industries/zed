@@ -81,7 +81,7 @@ pub struct AssistantSettingsContent {
     ///
     /// Default: gpt-4-1106-preview
     pub default_open_ai_model: Option<OpenAiModel>,
-    /// The api base url to use for the assistant.
+    /// OpenAI api base url to use when starting new conversations.
     ///
     /// Default: https://api.openai.com/v1
     pub openai_api_url: Option<String>,
