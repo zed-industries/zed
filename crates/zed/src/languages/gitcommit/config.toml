@@ -1,4 +1,5 @@
 name = "Git Commit"
+grammar = "git_commit"
 path_suffixes = [
   # Refer to https://github.com/neovim/neovim/blob/master/runtime/lua/vim/filetype.lua#L1286-L1290
   "TAG_EDITMSG",

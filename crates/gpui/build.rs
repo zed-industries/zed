@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "macos"), allow(unused))]
+
 use std::{
     env,
     path::{Path, PathBuf},
@@ -6,10 +8,14 @@ use std::{
 use cbindgen::Config;
 
 fn main() {
+    #[cfg(target_os = "macos")]
     generate_dispatch_bindings();
+    #[cfg(target_os = "macos")]
     let header_path = generate_shader_bindings();
+    #[cfg(target_os = "macos")]
     #[cfg(feature = "runtime_shaders")]
     emit_stitched_shaders(&header_path);
+    #[cfg(target_os = "macos")]
     #[cfg(not(feature = "runtime_shaders"))]
     compile_metal_shaders(&header_path);
 }
@@ -22,6 +28,7 @@ fn generate_dispatch_bindings() {
         .header("src/platform/mac/dispatch.h")
         .allowlist_var("_dispatch_main_q")
         .allowlist_var("DISPATCH_QUEUE_PRIORITY_DEFAULT")
+        .allowlist_var("DISPATCH_QUEUE_PRIORITY_HIGH")
         .allowlist_var("DISPATCH_TIME_NOW")
         .allowlist_function("dispatch_get_global_queue")
         .allowlist_function("dispatch_async_f")

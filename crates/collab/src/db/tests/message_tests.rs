@@ -32,6 +32,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
                 &[],
                 OffsetDateTime::now_utc(),
                 i,
+                None,
             )
             .await
             .unwrap()
@@ -106,6 +107,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
             &mentions_to_proto(&[(3..10, user_b.to_proto())]),
             OffsetDateTime::now_utc(),
             100,
+            None,
         )
         .await
         .unwrap()
@@ -118,6 +120,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
             &mentions_to_proto(&[]),
             OffsetDateTime::now_utc(),
             200,
+            None,
         )
         .await
         .unwrap()
@@ -130,6 +133,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
             &mentions_to_proto(&[(4..11, user_c.to_proto())]),
             OffsetDateTime::now_utc(),
             100,
+            None,
         )
         .await
         .unwrap()
@@ -142,6 +146,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
             &mentions_to_proto(&[]),
             OffsetDateTime::now_utc(),
             200,
+            None,
         )
         .await
         .unwrap()
@@ -157,6 +162,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
             &mentions_to_proto(&[(4..11, user_a.to_proto())]),
             OffsetDateTime::now_utc(),
             100,
+            None,
         )
         .await
         .unwrap()
@@ -231,17 +237,41 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
         .unwrap();
 
     let _ = db
-        .create_channel_message(channel_1, user, "1_1", &[], OffsetDateTime::now_utc(), 1)
+        .create_channel_message(
+            channel_1,
+            user,
+            "1_1",
+            &[],
+            OffsetDateTime::now_utc(),
+            1,
+            None,
+        )
         .await
         .unwrap();
 
     let _ = db
-        .create_channel_message(channel_1, user, "1_2", &[], OffsetDateTime::now_utc(), 2)
+        .create_channel_message(
+            channel_1,
+            user,
+            "1_2",
+            &[],
+            OffsetDateTime::now_utc(),
+            2,
+            None,
+        )
         .await
         .unwrap();
 
     let third_message = db
-        .create_channel_message(channel_1, user, "1_3", &[], OffsetDateTime::now_utc(), 3)
+        .create_channel_message(
+            channel_1,
+            user,
+            "1_3",
+            &[],
+            OffsetDateTime::now_utc(),
+            3,
+            None,
+        )
         .await
         .unwrap()
         .message_id;
@@ -251,7 +281,15 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
         .unwrap();
 
     let fourth_message = db
-        .create_channel_message(channel_2, user, "2_1", &[], OffsetDateTime::now_utc(), 4)
+        .create_channel_message(
+            channel_2,
+            user,
+            "2_1",
+            &[],
+            OffsetDateTime::now_utc(),
+            4,
+            None,
+        )
         .await
         .unwrap()
         .message_id;
@@ -317,6 +355,7 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
         &mentions_to_proto(&[(3..10, user_b.to_proto()), (15..22, user_c.to_proto())]),
         OffsetDateTime::now_utc(),
         1,
+        None,
     )
     .await
     .unwrap();
@@ -327,6 +366,7 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
         &mentions_to_proto(&[(4..11, user_c.to_proto())]),
         OffsetDateTime::now_utc(),
         2,
+        None,
     )
     .await
     .unwrap();
@@ -337,6 +377,7 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
         &mentions_to_proto(&[]),
         OffsetDateTime::now_utc(),
         3,
+        None,
     )
     .await
     .unwrap();
@@ -347,6 +388,7 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
         &mentions_to_proto(&[(0..7, user_b.to_proto())]),
         OffsetDateTime::now_utc(),
         4,
+        None,
     )
     .await
     .unwrap();

@@ -10,17 +10,17 @@ path = "src/go_to_line.rs"
 doctest = false
 
 [dependencies]
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-menu = { path = "../menu" }
+editor.workspace = true
+gpui.workspace = true
+menu.workspace = true
 postage.workspace = true
 serde.workspace = true
-settings = { path = "../settings" }
-text = { path = "../text" }
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+settings.workspace = true
+text.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }

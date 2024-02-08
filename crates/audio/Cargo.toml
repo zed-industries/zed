@@ -11,11 +11,11 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-collections = { path = "../collections" }
+collections.workspace = true
 derive_more.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 rodio = { version = "0.17.1", default-features = false, features = ["wav"] }
-util = { path = "../util" }
+util.workspace = true

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
+use collections::HashMap;
 use editor::scroll::Autoscroll;
 use editor::Editor;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -10,7 +11,6 @@ use gpui::{AppContext, AsyncAppContext, Global};
 use itertools::Itertools;
 use language::{Bias, Point};
 use release_channel::parse_zed_link;
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::path::Path;
@@ -176,7 +176,7 @@ pub async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
-                let mut caret_positions = HashMap::new();
+                let mut caret_positions = HashMap::default();
 
                 let paths = if paths.is_empty() {
                     workspace::last_opened_workspace_paths()

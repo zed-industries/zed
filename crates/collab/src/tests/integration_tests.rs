@@ -14,7 +14,7 @@ use gpui::{
 use language::{
     language_settings::{AllLanguageSettings, Formatter},
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
-    LineEnding, OffsetRangeExt, Point, Rope,
+    LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
@@ -2246,7 +2246,10 @@ async fn test_propagate_saves_and_fs_changes(
     let rust = Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -2254,7 +2257,10 @@ async fn test_propagate_saves_and_fs_changes(
     let javascript = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            path_suffixes: vec!["js".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -3783,7 +3789,10 @@ async fn test_collaborating_with_diagnostics(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4061,7 +4070,10 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4290,7 +4302,10 @@ async fn test_formatting_buffer(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4395,7 +4410,10 @@ async fn test_prettier_formatting_buffer(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
@@ -4511,7 +4529,10 @@ async fn test_definition(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4655,7 +4676,10 @@ async fn test_references(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4852,7 +4876,10 @@ async fn test_document_highlights(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4955,7 +4982,10 @@ async fn test_lsp_hover(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5051,7 +5081,10 @@ async fn test_project_symbols(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5160,7 +5193,10 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),

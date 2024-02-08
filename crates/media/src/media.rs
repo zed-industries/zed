@@ -8,6 +8,7 @@ use core_foundation::{
     base::{CFTypeID, TCFType},
     declare_TCFType, impl_CFTypeDescription, impl_TCFType,
 };
+#[cfg(target_os = "macos")]
 use std::ffi::c_void;
 
 #[cfg(target_os = "macos")]

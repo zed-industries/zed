@@ -7,12 +7,9 @@ pub use context::*;
 pub(crate) use matcher::*;
 
 use crate::{Action, Keystroke, NoAction};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use smallvec::SmallVec;
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-};
+use std::any::{Any, TypeId};
 
 /// An opaque identifier of which version of the keymap is currently active.
 /// The keymap's version is changed whenever bindings are added or removed.
