@@ -4698,8 +4698,8 @@ impl Editor {
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
-        let mut added_lines: usize = 0;
-        let mut removed_lines: usize = 0;
+        let mut added_lines = 0;
+        let mut removed_lines = 0;
 
         while let Some(selection) = selections.next() {
             let (start_row, end_row) = consume_contiguous_rows(
