@@ -107,9 +107,6 @@ jobs:
                 key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
                 restore-keys: ${{ runner.os }}-cargo-
 
-          - name: Install Rust toolchain
-            uses: dtolnay/rust-toolchain@stable
-
           - name: configure linux
             shell: bash -euxo pipefail {0}
             run: script/linux
