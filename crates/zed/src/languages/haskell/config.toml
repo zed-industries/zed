@@ -1,4 +1,5 @@
 name = "Haskell"
+grammar = "haskell"
 path_suffixes = ["hs"]
 autoclose_before = ",=)}]"
 line_comments = ["-- "]

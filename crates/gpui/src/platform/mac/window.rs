@@ -12,7 +12,7 @@ use cocoa::{
         CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowStyleMask, NSWindowTitleVisibility,
+        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -248,6 +248,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.add_method(
         sel!(windowDidResize:),
         window_did_resize as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidChangeOcclusionState:),
+        window_did_change_occlusion_state as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
         sel!(windowWillEnterFullScreen:),
@@ -530,14 +534,12 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            let display_link = start_display_link(native_window.screen(), native_view);
-
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
-                display_link,
+                display_link: nil,
                 renderer: MetalRenderer::new(instance_buffer_pool),
                 kind: options.kind,
                 request_frame_callback: None,
@@ -1332,6 +1334,23 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     }
 }
 
+extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.lock();
+    unsafe {
+        if lock
+            .native_window
+            .occlusionState()
+            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+        {
+            lock.display_link =
+                start_display_link(lock.native_window.screen(), lock.native_view.as_ptr());
+        } else {
+            lock.display_link = nil;
+        }
+    }
+}
+
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     window_state.as_ref().lock().move_traffic_light();
@@ -1530,6 +1549,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 extern "C" fn step(this: &Object, _: Sel, display_link: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
+
     if lock.display_link == display_link {
         if let Some(mut callback) = lock.request_frame_callback.take() {
             drop(lock);

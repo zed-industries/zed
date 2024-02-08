@@ -287,12 +287,17 @@ impl Fs for RealFs {
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
         let (tx, rx) = smol::channel::unbounded();
 
+        if !path.exists() {
+            log::error!("watch path does not exist: {}", path.display());
+            return Box::pin(rx);
+        }
+
         let mut watcher = notify::recommended_watcher(move |res| match res {
             Ok(event) => {
                 let _ = tx.try_send(vec![event]);
             }
             Err(err) => {
-                eprintln!("watch error: {:?}", err);
+                log::error!("watch error: {}", err);
             }
         })
         .unwrap();

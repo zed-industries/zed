@@ -11,6 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
+#[cfg(target_os = "macos")]
 use fsevent::StreamFlags;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
@@ -47,7 +48,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
     http::{self, HttpClient, ZedHttpClient},
-    paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR, PLUGINS_DIR},
+    paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt,
 };
 use uuid::Uuid;
@@ -126,6 +127,7 @@ fn main() {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
 
+        SystemAppearance::init(cx);
         OpenListener::set_global(listener.clone(), cx);
 
         load_embedded_fonts(cx);
@@ -172,7 +174,10 @@ fn main() {
         );
         assistant::init(cx);
 
+        extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
+
         load_user_themes_in_background(fs.clone(), cx);
+        #[cfg(target_os = "macos")]
         watch_themes(fs.clone(), cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
@@ -255,6 +260,8 @@ fn main() {
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
+            //todo!(linux): unblock this
+            #[cfg(not(target_os = "linux"))]
             upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);
             let urls = collect_url_args();
@@ -471,6 +478,7 @@ fn init_paths() {
 fn init_logger() {
     if stdout_is_a_pty() {
         Builder::new()
+            .parse_default_env()
             .format(|buf, record| {
                 use env_logger::fmt::Color;
 
@@ -810,7 +818,7 @@ async fn load_login_shell_environment() -> Result<()> {
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
     let output = Command::new(&shell)
-        .args(["-lic", &format!("echo {marker} && /usr/bin/env -0")])
+        .args(["-l", "-i", "-c", &format!("echo {marker}; /usr/bin/env -0")])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;
@@ -910,16 +918,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                     }
                 }
                 theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(|cx| {
-                    let mut theme_settings = ThemeSettings::get_global(cx).clone();
-                    if let Some(theme_selection) = theme_settings.theme_selection.clone() {
-                        let theme_name = theme_selection.theme(*SystemAppearance::global(cx));
-
-                        if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
-                            ThemeSettings::override_global(theme_settings, cx);
-                        }
-                    }
-                })?;
+                cx.update(|cx| ThemeSettings::reload_current_theme(cx))?;
             }
             anyhow::Ok(())
         }
@@ -927,7 +926,9 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
+//todo!(linux): Port fsevents to linux
 /// Spawns a background task to watch the themes directory for changes.
+#[cfg(target_os = "macos")]
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     cx.spawn(|cx| async move {
         let mut events = fs
@@ -948,23 +949,8 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                             .await
                             .log_err()
                         {
-                            cx.update(|cx| {
-                                let mut theme_settings = ThemeSettings::get_global(cx).clone();
-
-                                if let Some(theme_selection) =
-                                    theme_settings.theme_selection.clone()
-                                {
-                                    let theme_name =
-                                        theme_selection.theme(*SystemAppearance::global(cx));
-
-                                    if let Some(_theme) =
-                                        theme_settings.switch_theme(&theme_name, cx)
-                                    {
-                                        ThemeSettings::override_global(theme_settings, cx);
-                                    }
-                                }
-                            })
-                            .log_err();
+                            cx.update(|cx| ThemeSettings::reload_current_theme(cx))
+                                .log_err();
                         }
                     }
                 }
@@ -974,20 +960,13 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     .detach()
 }
 
+#[cfg(debug_assertions)]
 async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
     let reload_debounce = Duration::from_millis(250);
 
-    let mut events = fs.watch(PLUGINS_DIR.as_ref(), reload_debounce).await;
-
-    #[cfg(debug_assertions)]
-    {
-        events = futures::stream::select(
-            events,
-            fs.watch("crates/zed/src/languages".as_ref(), reload_debounce)
-                .await,
-        )
-        .boxed();
-    }
+    let mut events = fs
+        .watch("crates/zed/src/languages".as_ref(), reload_debounce)
+        .await;
 
     while (events.next().await).is_some() {
         languages.reload();
@@ -1017,3 +996,6 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
+
+#[cfg(not(debug_assertions))]
+async fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>) {}

@@ -20,7 +20,7 @@ pub mod markdown;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
@@ -33,12 +33,13 @@ use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use regex::Regex;
-use serde::{de, Deserialize, Deserializer};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::{
     any::Any,
     borrow::Cow,
     cell::RefCell,
+    ffi::OsStr,
     fmt::Debug,
     hash::Hash,
     mem,
@@ -392,14 +393,13 @@ pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: Arc<str>,
     // The name of the grammar in a WASM bundle (experimental).
-    pub grammar_name: Option<Arc<str>>,
-    /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
-    pub path_suffixes: Vec<String>,
+    pub grammar: Option<Arc<str>>,
+    /// The criteria for matching this language to a given file.
+    #[serde(flatten)]
+    pub matcher: LanguageMatcher,
     /// List of bracket types in a language.
+    #[serde(default)]
     pub brackets: BracketPairConfig,
-    /// A regex pattern that determines whether the language should be assigned to a file or not.
-    #[serde(default, deserialize_with = "deserialize_regex")]
-    pub first_line_pattern: Option<Regex>,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
@@ -442,6 +442,34 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct LanguageMatcher {
+    /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
+    #[serde(default)]
+    pub path_suffixes: Vec<String>,
+    /// A regex pattern that determines whether the language should be assigned to a file or not.
+    #[serde(
+        default,
+        serialize_with = "serialize_regex",
+        deserialize_with = "deserialize_regex"
+    )]
+    pub first_line_pattern: Option<Regex>,
+}
+
+pub const QUERY_FILENAME_PREFIXES: &[(
+    &str,
+    fn(&mut LanguageQueries) -> &mut Option<Cow<'static, str>>,
+)] = &[
+    ("highlights", |q| &mut q.highlights),
+    ("brackets", |q| &mut q.brackets),
+    ("outline", |q| &mut q.outline),
+    ("indents", |q| &mut q.indents),
+    ("embedding", |q| &mut q.embedding),
+    ("injections", |q| &mut q.injections),
+    ("overrides", |q| &mut q.overrides),
+    ("redactions", |q| &mut q.redactions),
+];
 
 /// Tree-sitter language queries for a given language.
 #[derive(Debug, Default)]
@@ -506,11 +534,10 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: "".into(),
-            grammar_name: None,
-            path_suffixes: Default::default(),
+            grammar: None,
+            matcher: LanguageMatcher::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
-            first_line_pattern: Default::default(),
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
@@ -535,6 +562,16 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
         Ok(Some(regex::Regex::new(&source).map_err(de::Error::custom)?))
     } else {
         Ok(None)
+    }
+}
+
+fn serialize_regex<S>(regex: &Option<Regex>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match regex {
+        Some(regex) => serializer.serialize_str(regex.as_str()),
+        None => serializer.serialize_none(),
     }
 }
 
@@ -702,22 +739,31 @@ type AvailableLanguageId = usize;
 #[derive(Clone)]
 struct AvailableLanguage {
     id: AvailableLanguageId,
-    config: LanguageConfig,
-    grammar: AvailableGrammar,
+    name: Arc<str>,
+    grammar: Option<Arc<str>>,
+    source: AvailableLanguageSource,
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
     loaded: bool,
 }
 
-#[derive(Clone)]
 enum AvailableGrammar {
-    Native {
-        grammar: tree_sitter::Language,
+    Native(tree_sitter::Language),
+    Loaded(PathBuf, tree_sitter::Language),
+    Loading(PathBuf, Vec<oneshot::Sender<Result<tree_sitter::Language>>>),
+    Unloaded(PathBuf),
+}
+
+#[derive(Clone)]
+enum AvailableLanguageSource {
+    BuiltIn {
         asset_dir: &'static str,
         get_queries: fn(&str) -> LanguageQueries,
+        config: LanguageConfig,
     },
-    Wasm {
+    Extension {
         path: Arc<Path>,
         get_queries: fn(&Path) -> LanguageQueries,
+        matcher: LanguageMatcher,
     },
 }
 
@@ -737,6 +783,7 @@ struct LanguageRegistryState {
     next_language_server_id: usize,
     languages: Vec<Arc<Language>>,
     available_languages: Vec<AvailableLanguage>,
+    grammars: HashMap<Arc<str>, AvailableGrammar>,
     next_available_language_id: AvailableLanguageId,
     loading_languages: HashMap<AvailableLanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
@@ -758,6 +805,7 @@ impl LanguageRegistry {
                 next_language_server_id: 0,
                 languages: vec![PLAIN_TEXT.clone()],
                 available_languages: Default::default(),
+                grammars: Default::default(),
                 next_available_language_id: 0,
                 loading_languages: Default::default(),
                 subscription: watch::channel(),
@@ -787,20 +835,25 @@ impl LanguageRegistry {
         self.state.write().reload();
     }
 
+    /// Clear out the given languages and reload them from scratch.
+    pub fn reload_languages(&self, languages: &[Arc<str>], grammars: &[Arc<str>]) {
+        self.state.write().reload_languages(languages, grammars);
+    }
+
     pub fn register(
         &self,
         asset_dir: &'static str,
         config: LanguageConfig,
-        grammar: tree_sitter::Language,
         lsp_adapters: Vec<Arc<dyn LspAdapter>>,
         get_queries: fn(&str) -> LanguageQueries,
     ) {
         let state = &mut *self.state.write();
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
-            config,
-            grammar: AvailableGrammar::Native {
-                grammar,
+            name: config.name.clone(),
+            grammar: config.grammar.clone(),
+            source: AvailableLanguageSource::BuiltIn {
+                config,
                 get_queries,
                 asset_dir,
             },
@@ -809,20 +862,57 @@ impl LanguageRegistry {
         });
     }
 
-    pub fn register_wasm(
+    pub fn register_extension(
         &self,
         path: Arc<Path>,
-        config: LanguageConfig,
+        name: Arc<str>,
+        grammar_name: Option<Arc<str>>,
+        matcher: LanguageMatcher,
         get_queries: fn(&Path) -> LanguageQueries,
     ) {
         let state = &mut *self.state.write();
+        let source = AvailableLanguageSource::Extension {
+            path,
+            get_queries,
+            matcher,
+        };
+        for existing_language in &mut state.available_languages {
+            if existing_language.name == name
+                && matches!(
+                    existing_language.source,
+                    AvailableLanguageSource::Extension { .. }
+                )
+            {
+                existing_language.source = source;
+                return;
+            }
+        }
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
-            config,
-            grammar: AvailableGrammar::Wasm { path, get_queries },
+            grammar: grammar_name,
+            name,
+            source,
             lsp_adapters: Vec::new(),
             loaded: false,
         });
+    }
+
+    pub fn add_grammars(
+        &self,
+        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, tree_sitter::Language)>,
+    ) {
+        self.state.write().grammars.extend(
+            grammars
+                .into_iter()
+                .map(|(name, grammar)| (name.into(), AvailableGrammar::Native(grammar))),
+        );
+    }
+
+    pub fn register_grammar(&self, name: Arc<str>, path: PathBuf) {
+        self.state
+            .write()
+            .grammars
+            .insert(name, AvailableGrammar::Unloaded(path));
     }
 
     pub fn language_names(&self) -> Vec<String> {
@@ -830,7 +920,7 @@ impl LanguageRegistry {
         let mut result = state
             .available_languages
             .iter()
-            .filter_map(|l| l.loaded.not().then_some(l.config.name.to_string()))
+            .filter_map(|l| l.loaded.not().then_some(l.name.to_string()))
             .chain(state.languages.iter().map(|l| l.config.name.to_string()))
             .collect::<Vec<_>>();
         result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
@@ -873,7 +963,7 @@ impl LanguageRegistry {
         name: &str,
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let name = UniCase::new(name);
-        self.get_or_load_language(|config| UniCase::new(config.name.as_ref()) == name)
+        self.get_or_load_language(|language_name, _| UniCase::new(language_name) == name)
     }
 
     pub fn language_for_name_or_extension(
@@ -881,8 +971,8 @@ impl LanguageRegistry {
         string: &str,
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let string = UniCase::new(string);
-        self.get_or_load_language(|config| {
-            UniCase::new(config.name.as_ref()) == string
+        self.get_or_load_language(|name, config| {
+            UniCase::new(name) == string
                 || config
                     .path_suffixes
                     .iter()
@@ -899,7 +989,7 @@ impl LanguageRegistry {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
-        self.get_or_load_language(|config| {
+        self.get_or_load_language(|_, config| {
             let path_matches = config
                 .path_suffixes
                 .iter()
@@ -919,7 +1009,7 @@ impl LanguageRegistry {
 
     fn get_or_load_language(
         self: &Arc<Self>,
-        callback: impl Fn(&LanguageConfig) -> bool,
+        callback: impl Fn(&str, &LanguageMatcher) -> bool,
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let (tx, rx) = oneshot::channel();
 
@@ -927,52 +1017,60 @@ impl LanguageRegistry {
         if let Some(language) = state
             .languages
             .iter()
-            .find(|language| callback(&language.config))
+            .find(|language| callback(language.config.name.as_ref(), &language.config.matcher))
         {
             let _ = tx.send(Ok(language.clone()));
         } else if let Some(executor) = self.executor.clone() {
             if let Some(language) = state
                 .available_languages
                 .iter()
-                .find(|l| !l.loaded && callback(&l.config))
+                .rfind(|l| {
+                    !l.loaded
+                        && match &l.source {
+                            AvailableLanguageSource::BuiltIn { config, .. } => {
+                                callback(l.name.as_ref(), &config.matcher)
+                            }
+                            AvailableLanguageSource::Extension { matcher, .. } => {
+                                callback(l.name.as_ref(), &matcher)
+                            }
+                        }
+                })
                 .cloned()
             {
-                let txs = state
-                    .loading_languages
-                    .entry(language.id)
-                    .or_insert_with(|| {
+                match state.loading_languages.entry(language.id) {
+                    hash_map::Entry::Occupied(mut entry) => entry.get_mut().push(tx),
+                    hash_map::Entry::Vacant(entry) => {
                         let this = self.clone();
                         executor
                             .spawn(async move {
                                 let id = language.id;
-                                let name = language.config.name.clone();
+                                let name = language.name.clone();
                                 let language = async {
-                                    let (grammar, queries) = match language.grammar {
-                                        AvailableGrammar::Native {
-                                            grammar,
+                                    let (config, queries) = match language.source {
+                                        AvailableLanguageSource::BuiltIn {
                                             asset_dir,
                                             get_queries,
-                                        } => (grammar, (get_queries)(asset_dir)),
-                                        AvailableGrammar::Wasm { path, get_queries } => {
-                                            let grammar_name =
-                                                &language.config.grammar_name.as_ref().ok_or_else(
-                                                    || anyhow!("missing grammar name"),
-                                                )?;
-                                            let mut wasm_path = path.join(grammar_name.as_ref());
-                                            wasm_path.set_extension("wasm");
-                                            let wasm_bytes = std::fs::read(&wasm_path)?;
-                                            let grammar = PARSER.with(|parser| {
-                                                let mut parser = parser.borrow_mut();
-                                                let mut store = parser.take_wasm_store().unwrap();
-                                                let grammar =
-                                                    store.load_language(&grammar_name, &wasm_bytes);
-                                                parser.set_wasm_store(store).unwrap();
-                                                grammar
-                                            })?;
-                                            (grammar, get_queries(path.as_ref()))
+                                            config,
+                                        } => (config, (get_queries)(asset_dir)),
+                                        AvailableLanguageSource::Extension {
+                                            path,
+                                            get_queries,
+                                            ..
+                                        } => {
+                                            let config = std::fs::read(path.join("config.toml"));
+                                            let config: LanguageConfig =
+                                                ::toml::from_slice(&config?)?;
+                                            (config, get_queries(path.as_ref()))
                                         }
                                     };
-                                    Language::new(language.config, Some(grammar))
+
+                                    let grammar = if let Some(grammar) = config.grammar.clone() {
+                                        Some(this.get_or_load_grammar(grammar).await?)
+                                    } else {
+                                        None
+                                    };
+
+                                    Language::new(config, grammar)
                                         .with_lsp_adapters(language.lsp_adapters)
                                         .await
                                         .with_queries(queries)
@@ -1009,15 +1107,76 @@ impl LanguageRegistry {
                                 };
                             })
                             .detach();
-
-                        Vec::new()
-                    });
-                txs.push(tx);
+                        entry.insert(vec![tx]);
+                    }
+                }
             } else {
                 let _ = tx.send(Err(anyhow!("language not found")));
             }
         } else {
             let _ = tx.send(Err(anyhow!("executor does not exist")));
+        }
+
+        rx.unwrap()
+    }
+
+    fn get_or_load_grammar(
+        self: &Arc<Self>,
+        name: Arc<str>,
+    ) -> UnwrapFuture<oneshot::Receiver<Result<tree_sitter::Language>>> {
+        let (tx, rx) = oneshot::channel();
+        let mut state = self.state.write();
+
+        if let Some(grammar) = state.grammars.get_mut(name.as_ref()) {
+            match grammar {
+                AvailableGrammar::Native(grammar) | AvailableGrammar::Loaded(_, grammar) => {
+                    tx.send(Ok(grammar.clone())).ok();
+                }
+                AvailableGrammar::Loading(_, txs) => {
+                    txs.push(tx);
+                }
+                AvailableGrammar::Unloaded(wasm_path) => {
+                    if let Some(executor) = &self.executor {
+                        let this = self.clone();
+                        executor
+                            .spawn({
+                                let wasm_path = wasm_path.clone();
+                                async move {
+                                    let wasm_bytes = std::fs::read(&wasm_path)?;
+                                    let grammar_name = wasm_path
+                                        .file_stem()
+                                        .and_then(OsStr::to_str)
+                                        .ok_or_else(|| anyhow!("invalid grammar filename"))?;
+                                    let grammar = PARSER.with(|parser| {
+                                        let mut parser = parser.borrow_mut();
+                                        let mut store = parser.take_wasm_store().unwrap();
+                                        let grammar =
+                                            store.load_language(&grammar_name, &wasm_bytes);
+                                        parser.set_wasm_store(store).unwrap();
+                                        grammar
+                                    })?;
+
+                                    if let Some(AvailableGrammar::Loading(_, txs)) =
+                                        this.state.write().grammars.insert(
+                                            name,
+                                            AvailableGrammar::Loaded(wasm_path, grammar.clone()),
+                                        )
+                                    {
+                                        for tx in txs {
+                                            tx.send(Ok(grammar.clone())).ok();
+                                        }
+                                    }
+
+                                    anyhow::Ok(())
+                                }
+                            })
+                            .detach();
+                        *grammar = AvailableGrammar::Loading(wasm_path.clone(), vec![tx]);
+                    }
+                }
+            }
+        } else {
+            tx.send(Err(anyhow!("no such grammar {}", name))).ok();
         }
 
         rx.unwrap()
@@ -1206,7 +1365,46 @@ impl LanguageRegistryState {
         *self.subscription.0.borrow_mut() = ();
     }
 
-    /// Mark the given language a having been loaded, so that the
+    fn reload_languages(
+        &mut self,
+        languages_to_reload: &[Arc<str>],
+        grammars_to_reload: &[Arc<str>],
+    ) {
+        for (name, grammar) in self.grammars.iter_mut() {
+            if grammars_to_reload.contains(name) {
+                if let AvailableGrammar::Loaded(path, _) = grammar {
+                    *grammar = AvailableGrammar::Unloaded(path.clone());
+                }
+            }
+        }
+
+        self.languages.retain(|language| {
+            let should_reload = languages_to_reload.contains(&language.config.name)
+                || language
+                    .config
+                    .grammar
+                    .as_ref()
+                    .map_or(false, |grammar| grammars_to_reload.contains(&grammar));
+            !should_reload
+        });
+
+        for language in &mut self.available_languages {
+            if languages_to_reload.contains(&language.name)
+                || language
+                    .grammar
+                    .as_ref()
+                    .map_or(false, |grammar| grammars_to_reload.contains(grammar))
+            {
+                language.loaded = false;
+            }
+        }
+
+        self.version += 1;
+        self.reload_count += 1;
+        *self.subscription.0.borrow_mut() = ();
+    }
+
+    /// Mark the given language as having been loaded, so that the
     /// language registry won't try to load it again.
     fn mark_language_loaded(&mut self, id: AvailableLanguageId) {
         for language in &mut self.available_languages {
@@ -1720,7 +1918,7 @@ impl Language {
     }
 
     pub fn path_suffixes(&self) -> &[String] {
-        &self.config.path_suffixes
+        &self.config.matcher.path_suffixes
     }
 
     pub fn should_autoclose_before(&self, c: char) -> bool {
@@ -1911,6 +2109,33 @@ impl CodeLabel {
     }
 }
 
+impl Ord for LanguageMatcher {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.path_suffixes.cmp(&other.path_suffixes).then_with(|| {
+            self.first_line_pattern
+                .as_ref()
+                .map(Regex::as_str)
+                .cmp(&other.first_line_pattern.as_ref().map(Regex::as_str))
+        })
+    }
+}
+
+impl PartialOrd for LanguageMatcher {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for LanguageMatcher {}
+
+impl PartialEq for LanguageMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        self.path_suffixes == other.path_suffixes
+            && self.first_line_pattern.as_ref().map(Regex::as_str)
+                == other.first_line_pattern.as_ref().map(Regex::as_str)
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl Default for FakeLspAdapter {
     fn default() -> Self {
@@ -2034,11 +2259,12 @@ mod tests {
             "/javascript",
             LanguageConfig {
                 name: "JavaScript".into(),
-                path_suffixes: vec!["js".into()],
-                first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["js".into()],
+                    first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+                },
                 ..Default::default()
             },
-            tree_sitter_typescript::language_tsx(),
             vec![],
             |_| Default::default(),
         );
@@ -2067,14 +2293,21 @@ mod tests {
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.executor());
         let languages = Arc::new(languages);
+        languages.add_grammars([
+            ("json", tree_sitter_json::language()),
+            ("rust", tree_sitter_rust::language()),
+        ]);
         languages.register(
             "/JSON",
             LanguageConfig {
                 name: "JSON".into(),
-                path_suffixes: vec!["json".into()],
+                grammar: Some("json".into()),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["json".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            tree_sitter_json::language(),
             vec![],
             |_| Default::default(),
         );
@@ -2082,10 +2315,13 @@ mod tests {
             "/rust",
             LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".into()],
+                grammar: Some("rust".into()),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            tree_sitter_rust::language(),
             vec![],
             |_| Default::default(),
         );

@@ -12,30 +12,30 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 bitflags = "1"
-collections = { path = "../collections" }
-editor = { path = "../editor" }
+collections.workspace = true
+editor.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
-language = { path = "../language" }
+gpui.workspace = true
+language.workspace = true
 log.workspace = true
-menu = { path = "../menu" }
+menu.workspace = true
 postage.workspace = true
-project = { path = "../project" }
-semantic_index = { path = "../semantic_index" }
+project.workspace = true
+semantic_index.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
-theme = { path = "../theme" }
-ui = { path = "../ui" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
-workspace = { path = "../workspace", features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

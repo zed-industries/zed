@@ -5,14 +5,12 @@ use parking_lot::Mutex;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
-    ffi::OsStr,
-    os::unix::prelude::OsStrExt,
     path::{Component, Path, PathBuf},
     sync::Arc,
     time::SystemTime,
 };
 use sum_tree::{MapSeekTarget, TreeMap};
-use util::ResultExt;
+use util::{paths::PathExt, ResultExt};
 
 pub use git2::Repository as LibGitRepository;
 
@@ -119,7 +117,7 @@ impl GitRepository for LibGitRepository {
 
         if let Some(statuses) = self.statuses(Some(&mut options)).log_err() {
             for status in statuses.iter() {
-                let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
+                let path = RepoPath(PathBuf::try_from_bytes(status.path_bytes()).unwrap());
                 let status = status.status();
                 if !status.contains(git2::Status::IGNORED) {
                     if let Some(status) = read_status(status) {

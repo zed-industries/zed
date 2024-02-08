@@ -1,4 +1,5 @@
 name = "Uiua"
+grammar = "uiua"
 path_suffixes = ["ua"]
 line_comments = ["# "]
 autoclose_before = ")]}\""

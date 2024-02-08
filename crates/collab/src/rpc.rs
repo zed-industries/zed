@@ -1691,7 +1691,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     tracing::info!(
         %project_id,
         host_user_id = %project.host_user_id,
-        host_connection_id = %project.host_connection_id,
+        host_connection_id = ?project.host_connection_id,
         "leave project"
     );
 
@@ -3019,6 +3019,10 @@ async fn send_channel_message(
             &request.mentions,
             timestamp,
             nonce.clone().into(),
+            match request.reply_to_message_id {
+                Some(reply_to_message_id) => Some(MessageId::from_proto(reply_to_message_id)),
+                None => None,
+            },
         )
         .await?;
     let message = proto::ChannelMessage {
@@ -3028,6 +3032,7 @@ async fn send_channel_message(
         mentions: request.mentions,
         timestamp: timestamp.unix_timestamp() as u64,
         nonce: Some(nonce),
+        reply_to_message_id: request.reply_to_message_id,
     };
     broadcast(
         Some(session.connection_id),

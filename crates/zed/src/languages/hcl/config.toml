@@ -1,4 +1,5 @@
 name = "HCL"
+grammar = "hcl"
 path_suffixes = ["hcl"]
 line_comments = ["# ", "// "]
 block_comment = ["/*", "*/"]

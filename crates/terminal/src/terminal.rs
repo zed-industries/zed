@@ -30,6 +30,7 @@ use mappings::mouse::{
     scroll_report,
 };
 
+use collections::{HashMap, VecDeque};
 use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -39,7 +40,6 @@ use util::truncate_and_trailoff;
 
 use std::{
     cmp::{self, min},
-    collections::{HashMap, VecDeque},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
     os::unix::prelude::AsRawFd,

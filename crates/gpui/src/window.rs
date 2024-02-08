@@ -271,7 +271,7 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
-    active: bool,
+    active: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
@@ -337,11 +337,13 @@ impl Window {
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
+        let active = Rc::new(Cell::new(false));
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
+            let active = active.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move || {
                 if dirty.get() {
@@ -353,9 +355,12 @@ impl Window {
                             })
                             .log_err();
                     })
-                } else if last_input_timestamp.get().elapsed() < Duration::from_secs(1) {
-                    // Keep presenting the current scene for 1 extra second since the
-                    // last input to prevent the display from underclocking the refresh rate.
+                }
+                // Keep presenting the current scene for 1 extra second since the
+                // last input to prevent the display from underclocking the refresh rate.
+                else if active.get()
+                    && last_input_timestamp.get().elapsed() < Duration::from_secs(1)
+                {
                     handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
             }
@@ -389,7 +394,7 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, cx| {
-                        cx.window.active = active;
+                        cx.window.active.set(active);
                         cx.window
                             .activation_observers
                             .clone()
@@ -435,7 +440,7 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
-            active: false,
+            active,
             dirty,
             last_input_timestamp,
             refreshing: false,
@@ -445,6 +450,12 @@ impl Window {
             focus_enabled: true,
             pending_input: None,
         }
+    }
+    fn new_focus_listener(
+        &mut self,
+        value: AnyWindowFocusListener,
+    ) -> (Subscription, impl FnOnce()) {
+        self.focus_listeners.insert((), value)
     }
 }
 
@@ -630,7 +641,7 @@ impl<'a> WindowContext<'a> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.event_listeners.insert(
+        self.app.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -648,9 +659,7 @@ impl<'a> WindowContext<'a> {
                         .unwrap_or(false)
                 }),
             ),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
@@ -777,7 +786,7 @@ impl<'a> WindowContext<'a> {
 
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
-        self.window.active
+        self.window.active.get()
     }
 
     /// Toggle zoom on the window.
@@ -1033,7 +1042,7 @@ impl<'a> WindowContext<'a> {
                 self.window.focus,
             );
         self.window.next_frame.focus = self.window.focus;
-        self.window.next_frame.window_active = self.window.active;
+        self.window.next_frame.window_active = self.window.active.get();
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
@@ -1742,13 +1751,15 @@ impl VisualContext for WindowContext<'_> {
         let entity = build_view_state(&mut cx);
         cx.entities.insert(slot, entity);
 
-        cx.new_view_observers
-            .clone()
-            .retain(&TypeId::of::<V>(), |observer| {
-                let any_view = AnyView::from(view.clone());
-                (observer)(any_view, self);
+        // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
+        fn notify_observers(cx: &mut WindowContext, tid: TypeId, view: AnyView) {
+            cx.new_view_observers.clone().retain(&tid, |observer| {
+                let any_view = view.clone();
+                (observer)(any_view, cx);
                 true
             });
+        }
+        notify_observers(self, TypeId::of::<V>(), AnyView::from(view.clone()));
 
         view
     }
@@ -1950,7 +1961,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.observers.insert(
+        self.app.new_observer(
             entity_id,
             Box::new(move |cx| {
                 window_handle
@@ -1964,9 +1975,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     })
                     .unwrap_or(false)
             }),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Subscribe to events emitted by another model or view.
@@ -1986,7 +1995,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
         let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.event_listeners.insert(
+        self.app.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -2004,9 +2013,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                         .unwrap_or(false)
                 }),
             ),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Register a callback to be invoked when the view is released.
@@ -2131,9 +2138,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.last() != Some(&focus_id)
                         && event.current_focus_path.last() == Some(&focus_id)
@@ -2142,9 +2148,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
-        self.app.defer(move |_| activate());
+            }));
+        self.app.defer(|_| activate());
         subscription
     }
 
@@ -2157,9 +2162,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if !event.previous_focus_path.contains(&focus_id)
                         && event.current_focus_path.contains(&focus_id)
@@ -2168,8 +2172,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
@@ -2183,9 +2186,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.last() == Some(&focus_id)
                         && event.current_focus_path.last() != Some(&focus_id)
@@ -2194,8 +2196,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
@@ -2226,9 +2227,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        let (subscription, activate) = self.window.focus_listeners.insert(
-            (),
-            Box::new(move |event, cx| {
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if event.previous_focus_path.contains(&focus_id)
                         && !event.current_focus_path.contains(&focus_id)
@@ -2237,8 +2237,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     }
                 })
                 .is_ok()
-            }),
-        );
+            }));
         self.app.defer(move |_| activate());
         subscription
     }
@@ -2553,7 +2552,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
         cx.windows
             .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active))
+            .and_then(|window| window.as_ref().map(|window| window.active.get()))
     }
 }
 

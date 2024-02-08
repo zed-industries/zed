@@ -687,15 +687,7 @@ impl Workspace {
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
-                let mut theme_settings = ThemeSettings::get_global(cx).clone();
-
-                if let Some(theme_selection) = theme_settings.theme_selection.clone() {
-                    let theme_name = theme_selection.theme(window_appearance.into());
-
-                    if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
-                        ThemeSettings::override_global(theme_settings, cx);
-                    }
-                }
+                ThemeSettings::reload_current_theme(cx);
             }),
             cx.observe(&left_dock, |this, _, cx| {
                 this.serialize_workspace(cx);
@@ -855,8 +847,6 @@ impl Workspace {
                     let workspace_id = workspace_id.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
-                        SystemAppearance::init_for_window(cx);
-
                         cx.new_view(|cx| {
                             Workspace::new(workspace_id, project_handle, app_state, cx)
                         })
@@ -1345,22 +1335,14 @@ impl Workspace {
         let is_remote = self.project.read(cx).is_remote();
         let has_worktree = self.project.read(cx).worktrees().next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-        let close_task = if is_remote || has_worktree || has_dirty_items {
+        let window_to_replace = if is_remote || has_worktree || has_dirty_items {
             None
         } else {
-            Some(self.prepare_to_close(false, cx))
+            window
         };
         let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
-            let window_to_replace = if let Some(close_task) = close_task {
-                if !close_task.await? {
-                    return Ok(());
-                }
-                window
-            } else {
-                None
-            };
             cx.update(|cx| open_paths(&paths, &app_state, window_to_replace, cx))?
                 .await?;
             Ok(())
@@ -2910,25 +2892,27 @@ impl Workspace {
         Ok(())
     }
 
-    fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
+    pub fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
 
-        if let Some(item) = self.active_item(cx) {
-            if item.focus_handle(cx).contains_focused(cx) {
-                if let Some(item) = item.to_followable_item_handle(cx) {
-                    is_project_item = item.is_project_item(cx);
-                    update = proto::UpdateActiveView {
-                        id: item
-                            .remote_id(&self.app_state.client, cx)
-                            .map(|id| id.to_proto()),
-                        leader_id: self.leader_for_pane(&self.active_pane),
-                    };
+        if cx.is_window_active() {
+            if let Some(item) = self.active_item(cx) {
+                if item.focus_handle(cx).contains_focused(cx) {
+                    if let Some(item) = item.to_followable_item_handle(cx) {
+                        is_project_item = item.is_project_item(cx);
+                        update = proto::UpdateActiveView {
+                            id: item
+                                .remote_id(&self.app_state.client, cx)
+                                .map(|id| id.to_proto()),
+                            leader_id: self.leader_for_pane(&self.active_pane),
+                        };
+                    }
                 }
             }
         }
 
-        if update.id != self.last_active_view_id {
+        if &update.id != &self.last_active_view_id {
             self.last_active_view_id = update.id.clone();
             self.update_followers(
                 is_project_item,

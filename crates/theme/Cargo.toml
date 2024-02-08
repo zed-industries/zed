@@ -8,11 +8,7 @@ license = "GPL-3.0-or-later"
 [features]
 default = []
 stories = ["dep:itertools", "dep:story"]
-test-support = [
-    "gpui/test-support",
-    "fs/test-support",
-    "settings/test-support"
-]
+test-support = ["gpui/test-support", "fs/test-support", "settings/test-support"]
 
 [lib]
 path = "src/theme.rs"
@@ -20,11 +16,12 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-color = { path = "../color" }
+collections.workspace = true
+color.workspace = true
 derive_more.workspace = true
-fs = { path = "../fs" }
+fs.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 indexmap = { version = "1.6.2", features = ["serde"] }
 itertools = { version = "0.11.0", optional = true }
 palette = { version = "0.7.3", default-features = false, features = ["std"] }
@@ -36,13 +33,13 @@ serde_derive.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 serde_repr.workspace = true
-settings = { path = "../settings" }
-story = { path = "../story", optional = true }
+settings.workspace = true
+story = { workspace = true, optional = true }
 toml.workspace = true
-util = { path = "../util" }
+util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-fs = { path = "../fs", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
