@@ -20,11 +20,7 @@ use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 use futures::{
-    channel::{
-        self,
-        mpsc::{self, UnboundedReceiver},
-        oneshot,
-    },
+    channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
