@@ -8477,7 +8477,7 @@ impl Editor {
 
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                        workspace.show_toast(Toast::new(0x45a8978, message), cx)
                     })
                 }
             }
