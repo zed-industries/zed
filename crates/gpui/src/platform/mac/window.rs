@@ -1343,13 +1343,14 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let lock = &mut *window_state.lock();
     unsafe {
-        lock.stop_display_link();
         if lock
             .native_window
             .occlusionState()
             .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
         {
             lock.start_display_link();
+        } else {
+            lock.stop_display_link();
         }
     }
 }

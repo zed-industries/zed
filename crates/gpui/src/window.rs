@@ -351,7 +351,6 @@ impl Window {
                 if !next_frame_callbacks.is_empty() {
                     handle
                         .update(&mut cx, |_, cx| {
-                            println!("frame_callbacks");
                             for callback in next_frame_callbacks {
                                 callback(cx);
                             }
