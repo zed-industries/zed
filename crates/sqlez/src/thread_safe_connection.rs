@@ -1,8 +1,9 @@
 use anyhow::Context;
+use collections::HashMap;
 use futures::{channel::oneshot, Future, FutureExt};
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, marker::PhantomData, ops::Deref, sync::Arc, thread};
+use std::{marker::PhantomData, ops::Deref, sync::Arc, thread};
 use thread_local::ThreadLocal;
 
 use crate::{connection::Connection, domain::Migrator, util::UnboundedSyncSender};

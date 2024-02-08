@@ -1,6 +1,5 @@
 use gpui::{Menu, MenuItem, OsAction};
 
-#[cfg(target_os = "macos")]
 pub fn app_menus() -> Vec<Menu<'static>> {
     use zed_actions::Quit;
 

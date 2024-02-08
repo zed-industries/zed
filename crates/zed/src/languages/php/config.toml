@@ -1,4 +1,5 @@
 name = "PHP"
+grammar = "php"
 path_suffixes = ["php"]
 first_line_pattern = '^#!.*php'
 line_comments = ["// ", "# "]

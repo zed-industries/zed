@@ -82,6 +82,13 @@
     }
   },
   {
+    "context": "Pane",
+    "bindings": {
+      "cmd-alt-left": "pane::GoBack",
+      "cmd-alt-right": "pane::GoForward"
+    }
+  },
+  {
     "context": "ProjectPanel",
     "bindings": {
       "enter": "project_panel::Open",

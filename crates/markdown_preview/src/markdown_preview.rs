@@ -1,6 +1,8 @@
 use gpui::{actions, AppContext};
 use workspace::Workspace;
 
+pub mod markdown_elements;
+pub mod markdown_parser;
 pub mod markdown_preview_view;
 pub mod markdown_renderer;
 

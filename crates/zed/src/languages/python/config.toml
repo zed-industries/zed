@@ -1,4 +1,5 @@
 name = "Python"
+grammar = "python"
 path_suffixes = ["py", "pyi", "mpy"]
 first_line_pattern = '^#!.*\bpython[0-9.]*\b'
 line_comments = ["# "]

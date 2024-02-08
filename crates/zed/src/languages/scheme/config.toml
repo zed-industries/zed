@@ -1,4 +1,5 @@
 name = "Scheme"
+grammar = "scheme"
 path_suffixes = ["scm", "ss"]
 line_comments = ["; "]
 autoclose_before = "])"

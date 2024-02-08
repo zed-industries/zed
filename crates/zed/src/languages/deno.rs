@@ -70,7 +70,8 @@ impl LspAdapter for DenoLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("denoland/deno", false, delegate.http_client()).await?;
+        let release =
+            latest_github_release("denoland/deno", true, false, delegate.http_client()).await?;
         let asset_name = format!("deno-{}-apple-darwin.zip", consts::ARCH);
         let asset = release
             .assets

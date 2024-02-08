@@ -5,7 +5,7 @@ use gpui::AppContext;
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    LineEnding, OffsetRangeExt, Point, ToPoint,
+    LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::Url;
 use parking_lot::Mutex;
@@ -149,7 +149,10 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     let mut rust_language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -157,7 +160,10 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     let mut json_language = Language::new(
         LanguageConfig {
             name: "JSON".into(),
-            path_suffixes: vec!["json".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["json".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         None,
@@ -535,7 +541,10 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -970,7 +979,10 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -1102,7 +1114,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     let progress_token = "the-progress-token";
     let mut language = Language::new(
         LanguageConfig {
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         None,
@@ -1183,7 +1198,10 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
 
     let mut language = Language::new(
         LanguageConfig {
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         None,
@@ -1272,7 +1290,10 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
 
     let mut language = Language::new(
         LanguageConfig {
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         None,
@@ -1322,7 +1343,10 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     let mut rust = Language::new(
         LanguageConfig {
             name: Arc::from("Rust"),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         None,
@@ -1336,7 +1360,10 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     let mut js = Language::new(
         LanguageConfig {
             name: Arc::from("JavaScript"),
-            path_suffixes: vec!["js".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         None,
@@ -1451,7 +1478,10 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -1862,7 +1892,10 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -2249,7 +2282,10 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -2350,7 +2386,10 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            path_suffixes: vec!["ts".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_typescript::language_typescript()),
@@ -2447,7 +2486,10 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            path_suffixes: vec!["ts".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_typescript::language_typescript()),
@@ -2513,7 +2555,10 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            path_suffixes: vec!["ts".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         None,
@@ -2816,14 +2861,18 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
     let languages = project.update(cx, |project, _| project.languages().clone());
+    languages.add_grammars([("rust", tree_sitter_rust::language())]);
     languages.register(
         "/some/path",
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".into()],
+            grammar: Some("rust".into()),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
             ..Default::default()
         },
-        tree_sitter_rust::language(),
         vec![],
         |_| Default::default(),
     );
@@ -3649,7 +3698,10 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),

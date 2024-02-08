@@ -1,4 +1,5 @@
 name = "Nix"
+grammar = "nix"
 path_suffixes = ["nix"]
 line_comments = ["# "]
 block_comment = ["/* ", " */"]

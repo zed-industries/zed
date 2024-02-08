@@ -28,7 +28,8 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("clangd/clangd", false, delegate.http_client()).await?;
+        let release =
+            latest_github_release("clangd/clangd", true, false, delegate.http_client()).await?;
         let asset_name = format!("clangd-mac-{}.zip", release.name);
         let asset = release
             .assets

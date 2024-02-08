@@ -4,7 +4,7 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext, WindowContext,
+    ViewContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -33,6 +33,24 @@ pub struct ThemeSettings {
     pub theme_overrides: Option<ThemeStyleContent>,
 }
 
+impl ThemeSettings {
+    /// Reloads the current theme.
+    ///
+    /// Reads the [`ThemeSettings`] to know which theme should be loaded,
+    /// taking into account the current [`SystemAppearance`].
+    pub fn reload_current_theme(cx: &mut AppContext) {
+        let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+        if let Some(theme_selection) = theme_settings.theme_selection.clone() {
+            let theme_name = theme_selection.theme(*SystemAppearance::global(cx));
+
+            if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
+                ThemeSettings::override_global(theme_settings, cx);
+            }
+        }
+    }
+}
+
 /// The appearance of the system.
 #[derive(Debug, Clone, Copy, Deref)]
 pub struct SystemAppearance(pub Appearance);
@@ -49,17 +67,17 @@ struct GlobalSystemAppearance(SystemAppearance);
 impl Global for GlobalSystemAppearance {}
 
 impl SystemAppearance {
+    /// Initializes the [`SystemAppearance`] for the application.
+    pub fn init(cx: &mut AppContext) {
+        *cx.default_global::<GlobalSystemAppearance>() =
+            GlobalSystemAppearance(SystemAppearance(cx.window_appearance().into()));
+    }
+
     /// Returns the global [`SystemAppearance`].
     ///
     /// Inserts a default [`SystemAppearance`] if one does not yet exist.
     pub(crate) fn default_global(cx: &mut AppContext) -> Self {
         cx.default_global::<GlobalSystemAppearance>().0
-    }
-
-    /// Initializes the [`SystemAppearance`] for the current window.
-    pub fn init_for_window(cx: &mut WindowContext) {
-        *cx.default_global::<GlobalSystemAppearance>() =
-            GlobalSystemAppearance(SystemAppearance(cx.appearance().into()));
     }
 
     /// Returns the global [`SystemAppearance`].
