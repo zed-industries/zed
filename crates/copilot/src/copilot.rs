@@ -444,7 +444,6 @@ impl Copilot {
                         |_, _| { /* Silence the notification */ },
                     )
                     .detach();
-
                 let server = cx.update(|cx| server.initialize(None, cx))?.await?;
 
                 let status = server
