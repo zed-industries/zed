@@ -14,14 +14,14 @@ test-support = ["gpui/test-support", "fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
-collections = { path = "../collections" }
-feature_flags = { path = "../feature_flags" }
-fs = { path = "../fs" }
+collections.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
+gpui.workspace = true
 lazy_static.workspace = true
 postage.workspace = true
-release_channel = { path = "../release_channel" }
+release_channel.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -32,11 +32,11 @@ smallvec.workspace = true
 toml.workspace = true
 tree-sitter-json = "*"
 tree-sitter.workspace = true
-util = { path = "../util" }
+util.workspace = true
 
 [dev-dependencies]
-fs = { path = "../fs", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true

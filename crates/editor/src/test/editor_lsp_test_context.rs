@@ -12,7 +12,9 @@ use collections::HashSet;
 use futures::Future;
 use gpui::{View, ViewContext, VisualTestContext};
 use indoc::indoc;
-use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageQueries};
+use language::{
+    point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
+};
 use lsp::{notification, request};
 use multi_buffer::ToPointUtf16;
 use project::Project;
@@ -115,7 +117,10 @@ impl EditorLspTestContext {
         let language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -160,7 +165,10 @@ impl EditorLspTestContext {
         let language = Language::new(
             LanguageConfig {
                 name: "Typescript".into(),
-                path_suffixes: vec!["ts".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["ts".to_string()],
+                    ..Default::default()
+                },
                 brackets: language::BracketPairConfig {
                     pairs: vec![language::BracketPair {
                         start: "{".to_string(),

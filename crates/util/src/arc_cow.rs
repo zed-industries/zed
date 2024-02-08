@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     sync::Arc,
@@ -15,6 +16,18 @@ impl<'a, T: ?Sized + PartialEq> PartialEq for ArcCow<'a, T> {
         let a = self.as_ref();
         let b = other.as_ref();
         a == b
+    }
+}
+
+impl<'a, T: ?Sized + PartialOrd> PartialOrd for ArcCow<'a, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.as_ref().partial_cmp(other.as_ref())
+    }
+}
+
+impl<'a, T: ?Sized + Ord> Ord for ArcCow<'a, T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_ref().cmp(other.as_ref())
     }
 }
 

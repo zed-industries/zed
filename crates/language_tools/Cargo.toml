@@ -11,27 +11,27 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-collections = { path = "../collections" }
-editor = { path = "../editor" }
+collections.workspace = true
+editor.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-lsp = { path = "../lsp" }
-project = { path = "../project" }
+gpui.workspace = true
+language.workspace = true
+lsp.workspace = true
+project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings = { path = "../settings" }
-theme = { path = "../theme" }
+settings.workspace = true
+theme.workspace = true
 tree-sitter.workspace = true
-ui = { path = "../ui" }
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-release_channel = { path = "../release_channel" }
+client = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
 env_logger.workspace = true
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
-util = { path = "../util", features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

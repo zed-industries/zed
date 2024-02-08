@@ -7,8 +7,8 @@ use terminal::{
     Terminal, TerminalBuilder,
 };
 
-#[cfg(target_os = "macos")]
-use std::os::unix::ffi::OsStrExt;
+// #[cfg(target_os = "macos")]
+// use std::os::unix::ffi::OsStrExt;
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModel<terminal::Terminal>>,
@@ -124,7 +124,7 @@ impl Project {
             // Paths are not strings so we need to jump through some hoops to format the command without `format!`
             let mut command = Vec::from(activate_command.as_bytes());
             command.push(b' ');
-            command.extend_from_slice(activate_script.as_os_str().as_bytes());
+            command.extend_from_slice(activate_script.as_os_str().as_encoded_bytes());
             command.push(b'\n');
 
             terminal_handle.update(cx, |this, _| this.input_bytes(command));

@@ -29,10 +29,6 @@ impl super::LspAdapter for OmniSharpAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("OmniSharp/omnisharp-roslyn", false, delegate.http_client())
-                .await?;
-
         let mapped_arch = match ARCH {
             "aarch64" => Some("arm64"),
             "x86_64" => Some("x64"),
@@ -42,6 +38,13 @@ impl super::LspAdapter for OmniSharpAdapter {
         match mapped_arch {
             None => Ok(Box::new(())),
             Some(arch) => {
+                let release = latest_github_release(
+                    "OmniSharp/omnisharp-roslyn",
+                    true,
+                    false,
+                    delegate.http_client(),
+                )
+                .await?;
                 let asset_name = format!("omnisharp-osx-{}-net6.0.tar.gz", arch);
                 let asset = release
                     .assets

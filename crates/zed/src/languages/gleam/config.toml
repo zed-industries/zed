@@ -1,4 +1,5 @@
 name = "Gleam"
+grammar = "gleam"
 path_suffixes = ["gleam"]
 line_comments = ["// ", "/// "]
 autoclose_before = ";:.,=}])>"

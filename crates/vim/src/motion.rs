@@ -798,23 +798,14 @@ fn next_word_end(
             *point.row_mut() += 1;
             *point.column_mut() = 0;
         }
-        point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-            left_kind != right_kind && left_kind != CharKind::Whitespace
-        });
+        point =
+            movement::find_boundary_exclusive(map, point, FindRange::MultiLine, |left, right| {
+                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
-        // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
-        // we have backtracked already
-        if !map
-            .chars_at(point)
-            .nth(1)
-            .map(|(c, _)| c == '\n')
-            .unwrap_or(true)
-        {
-            *point.column_mut() = point.column().saturating_sub(1);
-        }
+                left_kind != right_kind && left_kind != CharKind::Whitespace
+            });
         point = map.clip_point(point, Bias::Left);
     }
     point
@@ -1283,6 +1274,15 @@ mod test {
         cx.assert_shared_state("oneˇ two three four").await;
         cx.simulate_shared_keystrokes([","]).await;
         cx.assert_shared_state("one two thˇree four").await;
+    }
+
+    #[gpui::test]
+    async fn test_next_word_end_newline_last_char(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"something(ˇfoo)"};
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"something(fooˇ)"}).await;
     }
 
     #[gpui::test]
