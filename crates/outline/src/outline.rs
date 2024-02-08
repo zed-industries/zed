@@ -20,7 +20,7 @@ use std::{
 use theme::{color_alpha, ActiveTheme, ThemeSettings};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
-use workspace::ModalView;
+use workspace::{DismissDecision, ModalView};
 
 actions!(outline, [Toggle]);
 
@@ -55,10 +55,10 @@ impl FocusableView for OutlineView {
 
 impl EventEmitter<DismissEvent> for OutlineView {}
 impl ModalView for OutlineView {
-    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> DismissDecision {
         self.picker
             .update(cx, |picker, cx| picker.delegate.restore_active_editor(cx));
-        true
+        DismissDecision::Dismiss(true)
     }
 }
 
