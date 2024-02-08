@@ -8393,7 +8393,7 @@ impl Editor {
         }
     }
 
-    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
         let permalink = maybe!({
@@ -8439,6 +8439,11 @@ impl Editor {
                 selection: selection.map(|selection| selection.range()),
             })
         });
+        permalink
+    }
+
+    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+        let permalink = self.get_permalink_to_line(cx);
 
         match permalink {
             Ok(permalink) => {
@@ -8452,6 +8457,27 @@ impl Editor {
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
                         workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                    })
+                }
+            }
+        }
+    }
+
+    pub fn open_permalink_to_line(&mut self, _: &OpenPermalinkToLine, cx: &mut ViewContext<Self>) {
+        let permalink = self.get_permalink_to_line(cx);
+
+        match permalink {
+            Ok(permalink) => {
+                cx.open_url(&permalink.to_string());
+            }
+            Err(err) => {
+                let message = format!("Failed to open permalink: {err}");
+
+                Err::<(), anyhow::Error>(err).log_err();
+
+                if let Some(workspace) = self.workspace() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_toast(Toast::new(0x45a8978, message), cx)
                     })
                 }
             }
