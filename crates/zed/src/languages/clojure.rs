@@ -67,7 +67,7 @@ impl super::LspAdapter for ClojureLspAdapter {
                 .await
                 .with_context(|| format!("failed to create file {}", zip_path.display()))?;
             if !response.status().is_success() {
-                Err(anyhow!(
+                return Err(anyhow!(
                     "download failed with status {}",
                     response.status().to_string()
                 ))?;
@@ -86,7 +86,7 @@ impl super::LspAdapter for ClojureLspAdapter {
                 .await?
                 .status;
             if !unzip_status.success() {
-                Err(anyhow!("failed to unzip elixir-ls archive"))?;
+                return Err(anyhow!("failed to unzip elixir-ls archive"))?;
             }
 
             remove_matching(&container_dir, |entry| entry != folder_path).await;

@@ -68,7 +68,7 @@ pub fn init(
         ("beancount", tree_sitter_beancount::language()),
         ("c", tree_sitter_c::language()),
         ("c_sharp", tree_sitter_c_sharp::language()),
-        ("clojure", tree_sitter_clojure::language())
+        ("clojure", tree_sitter_clojure::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
         ("elixir", tree_sitter_elixir::language()),
@@ -123,7 +123,7 @@ pub fn init(
     language("bash", vec![]);
     language("beancount", vec![]);
     language("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
-    language("clojure", vec![Arc::new(clojure::ClojureLspAdapter) as Arc<dyn LspAdapter>]);
+    language("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
     language("cpp", vec![Arc::new(c::CLspAdapter)]);
     language("csharp", vec![Arc::new(csharp::OmniSharpAdapter {})]);
     language(
