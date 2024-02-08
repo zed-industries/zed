@@ -287,6 +287,7 @@ pub fn init(
     language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language("proto", vec![]);
     language("terraform", vec![]);
+    language("terraform-vars", vec![]);
     language("hcl", vec![]);
 }
 
