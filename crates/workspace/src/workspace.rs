@@ -582,7 +582,7 @@ impl Workspace {
                         let index = cx
                             .update(|cx| {
                                 cx.prompt(
-                                    PromptLevel::Critical,
+                                    request.level,
                                     "",
                                     Some(&request.message),
                                     &messages,
