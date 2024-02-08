@@ -340,8 +340,15 @@ impl PlatformWindow for LinuxWindow {
     //todo!(linux)
     fn activate(&self) {}
 
-    //todo!(linux)
-    fn set_title(&mut self, title: &str) {}
+    fn set_title(&mut self, title: &str) {
+        self.0.xcb_connection.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window: self.0.x_window,
+            property: x::ATOM_WM_NAME,
+            r#type: x::ATOM_STRING,
+            data: title.as_bytes(),
+        });
+    }
 
     //todo!(linux)
     fn set_edited(&mut self, edited: bool) {}
