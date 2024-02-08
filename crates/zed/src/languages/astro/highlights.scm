@@ -1,18 +1,16 @@
-(tag_name) @tag
-(erroneous_end_tag_name) @tag.error
-(doctype) @constant
-(attribute_name) @attribute
-(attribute_value) @string
-(comment) @comment
+; inherits: html
+"---" @punctuation.delimiter
 
 [
   "{"
   "}"
-] @punctuation.bracket
+] @punctuation.special
 
-[
-  "<"
-  ">"
-  "</"
-  "/>"
-] @tag.delimiter
+((start_tag
+  (tag_name) @type))
+
+((end_tag
+  (tag_name) @type))
+
+((erroneous_end_tag
+  (erroneous_end_tag_name) @type))
