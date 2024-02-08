@@ -295,7 +295,7 @@ impl PlatformWindow for LinuxWindow {
 
     //todo!(linux)
     fn appearance(&self) -> WindowAppearance {
-        unimplemented!()
+        WindowAppearance::Light
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {

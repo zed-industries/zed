@@ -346,7 +346,7 @@ impl Platform for LinuxPlatform {
 
     //todo!(linux)
     fn should_auto_hide_scrollbars(&self) -> bool {
-        unimplemented!()
+        false
     }
 
     //todo!(linux)
@@ -370,7 +370,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn window_appearance(&self) -> crate::WindowAppearance {
-        unimplemented!()
+        crate::WindowAppearance::Light
     }
 }
 
