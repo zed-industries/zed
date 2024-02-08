@@ -45,16 +45,6 @@ lazy_static::lazy_static! {
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
 }
 
-pub mod legacy {
-    use std::path::PathBuf;
-
-    lazy_static::lazy_static! {
-        static ref CONFIG_DIR: PathBuf = super::HOME.join(".zed");
-        pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
-        pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
-    }
-}
-
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn icon_suffix(&self) -> Option<&str>;
