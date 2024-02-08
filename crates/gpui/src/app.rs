@@ -669,7 +669,7 @@ impl AppContext {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        window.dirty.get().then_some(window.handle)
+                        window.dirty_draw.get().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
@@ -753,7 +753,7 @@ impl AppContext {
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
-                window.dirty.set(true);
+                window.dirty_present.set(true);
             }
         }
     }

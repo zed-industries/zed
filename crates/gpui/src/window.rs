@@ -271,7 +271,8 @@ pub struct Window {
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
-    pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) dirty_draw: Rc<Cell<bool>>,
+    pub(crate) dirty_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
@@ -335,14 +336,16 @@ impl Window {
         let bounds = platform_window.bounds();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
-        let dirty = Rc::new(Cell::new(true));
+        let dirty_draw = Rc::new(Cell::new(true));
+        let dirty_present = Rc::new(Cell::new(true));
         let active = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
-            let dirty = dirty.clone();
+            let dirty_draw = dirty_draw.clone();
+            let dirty_present = dirty_present.clone();
             let active = active.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
@@ -358,12 +361,15 @@ impl Window {
                         .log_err();
                 }
 
-                if dirty.get() {
+                if dirty_draw.get() || dirty_present.get() {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, cx| {
-                                cx.draw();
+                                if dirty_draw.get() {
+                                    cx.draw();
+                                }
                                 cx.present();
+                                dirty_present.set(false);
                             })
                             .log_err();
                     })
@@ -454,7 +460,8 @@ impl Window {
             appearance,
             appearance_observers: SubscriberSet::new(),
             active,
-            dirty,
+            dirty_draw,
+            dirty_present,
             last_input_timestamp,
             refreshing: false,
             drawing: false,
@@ -519,7 +526,7 @@ impl<'a> WindowContext<'a> {
     pub fn refresh(&mut self) {
         if !self.window.drawing {
             self.window.refreshing = true;
-            self.window.dirty.set(true);
+            self.window.dirty_draw.set(true);
         }
     }
 
@@ -938,7 +945,7 @@ impl<'a> WindowContext<'a> {
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
     pub(crate) fn draw(&mut self) {
-        self.window.dirty.set(false);
+        self.window.dirty_draw.set(false);
         self.window.drawing = true;
 
         if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
@@ -1076,6 +1083,7 @@ impl<'a> WindowContext<'a> {
         }
         self.window.refreshing = false;
         self.window.drawing = false;
+        self.window.dirty_present.set(true);
     }
 
     fn present(&self) {
@@ -2043,7 +2051,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
 
         if !self.window.drawing {
-            self.window_cx.window.dirty.set(true);
+            self.window_cx.window.dirty_draw.set(true);
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,
             });
