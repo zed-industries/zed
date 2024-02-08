@@ -33,7 +33,7 @@ impl LspAdapter for RustLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release(
             "rust-lang/rust-analyzer",
-            false,
+            true,
             false,
             delegate.http_client(),
         )
