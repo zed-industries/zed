@@ -27,7 +27,7 @@ impl super::LspAdapter for ClojureLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
-            latest_github_release("clojure-lsp/clojure-lsp", false, delegate.http_client()).await?;
+            latest_github_release("clojure-lsp/clojure-lsp", true, false, delegate.http_client()).await?;
         let platform = match consts::ARCH {
             "x86_64" => "amd64",
             "aarch64" => "aarch64",
@@ -40,7 +40,7 @@ impl super::LspAdapter for ClojureLspAdapter {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         let version = GitHubLspBinaryVersion {
-            name: release.name.clone(),
+            name: release.tag_name.clone(),
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
