@@ -19,6 +19,9 @@ use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
 
+// Exported to metal
+pub(crate) type PointF = Point<f32>;
+
 #[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 #[cfg(feature = "runtime_shaders")]

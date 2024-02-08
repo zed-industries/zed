@@ -1,3 +1,6 @@
+//todo!(linux) remove
+#[allow(unused)]
+
 use crate::{
     Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout, Pixels,
     PlatformTextSystem, RenderGlyphParams, SharedString, Size,
@@ -6,10 +9,6 @@ use anyhow::Result;
 use collections::HashMap;
 use font_kit::{
     font::Font as FontKitFont,
-    handle::Handle,
-    hinting::HintingOptions,
-    metrics::Metrics,
-    properties::{Style as FontkitStyle, Weight as FontkitWeight},
     source::SystemSource,
     sources::mem::MemSource,
 };
