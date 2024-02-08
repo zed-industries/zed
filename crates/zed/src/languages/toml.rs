@@ -26,7 +26,8 @@ impl LspAdapter for TaploLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("tamasfe/taplo", false, delegate.http_client()).await?;
+        let release =
+            latest_github_release("tamasfe/taplo", true, false, delegate.http_client()).await?;
         let asset_name = format!("taplo-full-darwin-{arch}.gz", arch = std::env::consts::ARCH);
 
         let asset = release

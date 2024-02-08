@@ -98,6 +98,7 @@ pub fn init(
         ),
         ("php", tree_sitter_php::language_php()),
         ("proto", tree_sitter_proto::language()),
+        #[cfg(not(target_os = "linux"))]
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),

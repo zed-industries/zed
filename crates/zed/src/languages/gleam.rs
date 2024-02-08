@@ -35,7 +35,7 @@ impl LspAdapter for GleamLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
-            latest_github_release("gleam-lang/gleam", false, delegate.http_client()).await?;
+            latest_github_release("gleam-lang/gleam", true, false, delegate.http_client()).await?;
 
         let asset_name = format!(
             "gleam-{version}-{arch}-apple-darwin.tar.gz",

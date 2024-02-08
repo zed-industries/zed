@@ -31,8 +31,13 @@ impl LspAdapter for RustLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("rust-lang/rust-analyzer", false, delegate.http_client()).await?;
+        let release = latest_github_release(
+            "rust-lang/rust-analyzer",
+            true,
+            false,
+            delegate.http_client(),
+        )
+        .await?;
         let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
         let asset = release
             .assets
