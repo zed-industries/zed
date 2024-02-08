@@ -740,14 +740,16 @@ type AvailableLanguageId = usize;
 struct AvailableLanguage {
     id: AvailableLanguageId,
     name: Arc<str>,
+    grammar: Option<Arc<str>>,
     source: AvailableLanguageSource,
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
     loaded: bool,
 }
 
 enum AvailableGrammar {
-    Loaded(tree_sitter::Language),
-    Loading(Vec<oneshot::Sender<Result<tree_sitter::Language>>>),
+    Native(tree_sitter::Language),
+    Loaded(PathBuf, tree_sitter::Language),
+    Loading(PathBuf, Vec<oneshot::Sender<Result<tree_sitter::Language>>>),
     Unloaded(PathBuf),
 }
 
@@ -781,7 +783,7 @@ struct LanguageRegistryState {
     next_language_server_id: usize,
     languages: Vec<Arc<Language>>,
     available_languages: Vec<AvailableLanguage>,
-    grammars: HashMap<String, AvailableGrammar>,
+    grammars: HashMap<Arc<str>, AvailableGrammar>,
     next_available_language_id: AvailableLanguageId,
     loading_languages: HashMap<AvailableLanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
@@ -834,8 +836,8 @@ impl LanguageRegistry {
     }
 
     /// Clear out the given languages and reload them from scratch.
-    pub fn reload_languages(&self, languages: &HashSet<Arc<str>>) {
-        self.state.write().reload_languages(languages);
+    pub fn reload_languages(&self, languages: &[Arc<str>], grammars: &[Arc<str>]) {
+        self.state.write().reload_languages(languages, grammars);
     }
 
     pub fn register(
@@ -849,6 +851,7 @@ impl LanguageRegistry {
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
             name: config.name.clone(),
+            grammar: config.grammar.clone(),
             source: AvailableLanguageSource::BuiltIn {
                 config,
                 get_queries,
@@ -863,6 +866,7 @@ impl LanguageRegistry {
         &self,
         path: Arc<Path>,
         name: Arc<str>,
+        grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
         get_queries: fn(&Path) -> LanguageQueries,
     ) {
@@ -885,6 +889,7 @@ impl LanguageRegistry {
         }
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
+            grammar: grammar_name,
             name,
             source,
             lsp_adapters: Vec::new(),
@@ -894,16 +899,16 @@ impl LanguageRegistry {
 
     pub fn add_grammars(
         &self,
-        grammars: impl IntoIterator<Item = (impl Into<String>, tree_sitter::Language)>,
+        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, tree_sitter::Language)>,
     ) {
         self.state.write().grammars.extend(
             grammars
                 .into_iter()
-                .map(|(name, grammar)| (name.into(), AvailableGrammar::Loaded(grammar))),
+                .map(|(name, grammar)| (name.into(), AvailableGrammar::Native(grammar))),
         );
     }
 
-    pub fn register_grammar(&self, name: String, path: PathBuf) {
+    pub fn register_grammar(&self, name: Arc<str>, path: PathBuf) {
         self.state
             .write()
             .grammars
@@ -1124,46 +1129,49 @@ impl LanguageRegistry {
 
         if let Some(grammar) = state.grammars.get_mut(name.as_ref()) {
             match grammar {
-                AvailableGrammar::Loaded(grammar) => {
+                AvailableGrammar::Native(grammar) | AvailableGrammar::Loaded(_, grammar) => {
                     tx.send(Ok(grammar.clone())).ok();
                 }
-                AvailableGrammar::Loading(txs) => {
+                AvailableGrammar::Loading(_, txs) => {
                     txs.push(tx);
                 }
                 AvailableGrammar::Unloaded(wasm_path) => {
                     if let Some(executor) = &self.executor {
                         let this = self.clone();
-                        let wasm_path = wasm_path.clone();
                         executor
-                            .spawn(async move {
-                                let wasm_bytes = std::fs::read(&wasm_path)?;
-                                let grammar_name = wasm_path
-                                    .file_stem()
-                                    .and_then(OsStr::to_str)
-                                    .ok_or_else(|| anyhow!("invalid grammar filename"))?;
-                                let grammar = PARSER.with(|parser| {
-                                    let mut parser = parser.borrow_mut();
-                                    let mut store = parser.take_wasm_store().unwrap();
-                                    let grammar = store.load_language(&grammar_name, &wasm_bytes);
-                                    parser.set_wasm_store(store).unwrap();
-                                    grammar
-                                })?;
+                            .spawn({
+                                let wasm_path = wasm_path.clone();
+                                async move {
+                                    let wasm_bytes = std::fs::read(&wasm_path)?;
+                                    let grammar_name = wasm_path
+                                        .file_stem()
+                                        .and_then(OsStr::to_str)
+                                        .ok_or_else(|| anyhow!("invalid grammar filename"))?;
+                                    let grammar = PARSER.with(|parser| {
+                                        let mut parser = parser.borrow_mut();
+                                        let mut store = parser.take_wasm_store().unwrap();
+                                        let grammar =
+                                            store.load_language(&grammar_name, &wasm_bytes);
+                                        parser.set_wasm_store(store).unwrap();
+                                        grammar
+                                    })?;
 
-                                if let Some(AvailableGrammar::Loading(txs)) =
-                                    this.state.write().grammars.insert(
-                                        name.to_string(),
-                                        AvailableGrammar::Loaded(grammar.clone()),
-                                    )
-                                {
-                                    for tx in txs {
-                                        tx.send(Ok(grammar.clone())).ok();
+                                    if let Some(AvailableGrammar::Loading(_, txs)) =
+                                        this.state.write().grammars.insert(
+                                            name,
+                                            AvailableGrammar::Loaded(wasm_path, grammar.clone()),
+                                        )
+                                    {
+                                        for tx in txs {
+                                            tx.send(Ok(grammar.clone())).ok();
+                                        }
                                     }
-                                }
 
-                                anyhow::Ok(())
+                                    anyhow::Ok(())
+                                }
                             })
                             .detach();
-                        *grammar = AvailableGrammar::Loading(vec![tx]);
+                        *grammar = AvailableGrammar::Loading(wasm_path.clone(), vec![tx]);
                     }
                 }
             }
@@ -1357,16 +1365,42 @@ impl LanguageRegistryState {
         *self.subscription.0.borrow_mut() = ();
     }
 
-    fn reload_languages(&mut self, languages: &HashSet<Arc<str>>) {
-        self.languages
-            .retain(|language| !languages.contains(&language.config.name));
-        self.version += 1;
-        self.reload_count += 1;
+    fn reload_languages(
+        &mut self,
+        languages_to_reload: &[Arc<str>],
+        grammars_to_reload: &[Arc<str>],
+    ) {
+        for (name, grammar) in self.grammars.iter_mut() {
+            if grammars_to_reload.contains(name) {
+                if let AvailableGrammar::Loaded(path, _) = grammar {
+                    *grammar = AvailableGrammar::Unloaded(path.clone());
+                }
+            }
+        }
+
+        self.languages.retain(|language| {
+            let should_reload = languages_to_reload.contains(&language.config.name)
+                || language
+                    .config
+                    .grammar
+                    .as_ref()
+                    .map_or(false, |grammar| grammars_to_reload.contains(&grammar));
+            !should_reload
+        });
+
         for language in &mut self.available_languages {
-            if languages.contains(&language.name) {
+            if languages_to_reload.contains(&language.name)
+                || language
+                    .grammar
+                    .as_ref()
+                    .map_or(false, |grammar| grammars_to_reload.contains(grammar))
+            {
                 language.loaded = false;
             }
         }
+
+        self.version += 1;
+        self.reload_count += 1;
         *self.subscription.0.borrow_mut() = ();
     }
 
