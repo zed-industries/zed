@@ -63,10 +63,13 @@ impl PlatformTextSystem for LinuxTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
+    // todo!(linux) 
+    // Need to check that this is working correctly, probably requires xcb input support
     fn all_font_names(&self) -> Vec<String> {
         self.0.read().font_system.db().faces().map(|face| face.post_script_name.clone()).collect()
     }
 
+    // todo!(linux) 
     fn all_font_families(&self) -> Vec<String> {
         Vec::new()
     }
@@ -103,7 +106,8 @@ impl PlatformTextSystem for LinuxTextSystem {
             {
                 FontId(font_id)
             } else {
-                // HACK: font isn't in fonts so add it there, this is because we query all the fonts in the db and maybe we haven't loaded it yet
+                // todo!(linux) 
+                // Font isn't in fonts so add it there, this is because we query all the fonts in the db and maybe we haven't loaded it yet
                 let font_id = FontId(lock.fonts.len());
                 let font = lock.font_system.get_font(id).unwrap();
                 lock.fonts.push(font);
@@ -120,7 +124,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         FontMetrics {
             units_per_em: metrics.units_per_em as u32,
             ascent: metrics.ascent,
-            descent: metrics.descent - 1000.0, // HACK: extremly hacky but this means text doesn't get cut off, something to do with gutter padding in the editor
+            descent: metrics.descent - 1000.0, // todo!(linux) extremely hacky but this means text doesn't get cut off, something to do with gutter padding in the editor
             line_gap: metrics.leading,
             underline_position: metrics.underline_offset,
             underline_thickness: metrics.stroke_size,
@@ -129,7 +133,7 @@ impl PlatformTextSystem for LinuxTextSystem {
             bounding_box: Bounds {
                 origin: point(0.0, 0.0),
                 size: size(metrics.max_width, metrics.ascent + metrics.descent),
-            }, // most probably incorrect
+            }, // todo!(linux) most probably incorrect
         }
     }
 
@@ -139,11 +143,11 @@ impl PlatformTextSystem for LinuxTextSystem {
         let glyph_metrics = lock.fonts[font_id.0].as_swash().glyph_metrics(&[]);
         let glyph_id = glyph_id.0 as u16;
         Ok(Bounds {
-            origin: point(0.0, 0.0), // do we need an origin?
+            origin: point(0.0, 0.0), // todo!(linux) do we need an origin?
             size: size(
                 glyph_metrics.advance_width(glyph_id),
                 glyph_metrics.advance_height(glyph_id),
-            ), // this height is probably incorect
+            ), // todo!(linux) this height is probably incorect
         })
     }
 
@@ -171,7 +175,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         self.0.write().layout_line(text, font_size, runs)
     }
 
-    // looks like this isnt used anywhere
+    // todo!(linux) looks like this isnt used anywhere
     fn wrap_line(
         &self,
         text: &str,
@@ -186,7 +190,7 @@ impl PlatformTextSystem for LinuxTextSystem {
 
 impl LinuxTextSystemState {
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        // TODO: I think on mac we don't actually load at this point don't think we can do this here though
+        // todo!(linux) I think on mac we don't actually load at this point don't think we can do this here though
         let db = self.font_system.db_mut();
         for bytes in fonts {
             match bytes {
@@ -253,7 +257,7 @@ impl LinuxTextSystemState {
             })
     }
 
-    // both raster functions have problems because I am not sure this is the correct mapping from cosmic text to gpui system
+    // todo!(linux) both raster functions have problems because I am not sure this is the correct mapping from cosmic text to gpui system
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
         // let scale = Transform2F::from_scale(params.scale_factor);
@@ -311,12 +315,12 @@ impl LinuxTextSystemState {
         }
     }
 
-    // HACK: This is all very incorrect, and maybe we should be using Buffer
+    // todo!(linux) This is all very incorrect, and maybe we should be using Buffer
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         let mut attrs_list = AttrsList::new(Attrs::new());
         let mut offs = 0;
         for run in font_runs {
-            // FIXME: We need to check we are doing utf properly
+            // todo!(linux) We need to check we are doing utf properly
             let font = &self.fonts[run.font_id.0];
             let font = self.font_system.db().face(font.id()).unwrap();
             attrs_list.add_span(
@@ -333,11 +337,11 @@ impl LinuxTextSystemState {
         let layout = line.layout(
             &mut self.font_system,
             font_size.0,
-            f32::MAX, // we don't have a width cause this should technically not be wrapped I believe
+            f32::MAX, // todo!(linux) we don't have a width cause this should technically not be wrapped I believe
             cosmic_text::Wrap::None,
         );
         let mut runs = Vec::new();
-        // what I think can happen is layout returns possibly multiple lines which means we should be probably working with it higher up in the text rendering
+        // todo!(linux) what I think can happen is layout returns possibly multiple lines which means we should be probably working with it higher up in the text rendering
         let layout = layout.first().unwrap();
         for glyph in &layout.glyphs {
             let font_id = glyph.font_id;
@@ -348,7 +352,7 @@ impl LinuxTextSystemState {
                     .unwrap(),
             );
             let mut glyphs = SmallVec::new();
-            // this is definetly wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
+            // todo!(linux) this is definetly wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
             glyphs.push(ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
                 position: point((glyph.x).into(), glyph.y.into()),
