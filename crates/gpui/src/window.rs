@@ -1547,7 +1547,7 @@ impl<'a> WindowContext<'a> {
         let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
             return vec![];
         };
-        let context_stack = dispatch_tree
+        let context_stack: Vec<_> = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
