@@ -17,8 +17,8 @@ By default, the Pyright language server will look for Python packages in the def
 
 To do this, create a JSON file called `pyrightconfig.json` at the root of your project. This file must include two keys:
 
-* `venvPath`: a relative path from your project directory to any directory that _contains_ one or more virtual environment directories
-* `venv`: the name of a virtual environment directory
+- `venvPath`: a relative path from your project directory to any directory that _contains_ one or more virtual environment directories
+- `venv`: the name of a virtual environment directory
 
 For example, a common approach is to create a virtual environment directory called `.venv` at the root of your project directory with the following commands:
 
@@ -40,7 +40,7 @@ Having done that, you would create a `pyrightconfig.json` with the following con
 
 ### Code formatting
 
-The Pyright language server does not provide code formatting. If you want to automatically reformat your Python code when saving, you'll need to specify an _external_code formatter in your settings. See the [configuration](../configuration/configuring-zed.md) documentation for more information.
+The Pyright language server does not provide code formatting. If you want to automatically reformat your Python code when saving, you'll need to specify an \_external_code formatter in your settings. See the [configuration](../configuration/configuring-zed.md) documentation for more information.
 
 A common tool for formatting python code is [Black](https://black.readthedocs.io/en/stable/). If you have Black installed globally, you can use it to format Python files by adding the following to your `settings.json`:
 

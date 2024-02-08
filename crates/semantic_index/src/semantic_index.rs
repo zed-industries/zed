@@ -15,8 +15,8 @@ use db::VectorDatabase;
 use embedding_queue::{EmbeddingQueue, FileToEmbed};
 use futures::{future, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, BorrowWindow, Context, Model, ModelContext, Task, ViewContext,
-    WeakModel,
+    AppContext, AsyncAppContext, BorrowWindow, Context, Global, Model, ModelContext, Task,
+    ViewContext, WeakModel,
 };
 use language::{Anchor, Bias, Buffer, Language, LanguageRegistry};
 use lazy_static::lazy_static;
@@ -25,6 +25,7 @@ use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Span, SpanDigest, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
 use project::{Fs, PathChange, Project, ProjectEntryId, Worktree, WorktreeId};
+use release_channel::ReleaseChannel;
 use settings::Settings;
 use smol::channel;
 use std::{
@@ -38,7 +39,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use util::paths::PathMatcher;
-use util::{channel::RELEASE_CHANNEL_NAME, http::HttpClient, paths::EMBEDDINGS_DIR, ResultExt};
+use util::{http::HttpClient, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::Workspace;
 
 const SEMANTIC_INDEX_VERSION: usize = 11;
@@ -58,7 +59,7 @@ pub fn init(
     SemanticIndexSettings::register(cx);
 
     let db_file_path = EMBEDDINGS_DIR
-        .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
+        .join(Path::new(ReleaseChannel::global(cx).dev_name()))
         .join("embeddings_db");
 
     cx.observe_new_views(
@@ -101,7 +102,7 @@ pub fn init(
         )
         .await?;
 
-        cx.update(|cx| cx.set_global(semantic_index.clone()))?;
+        cx.update(|cx| cx.set_global(GlobalSemanticIndex(semantic_index.clone())))?;
 
         anyhow::Ok(())
     })
@@ -129,6 +130,10 @@ pub struct SemanticIndex {
     _parsing_files_tasks: Vec<Task<()>>,
     projects: HashMap<WeakModel<Project>, ProjectState>,
 }
+
+struct GlobalSemanticIndex(Model<SemanticIndex>);
+
+impl Global for GlobalSemanticIndex {}
 
 struct ProjectState {
     worktrees: HashMap<WorktreeId, WorktreeState>,
@@ -274,8 +279,8 @@ pub struct SearchResult {
 
 impl SemanticIndex {
     pub fn global(cx: &mut AppContext) -> Option<Model<SemanticIndex>> {
-        cx.try_global::<Model<Self>>()
-            .map(|semantic_index| semantic_index.clone())
+        cx.try_global::<GlobalSemanticIndex>()
+            .map(|semantic_index| semantic_index.0.clone())
     }
 
     pub fn authenticate(&mut self, cx: &mut AppContext) -> Task<bool> {

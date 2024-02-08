@@ -173,7 +173,7 @@ impl Database {
         .await
     }
 
-    /// Sets the visibiltity of the given channel.
+    /// Sets the visibility of the given channel.
     pub async fn set_channel_visibility(
         &self,
         channel_id: ChannelId,

@@ -412,7 +412,7 @@ impl Plugin {
     //
     // phew...
     //
-    // now the problem is, webassambly doesn't support buffers.
+    // now the problem is, webassembly doesn't support buffers.
     // only really like i32s, that's it (yeah, it's sad. Not even unsigned!)
     // (ok, I'm exaggerating a bit).
     //

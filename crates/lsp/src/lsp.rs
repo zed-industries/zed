@@ -5,7 +5,7 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
-use gpui::{AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -322,20 +322,54 @@ impl LanguageServer {
         let mut buffer = Vec::new();
         loop {
             buffer.clear();
-            stdout.read_until(b'\n', &mut buffer).await?;
-            stdout.read_until(b'\n', &mut buffer).await?;
+
+            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
+                break;
+            };
+
+            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
+                break;
+            };
+
             let header = std::str::from_utf8(&buffer)?;
-            let message_len: usize = header
+            let mut segments = header.lines();
+
+            let message_len: usize = segments
+                .next()
+                .with_context(|| {
+                    format!("unable to find the first line of the LSP message header `{header}`")
+                })?
                 .strip_prefix(CONTENT_LEN_HEADER)
-                .ok_or_else(|| anyhow!("invalid LSP message header {header:?}"))?
-                .trim_end()
-                .parse()?;
+                .with_context(|| format!("invalid LSP message header `{header}`"))?
+                .parse()
+                .with_context(|| {
+                    format!("failed to parse Content-Length of LSP message header: `{header}`")
+                })?;
+
+            if let Some(second_segment) = segments.next() {
+                match second_segment {
+                    "" => (), // Header end
+                    header_field => {
+                        if header_field.starts_with("Content-Type:") {
+                            stdout.read_until(b'\n', &mut buffer).await?;
+                        } else {
+                            anyhow::bail!(
+                                "inside `{header}`, expected a Content-Type header field or a header ending CRLF, got `{second_segment:?}`"
+                            )
+                        }
+                    }
+                }
+            } else {
+                anyhow::bail!(
+                    "unable to find the second line of the LSP message header `{header}`"
+                );
+            }
 
             buffer.resize(message_len, 0);
             stdout.read_exact(&mut buffer).await?;
 
             if let Ok(message) = str::from_utf8(&buffer) {
-                log::trace!("incoming message: {}", message);
+                log::trace!("incoming message: {message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdOut, message);
                 }
@@ -378,6 +412,8 @@ impl LanguageServer {
             // Don't starve the main thread when receiving lots of messages at once.
             smol::future::yield_now().await;
         }
+
+        Ok(())
     }
 
     async fn handle_stderr<Stderr>(
@@ -393,7 +429,12 @@ impl LanguageServer {
 
         loop {
             buffer.clear();
-            stderr.read_until(b'\n', &mut buffer).await?;
+
+            let bytes_read = stderr.read_until(b'\n', &mut buffer).await?;
+            if bytes_read == 0 {
+                return Ok(());
+            }
+
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming stderr message:{message}");
                 for handler in io_handlers.lock().values_mut() {
@@ -450,7 +491,11 @@ impl LanguageServer {
     /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
-    pub async fn initialize(mut self, options: Option<Value>) -> Result<Arc<Self>> {
+    pub fn initialize(
+        mut self,
+        options: Option<Value>,
+        cx: &AppContext,
+    ) -> Task<Result<Arc<Self>>> {
         let root_uri = Url::from_file_path(&self.root_path).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
@@ -515,7 +560,10 @@ impl LanguageServer {
                         completion_item: Some(CompletionItemCapability {
                             snippet_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                                properties: vec!["additionalTextEdits".to_string()],
+                                properties: vec![
+                                    "documentation".to_string(),
+                                    "additionalTextEdits".to_string(),
+                                ],
                             }),
                             ..Default::default()
                         }),
@@ -579,18 +627,25 @@ impl LanguageServer {
                 uri: root_uri,
                 name: Default::default(),
             }]),
-            client_info: None,
+            client_info: Some(ClientInfo {
+                name: release_channel::ReleaseChannel::global(cx)
+                    .display_name()
+                    .to_string(),
+                version: Some(release_channel::AppVersion::global(cx).to_string()),
+            }),
             locale: None,
         };
 
-        let response = self.request::<request::Initialize>(params).await?;
-        if let Some(info) = response.server_info {
-            self.name = info.name;
-        }
-        self.capabilities = response.capabilities;
+        cx.spawn(|_| async move {
+            let response = self.request::<request::Initialize>(params).await?;
+            if let Some(info) = response.server_info {
+                self.name = info.name;
+            }
+            self.capabilities = response.capabilities;
 
-        self.notify::<notification::Initialized>(InitializedParams {})?;
-        Ok(Arc::new(self))
+            self.notify::<notification::Initialized>(InitializedParams {})?;
+            Ok(Arc::new(self))
+        })
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
@@ -1213,6 +1268,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init("0.0.0", cx);
+        });
         let (server, mut fake) =
             FakeLanguageServer::new("the-lsp".to_string(), Default::default(), cx.to_async());
 
@@ -1229,7 +1287,7 @@ mod tests {
             })
             .detach();
 
-        let server = server.initialize(None).await.unwrap();
+        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(

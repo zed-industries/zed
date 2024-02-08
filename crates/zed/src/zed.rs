@@ -20,6 +20,7 @@ use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
+use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{initial_local_settings_content, KeymapFile, Settings, SettingsStore};
@@ -27,7 +28,6 @@ use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
-    channel::{AppCommitSha, ReleaseChannel},
     paths::{self, LOCAL_SETTINGS_RELATIVE_PATH},
     ResultExt,
 };
@@ -38,7 +38,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
 };
-use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
+use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 
 actions!(
     zed,
@@ -201,9 +201,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(|_, _: &ToggleFullScreen, cx| {
                 cx.toggle_full_screen();
             })
-            .register_action(|_, action: &OpenZedURL, cx| {
-                cx.global::<Arc<OpenListener>>()
-                    .open_urls(&[action.url.clone()])
+            .register_action(|_, action: &OpenZedUrl, cx| {
+                OpenListener::global(cx).open_urls(&[action.url.clone()])
             })
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
             .register_action(move |_, _: &IncreaseBufferFontSize, cx| {
@@ -354,7 +353,7 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
             let quick_action_bar =
-                cx.new_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
+                cx.new_view(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, cx);
             let diagnostic_editor_controls = cx.new_view(|_| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, cx);
@@ -370,12 +369,12 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
-    let app_name = cx.global::<ReleaseChannel>().display_name();
+    let app_name = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
     let message = format!("{app_name} {version}");
-    let detail = cx.try_global::<AppCommitSha>().map(|sha| sha.0.as_ref());
+    let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
 
-    let prompt = cx.prompt(PromptLevel::Info, &message, detail, &["OK"]);
+    let prompt = cx.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"]);
     cx.foreground_executor()
         .spawn(async {
             prompt.await.ok();
@@ -734,19 +733,17 @@ fn open_settings_file(
 mod tests {
     use super::*;
     use assets::Assets;
+    use collections::HashSet;
     use editor::{scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
         VisualTestContext, WindowHandle,
     };
-    use language::LanguageRegistry;
+    use language::{LanguageMatcher, LanguageRegistry};
     use project::{project_settings::ProjectSettings, Project, ProjectPath};
     use serde_json::json;
     use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
-    use std::{
-        collections::HashSet,
-        path::{Path, PathBuf},
-    };
+    use std::path::{Path, PathBuf};
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
@@ -2690,7 +2687,7 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
-        for theme_name in themes.list(false).map(|meta| meta.name) {
+        for theme_name in themes.list(false).into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
             if theme.name == ThemeSettings::get(None, cx).active_theme.name {
@@ -2745,7 +2742,10 @@ mod tests {
         Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),

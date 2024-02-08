@@ -12,16 +12,25 @@ pub enum Autoscroll {
 }
 
 impl Autoscroll {
+    /// scrolls the minimal amount to (try) and fit all cursors onscreen
     pub fn fit() -> Self {
         Self::Strategy(AutoscrollStrategy::Fit)
     }
 
+    /// scrolls the minimal amount to fit the newest cursor
     pub fn newest() -> Self {
         Self::Strategy(AutoscrollStrategy::Newest)
     }
 
+    /// scrolls so the newest cursor is vertically centered
     pub fn center() -> Self {
         Self::Strategy(AutoscrollStrategy::Center)
+    }
+
+    /// scrolls so the neweset cursor is near the top
+    /// (offset by vertical_scroll_margin)
+    pub fn focused() -> Self {
+        Self::Strategy(AutoscrollStrategy::Focused)
     }
 }
 
@@ -31,6 +40,7 @@ pub enum AutoscrollStrategy {
     Newest,
     #[default]
     Center,
+    Focused,
     Top,
     Bottom,
 }
@@ -153,6 +163,11 @@ impl Editor {
             }
             AutoscrollStrategy::Center => {
                 scroll_position.y = (target_top - margin).max(0.0);
+                self.set_scroll_position_internal(scroll_position, local, true, cx);
+            }
+            AutoscrollStrategy::Focused => {
+                scroll_position.y =
+                    (target_top - self.scroll_manager.vertical_scroll_margin).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {

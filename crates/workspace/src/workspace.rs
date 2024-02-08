@@ -12,12 +12,13 @@ mod toolbar;
 mod workspace_settings;
 
 use anyhow::{anyhow, Context as _, Result};
-use call::ActiveCall;
+use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
     Client, ErrorExt, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
+use derive_more::{Deref, DerefMut};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
     channel::{mpsc, oneshot},
@@ -28,7 +29,7 @@ use gpui::{
     actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView,
     AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
     DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
+    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
     ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
     Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
@@ -59,10 +60,11 @@ use std::{
     borrow::Cow,
     cmp, env,
     path::{Path, PathBuf},
+    sync::Weak,
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use theme::{ActiveTheme, ThemeSettings};
+use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::Label;
@@ -256,8 +258,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     });
 }
 
-type ProjectItemBuilders =
-    HashMap<TypeId, fn(Model<Project>, AnyModel, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
+#[derive(Clone, Default, Deref, DerefMut)]
+struct ProjectItemBuilders(
+    HashMap<TypeId, fn(Model<Project>, AnyModel, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>,
+);
+
+impl Global for ProjectItemBuilders {}
+
 pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     let builders = cx.default_global::<ProjectItemBuilders>();
     builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
@@ -273,13 +280,20 @@ type FollowableItemBuilder = fn(
     &mut Option<proto::view::Variant>,
     &mut WindowContext,
 ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
-type FollowableItemBuilders = HashMap<
-    TypeId,
-    (
-        FollowableItemBuilder,
-        fn(&AnyView) -> Box<dyn FollowableItemHandle>,
-    ),
->;
+
+#[derive(Default, Deref, DerefMut)]
+struct FollowableItemBuilders(
+    HashMap<
+        TypeId,
+        (
+            FollowableItemBuilder,
+            fn(&AnyView) -> Box<dyn FollowableItemHandle>,
+        ),
+    >,
+);
+
+impl Global for FollowableItemBuilders {}
+
 pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
     let builders = cx.default_global::<FollowableItemBuilders>();
     builders.insert(
@@ -296,16 +310,22 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
     );
 }
 
-type ItemDeserializers = HashMap<
-    Arc<str>,
-    fn(
-        Model<Project>,
-        WeakView<Workspace>,
-        WorkspaceId,
-        ItemId,
-        &mut ViewContext<Pane>,
-    ) -> Task<Result<Box<dyn ItemHandle>>>,
->;
+#[derive(Default, Deref, DerefMut)]
+struct ItemDeserializers(
+    HashMap<
+        Arc<str>,
+        fn(
+            Model<Project>,
+            WeakView<Workspace>,
+            WorkspaceId,
+            ItemId,
+            &mut ViewContext<Pane>,
+        ) -> Task<Result<Box<dyn ItemHandle>>>,
+    >,
+);
+
+impl Global for ItemDeserializers {}
+
 pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
     if let Some(serialized_item_kind) = I::serialized_item_kind() {
         let deserializers = cx.default_global::<ItemDeserializers>();
@@ -331,6 +351,10 @@ pub struct AppState {
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
+struct GlobalAppState(Weak<AppState>);
+
+impl Global for GlobalAppState {}
+
 pub struct WorkspaceStore {
     workspaces: HashSet<WindowHandle<Workspace>>,
     followers: Vec<Follower>,
@@ -345,6 +369,17 @@ struct Follower {
 }
 
 impl AppState {
+    pub fn global(cx: &AppContext) -> Weak<Self> {
+        cx.global::<GlobalAppState>().0.clone()
+    }
+    pub fn try_global(cx: &AppContext) -> Option<Weak<Self>> {
+        cx.try_global::<GlobalAppState>()
+            .map(|state| state.0.clone())
+    }
+    pub fn set_global(state: Weak<AppState>, cx: &mut AppContext) {
+        cx.set_global(GlobalAppState(state));
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
         use node_runtime::FakeNodeRuntime;
@@ -616,7 +651,7 @@ impl Workspace {
         let modal_layer = cx.new_view(|_| ModalLayer::new());
 
         let mut active_call = None;
-        if let Some(call) = cx.try_global::<Model<ActiveCall>>() {
+        if let Some(call) = ActiveCall::try_global(cx) {
             let call = call.clone();
             let mut subscriptions = Vec::new();
             subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
@@ -646,6 +681,13 @@ impl Workspace {
                     }
                 }
                 cx.notify();
+            }),
+            cx.observe_window_appearance(|_, cx| {
+                let window_appearance = cx.appearance();
+
+                *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
+
+                ThemeSettings::reload_current_theme(cx);
             }),
             cx.observe(&left_dock, |this, _, cx| {
                 this.serialize_workspace(cx);
@@ -1293,22 +1335,14 @@ impl Workspace {
         let is_remote = self.project.read(cx).is_remote();
         let has_worktree = self.project.read(cx).worktrees().next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-        let close_task = if is_remote || has_worktree || has_dirty_items {
+        let window_to_replace = if is_remote || has_worktree || has_dirty_items {
             None
         } else {
-            Some(self.prepare_to_close(false, cx))
+            window
         };
         let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
-            let window_to_replace = if let Some(close_task) = close_task {
-                if !close_task.await? {
-                    return Ok(());
-                }
-                window
-            } else {
-                None
-            };
             cx.update(|cx| open_paths(&paths, &app_state, window_to_replace, cx))?
                 .await?;
             Ok(())
@@ -2040,30 +2074,99 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut WindowContext,
     ) {
-        if let Some(pane) = self.find_pane_in_direction(direction, cx) {
-            cx.focus_view(pane);
+        use ActivateInDirectionTarget as Target;
+        enum Origin {
+            LeftDock,
+            RightDock,
+            BottomDock,
+            Center,
         }
-    }
 
-    pub fn swap_pane_in_direction(
-        &mut self,
-        direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(to) = self
-            .find_pane_in_direction(direction, cx)
-            .map(|pane| pane.clone())
-        {
-            self.center.swap(&self.active_pane.clone(), &to);
-            cx.notify();
+        let origin: Origin = [
+            (&self.left_dock, Origin::LeftDock),
+            (&self.right_dock, Origin::RightDock),
+            (&self.bottom_dock, Origin::BottomDock),
+        ]
+        .into_iter()
+        .find_map(|(dock, origin)| {
+            if dock.focus_handle(cx).contains_focused(cx) && dock.read(cx).is_open() {
+                Some(origin)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(Origin::Center);
+
+        let get_last_active_pane = || {
+            self.last_active_center_pane.as_ref().and_then(|p| {
+                let p = p.upgrade()?;
+                (p.read(cx).items_len() != 0).then_some(p)
+            })
+        };
+
+        let try_dock =
+            |dock: &View<Dock>| dock.read(cx).is_open().then(|| Target::Dock(dock.clone()));
+
+        let target = match (origin, direction) {
+            // We're in the center, so we first try to go to a different pane,
+            // otherwise try to go to a dock.
+            (Origin::Center, direction) => {
+                if let Some(pane) = self.find_pane_in_direction(direction, cx) {
+                    Some(Target::Pane(pane))
+                } else {
+                    match direction {
+                        SplitDirection::Up => None,
+                        SplitDirection::Down => try_dock(&self.bottom_dock),
+                        SplitDirection::Left => try_dock(&self.left_dock),
+                        SplitDirection::Right => try_dock(&self.right_dock),
+                    }
+                }
+            }
+
+            (Origin::LeftDock, SplitDirection::Right) => {
+                if let Some(last_active_pane) = get_last_active_pane() {
+                    Some(Target::Pane(last_active_pane))
+                } else {
+                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.right_dock))
+                }
+            }
+
+            (Origin::LeftDock, SplitDirection::Down)
+            | (Origin::RightDock, SplitDirection::Down) => try_dock(&self.bottom_dock),
+
+            (Origin::BottomDock, SplitDirection::Up) => get_last_active_pane().map(Target::Pane),
+            (Origin::BottomDock, SplitDirection::Left) => try_dock(&self.left_dock),
+            (Origin::BottomDock, SplitDirection::Right) => try_dock(&self.right_dock),
+
+            (Origin::RightDock, SplitDirection::Left) => {
+                if let Some(last_active_pane) = get_last_active_pane() {
+                    Some(Target::Pane(last_active_pane))
+                } else {
+                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock))
+                }
+            }
+
+            _ => None,
+        };
+
+        match target {
+            Some(ActivateInDirectionTarget::Pane(pane)) => cx.focus_view(&pane),
+            Some(ActivateInDirectionTarget::Dock(dock)) => {
+                if let Some(panel) = dock.read(cx).active_panel() {
+                    panel.focus_handle(cx).focus(cx);
+                } else {
+                    log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.read(cx).position());
+                }
+            }
+            None => {}
         }
     }
 
     fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &AppContext,
-    ) -> Option<&View<Pane>> {
+        cx: &WindowContext,
+    ) -> Option<View<Pane>> {
         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
             return None;
         };
@@ -2089,7 +2192,21 @@ impl Workspace {
                 Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
             }
         };
-        self.center.pane_at_pixel_position(target)
+        self.center.pane_at_pixel_position(target).cloned()
+    }
+
+    pub fn swap_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(to) = self
+            .find_pane_in_direction(direction, cx)
+            .map(|pane| pane.clone())
+        {
+            self.center.swap(&self.active_pane.clone(), &to);
+            cx.notify();
+        }
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
@@ -2749,8 +2866,10 @@ impl Workspace {
                         item_tasks.push(task);
                         leader_view_ids.push(id);
                         break;
-                    } else {
-                        assert!(variant.is_some());
+                    } else if variant.is_none() {
+                        Err(anyhow!(
+                            "failed to construct view from leader (maybe from a different version of zed?)"
+                        ))?;
                     }
                 }
             }
@@ -2773,25 +2892,27 @@ impl Workspace {
         Ok(())
     }
 
-    fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
+    pub fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
 
-        if let Some(item) = self.active_item(cx) {
-            if item.focus_handle(cx).contains_focused(cx) {
-                if let Some(item) = item.to_followable_item_handle(cx) {
-                    is_project_item = item.is_project_item(cx);
-                    update = proto::UpdateActiveView {
-                        id: item
-                            .remote_id(&self.app_state.client, cx)
-                            .map(|id| id.to_proto()),
-                        leader_id: self.leader_for_pane(&self.active_pane),
-                    };
+        if cx.is_window_active() {
+            if let Some(item) = self.active_item(cx) {
+                if item.focus_handle(cx).contains_focused(cx) {
+                    if let Some(item) = item.to_followable_item_handle(cx) {
+                        is_project_item = item.is_project_item(cx);
+                        update = proto::UpdateActiveView {
+                            id: item
+                                .remote_id(&self.app_state.client, cx)
+                                .map(|id| id.to_proto()),
+                            leader_id: self.leader_for_pane(&self.active_pane),
+                        };
+                    }
                 }
             }
         }
 
-        if update.id != self.last_active_view_id {
+        if &update.id != &self.last_active_view_id {
             self.last_active_view_id = update.id.clone();
             self.update_followers(
                 is_project_item,
@@ -3451,6 +3572,11 @@ fn open_items(
     })
 }
 
+enum ActivateInDirectionTarget {
+    Pane(View<Pane>),
+    Dock(View<Dock>),
+}
+
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncAppContext) {
     const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/zed/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
 
@@ -3657,7 +3783,7 @@ impl WorkspaceStore {
         update: proto::update_followers::Variant,
         cx: &AppContext,
     ) -> Option<()> {
-        let active_call = cx.try_global::<Model<ActiveCall>>()?;
+        let active_call = ActiveCall::try_global(cx)?;
         let room_id = active_call.read(cx).room()?.read(cx).id();
         let follower_ids: Vec<_> = self
             .followers
@@ -3849,6 +3975,8 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
 
+actions!(collab, [OpenChannelNotes]);
+
 async fn join_channel_internal(
     channel_id: u64,
     app_state: &Arc<AppState>,
@@ -3950,6 +4078,36 @@ async fn join_channel_internal(
             return Some(join_remote_project(project, host, app_state.clone(), cx));
         }
 
+        // if you are the first to join a channel, share your project
+        if room.remote_participants().len() == 0 && !room.local_participant_is_guest() {
+            if let Some(workspace) = requesting_window {
+                let project = workspace.update(cx, |workspace, cx| {
+                    if !CallSettings::get_global(cx).share_on_join {
+                        return None;
+                    }
+                    let project = workspace.project.read(cx);
+                    if project.is_local()
+                        && project.visible_worktrees(cx).any(|tree| {
+                            tree.read(cx)
+                                .root_entry()
+                                .map_or(false, |entry| entry.is_dir())
+                        })
+                    {
+                        Some(workspace.project.clone())
+                    } else {
+                        None
+                    }
+                });
+                if let Ok(Some(project)) = project {
+                    return Some(cx.spawn(|room, mut cx| async move {
+                        room.update(&mut cx, |room, cx| room.share_project(project, cx))?
+                            .await?;
+                        Ok(())
+                    }));
+                }
+            }
+        }
+
         None
     })?;
     if let Some(task) = task {
@@ -3991,6 +4149,12 @@ pub fn join_channel(
                     Workspace::new_local(vec![], app_state.clone(), requesting_window, cx)
                 })?
                 .await?;
+
+            if result.is_ok() {
+                cx.update(|cx| {
+                    cx.dispatch_action(&OpenChannelNotes);
+                }).log_err();
+            }
 
             active_window = Some(window_handle);
         }

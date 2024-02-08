@@ -1,9 +1,9 @@
 pub mod arc_cow;
-pub mod channel;
 pub mod fs;
 pub mod github;
 pub mod http;
 pub mod paths;
+mod semantic_version;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -11,6 +11,7 @@ pub use backtrace::Backtrace;
 use futures::Future;
 use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
+pub use semantic_version::SemanticVersion;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -41,6 +42,28 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
         None => s,
         Some((idx, _)) => &s[..idx],
     }
+}
+
+pub fn http_proxy_from_env() -> Option<isahc::http::Uri> {
+    macro_rules! try_env {
+        ($($env:literal),+) => {
+            $(
+                if let Ok(env) = std::env::var($env) {
+                    return env.parse::<isahc::http::Uri>().ok();
+                }
+            )+
+        };
+    }
+
+    try_env!(
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy"
+    );
+    None
 }
 
 /// Removes characters from the end of the string if its length is greater than `max_chars` and

@@ -1,7 +1,10 @@
 {
     "suffixes": {
+        "Emakefile": "erlang",
         "aac": "audio",
         "accdb": "storage",
+        "app.src": "erlang",
+        "avif": "image",
         "bak": "backup",
         "bash": "terminal",
         "bash_aliases": "terminal",
@@ -13,7 +16,7 @@
         "cc": "code",
         "conf": "settings",
         "cpp": "code",
-        "css": "code",
+        "css": "css",
         "csv": "storage",
         "dat": "storage",
         "db": "storage",
@@ -22,6 +25,9 @@
         "doc": "document",
         "docx": "document",
         "eex": "elixir",
+        "elm": "elm",
+        "erl": "erlang",
+        "escript": "erlang",
         "eslintrc": "eslint",
         "eslintrc.js": "eslint",
         "eslintrc.json": "eslint",
@@ -36,16 +42,18 @@
         "gif": "image",
         "gitattributes": "vcs",
         "gitignore": "vcs",
-        "gitmodules": "vcs",
         "gitkeep": "vcs",
-        "go": "code",
+        "gitmodules": "vcs",
+        "go": "go",
         "h": "code",
         "handlebars": "code",
         "hbs": "template",
         "heex": "elixir",
+        "heif": "image",
+        "hrl": "erlang",
+        "hs": "haskell",
         "htm": "template",
         "html": "template",
-        "hs": "haskell",
         "ib": "storage",
         "ico": "image",
         "ini": "settings",
@@ -62,6 +70,8 @@
         "mdb": "storage",
         "mdf": "storage",
         "mdx": "document",
+        "ml": "ocaml",
+        "mli": "ocaml",
         "mp3": "audio",
         "mp4": "video",
         "myd": "storage",
@@ -72,17 +82,19 @@
         "ogg": "video",
         "pdb": "storage",
         "pdf": "document",
-        "php": "code",
+        "php": "php",
         "png": "image",
         "ppt": "document",
         "pptx": "document",
         "prettierignore": "prettier",
         "prettierrc": "prettier",
+        "prisma": "prisma",
         "profile": "terminal",
         "ps1": "terminal",
         "psd": "image",
         "py": "python",
         "rb": "ruby",
+        "rebar.config": "erlang",
         "rkt": "code",
         "rs": "rust",
         "rtf": "document",
@@ -103,11 +115,14 @@
         "vue": "vue",
         "wav": "audio",
         "webm": "video",
+        "webp": "image",
         "xls": "document",
         "xlsx": "document",
         "xml": "template",
+        "xrl": "erlang",
         "yaml": "settings",
         "yml": "settings",
+        "yrl": "erlang",
         "zlogin": "terminal",
         "zsh": "terminal",
         "zsh_aliases": "terminal",
@@ -129,6 +144,9 @@
         "collapsed_folder": {
             "icon": "icons/file_icons/folder.svg"
         },
+        "css": {
+            "icon": "icons/file_icons/css.svg"
+        },
         "default": {
             "icon": "icons/file_icons/file.svg"
         },
@@ -137,6 +155,12 @@
         },
         "elixir": {
             "icon": "icons/file_icons/elixir.svg"
+        },
+        "elm": {
+            "icon": "icons/file_icons/elm.svg"
+        },
+        "erlang": {
+            "icon": "icons/file_icons/erlang.svg"
         },
         "eslint": {
             "icon": "icons/file_icons/eslint.svg"
@@ -150,6 +174,9 @@
         "haskell": {
             "icon": "icons/file_icons/haskell.svg"
         },
+        "go": {
+            "icon": "icons/file_icons/go.svg"
+        },
         "image": {
             "icon": "icons/file_icons/image.svg"
         },
@@ -159,11 +186,20 @@
         "log": {
             "icon": "icons/file_icons/info.svg"
         },
+        "ocaml": {
+          "icon": "icons/file_icons/ocaml.svg"
+        },
         "phoenix": {
             "icon": "icons/file_icons/phoenix.svg"
         },
+        "php": {
+            "icon": "icons/file_icons/php.svg"
+        },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
+        },
+        "prisma": {
+            "icon": "icons/file_icons/prisma.svg"
         },
         "python": {
             "icon": "icons/file_icons/python.svg"

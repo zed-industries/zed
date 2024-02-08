@@ -1,9 +1,10 @@
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter,
-    ForegroundExecutor, InputEvent, Keystroke, Model, ModelContext, Pixels, Platform, Point,
-    Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow, TextSystem, View,
-    ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -236,6 +237,11 @@ impl TestAppContext {
         self.test_platform.has_pending_prompt()
     }
 
+    /// All the urls that have been opened with cx.open_url() during this test.
+    pub fn opened_url(&self) -> Option<String> {
+        self.test_platform.opened_url.borrow().clone()
+    }
+
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
@@ -256,20 +262,20 @@ impl TestAppContext {
     }
 
     /// true if the given global is defined
-    pub fn has_global<G: 'static>(&self) -> bool {
+    pub fn has_global<G: Global>(&self) -> bool {
         let app = self.app.borrow();
         app.has_global::<G>()
     }
 
     /// runs the given closure with a reference to the global
     /// panics if `has_global` would return false.
-    pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> R {
+    pub fn read_global<G: Global, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> R {
         let app = self.app.borrow();
         read(app.global(), &app)
     }
 
     /// runs the given closure with a reference to the global (if set)
-    pub fn try_read_global<G: 'static, R>(
+    pub fn try_read_global<G: Global, R>(
         &self,
         read: impl FnOnce(&G, &AppContext) -> R,
     ) -> Option<R> {
@@ -278,13 +284,13 @@ impl TestAppContext {
     }
 
     /// sets the global in this context.
-    pub fn set_global<G: 'static>(&mut self, global: G) {
+    pub fn set_global<G: Global>(&mut self, global: G) {
         let mut lock = self.app.borrow_mut();
         lock.set_global(global);
     }
 
     /// updates the global in this context. (panics if `has_global` would return false)
-    pub fn update_global<G: 'static, R>(
+    pub fn update_global<G: Global, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> R {
@@ -623,6 +629,36 @@ impl<'a> VisualTestContext {
     /// Automatically runs until parked.
     pub fn simulate_input(&mut self, input: &str) {
         self.cx.simulate_input(self.window, input)
+    }
+
+    /// Simulate a mouse move event to the given point
+    pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
+        self.simulate_event(MouseMoveEvent {
+            position,
+            modifiers,
+            pressed_button: None,
+        })
+    }
+
+    /// Simulate a primary mouse click at the given point
+    pub fn simulate_click(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
+        self.simulate_event(MouseDownEvent {
+            position,
+            modifiers,
+            button: MouseButton::Left,
+            click_count: 1,
+        });
+        self.simulate_event(MouseUpEvent {
+            position,
+            modifiers,
+            button: MouseButton::Left,
+            click_count: 1,
+        });
+    }
+
+    /// Simulate a modifiers changed event
+    pub fn simulate_modifiers_change(&mut self, modifiers: Modifiers) {
+        self.simulate_event(ModifiersChangedEvent { modifiers })
     }
 
     /// Simulates the user resizing the window to the new size.

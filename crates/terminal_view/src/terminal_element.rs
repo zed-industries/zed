@@ -4,8 +4,8 @@ use gpui::{
     ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
     InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState, Interactivity,
     IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
-    Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem,
-    UnderlineStyle, WeakView, WhiteSpace, WindowContext,
+    Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
+    TextStyle, UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -185,7 +185,7 @@ impl TerminalElement {
         grid: &Vec<IndexedCell>,
         text_style: &TextStyle,
         // terminal_theme: &TerminalStyle,
-        text_system: &TextSystem,
+        text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
         cx: &WindowContext<'_>,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
@@ -218,7 +218,22 @@ impl TerminalElement {
                         match cur_alac_color {
                             Some(cur_color) => {
                                 if bg == cur_color {
-                                    cur_rect = cur_rect.take().map(|rect| rect.extend());
+                                    // `cur_rect` can be None if it was moved to the `rects` vec after wrapping around
+                                    // from one line to the next. The variables are all set correctly but there is no current
+                                    // rect, so we create one if necessary.
+                                    cur_rect = cur_rect.map_or_else(
+                                        || {
+                                            Some(LayoutRect::new(
+                                                AlacPoint::new(
+                                                    line_index as i32,
+                                                    cell.point.column.0 as i32,
+                                                ),
+                                                1,
+                                                convert_color(&bg, theme),
+                                            ))
+                                        },
+                                        |rect| Some(rect.extend()),
+                                    );
                                 } else {
                                     cur_alac_color = Some(bg);
                                     if cur_rect.is_some() {
@@ -325,6 +340,13 @@ impl TerminalElement {
             wavy: flags.contains(Flags::UNDERCURL),
         });
 
+        let strikethrough = flags
+            .intersects(Flags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                color: Some(fg),
+                thickness: Pixels::from(1.0),
+            });
+
         let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
             FontWeight::BOLD
         } else {
@@ -347,6 +369,7 @@ impl TerminalElement {
                 ..text_style.font()
             },
             underline,
+            strikethrough,
         };
 
         if let Some((style, range)) = hyperlink {
@@ -399,6 +422,7 @@ impl TerminalElement {
                 color: Some(theme.colors().link_text_hover),
                 wavy: false,
             }),
+            strikethrough: None,
             fade_out: None,
         };
 
@@ -412,6 +436,7 @@ impl TerminalElement {
             white_space: WhiteSpace::Normal,
             // These are going to be overridden per-cell
             underline: None,
+            strikethrough: None,
             color: theme.colors().text,
             font_weight: FontWeight::NORMAL,
         };
@@ -434,6 +459,13 @@ impl TerminalElement {
 
             let mut size = bounds.size.clone();
             size.width -= gutter;
+
+            // https://github.com/zed-industries/zed/issues/2750
+            // if the terminal is one column wide, rendering 🦀
+            // causes alacritty to misbehave.
+            if size.width < cell_width * 2.0 {
+                size.width = cell_width * 2.0;
+            }
 
             TerminalSize::new(line_height, cell_width, size)
         };
@@ -523,6 +555,7 @@ impl TerminalElement {
                             color: theme.colors().terminal_background,
                             background_color: None,
                             underline: Default::default(),
+                            strikethrough: None,
                         }],
                     )
                     .unwrap()
@@ -761,7 +794,6 @@ impl Element for TerminalElement {
         self.interactivity
             .paint(bounds, bounds.size, state, cx, |_, _, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
-                cx.keymatch_mode_immediate();
 
                 cx.on_key_event({
                     let this = self.terminal.clone();

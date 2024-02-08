@@ -9,16 +9,12 @@ use crate::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     items::BufferSearchHighlights,
-    link_go_to_definition::{
-        go_to_fetched_definition, go_to_fetched_type_definition, show_link_definition,
-        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
-        LinkGoToDefinitionState,
-    },
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
-    CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, HalfPageDown, HalfPageUp, HoveredCursor, LineDown,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -34,6 +30,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
+use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -145,7 +142,11 @@ impl EditorElement {
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
+        register_action(view, cx, Editor::move_down_by_lines);
+        register_action(view, cx, Editor::select_down_by_lines);
         register_action(view, cx, Editor::move_up);
+        register_action(view, cx, Editor::move_up_by_lines);
+        register_action(view, cx, Editor::select_up_by_lines);
         register_action(view, cx, Editor::cancel);
         register_action(view, cx, Editor::newline);
         register_action(view, cx, Editor::newline_above);
@@ -276,6 +277,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_path);
         register_action(view, cx, Editor::copy_relative_path);
         register_action(view, cx, Editor::copy_highlight_json);
+        register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -330,7 +332,14 @@ impl EditorElement {
         register_action(view, cx, Editor::display_cursor_names);
     }
 
-    fn register_key_listeners(&self, cx: &mut ElementContext) {
+    fn register_key_listeners(
+        &self,
+        cx: &mut ElementContext,
+        text_bounds: Bounds<Pixels>,
+        layout: &LayoutState,
+    ) {
+        let position_map = layout.position_map.clone();
+        let stacking_order = cx.stacking_order().clone();
         cx.on_key_event({
             let editor = self.editor.clone();
             move |event: &ModifiersChangedEvent, phase, cx| {
@@ -338,46 +347,41 @@ impl EditorElement {
                     return;
                 }
 
-                if editor.update(cx, |editor, cx| Self::modifiers_changed(editor, event, cx)) {
-                    cx.stop_propagation();
-                }
+                editor.update(cx, |editor, cx| {
+                    Self::modifiers_changed(
+                        editor,
+                        event,
+                        &position_map,
+                        text_bounds,
+                        &stacking_order,
+                        cx,
+                    )
+                })
             }
         });
     }
 
-    pub(crate) fn modifiers_changed(
+    fn modifiers_changed(
         editor: &mut Editor,
         event: &ModifiersChangedEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
-        let pending_selection = editor.has_pending_selection();
-
-        if let Some(point) = &editor.link_go_to_definition_state.last_trigger_point {
-            if event.command && !pending_selection {
-                let point = point.clone();
-                let snapshot = editor.snapshot(cx);
-                let kind = point.definition_kind(event.shift);
-
-                show_link_definition(kind, editor, point, snapshot, cx);
-                return false;
-            }
-        }
-
+    ) {
+        let mouse_position = cx.mouse_position();
+        if !text_bounds.contains(&mouse_position)
+            || !cx.was_top_layer(&mouse_position, stacking_order)
         {
-            if editor.link_go_to_definition_state.symbol_range.is_some()
-                || !editor.link_go_to_definition_state.definitions.is_empty()
-            {
-                editor.link_go_to_definition_state.symbol_range.take();
-                editor.link_go_to_definition_state.definitions.clear();
-                cx.notify();
-            }
-
-            editor.link_go_to_definition_state.task = None;
-
-            editor.clear_highlights::<LinkGoToDefinitionState>(cx);
+            return;
         }
 
-        false
+        editor.update_hovered_link(
+            position_map.point_for_position(text_bounds, mouse_position),
+            &position_map.snapshot,
+            event.modifiers,
+            cx,
+        )
     }
 
     fn mouse_left_down(
@@ -478,13 +482,7 @@ impl EditorElement {
             && cx.was_top_layer(&event.position, stacking_order)
         {
             let point = position_map.point_for_position(text_bounds, event.position);
-            let could_be_inlay = point.as_valid().is_none();
-            let split = event.modifiers.alt;
-            if event.modifiers.shift || could_be_inlay {
-                go_to_fetched_type_definition(editor, point, split, cx);
-            } else {
-                go_to_fetched_definition(editor, point, split, cx);
-            }
+            editor.handle_click_hovered_link(point, event.modifiers, cx);
 
             cx.stop_propagation();
         } else if end_selection {
@@ -557,31 +555,14 @@ impl EditorElement {
         if text_hovered && was_top {
             let point_for_position = position_map.point_for_position(text_bounds, event.position);
 
-            match point_for_position.as_valid() {
-                Some(point) => {
-                    update_go_to_definition_link(
-                        editor,
-                        Some(GoToDefinitionTrigger::Text(point)),
-                        modifiers.command,
-                        modifiers.shift,
-                        cx,
-                    );
-                    hover_at(editor, Some(point), cx);
-                    Self::update_visible_cursor(editor, point, position_map, cx);
-                }
-                None => {
-                    update_inlay_link_and_hover_points(
-                        &position_map.snapshot,
-                        point_for_position,
-                        editor,
-                        modifiers.command,
-                        modifiers.shift,
-                        cx,
-                    );
-                }
+            editor.update_hovered_link(point_for_position, &position_map.snapshot, modifiers, cx);
+
+            if let Some(point) = point_for_position.as_valid() {
+                hover_at(editor, Some(point), cx);
+                Self::update_visible_cursor(editor, point, position_map, cx);
             }
         } else {
-            update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
+            editor.hide_hovered_link(cx);
             hover_at(editor, None, cx);
             if gutter_hovered && was_top {
                 cx.stop_propagation();
@@ -923,13 +904,13 @@ impl EditorElement {
                     if self
                         .editor
                         .read(cx)
-                        .link_go_to_definition_state
-                        .definitions
-                        .is_empty()
+                        .hovered_link_state
+                        .as_ref()
+                        .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
                     {
-                        cx.set_cursor_style(CursorStyle::IBeam);
-                    } else {
                         cx.set_cursor_style(CursorStyle::PointingHand);
+                    } else {
+                        cx.set_cursor_style(CursorStyle::IBeam);
                     }
                 }
 
@@ -1092,6 +1073,7 @@ impl EditorElement {
                                                         font: self.style.text.font(),
                                                         color: self.style.background,
                                                         background_color: None,
+                                                        strikethrough: None,
                                                         underline: None,
                                                     }],
                                                 )
@@ -1151,13 +1133,41 @@ impl EditorElement {
                     )
                 }
 
-                cx.with_z_index(0, |cx| {
+                cx.with_z_index(0, |cx| self.paint_redactions(text_bounds, &layout, cx));
+
+                cx.with_z_index(1, |cx| {
                     for cursor in cursors {
                         cursor.paint(content_origin, cx);
                     }
                 });
             },
         )
+    }
+
+    fn paint_redactions(
+        &mut self,
+        text_bounds: Bounds<Pixels>,
+        layout: &LayoutState,
+        cx: &mut ElementContext,
+    ) {
+        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let line_end_overshoot = layout.line_end_overshoot();
+
+        // A softer than perfect black
+        let redaction_color = gpui::rgb(0x0e1111);
+
+        for range in layout.redacted_ranges.iter() {
+            self.paint_highlighted_range(
+                range.clone(),
+                redaction_color.into(),
+                Pixels::ZERO,
+                line_end_overshoot,
+                layout,
+                content_origin,
+                text_bounds,
+                cx,
+            );
+        }
     }
 
     fn paint_overlays(
@@ -1366,6 +1376,44 @@ impl EditorElement {
                 }
             }
 
+            if layout.is_singleton && scrollbar_settings.symbols_selections {
+                let selection_ranges = self.editor.read(cx).background_highlights_in_range(
+                    Anchor::min()..Anchor::max(),
+                    &layout.position_map.snapshot,
+                    cx.theme().colors(),
+                );
+                for hunk in selection_ranges {
+                    let start_display = Point::new(hunk.0.start.row(), 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = Point::new(hunk.0.end.row(), 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if hunk.0.start == hunk.0.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
+
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        cx.theme().status().info,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
             if layout.is_singleton && scrollbar_settings.git_diff {
                 for hunk in layout
                     .position_map
@@ -1393,6 +1441,64 @@ impl EditorElement {
                         DiffHunkStatus::Added => cx.theme().status().created,
                         DiffHunkStatus::Modified => cx.theme().status().modified,
                         DiffHunkStatus::Removed => cx.theme().status().deleted,
+                    };
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        color,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
+            if layout.is_singleton && scrollbar_settings.diagnostics {
+                let max_point = layout
+                    .position_map
+                    .snapshot
+                    .display_snapshot
+                    .buffer_snapshot
+                    .max_point();
+
+                let diagnostics = layout
+                    .position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
+                    // We want to sort by severity, in order to paint the most severe diagnostics last.
+                    .sorted_by_key(|diagnostic| std::cmp::Reverse(diagnostic.diagnostic.severity));
+
+                for diagnostic in diagnostics {
+                    let start_display = diagnostic
+                        .range
+                        .start
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = diagnostic
+                        .range
+                        .end
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if diagnostic.range.start == diagnostic.range.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
+
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+
+                    let color = match diagnostic.diagnostic.severity {
+                        DiagnosticSeverity::ERROR => cx.theme().status().error,
+                        DiagnosticSeverity::WARNING => cx.theme().status().warning,
+                        DiagnosticSeverity::INFORMATION => cx.theme().status().info,
+                        _ => cx.theme().status().hint,
                     };
                     cx.paint_quad(quad(
                         bounds,
@@ -1608,6 +1714,7 @@ impl EditorElement {
                     color: Hsla::default(),
                     background_color: None,
                     underline: None,
+                    strikethrough: None,
                 }],
             )
             .unwrap();
@@ -1744,6 +1851,7 @@ impl EditorElement {
                         color,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     };
                     let shaped_line = cx
                         .text_system()
@@ -1801,6 +1909,7 @@ impl EditorElement {
                         color: placeholder_color,
                         background_color: None,
                         underline: Default::default(),
+                        strikethrough: None,
                     };
                     cx.text_system()
                         .shape_line(line.to_string().into(), font_size, &[run])
@@ -1917,6 +2026,8 @@ impl EditorElement {
                 cx.theme().colors(),
             );
 
+            let redacted_ranges = editor.redacted_ranges(start_anchor..end_anchor, &snapshot.display_snapshot, cx);
+
             let mut newest_selection_head = None;
 
             if editor.show_local_selections {
@@ -2032,8 +2143,15 @@ impl EditorElement {
                     ||
                     // Selections
                     (is_singleton && scrollbar_settings.selections && editor.has_background_highlights::<BufferSearchHighlights>())
+                    ||
+                    // Symbols Selections
+                    (is_singleton && scrollbar_settings.symbols_selections && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                    ||
+                    // Diagnostics
+                    (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
+                    ||
                     // Scrollmanager
-                    || editor.scroll_manager.scrollbars_visible()
+                    editor.scroll_manager.scrollbars_visible()
                 }
                 ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
                 ShowScrollbar::Always => true,
@@ -2207,6 +2325,7 @@ impl EditorElement {
                         color: cx.theme().colors().editor_invisible,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     }],
                 )
                 .unwrap();
@@ -2221,6 +2340,7 @@ impl EditorElement {
                         color: cx.theme().colors().editor_invisible,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     }],
                 )
                 .unwrap();
@@ -2254,6 +2374,7 @@ impl EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
+                redacted_ranges,
                 line_numbers,
                 display_hunks,
                 blocks,
@@ -2753,6 +2874,7 @@ impl LineWithInvisibles {
                         color: text_style.color,
                         background_color: text_style.background_color,
                         underline: text_style.underline,
+                        strikethrough: text_style.strikethrough,
                     });
 
                     if editor_mode == EditorMode::Full {
@@ -2964,9 +3086,9 @@ impl Element for EditorElement {
                     let key_context = self.editor.read(cx).key_context(cx);
                     cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
                         self.register_actions(cx);
-                        self.register_key_listeners(cx);
 
                         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                            self.register_key_listeners(cx, text_bounds, &layout);
                             cx.handle_input(
                                 &focus_handle,
                                 ElementInputHandler::new(bounds, self.editor.clone()),
@@ -3038,6 +3160,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    redacted_ranges: Vec<Range<DisplayPoint>>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
@@ -3049,6 +3172,12 @@ pub struct LayoutState {
     fold_indicators: Vec<Option<IconButton>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
+}
+
+impl LayoutState {
+    fn line_end_overshoot(&self) -> Pixels {
+        0.15 * self.position_map.line_height
+    }
 }
 
 struct CodeActionsIndicator {
@@ -3076,16 +3205,6 @@ pub struct PointForPosition {
 }
 
 impl PointForPosition {
-    #[cfg(test)]
-    pub fn valid(valid: DisplayPoint) -> Self {
-        Self {
-            previous_valid: valid,
-            next_valid: valid,
-            exact_unclipped: valid,
-            column_overshoot_after_line_end: 0,
-        }
-    }
-
     pub fn as_valid(&self) -> Option<DisplayPoint> {
         if self.previous_valid == self.exact_unclipped && self.next_valid == self.exact_unclipped {
             Some(self.previous_valid)
@@ -3169,6 +3288,7 @@ fn layout_line(
             color: Hsla::default(),
             background_color: None,
             underline: None,
+            strikethrough: None,
         }],
     )
 }

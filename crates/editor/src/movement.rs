@@ -2,8 +2,8 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
-use gpui::{px, Pixels, TextSystem};
+use crate::{char_kind, scroll::ScrollAnchor, CharKind, EditorStyle, ToOffset, ToPoint};
+use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
 
 use std::{ops::Range, sync::Arc};
@@ -20,9 +20,12 @@ pub enum FindRange {
 /// TextLayoutDetails encompasses everything we need to move vertically
 /// taking into account variable width characters.
 pub struct TextLayoutDetails {
-    pub(crate) text_system: Arc<TextSystem>,
+    pub(crate) text_system: Arc<WindowTextSystem>,
     pub(crate) editor_style: EditorStyle,
     pub(crate) rem_size: Pixels,
+    pub scroll_anchor: ScrollAnchor,
+    pub visible_rows: Option<f32>,
+    pub vertical_scroll_margin: f32,
 }
 
 /// Returns a column to the left of the current point, wrapping
@@ -46,11 +49,10 @@ pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Displa
     map.clip_point(point, Bias::Left)
 }
 
-/// Returns a column to the right of the current point, wrapping
-/// to the next line if that point is at the end of line.
+/// Returns a column to the right of the current point, doing nothing
+// if that point is at the end of the line.
 pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let max_column = map.line_len(point.row());
-    if point.column() < max_column {
+    if point.column() < map.line_len(point.row()) {
         *point.column_mut() += 1;
     } else if point.row() < map.max_point().row() {
         *point.row_mut() += 1;
@@ -393,14 +395,17 @@ pub fn find_preceding_boundary(
 /// Scans for a boundary following the given start point until a boundary is found, indicated by the
 /// given predicate returning true. The predicate is called with the character to the left and right
 /// of the candidate boundary location, and will be called with `\n` characters indicating the start
-/// or end of a line.
-pub fn find_boundary(
+/// or end of a line. The function supports optionally returning the point just before the boundary
+/// is found via return_point_before_boundary.
+pub fn find_boundary_point(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     find_range: FindRange,
     mut is_boundary: impl FnMut(char, char) -> bool,
+    return_point_before_boundary: bool,
 ) -> DisplayPoint {
     let mut offset = from.to_offset(&map, Bias::Right);
+    let mut prev_offset = offset;
     let mut prev_ch = None;
 
     for ch in map.buffer_snapshot.chars_at(offset) {
@@ -409,14 +414,36 @@ pub fn find_boundary(
         }
         if let Some(prev_ch) = prev_ch {
             if is_boundary(prev_ch, ch) {
-                break;
+                if return_point_before_boundary {
+                    return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+                } else {
+                    break;
+                }
             }
         }
-
+        prev_offset = offset;
         offset += ch.len_utf8();
         prev_ch = Some(ch);
     }
     map.clip_point(offset.to_display_point(map), Bias::Right)
+}
+
+pub fn find_boundary(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    find_range: FindRange,
+    is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    return find_boundary_point(map, from, find_range, is_boundary, false);
+}
+
+pub fn find_boundary_exclusive(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    find_range: FindRange,
+    is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    return find_boundary_point(map, from, find_range, is_boundary, true);
 }
 
 /// Returns an iterator over the characters following a given offset in the [`DisplaySnapshot`].
@@ -761,7 +788,7 @@ mod tests {
                     &snapshot,
                     display_points[0],
                     FindRange::MultiLine,
-                    is_boundary
+                    is_boundary,
                 ),
                 display_points[1]
             );

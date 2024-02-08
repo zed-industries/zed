@@ -64,6 +64,7 @@ use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{field, info_span, instrument, Instrument};
+use util::SemanticVersion;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -795,6 +796,7 @@ fn broadcast<F>(
 
 lazy_static! {
     static ref ZED_PROTOCOL_VERSION: HeaderName = HeaderName::from_static("x-zed-protocol-version");
+    static ref ZED_APP_VERSION: HeaderName = HeaderName::from_static("x-zed-app-version");
 }
 
 pub struct ProtocolVersion(u32);
@@ -802,6 +804,32 @@ pub struct ProtocolVersion(u32);
 impl Header for ProtocolVersion {
     fn name() -> &'static HeaderName {
         &ZED_PROTOCOL_VERSION
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        let version = values
+            .next()
+            .ok_or_else(axum::headers::Error::invalid)?
+            .to_str()
+            .map_err(|_| axum::headers::Error::invalid())?
+            .parse()
+            .map_err(|_| axum::headers::Error::invalid())?;
+        Ok(Self(version))
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
+        values.extend([self.0.to_string().parse().unwrap()]);
+    }
+}
+
+pub struct AppVersionHeader(SemanticVersion);
+impl Header for AppVersionHeader {
+    fn name() -> &'static HeaderName {
+        &ZED_APP_VERSION
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
@@ -838,6 +866,7 @@ pub fn routes(server: Arc<Server>) -> Router<Body> {
 
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
+    _app_version_header: Option<TypedHeader<AppVersionHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(user): Extension<User>,
@@ -851,6 +880,7 @@ pub async fn handle_websocket_request(
         )
             .into_response();
     }
+
     let socket_address = socket_address.to_string();
     ws.on_upgrade(move |socket| {
         use util::ResultExt;
@@ -1263,7 +1293,7 @@ async fn rejoin_room(
     Ok(())
 }
 
-/// leave room disonnects from the room.
+/// leave room disconnects from the room.
 async fn leave_room(
     _: proto::LeaveRoom,
     response: Response<proto::LeaveRoom>,
@@ -1661,7 +1691,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     tracing::info!(
         %project_id,
         host_user_id = %project.host_user_id,
-        host_connection_id = %project.host_connection_id,
+        host_connection_id = ?project.host_connection_id,
         "leave project"
     );
 
@@ -2989,6 +3019,10 @@ async fn send_channel_message(
             &request.mentions,
             timestamp,
             nonce.clone().into(),
+            match request.reply_to_message_id {
+                Some(reply_to_message_id) => Some(MessageId::from_proto(reply_to_message_id)),
+                None => None,
+            },
         )
         .await?;
     let message = proto::ChannelMessage {
@@ -2998,6 +3032,7 @@ async fn send_channel_message(
         mentions: request.mentions,
         timestamp: timestamp.unix_timestamp() as u64,
         nonce: Some(nonce),
+        reply_to_message_id: request.reply_to_message_id,
     };
     broadcast(
         Some(session.connection_id),

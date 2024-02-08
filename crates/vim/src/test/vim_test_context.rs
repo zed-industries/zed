@@ -23,6 +23,7 @@ impl VimTestContext {
             search::init(cx);
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            release_channel::init("0.0.0", cx);
             command_palette::init(cx);
             crate::init(cx);
         });

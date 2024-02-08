@@ -3,9 +3,9 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::Stream;
-use gpui::BackgroundExecutor;
+use gpui::{BackgroundExecutor, ImageSource};
 use live_kit_server::{proto, token};
-use media::core_video::CVImageBuffer;
+
 use parking_lot::Mutex;
 use postage::watch;
 use std::{
@@ -845,7 +845,7 @@ impl Frame {
         self.height
     }
 
-    pub fn image(&self) -> CVImageBuffer {
+    pub fn image(&self) -> ImageSource {
         unimplemented!("you can't call this in test mode")
     }
 }
