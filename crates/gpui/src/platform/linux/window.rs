@@ -1,3 +1,6 @@
+//todo!(linux): remove
+#![allow(unused)]
+
 use super::BladeRenderer;
 use crate::{
     Bounds, GlobalPixels, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
@@ -50,7 +53,6 @@ fn query_render_extent(xcb_connection: &xcb::Connection, x_window: x::Window) ->
         drawable: x::Drawable::Window(x_window),
     });
     let reply = xcb_connection.wait_for_reply(cookie).unwrap();
-    println!("Got geometry {:?}", reply);
     gpu::Extent {
         width: reply.width() as u32,
         height: reply.height() as u32,
@@ -295,7 +297,7 @@ impl PlatformWindow for LinuxWindow {
 
     //todo!(linux)
     fn appearance(&self) -> WindowAppearance {
-        unimplemented!()
+        WindowAppearance::Light
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {

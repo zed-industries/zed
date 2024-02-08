@@ -4655,6 +4655,28 @@ impl Editor {
         self.manipulate_lines(cx, |lines| lines.sort_by_key(|line| line.to_lowercase()))
     }
 
+    pub fn unique_lines_case_insensitive(
+        &mut self,
+        _: &UniqueLinesCaseInsensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |lines| {
+            let mut seen = HashSet::default();
+            lines.retain(|line| seen.insert(line.to_lowercase()));
+        })
+    }
+
+    pub fn unique_lines_case_sensitive(
+        &mut self,
+        _: &UniqueLinesCaseSensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |lines| {
+            let mut seen = HashSet::default();
+            lines.retain(|line| seen.insert(*line));
+        })
+    }
+
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
         self.manipulate_lines(cx, |lines| lines.reverse())
     }
@@ -4665,7 +4687,7 @@ impl Editor {
 
     fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
     where
-        Fn: FnMut(&mut [&str]),
+        Fn: FnMut(&mut Vec<&str>),
     {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -4676,6 +4698,8 @@ impl Editor {
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
+        let mut added_lines = 0;
+        let mut removed_lines = 0;
 
         while let Some(selection) = selections.next() {
             let (start_row, end_row) = consume_contiguous_rows(
@@ -4690,36 +4714,54 @@ impl Editor {
             let text = buffer
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
+
             let mut lines = text.split("\n").collect_vec();
 
-            let lines_len = lines.len();
+            let lines_before = lines.len();
             callback(&mut lines);
-
-            // This is a current limitation with selections.
-            // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
-            debug_assert!(
-                lines.len() == lines_len,
-                "callback should not change the number of lines"
-            );
+            let lines_after = lines.len();
 
             edits.push((start_point..end_point, lines.join("\n")));
-            let start_anchor = buffer.anchor_after(start_point);
-            let end_anchor = buffer.anchor_before(end_point);
 
-            // Make selection and push
+            // Selections must change based on added and removed line count
+            let start_row = start_point.row + added_lines as u32 - removed_lines as u32;
+            let end_row = start_row + lines_after.saturating_sub(1) as u32;
             new_selections.push(Selection {
                 id: selection.id,
-                start: start_anchor.to_offset(&buffer),
-                end: end_anchor.to_offset(&buffer),
+                start: start_row,
+                end: end_row,
                 goal: SelectionGoal::None,
                 reversed: selection.reversed,
             });
+
+            if lines_after > lines_before {
+                added_lines += lines_after - lines_before;
+            } else if lines_before > lines_after {
+                removed_lines += lines_before - lines_after;
+            }
         }
 
         self.transact(cx, |this, cx| {
-            this.buffer.update(cx, |buffer, cx| {
+            let buffer = this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, None, cx);
+                buffer.snapshot(cx)
             });
+
+            // Recalculate offsets on newly edited buffer
+            let new_selections = new_selections
+                .iter()
+                .map(|s| {
+                    let start_point = Point::new(s.start, 0);
+                    let end_point = Point::new(s.end, buffer.line_len(s.end));
+                    Selection {
+                        id: s.id,
+                        start: buffer.point_to_offset(start_point),
+                        end: buffer.point_to_offset(end_point),
+                        goal: s.goal,
+                        reversed: s.reversed,
+                    }
+                })
+                .collect();
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
@@ -8351,52 +8393,54 @@ impl Editor {
         }
     }
 
-    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
-        let permalink = maybe!({
-            let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
-            let project = project.read(cx);
+        let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
+        let project = project.read(cx);
 
-            let worktree = project
-                .visible_worktrees(cx)
-                .next()
-                .ok_or_else(|| anyhow!("no worktree"))?;
+        let worktree = project
+            .visible_worktrees(cx)
+            .next()
+            .ok_or_else(|| anyhow!("no worktree"))?;
 
-            let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-            cwd.push(".git");
+        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+        cwd.push(".git");
 
-            const REMOTE_NAME: &'static str = "origin";
-            let repo = project
-                .fs()
-                .open_repo(&cwd)
-                .ok_or_else(|| anyhow!("no Git repo"))?;
-            let origin_url = repo
-                .lock()
-                .remote_url(REMOTE_NAME)
-                .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
-            let sha = repo
-                .lock()
-                .head_sha()
-                .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
+        const REMOTE_NAME: &'static str = "origin";
+        let repo = project
+            .fs()
+            .open_repo(&cwd)
+            .ok_or_else(|| anyhow!("no Git repo"))?;
+        let origin_url = repo
+            .lock()
+            .remote_url(REMOTE_NAME)
+            .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+        let sha = repo
+            .lock()
+            .head_sha()
+            .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
-            let path = maybe!({
-                let buffer = self.buffer().read(cx).as_singleton()?;
-                let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-                file.path().to_str().map(|path| path.to_string())
-            })
-            .ok_or_else(|| anyhow!("failed to determine file path"))?;
+        let path = maybe!({
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+            file.path().to_str().map(|path| path.to_string())
+        })
+        .ok_or_else(|| anyhow!("failed to determine file path"))?;
 
-            let selections = self.selections.all::<Point>(cx);
-            let selection = selections.iter().peekable().next();
+        let selections = self.selections.all::<Point>(cx);
+        let selection = selections.iter().peekable().next();
 
-            build_permalink(BuildPermalinkParams {
-                remote_url: &origin_url,
-                sha: &sha,
-                path: &path,
-                selection: selection.map(|selection| selection.range()),
-            })
-        });
+        build_permalink(BuildPermalinkParams {
+            remote_url: &origin_url,
+            sha: &sha,
+            path: &path,
+            selection: selection.map(|selection| selection.range()),
+        })
+    }
+
+    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+        let permalink = self.get_permalink_to_line(cx);
 
         match permalink {
             Ok(permalink) => {
@@ -8410,6 +8454,27 @@ impl Editor {
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
                         workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                    })
+                }
+            }
+        }
+    }
+
+    pub fn open_permalink_to_line(&mut self, _: &OpenPermalinkToLine, cx: &mut ViewContext<Self>) {
+        let permalink = self.get_permalink_to_line(cx);
+
+        match permalink {
+            Ok(permalink) => {
+                cx.open_url(&permalink.to_string());
+            }
+            Err(err) => {
+                let message = format!("Failed to open permalink: {err}");
+
+                Err::<(), anyhow::Error>(err).log_err();
+
+                if let Some(workspace) = self.workspace() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_toast(Toast::new(0x45a8978, message), cx)
                     })
                 }
             }

@@ -2786,6 +2786,126 @@ async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
         dddˇ»
 
     "});
+
+    // Adding new line
+    cx.set_state(indoc! {"
+        aa«a
+        bbˇ»b
+    "});
+    cx.update_editor(|e, cx| e.manipulate_lines(cx, |lines| lines.push("added_line")));
+    cx.assert_editor_state(indoc! {"
+        «aaa
+        bbb
+        added_lineˇ»
+    "});
+
+    // Removing line
+    cx.set_state(indoc! {"
+        aa«a
+        bbbˇ»
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.pop();
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        «aaaˇ»
+    "});
+
+    // Removing all lines
+    cx.set_state(indoc! {"
+        aa«a
+        bbbˇ»
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.drain(..);
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_unique_lines_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Consider continuous selection as single selection
+    cx.set_state(indoc! {"
+        Aaa«aa
+        cˇ»c«c
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaaa
+        ccc
+        bb
+        aaaaaˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        Aaa«aa
+        cˇ»c«c
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaaa
+        ccc
+        bbˇ»
+    "});
+
+    // Consider non continuous selection as distinct dedup operations
+    cx.set_state(indoc! {"
+        «aaaaa
+        bb
+        aaaaa
+        aaaaaˇ»
+
+        aaa«aaˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaaa
+        bbˇ»
+
+        «aaaaaˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_unique_lines_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «Aaa
+        aAa
+        Aaaˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaa
+        aAaˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «Aaa
+        aAa
+        aaAˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaˇ»
+    "});
 }
 
 #[gpui::test]
@@ -2834,6 +2954,44 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         bb
         ccc
         ddddˇ»
+    "});
+
+    // Adding lines on each selection
+    cx.set_state(indoc! {"
+        2«
+        1ˇ»
+
+        bb«bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.manipulate_lines(cx, |lines| lines.push("added line")));
+    cx.assert_editor_state(indoc! {"
+        «2
+        1
+        added lineˇ»
+
+        «bbbb
+        aaaaa
+        added lineˇ»
+    "});
+
+    // Removing lines on each selection
+    cx.set_state(indoc! {"
+        2«
+        1ˇ»
+
+        bb«bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.pop();
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        «2ˇ»
+
+        «bbbbˇ»
     "});
 }
 

@@ -231,22 +231,6 @@ impl Platform for LinuxPlatform {
         Box::new(LinuxWindow(window_ptr))
     }
 
-    fn set_display_link_output_callback(
-        &self,
-        display_id: DisplayId,
-        callback: Box<dyn FnMut() + Send>,
-    ) {
-        log::warn!("unimplemented: set_display_link_output_callback");
-    }
-
-    fn start_display_link(&self, display_id: DisplayId) {
-        unimplemented!()
-    }
-
-    fn stop_display_link(&self, display_id: DisplayId) {
-        unimplemented!()
-    }
-
     fn open_url(&self, url: &str) {
         unimplemented!()
     }
@@ -346,7 +330,7 @@ impl Platform for LinuxPlatform {
 
     //todo!(linux)
     fn should_auto_hide_scrollbars(&self) -> bool {
-        unimplemented!()
+        false
     }
 
     //todo!(linux)
@@ -370,7 +354,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn window_appearance(&self) -> crate::WindowAppearance {
-        unimplemented!()
+        crate::WindowAppearance::Light
     }
 }
 

@@ -27,6 +27,10 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
+      - name: Run clippy
+        shell: bash -euxo pipefail {0}
+        run: script/clippy
+
   tests:
     name: Run tests
     runs-on:
