@@ -27,6 +27,7 @@ pub struct GithubReleaseAsset {
 
 pub async fn latest_github_release(
     repo_name_with_owner: &str,
+    require_assets: bool,
     pre_release: bool,
     http: Arc<dyn HttpClient>,
 ) -> Result<GithubRelease, anyhow::Error> {
@@ -68,6 +69,7 @@ pub async fn latest_github_release(
 
     releases
         .into_iter()
-        .find(|release| !release.assets.is_empty() && release.pre_release == pre_release)
+        .filter(|release| !require_assets || !release.assets.is_empty())
+        .find(|release| release.pre_release == pre_release)
         .ok_or(anyhow!("Failed to find a release"))
 }
