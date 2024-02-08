@@ -19,7 +19,6 @@ test-support = [
     "collections/test-support",
     "gpui/test-support",
     "live_kit_server",
-    "nanoid",
 ]
 
 [dependencies]
@@ -32,9 +31,9 @@ gpui = { workspace = true, optional = true }
 live_kit_server = { workspace = true, optional = true }
 log.workspace = true
 media.workspace = true
-nanoid = { version ="0.4", optional = true}
 parking_lot.workspace = true
 postage.workspace = true
+nanoid.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9.3"
