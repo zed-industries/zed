@@ -12,47 +12,27 @@ lazy_static::lazy_static! {
     pub static ref CONVERSATIONS_DIR: PathBuf = CONFIG_DIR.join("conversations");
     pub static ref EMBEDDINGS_DIR: PathBuf = CONFIG_DIR.join("embeddings");
     pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
-    pub static ref LOGS_DIR: PathBuf = if cfg!(target_os="macos") {
+    pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/Zed")
     } else {
         CONFIG_DIR.join("logs")
     };
-    pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os="macos") {
+    pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Application Support/Zed")
     } else {
-        CONFIG_DIR.join("support")
+        CONFIG_DIR.clone()
     };
-    pub static ref EXTENSIONS_DIR: PathBuf = if cfg!(target_os="macos") {
-        HOME.join("Library/Application Support/Zed/extensions")
-    } else {
-        CONFIG_DIR.join("extensions")
-    };
-    pub static ref LANGUAGES_DIR: PathBuf = if cfg!(target_os="macos") {
-        HOME.join("Library/Application Support/Zed/languages")
-    } else {
-        CONFIG_DIR.join("languages")
-    };
-    pub static ref COPILOT_DIR: PathBuf = if cfg!(target_os="macos") {
-        HOME.join("Library/Application Support/Zed/copilot")
-    } else {
-        CONFIG_DIR.join("copilot")
-    };
-    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = if cfg!(target_os="macos") {
-        HOME.join("Library/Application Support/Zed/prettier")
-    } else {
-        CONFIG_DIR.join("prettier")
-    };
-    pub static ref DB_DIR: PathBuf = if cfg!(target_os="macos") {
-        HOME.join("Library/Application Support/Zed/db")
-    } else {
-        CONFIG_DIR.join("db")
-    };
-    pub static ref CRASHES_DIR: PathBuf = if cfg!(target_os="macos") {
+    pub static ref EXTENSIONS_DIR: PathBuf = SUPPORT_DIR.join("extensions");
+    pub static ref LANGUAGES_DIR: PathBuf = SUPPORT_DIR.join("languages");
+    pub static ref COPILOT_DIR: PathBuf = SUPPORT_DIR.join("copilot");
+    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = SUPPORT_DIR.join("prettier");
+    pub static ref DB_DIR: PathBuf = SUPPORT_DIR.join("db");
+    pub static ref CRASHES_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/DiagnosticReports")
     } else {
         CONFIG_DIR.join("crashes")
     };
-    pub static ref CRASHES_RETIRED_DIR: PathBuf = if cfg!(target_os="macos") {
+    pub static ref CRASHES_RETIRED_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/DiagnosticReports/Retired")
     } else {
         CRASHES_DIR.join("retired")
@@ -63,16 +43,6 @@ lazy_static::lazy_static! {
     pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
-}
-
-pub mod legacy {
-    use std::path::PathBuf;
-
-    lazy_static::lazy_static! {
-        static ref CONFIG_DIR: PathBuf = super::HOME.join(".zed");
-        pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
-        pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
-    }
 }
 
 pub trait PathExt {

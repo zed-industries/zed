@@ -144,6 +144,12 @@ impl CopilotCodeVerification {
                     .on_click(|_, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )
     }
+
+    fn render_disabled_modal() -> impl Element {
+        v_flex()
+            .child(Headline::new("Copilot is disabled").size(HeadlineSize::Large))
+            .child(Label::new("You can enable Copilot in your settings."))
+    }
 }
 
 impl Render for CopilotCodeVerification {
@@ -159,6 +165,10 @@ impl Render for CopilotCodeVerification {
             Status::Authorized => {
                 self.connect_clicked = false;
                 Self::render_enabled_modal(cx).into_any_element()
+            }
+            Status::Disabled => {
+                self.connect_clicked = false;
+                Self::render_disabled_modal().into_any_element()
             }
             _ => div().into_any_element(),
         };

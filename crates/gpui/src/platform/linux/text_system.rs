@@ -1,3 +1,5 @@
+//todo!(linux) remove
+#[allow(unused)]
 use crate::{point, size, FontStyle, FontWeight, Point, ShapedGlyph};
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId, LineLayout,

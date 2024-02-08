@@ -365,7 +365,7 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) f32 {
         return 0.0;
     }
 
-    let gradient = 2.0 * input.st_position * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
+    let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
     let f = input.st_position.x * input.st_position.x - input.st_position.y;
     let distance = f / length(gradient);
     return saturate(0.5 - distance);

@@ -30,15 +30,19 @@ impl super::LspAdapter for LuaLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("LuaLS/lua-language-server", false, delegate.http_client())
-                .await?;
-        let version = release.name.clone();
         let platform = match consts::ARCH {
             "x86_64" => "x64",
             "aarch64" => "arm64",
             other => bail!("Running on unsupported platform: {other}"),
         };
+        let release = latest_github_release(
+            "LuaLS/lua-language-server",
+            true,
+            false,
+            delegate.http_client(),
+        )
+        .await?;
+        let version = &release.name;
         let asset_name = format!("lua-language-server-{version}-darwin-{platform}.tar.gz");
         let asset = release
             .assets
@@ -46,7 +50,7 @@ impl super::LspAdapter for LuaLspAdapter {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         let version = GitHubLspBinaryVersion {
-            name: release.name.clone(),
+            name: release.name,
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
