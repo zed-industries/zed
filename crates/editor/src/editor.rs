@@ -8396,50 +8396,47 @@ impl Editor {
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
-        let permalink = maybe!({
-            let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
-            let project = project.read(cx);
+        let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
+        let project = project.read(cx);
 
-            let worktree = project
-                .visible_worktrees(cx)
-                .next()
-                .ok_or_else(|| anyhow!("no worktree"))?;
+        let worktree = project
+            .visible_worktrees(cx)
+            .next()
+            .ok_or_else(|| anyhow!("no worktree"))?;
 
-            let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-            cwd.push(".git");
+        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+        cwd.push(".git");
 
-            const REMOTE_NAME: &'static str = "origin";
-            let repo = project
-                .fs()
-                .open_repo(&cwd)
-                .ok_or_else(|| anyhow!("no Git repo"))?;
-            let origin_url = repo
-                .lock()
-                .remote_url(REMOTE_NAME)
-                .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
-            let sha = repo
-                .lock()
-                .head_sha()
-                .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
+        const REMOTE_NAME: &'static str = "origin";
+        let repo = project
+            .fs()
+            .open_repo(&cwd)
+            .ok_or_else(|| anyhow!("no Git repo"))?;
+        let origin_url = repo
+            .lock()
+            .remote_url(REMOTE_NAME)
+            .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+        let sha = repo
+            .lock()
+            .head_sha()
+            .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
-            let path = maybe!({
-                let buffer = self.buffer().read(cx).as_singleton()?;
-                let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-                file.path().to_str().map(|path| path.to_string())
-            })
-            .ok_or_else(|| anyhow!("failed to determine file path"))?;
+        let path = maybe!({
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+            file.path().to_str().map(|path| path.to_string())
+        })
+        .ok_or_else(|| anyhow!("failed to determine file path"))?;
 
-            let selections = self.selections.all::<Point>(cx);
-            let selection = selections.iter().peekable().next();
+        let selections = self.selections.all::<Point>(cx);
+        let selection = selections.iter().peekable().next();
 
-            build_permalink(BuildPermalinkParams {
-                remote_url: &origin_url,
-                sha: &sha,
-                path: &path,
-                selection: selection.map(|selection| selection.range()),
-            })
-        });
-        permalink
+        build_permalink(BuildPermalinkParams {
+            remote_url: &origin_url,
+            sha: &sha,
+            path: &path,
+            selection: selection.map(|selection| selection.range()),
+        })
     }
 
     pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
