@@ -1,15 +1,15 @@
 pub mod repository;
 
 use anyhow::{anyhow, Result};
-#[cfg(target_os = "macos")]
 pub use fsevent::Event;
 #[cfg(target_os = "macos")]
 use fsevent::EventStream;
 
 #[cfg(not(target_os = "macos"))]
-pub use notify::Event;
+use fsevent::StreamFlags;
+
 #[cfg(not(target_os = "macos"))]
-use notify::{Config, Watcher};
+use notify::{Config, EventKind, Watcher};
 
 use futures::{future::BoxFuture, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
@@ -292,15 +292,30 @@ impl Fs for RealFs {
             return Box::pin(rx);
         }
 
-        let mut watcher = notify::recommended_watcher(move |res| match res {
-            Ok(event) => {
-                let _ = tx.try_send(vec![event]);
-            }
-            Err(err) => {
-                log::error!("watch error: {}", err);
-            }
-        })
-        .unwrap();
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
+                Ok(event) => {
+                    let flags = match event.kind {
+                        // ITEM_REMOVED is currently the only flag we care about
+                        EventKind::Remove(_) => StreamFlags::ITEM_REMOVED,
+                        _ => StreamFlags::NONE,
+                    };
+                    let events = event
+                        .paths
+                        .into_iter()
+                        .map(|path| Event {
+                            event_id: 0,
+                            flags,
+                            path,
+                        })
+                        .collect::<Vec<_>>();
+                    let _ = tx.try_send(events);
+                }
+                Err(err) => {
+                    log::error!("watch error: {}", err);
+                }
+            })
+            .unwrap();
 
         watcher
             .configure(Config::default().with_poll_interval(latency))
@@ -330,18 +345,8 @@ impl Fs for RealFs {
     }
 }
 
-#[cfg(target_os = "macos")]
 pub fn fs_events_paths(events: Vec<Event>) -> Vec<PathBuf> {
     events.into_iter().map(|event| event.path).collect()
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn fs_events_paths(events: Vec<Event>) -> Vec<PathBuf> {
-    events
-        .into_iter()
-        .map(|event| event.paths.into_iter())
-        .flatten()
-        .collect()
 }
 
 #[cfg(any(test, feature = "test-support"))]
