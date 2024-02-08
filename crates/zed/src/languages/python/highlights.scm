@@ -52,6 +52,15 @@
   "{" @punctuation.special
   "}" @punctuation.special) @embedded
 
+; Doc strings.
+; This has to come after string literals.
+(function_definition
+  "async"?
+  "def"
+  name: (_)
+  (parameters)?
+  body: (block (expression_statement (string) @comment.doc)))
+
 [
   "-"
   "-="
