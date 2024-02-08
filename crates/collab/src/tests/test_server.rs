@@ -36,7 +36,7 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
+use util::{http::FakeHttpClient, SemanticVersion};
 use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
@@ -230,6 +230,7 @@ impl TestServer {
                                 server_conn,
                                 client_name,
                                 user,
+                                SemanticVersion::default(),
                                 None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),

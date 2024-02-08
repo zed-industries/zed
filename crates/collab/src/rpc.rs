@@ -105,6 +105,7 @@ struct Session {
     zed_environment: Arc<str>,
     user_id: UserId,
     connection_id: ConnectionId,
+    zed_version: SemanticVersion,
     db: Arc<tokio::sync::Mutex<DbHandle>>,
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
@@ -129,6 +130,19 @@ impl Session {
         ConnectionPoolGuard {
             guard,
             _not_send: PhantomData,
+        }
+    }
+
+    fn endpoint_removed_in(&self, endpoint: &str, version: SemanticVersion) -> anyhow::Result<()> {
+        if self.zed_version > version {
+            Err(anyhow!(
+                "{} was removed in {} (you're on {})",
+                endpoint,
+                version,
+                self.zed_version
+            ))
+        } else {
+            Ok(())
         }
     }
 }
@@ -562,6 +576,7 @@ impl Server {
         connection: Connection,
         address: String,
         user: User,
+        zed_version: SemanticVersion,
         impersonator: Option<User>,
         mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
@@ -619,6 +634,7 @@ impl Server {
             let session = Session {
                 user_id,
                 connection_id,
+                zed_version,
                 db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
                 zed_environment: this.app_state.config.zed_environment.clone(),
                 peer: this.peer.clone(),
@@ -869,7 +885,7 @@ pub fn routes(server: Arc<Server>) -> Router<Body> {
 
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
-    _app_version_header: Option<TypedHeader<AppVersionHeader>>,
+    app_version_header: Option<TypedHeader<AppVersionHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(user): Extension<User>,
@@ -883,6 +899,12 @@ pub async fn handle_websocket_request(
         )
             .into_response();
     }
+
+    // zed 0.122.x was the first version that sent an app header, so once that hits stable
+    // we can return UPGRADE_REQUIRED instead of unwrap_or_default();
+    let app_version = app_version_header
+        .map(|header| header.0 .0)
+        .unwrap_or_default();
 
     let socket_address = socket_address.to_string();
     ws.on_upgrade(move |socket| {
@@ -898,6 +920,7 @@ pub async fn handle_websocket_request(
                     connection,
                     socket_address,
                     user,
+                    app_version,
                     impersonator.0,
                     None,
                     Executor::Production,
@@ -2709,6 +2732,8 @@ async fn join_channel(
     response: Response<proto::JoinChannel>,
     session: Session,
 ) -> Result<()> {
+    session.endpoint_removed_in("join_channel", "0.123.0".parse().unwrap())?;
+
     let channel_id = ChannelId::from_proto(request.channel_id);
     join_channel_internal(channel_id, true, Box::new(response), session).await
 }
