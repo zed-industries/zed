@@ -581,12 +581,7 @@ impl Workspace {
                             .collect::<Vec<_>>();
                         let index = cx
                             .update(|cx| {
-                                cx.prompt(
-                                    request.level,
-                                    "",
-                                    Some(&request.message),
-                                    &messages,
-                                )
+                                cx.prompt(request.level, "", Some(&request.message), &messages)
                             })?
                             .await?;
                         request.respond(index).await;

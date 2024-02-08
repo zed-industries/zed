@@ -3139,9 +3139,9 @@ impl Project {
                             let (tx, mut rx) = smol::channel::bounded(1);
                             let request = LanguageServerPromptRequest {
                                 level: match params.typ {
-                                    lsp::MessageType::ERROR   => PromptLevel::Critical,
+                                    lsp::MessageType::ERROR => PromptLevel::Critical,
                                     lsp::MessageType::WARNING => PromptLevel::Warning,
-                                    _                         => PromptLevel::Info,
+                                    _ => PromptLevel::Info,
                                 },
                                 message: params.message,
                                 actions,
