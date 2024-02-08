@@ -71,7 +71,8 @@ struct AvailableLanguage {
     id: AvailableLanguageId,
     name: Arc<str>,
     grammar: Option<Arc<str>>,
-    source: AvailableLanguageSource,
+    matcher: LanguageMatcher,
+    load: Arc<dyn Fn() -> Result<(LanguageConfig, LanguageQueries)> + 'static + Send + Sync>,
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
     loaded: bool,
 }
@@ -117,20 +118,6 @@ struct LspBinaryStatusSender {
     txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(Arc<Language>, LanguageServerBinaryStatus)>>>>,
 }
 
-#[derive(Clone)]
-enum AvailableLanguageSource {
-    BuiltIn {
-        asset_dir: &'static str,
-        get_queries: fn(&str) -> LanguageQueries,
-        config: LanguageConfig,
-    },
-    Extension {
-        path: Arc<Path>,
-        get_queries: fn(&Path) -> LanguageQueries,
-        matcher: LanguageMatcher,
-    },
-}
-
 impl LanguageRegistry {
     pub fn new(login_shell_env_loaded: Task<()>) -> Self {
         Self {
@@ -163,74 +150,63 @@ impl LanguageRegistry {
         self.executor = Some(executor);
     }
 
-    /// Clear out all of the loaded languages and reload them from scratch.
+    /// Clears out all of the loaded languages and reload them from scratch.
     pub fn reload(&self) {
         self.state.write().reload();
     }
 
-    /// Clear out the given languages and reload them from scratch.
+    /// Clears out the given languages and reload them from scratch.
     pub fn reload_languages(&self, languages: &[Arc<str>], grammars: &[Arc<str>]) {
         self.state.write().reload_languages(languages, grammars);
     }
 
-    pub fn register(
+    #[cfg(any(feature = "test-support", test))]
+    pub fn register_test_language(&self, config: LanguageConfig) {
+        self.register_language(
+            config.name.clone(),
+            config.grammar.clone(),
+            config.matcher.clone(),
+            vec![],
+            move || Ok((config.clone(), Default::default())),
+        )
+    }
+
+    /// Adds a language to the registry, which can be loaded if needed.
+    pub fn register_language(
         &self,
-        asset_dir: &'static str,
-        config: LanguageConfig,
+        name: Arc<str>,
+        grammar_name: Option<Arc<str>>,
+        matcher: LanguageMatcher,
         lsp_adapters: Vec<Arc<dyn LspAdapter>>,
-        get_queries: fn(&str) -> LanguageQueries,
+        load: impl Fn() -> Result<(LanguageConfig, LanguageQueries)> + 'static + Send + Sync,
     ) {
+        let load = Arc::new(load);
         let state = &mut *self.state.write();
+
+        for existing_language in &mut state.available_languages {
+            if existing_language.name == name {
+                existing_language.grammar = grammar_name;
+                existing_language.matcher = matcher;
+                existing_language.lsp_adapters = lsp_adapters;
+                existing_language.load = load;
+                return;
+            }
+        }
+
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
-            name: config.name.clone(),
-            grammar: config.grammar.clone(),
-            source: AvailableLanguageSource::BuiltIn {
-                config,
-                get_queries,
-                asset_dir,
-            },
+            name,
+            grammar: grammar_name,
+            matcher,
+            load,
             lsp_adapters,
             loaded: false,
         });
     }
 
-    pub fn register_extension(
-        &self,
-        path: Arc<Path>,
-        name: Arc<str>,
-        grammar_name: Option<Arc<str>>,
-        matcher: LanguageMatcher,
-        get_queries: fn(&Path) -> LanguageQueries,
-    ) {
-        let state = &mut *self.state.write();
-        let source = AvailableLanguageSource::Extension {
-            path,
-            get_queries,
-            matcher,
-        };
-        for existing_language in &mut state.available_languages {
-            if existing_language.name == name
-                && matches!(
-                    existing_language.source,
-                    AvailableLanguageSource::Extension { .. }
-                )
-            {
-                existing_language.source = source;
-                return;
-            }
-        }
-        state.available_languages.push(AvailableLanguage {
-            id: post_inc(&mut state.next_available_language_id),
-            grammar: grammar_name,
-            name,
-            source,
-            lsp_adapters: Vec::new(),
-            loaded: false,
-        });
-    }
-
-    pub fn add_grammars(
+    /// Adds grammars to the registry. Language configurations reference a grammar by name. The
+    /// grammar controls how the source code is parsed.
+    pub fn register_native_grammars(
         &self,
         grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, tree_sitter::Language)>,
     ) {
@@ -241,11 +217,16 @@ impl LanguageRegistry {
         );
     }
 
-    pub fn register_grammar(&self, name: Arc<str>, path: PathBuf) {
-        self.state
-            .write()
-            .grammars
-            .insert(name, AvailableGrammar::Unloaded(path));
+    /// Adds paths to WASM grammar files, which can be loaded if needed.
+    pub fn register_wasm_grammars(
+        &self,
+        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, PathBuf)>,
+    ) {
+        self.state.write().grammars.extend(
+            grammars
+                .into_iter()
+                .map(|(name, path)| (name.into(), AvailableGrammar::Unloaded(path))),
+        );
     }
 
     pub fn language_names(&self) -> Vec<String> {
@@ -268,13 +249,13 @@ impl LanguageRegistry {
         self.state.read().subscription.1.clone()
     }
 
-    /// The number of times that the registry has been changed,
+    /// Returns the number of times that the registry has been changed,
     /// by adding languages or reloading.
     pub fn version(&self) -> usize {
         self.state.read().version
     }
 
-    /// The number of times that the registry has been reloaded.
+    /// Returns the number of times that the registry has been reloaded.
     pub fn reload_count(&self) -> usize {
         self.state.read().reload_count
     }
@@ -357,17 +338,7 @@ impl LanguageRegistry {
             if let Some(language) = state
                 .available_languages
                 .iter()
-                .rfind(|l| {
-                    !l.loaded
-                        && match &l.source {
-                            AvailableLanguageSource::BuiltIn { config, .. } => {
-                                callback(l.name.as_ref(), &config.matcher)
-                            }
-                            AvailableLanguageSource::Extension { matcher, .. } => {
-                                callback(l.name.as_ref(), &matcher)
-                            }
-                        }
-                })
+                .rfind(|l| !l.loaded && callback(&l.name, &l.matcher))
                 .cloned()
             {
                 match state.loading_languages.entry(language.id) {
@@ -379,23 +350,7 @@ impl LanguageRegistry {
                                 let id = language.id;
                                 let name = language.name.clone();
                                 let language = async {
-                                    let (config, queries) = match language.source {
-                                        AvailableLanguageSource::BuiltIn {
-                                            asset_dir,
-                                            get_queries,
-                                            config,
-                                        } => (config, (get_queries)(asset_dir)),
-                                        AvailableLanguageSource::Extension {
-                                            path,
-                                            get_queries,
-                                            ..
-                                        } => {
-                                            let config = std::fs::read(path.join("config.toml"));
-                                            let config: LanguageConfig =
-                                                ::toml::from_slice(&config?)?;
-                                            (config, get_queries(path.as_ref()))
-                                        }
-                                    };
+                                    let (config, queries) = (language.load)()?;
 
                                     let grammar = if let Some(grammar) = config.grammar.clone() {
                                         Some(this.get_or_load_grammar(grammar).await?)

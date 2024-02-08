@@ -22,7 +22,6 @@ pub mod markdown;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
-use futures::channel::mpsc;
 use gpui::{AppContext, AsyncAppContext, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
@@ -599,7 +598,7 @@ pub struct Language {
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
-        mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
         Arc<FakeLspAdapter>,
     )>,
 }
@@ -1011,8 +1010,8 @@ impl Language {
     pub async fn set_fake_lsp_adapter(
         &mut self,
         fake_lsp_adapter: Arc<FakeLspAdapter>,
-    ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
-        let (servers_tx, servers_rx) = mpsc::unbounded();
+    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
+        let (servers_tx, servers_rx) = futures::channel::mpsc::unbounded();
         self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
         let adapter = CachedLspAdapter::new(Arc::new(fake_lsp_adapter)).await;
         self.adapters = vec![adapter];
@@ -1435,19 +1434,14 @@ mod tests {
 
         languages.set_executor(cx.executor());
         let languages = Arc::new(languages);
-        languages.register(
-            "/javascript",
-            LanguageConfig {
-                name: "JavaScript".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["js".into()],
-                    first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
-                },
-                ..Default::default()
+        languages.register_test_language(LanguageConfig {
+            name: "JavaScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["js".into()],
+                first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
             },
-            vec![],
-            |_| Default::default(),
-        );
+            ..Default::default()
+        });
 
         languages
             .language_for_file("the/script", None)
@@ -1473,38 +1467,28 @@ mod tests {
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.executor());
         let languages = Arc::new(languages);
-        languages.add_grammars([
+        languages.register_native_grammars([
             ("json", tree_sitter_json::language()),
             ("rust", tree_sitter_rust::language()),
         ]);
-        languages.register(
-            "/JSON",
-            LanguageConfig {
-                name: "JSON".into(),
-                grammar: Some("json".into()),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["json".into()],
-                    ..Default::default()
-                },
+        languages.register_test_language(LanguageConfig {
+            name: "JSON".into(),
+            grammar: Some("json".into()),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["json".into()],
                 ..Default::default()
             },
-            vec![],
-            |_| Default::default(),
-        );
-        languages.register(
-            "/rust",
-            LanguageConfig {
-                name: "Rust".into(),
-                grammar: Some("rust".into()),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".into()],
-                    ..Default::default()
-                },
+            ..Default::default()
+        });
+        languages.register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            grammar: Some("rust".into()),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             },
-            vec![],
-            |_| Default::default(),
-        );
+            ..Default::default()
+        });
         assert_eq!(
             languages.language_names(),
             &[
