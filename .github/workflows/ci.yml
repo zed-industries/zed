@@ -23,7 +23,7 @@ env:
 
 jobs:
     style:
-        name: Check formatting, Clippy lints, and spelling
+        name: Check formatting and spelling
         runs-on:
             - self-hosted
             - test
@@ -59,8 +59,8 @@ jobs:
                   input: "crates/rpc/proto/"
                   against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=crates/rpc/proto/"
 
-    tests:
-        name: Run tests
+    macos_tests:
+        name: (macOS) Run Clippy and tests
         runs-on:
             - self-hosted
             - test
@@ -71,6 +71,10 @@ jobs:
                   clean: false
                   submodules: "recursive"
 
+            - name: cargo clippy
+              shell: bash -euxo pipefail {0}
+              run: script/clippy
+
             - name: Run tests
               uses: ./.github/actions/run_tests
 
@@ -80,13 +84,46 @@ jobs:
             - name: Build other binaries
               run: cargo build --workspace --bins --all-features
 
+    # todo!(linux): Actually run the tests
+    linux_tests:
+        name: (Linux) Run Clippy and tests
+        runs-on: ubuntu-latest
+        steps:
+          - name: Checkout repo
+            uses: actions/checkout@v4
+            with:
+              clean: false
+              submodules: "recursive"
+
+          - name: Restore from cache
+            uses: actions/cache@v3
+            with:
+                path: |
+                  ~/.cargo/bin/
+                  ~/.cargo/registry/index/
+                  ~/.cargo/registry/cache/
+                  ~/.cargo/git/db/
+                  target/
+                key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+                restore-keys: ${{ runner.os }}-cargo-
+
+          - name: configure linux
+            shell: bash -euxo pipefail {0}
+            run: script/linux
+
+          - name: cargo clippy
+            shell: bash -euxo pipefail {0}
+            run: script/clippy
+
+          - name: Build Zed
+            run: cargo build -p zed
     bundle:
         name: Bundle app
         runs-on:
             - self-hosted
             - bundle
         if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-build-dmg') }}
-        needs: tests
+        needs: [macos_tests, linux_tests]
         env:
             MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
             MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
