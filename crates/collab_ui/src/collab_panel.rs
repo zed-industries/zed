@@ -483,7 +483,7 @@ impl CollabPanel {
                                 && participant.video_tracks.is_empty(),
                         });
                     }
-                    if !participant.video_tracks.is_empty() {
+                    if room.in_call() && !participant.video_tracks.is_empty() {
                         self.entries.push(ListEntry::ParticipantScreen {
                             peer_id: Some(participant.peer_id),
                             is_last: true,
@@ -955,10 +955,39 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let is_in_call = ActiveCall::global(cx)
+        let (is_in_call, call_participants) = ActiveCall::global(cx)
             .read(cx)
             .room()
-            .is_some_and(|room| room.read(cx).is_connected_to_livekit());
+            .map(|room| (room.read(cx).in_call(), room.read(cx).call_participants(cx)))
+            .unwrap_or_default();
+
+        const FACEPILE_LIMIT: usize = 3;
+
+        let face_pile = if !call_participants.is_empty() {
+            let extra_count = call_participants.len().saturating_sub(FACEPILE_LIMIT);
+            let result = FacePile::new(
+                call_participants
+                    .iter()
+                    .map(|user| Avatar::new(user.avatar_uri.clone()).into_any_element())
+                    .take(FACEPILE_LIMIT)
+                    .chain(if extra_count > 0 {
+                        Some(
+                            div()
+                                .ml_2()
+                                .child(Label::new(format!("+{extra_count}")))
+                                .into_any_element(),
+                        )
+                    } else {
+                        None
+                    })
+                    .collect::<SmallVec<_>>(),
+            );
+
+            Some(result)
+        } else {
+            None
+        };
+
         ListItem::new("channel-call")
             .selected(is_selected)
             .start_slot(
@@ -985,9 +1014,12 @@ impl CollabPanel {
             .child(
                 div()
                     .text_ui()
-                    .when(is_in_call, |el| el.font_weight(FontWeight::SEMIBOLD))
+                    .when(!call_participants.is_empty(), |el| {
+                        el.font_weight(FontWeight::SEMIBOLD)
+                    })
                     .child("call"),
             )
+            .children(face_pile)
     }
 
     fn render_channel_notes(
@@ -1305,12 +1337,14 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let this = cx.view().clone();
-        let in_room = ActiveCall::global(cx).read(cx).room().is_some();
+        let room = ActiveCall::global(cx).read(cx).room();
+        let in_room = room.is_some();
+        let in_call = room.is_some_and(|room| room.read(cx).in_call());
 
         let context_menu = ContextMenu::build(cx, |mut context_menu, _| {
             let user_id = contact.user.id;
 
-            if contact.online && !contact.busy {
+            if contact.online && !contact.busy && (!in_room || in_call) {
                 let label = if in_room {
                     format!("Invite {} to join", contact.user.github_login)
                 } else {
@@ -1963,7 +1997,7 @@ impl CollabPanel {
             return;
         };
 
-        room.update(cx, |room, cx| room.enable_audio(cx));
+        room.update(cx, |room, cx| room.join_call(cx));
     }
 
     fn leave_channel_call(&mut self, cx: &mut ViewContext<Self>) {
@@ -1971,7 +2005,7 @@ impl CollabPanel {
             return;
         };
 
-        room.update(cx, |room, cx| room.disable_audio(cx));
+        room.update(cx, |room, cx| room.leave_call(cx));
     }
 
     fn join_channel_chat(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {

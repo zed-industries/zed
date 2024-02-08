@@ -1962,8 +1962,8 @@ async fn test_mute_deafen(
         }]
     );
 
-    // User A deafens
-    room_a.update(cx_a, |room, cx| room.toggle_deafen(cx));
+    // User A mutes
+    room_a.update(cx_a, |room, cx| room.toggle_mute(cx));
     executor.run_until_parked();
 
     // User A does not hear user B.

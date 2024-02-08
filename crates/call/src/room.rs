@@ -149,7 +149,9 @@ impl Room {
             room_update_completed_tx,
             room_update_completed_rx,
         };
-        this.enable_audio(cx);
+        if this.live_kit_connection_info.is_some() {
+            this.join_call(cx)
+        }
         this
     }
 
@@ -209,11 +211,7 @@ impl Room {
         cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         Self::from_join_response(
-            client
-                .request(proto::JoinChannel {
-                    channel_id,
-                })
-                .await?,
+            client.request(proto::JoinChannel2 { channel_id }).await?,
             client,
             user_store,
             cx,
@@ -529,6 +527,24 @@ impl Room {
         &self.remote_participants
     }
 
+    pub fn call_participants(&self, cx: &AppContext) -> Vec<Arc<User>> {
+        self.remote_participants()
+            .values()
+            .filter_map(|participant| {
+                if participant.in_call {
+                    Some(participant.user.clone())
+                } else {
+                    None
+                }
+            })
+            .chain(if self.in_call() {
+                self.user_store.read(cx).current_user()
+            } else {
+                None
+            })
+            .collect()
+    }
+
     pub fn remote_participant_for_peer_id(&self, peer_id: PeerId) -> Option<&RemoteParticipant> {
         self.remote_participants
             .values()
@@ -764,6 +780,7 @@ impl Room {
                         }
 
                         let role = participant.role();
+                        let in_call = participant.in_call;
                         let location = ParticipantLocation::from_proto(participant.location)
                             .unwrap_or(ParticipantLocation::External);
                         if let Some(remote_participant) =
@@ -774,9 +791,15 @@ impl Room {
                             remote_participant.participant_index = participant_index;
                             if location != remote_participant.location
                                 || role != remote_participant.role
+                                || in_call != remote_participant.in_call
                             {
+                                if in_call && !remote_participant.in_call {
+                                    Audio::play_sound(Sound::Joined, cx);
+                                }
                                 remote_participant.location = location;
                                 remote_participant.role = role;
+                                remote_participant.in_call = participant.in_call;
+
                                 cx.emit(Event::ParticipantLocationChanged {
                                     participant_id: peer_id,
                                 });
@@ -793,12 +816,15 @@ impl Room {
                                     role,
                                     muted: true,
                                     speaking: false,
+                                    in_call: participant.in_call,
                                     video_tracks: Default::default(),
                                     audio_tracks: Default::default(),
                                 },
                             );
 
-                            Audio::play_sound(Sound::Joined, cx);
+                            if participant.in_call {
+                                Audio::play_sound(Sound::Joined, cx);
+                            }
 
                             if let Some(live_kit) = this.live_kit.as_ref() {
                                 let video_tracks =
@@ -1256,7 +1282,7 @@ impl Room {
             .map_or(false, |live_kit| live_kit.speaking)
     }
 
-    pub fn is_connected_to_livekit(&self) -> bool {
+    pub fn in_call(&self) -> bool {
         self.live_kit.is_some()
     }
 
@@ -1289,7 +1315,6 @@ impl Room {
                     .await
             };
             let publication = publish_track.await;
-            dbg!(publication.is_ok());
             this.upgrade()
                 .ok_or_else(|| anyhow!("room was dropped"))?
                 .update(&mut cx, |this, cx| {
@@ -1310,11 +1335,9 @@ impl Room {
                     match publication {
                         Ok(publication) => {
                             if canceled {
-                                dbg!("CANCELED");
                                 live_kit.room.unpublish_track(publication);
                                 live_kit.microphone_track = LocalTrack::None;
                             } else {
-                                dbg!("DONE", publication.is_muted());
                                 live_kit.microphone_track = LocalTrack::Published {
                                     track_publication: publication,
                                 };
@@ -1323,7 +1346,6 @@ impl Room {
                             Ok(())
                         }
                         Err(error) => {
-                            dbg!(&error, &canceled);
                             if canceled {
                                 Ok(())
                             } else {
@@ -1425,16 +1447,10 @@ impl Room {
         }
     }
 
-    pub fn enable_audio(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn join_call(&mut self, cx: &mut ModelContext<Self>) {
         if self.live_kit.is_some() {
             return;
         }
-        let Some(connection_info) = self.live_kit_connection_info.as_ref() else {
-            log::error!("tried to connect to livekit without connection info");
-            return;
-        };
-
-        Audio::play_sound(Sound::Joined, cx);
 
         let room = live_kit_client::Room::new();
         let mut status = room.status();
@@ -1475,40 +1491,66 @@ impl Room {
             }
         });
 
-        let connect = room.connect(&connection_info.server_url, &connection_info.token);
-        let share_microphone = !self.read_only() && !Self::mute_on_join(cx);
-        cx.spawn(|this, mut cx| async move {
-            connect.await?;
-            let track_updates = this.update(&mut cx, |this, _| {
-                let Some(live_kit) = this.live_kit.as_mut() else {
-                    return vec![];
+        cx.spawn({
+            let room = room.clone();
+            let client = self.client.clone();
+            let share_microphone = !self.read_only() && !Self::mute_on_join(cx);
+            let connection_info = self.live_kit_connection_info.clone();
+            let channel_id = self.channel_id;
+
+            move |this, mut cx| async move {
+                let connection_info = if let Some(connection_info) = connection_info {
+                    connection_info.clone()
+                } else if let Some(channel_id) = channel_id {
+                    if let Some(connection_info) = client
+                        .request(proto::JoinChannelCall { channel_id })
+                        .await?
+                        .live_kit_connection_info
+                    {
+                        connection_info
+                    } else {
+                        return Err(anyhow!("failed to get connection info from server"));
+                    }
+                } else {
+                    return Err(anyhow!(
+                        "tried to connect to livekit without connection info"
+                    ));
+                };
+                room.connect(&connection_info.server_url, &connection_info.token)
+                    .await?;
+
+                let track_updates = this.update(&mut cx, |this, cx| {
+                    Audio::play_sound(Sound::Joined, cx);
+                    let Some(live_kit) = this.live_kit.as_mut() else {
+                        return vec![];
+                    };
+
+                    let mut track_updates = Vec::new();
+                    for participant in this.remote_participants.values() {
+                        for publication in live_kit
+                            .room
+                            .remote_audio_track_publications(&participant.user.id.to_string())
+                        {
+                            track_updates.push(publication.set_enabled(true));
+                        }
+
+                        for track in participant.audio_tracks.values() {
+                            track.start();
+                        }
+                    }
+                    track_updates
+                })?;
+
+                if share_microphone {
+                    this.update(&mut cx, |this, cx| this.share_microphone(cx))?
+                        .await?
                 };
 
-                let mut track_updates = Vec::new();
-                for participant in this.remote_participants.values() {
-                    for publication in live_kit
-                        .room
-                        .remote_audio_track_publications(&participant.user.id.to_string())
-                    {
-                        track_updates.push(publication.set_enabled(true));
-                    }
-
-                    for track in participant.audio_tracks.values() {
-                        track.start();
-                    }
+                for result in futures::future::join_all(track_updates).await {
+                    result?;
                 }
-                track_updates
-            })?;
-
-            if share_microphone {
-                this.update(&mut cx, |this, cx| this.share_microphone(cx))?
-                    .await?
-            };
-
-            for result in futures::future::join_all(track_updates).await {
-                result?;
+                anyhow::Ok(())
             }
-            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
@@ -1523,10 +1565,19 @@ impl Room {
         });
     }
 
-    pub fn disable_audio(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn leave_call(&mut self, cx: &mut ModelContext<Self>) {
         Audio::play_sound(Sound::Leave, cx);
-        self.live_kit.take();
-        cx.notify();
+        if let Some(channel_id) = self.channel_id() {
+            let client = self.client.clone();
+            cx.background_executor()
+                .spawn(client.request(proto::LeaveChannelCall { channel_id }))
+                .detach_and_log_err(cx);
+            self.live_kit.take();
+            self.live_kit_connection_info.take();
+            cx.notify();
+        } else {
+            self.leave(cx).detach_and_log_err(cx)
+        }
     }
 
     pub fn unshare_screen(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {

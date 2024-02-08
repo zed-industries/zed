@@ -185,7 +185,7 @@ impl Render for CollabTitlebarItem {
                         let is_local = project.is_local();
                         let is_shared = is_local && project.is_shared();
                         let is_muted = room.is_muted();
-                        let is_connected_to_livekit = room.is_connected_to_livekit();
+                        let is_connected_to_livekit = room.in_call();
                         let is_screen_sharing = room.is_screen_sharing();
                         let read_only = room.read_only();
 
@@ -232,7 +232,7 @@ impl Render for CollabTitlebarItem {
                                                 ActiveCall::global(cx).update(cx, |call, cx| {
                                                     if let Some(room) = call.room() {
                                                         room.update(cx, |room, cx| {
-                                                            room.disable_audio(cx)
+                                                            room.leave_call(cx)
                                                         })
                                                     }
                                                 })

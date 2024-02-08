@@ -274,8 +274,11 @@ impl Server {
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
+            .add_request_handler(join_channel2)
             .add_request_handler(join_channel_chat)
             .add_message_handler(leave_channel_chat)
+            .add_request_handler(join_channel_call)
+            .add_request_handler(leave_channel_call)
             .add_request_handler(send_channel_message)
             .add_request_handler(remove_channel_message)
             .add_request_handler(get_channel_messages)
@@ -1037,7 +1040,7 @@ async fn join_room(
     let channel_id = session.db().await.channel_id_for_room(room_id).await?;
 
     if let Some(channel_id) = channel_id {
-        return join_channel_internal(channel_id, Box::new(response), session).await;
+        return join_channel_internal(channel_id, true, Box::new(response), session).await;
     }
 
     let joined_room = {
@@ -2700,14 +2703,65 @@ async fn respond_to_channel_invite(
     Ok(())
 }
 
-/// Join the channels' room
+/// Join the channels' call
 async fn join_channel(
     request: proto::JoinChannel,
     response: Response<proto::JoinChannel>,
     session: Session,
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
-    join_channel_internal(channel_id, Box::new(response), session).await
+    join_channel_internal(channel_id, true, Box::new(response), session).await
+}
+
+async fn join_channel2(
+    request: proto::JoinChannel2,
+    response: Response<proto::JoinChannel2>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    join_channel_internal(channel_id, false, Box::new(response), session).await
+}
+
+async fn join_channel_call(
+    request: proto::JoinChannelCall,
+    response: Response<proto::JoinChannelCall>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let db = session.db().await;
+    let (joined_room, role) = db
+        .set_in_channel_call(channel_id, session.user_id, true)
+        .await?;
+
+    let Some(connection_info) = session.live_kit_client.as_ref().and_then(|live_kit| {
+        live_kit_info_for_user(live_kit, &session.user_id, role, &joined_room.live_kit_room)
+    }) else {
+        Err(anyhow!("no live kit token info"))?
+    };
+
+    room_updated(&joined_room, &session.peer);
+    response.send(proto::JoinChannelCallResponse {
+        live_kit_connection_info: Some(connection_info),
+    })?;
+
+    Ok(())
+}
+
+async fn leave_channel_call(
+    request: proto::LeaveChannelCall,
+    response: Response<proto::LeaveChannelCall>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let db = session.db().await;
+    let (joined_room, _) = db
+        .set_in_channel_call(channel_id, session.user_id, false)
+        .await?;
+
+    room_updated(&joined_room, &session.peer);
+    response.send(proto::Ack {})?;
+
+    Ok(())
 }
 
 trait JoinChannelInternalResponse {
@@ -2723,9 +2777,15 @@ impl JoinChannelInternalResponse for Response<proto::JoinRoom> {
         Response::<proto::JoinRoom>::send(self, result)
     }
 }
+impl JoinChannelInternalResponse for Response<proto::JoinChannel2> {
+    fn send(self, result: proto::JoinRoomResponse) -> Result<()> {
+        Response::<proto::JoinChannel2>::send(self, result)
+    }
+}
 
 async fn join_channel_internal(
     channel_id: ChannelId,
+    autojoin: bool,
     response: Box<impl JoinChannelInternalResponse>,
     session: Session,
 ) -> Result<()> {
@@ -2737,39 +2797,22 @@ async fn join_channel_internal(
             .join_channel(
                 channel_id,
                 session.user_id,
+                autojoin,
                 session.connection_id,
                 session.zed_environment.as_ref(),
             )
             .await?;
 
         let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {
-            let (can_publish, token) = if role == ChannelRole::Guest {
-                (
-                    false,
-                    live_kit
-                        .guest_token(
-                            &joined_room.room.live_kit_room,
-                            &session.user_id.to_string(),
-                        )
-                        .trace_err()?,
-                )
-            } else {
-                (
-                    true,
-                    live_kit
-                        .room_token(
-                            &joined_room.room.live_kit_room,
-                            &session.user_id.to_string(),
-                        )
-                        .trace_err()?,
-                )
-            };
-
-            Some(LiveKitConnectionInfo {
-                server_url: live_kit.url().into(),
-                token,
-                can_publish,
-            })
+            if !autojoin {
+                return None;
+            }
+            live_kit_info_for_user(
+                live_kit,
+                &session.user_id,
+                role,
+                &joined_room.room.live_kit_room,
+            )
         });
 
         response.send(proto::JoinRoomResponse {
@@ -2803,6 +2846,35 @@ async fn join_channel_internal(
 
     update_user_contacts(session.user_id, &session).await?;
     Ok(())
+}
+
+fn live_kit_info_for_user(
+    live_kit: &Arc<dyn live_kit_server::api::Client>,
+    user_id: &UserId,
+    role: ChannelRole,
+    live_kit_room: &String,
+) -> Option<LiveKitConnectionInfo> {
+    let (can_publish, token) = if role == ChannelRole::Guest {
+        (
+            false,
+            live_kit
+                .guest_token(live_kit_room, &user_id.to_string())
+                .trace_err()?,
+        )
+    } else {
+        (
+            true,
+            live_kit
+                .room_token(live_kit_room, &user_id.to_string())
+                .trace_err()?,
+        )
+    };
+
+    Some(LiveKitConnectionInfo {
+        server_url: live_kit.url().into(),
+        token,
+        can_publish,
+    })
 }
 
 /// Start editing the channel notes
