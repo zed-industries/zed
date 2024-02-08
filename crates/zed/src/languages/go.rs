@@ -50,7 +50,7 @@ impl super::LspAdapter for GoLspAdapter {
         let version: Option<String> = release.tag_name.strip_prefix("gopls/v").map(str::to_string);
         if version.is_none() {
             log::warn!(
-                "couldn't infer gopls version from github release name '{}'",
+                "couldn't infer gopls version from GitHub release tag name '{}'",
                 release.tag_name
             );
         }
