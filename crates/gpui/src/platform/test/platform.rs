@@ -176,19 +176,7 @@ impl Platform for TestPlatform {
         Box::new(window)
     }
 
-    fn set_display_link_output_callback(
-        &self,
-        _display_id: DisplayId,
-        mut callback: Box<dyn FnMut() + Send>,
-    ) {
-        callback()
-    }
-
-    fn start_display_link(&self, _display_id: DisplayId) {}
-
-    fn stop_display_link(&self, _display_id: DisplayId) {}
-
-    fn open_url(&self, _url: &str) {
+    fn open_url(&self, _: &str) {
         unimplemented!()
     }
 
