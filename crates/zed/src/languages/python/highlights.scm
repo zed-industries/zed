@@ -52,7 +52,7 @@
   "{" @punctuation.special
   "}" @punctuation.special) @embedded
 
-; Doc strings.
+; Docstrings.
 ; This has to come after string literals.
 (function_definition
   "async"?
