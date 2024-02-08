@@ -62,7 +62,7 @@ pub fn init(
     ElixirSettings::register(cx);
     DenoSettings::register(cx);
 
-    languages.add_grammars([
+    languages.register_native_grammars([
         ("bash", tree_sitter_bash::language()),
         ("beancount", tree_sitter_beancount::language()),
         ("c", tree_sitter_c::language()),
@@ -115,8 +115,15 @@ pub fn init(
         ("zig", tree_sitter_zig::language()),
     ]);
 
-    let language = |name: &'static str, adapters| {
-        languages.register(name, load_config(name), adapters, load_queries)
+    let language = |asset_dir_name: &'static str, adapters| {
+        let config = load_config(asset_dir_name);
+        languages.register_language(
+            config.name.clone(),
+            config.grammar.clone(),
+            config.matcher.clone(),
+            adapters,
+            move || Ok((config.clone(), load_queries(asset_dir_name))),
+        )
     };
 
     language("bash", vec![]);
