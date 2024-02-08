@@ -18,8 +18,8 @@ use crate::WindowAppearance;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
+    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
+    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
     TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
 };
@@ -193,7 +193,6 @@ impl App {
     }
 }
 
-pub(crate) type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 'static>;
@@ -213,8 +212,6 @@ pub struct AppContext {
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
-    pub(crate) next_frame_callbacks: FxHashMap<DisplayId, Vec<FrameCallback>>,
-    pub(crate) frame_consumers: FxHashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -275,8 +272,6 @@ impl AppContext {
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
-                next_frame_callbacks: FxHashMap::default(),
-                frame_consumers: FxHashMap::default(),
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),

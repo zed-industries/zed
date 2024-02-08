@@ -182,18 +182,6 @@ impl Platform for TestPlatform {
         WindowAppearance::Light
     }
 
-    fn set_display_link_output_callback(
-        &self,
-        _display_id: DisplayId,
-        mut callback: Box<dyn FnMut() + Send>,
-    ) {
-        callback()
-    }
-
-    fn start_display_link(&self, _display_id: DisplayId) {}
-
-    fn stop_display_link(&self, _display_id: DisplayId) {}
-
     fn open_url(&self, url: &str) {
         *self.opened_url.borrow_mut() = Some(url.to_string())
     }

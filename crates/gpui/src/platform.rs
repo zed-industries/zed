@@ -70,14 +70,6 @@ pub(crate) trait Platform: 'static {
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
 
-    fn set_display_link_output_callback(
-        &self,
-        display_id: DisplayId,
-        callback: Box<dyn FnMut() + Send>,
-    );
-    fn start_display_link(&self, display_id: DisplayId);
-    fn stop_display_link(&self, display_id: DisplayId);
-
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn prompt_for_paths(
