@@ -1,3 +1,6 @@
+// todo!(linux): remove
+#![cfg_attr(target_os = "linux", allow(dead_code))]
+
 mod app_menu;
 mod keystroke;
 #[cfg(target_os = "linux")]

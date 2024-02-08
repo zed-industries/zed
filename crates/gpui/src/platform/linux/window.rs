@@ -1,3 +1,6 @@
+//todo!(linux): remove
+#![allow(unused)]
+
 use super::BladeRenderer;
 use crate::{
     Bounds, GlobalPixels, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
