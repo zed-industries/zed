@@ -1,3 +1,4 @@
 name = "Beancount"
+grammar = "beancount"
 path_suffixes = ["beancount"]
 brackets = [{ start = "\"", end = "\"", close = false, newline = false }]

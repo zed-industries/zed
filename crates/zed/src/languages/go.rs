@@ -45,7 +45,8 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("golang/tools", false, delegate.http_client()).await?;
+        let release =
+            latest_github_release("golang/tools", false, false, delegate.http_client()).await?;
         let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
         if version.is_none() {
             log::warn!(

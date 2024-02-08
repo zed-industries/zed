@@ -560,7 +560,7 @@
   "stable": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using Zed Stable.
+  // Settings overrides to use when using Zed Dev.
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"

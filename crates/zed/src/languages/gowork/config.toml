@@ -1,4 +1,5 @@
 name = "Go Work"
+grammar = "go_work"
 path_suffixes = ["work"]
 line_comments = ["//"]
 autoclose_before = ")"

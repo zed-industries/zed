@@ -543,8 +543,8 @@ pub(crate) struct Underline {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    pub thickness: ScaledPixels,
     pub color: Hsla,
+    pub thickness: ScaledPixels,
     pub wavy: bool,
 }
 
@@ -577,6 +577,7 @@ pub(crate) struct Shadow {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub blur_radius: ScaledPixels,
+    pub pad: u32, // align to 8 bytes
 }
 
 impl Ord for Shadow {
@@ -641,6 +642,7 @@ pub(crate) struct PolychromeSprite {
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
     pub grayscale: bool,
+    pub pad: u32, // align to 8 bytes
 }
 
 impl Ord for PolychromeSprite {
@@ -671,6 +673,7 @@ pub(crate) struct Surface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    #[cfg(target_os = "macos")]
     pub image_buffer: media::core_video::CVImageBuffer,
 }
 

@@ -739,7 +739,7 @@ mod tests {
         actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
         VisualTestContext, WindowHandle,
     };
-    use language::LanguageRegistry;
+    use language::{LanguageMatcher, LanguageRegistry};
     use project::{project_settings::ProjectSettings, Project, ProjectPath};
     use serde_json::json;
     use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
@@ -2742,7 +2742,10 @@ mod tests {
         Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),

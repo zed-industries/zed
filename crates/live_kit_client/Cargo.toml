@@ -66,6 +66,13 @@ serde_derive.workspace = true
 sha2 = "0.10"
 simplelog = "0.9"
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+cocoa = "0.25"
+core-foundation = "0.9.3"
+core-graphics = "0.22.3"
+foreign-types = "0.3"
+objc = "0.2"
+
 [build-dependencies]
 serde.workspace = true
 serde_derive.workspace = true

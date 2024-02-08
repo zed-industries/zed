@@ -1,8 +1,9 @@
 name = "OCaml"
+grammar = "ocaml"
 path_suffixes = ["ml"]
 block_comment = ["(* ", "*)"]
 autoclose_before = ";,=)}]"
-brackets = [ 
+brackets = [
   { start = "{", end = "}", close = true, newline = true },
   { start = "<", end = ">", close = true, newline = true },
   { start = "[", end = "]", close = true, newline = true },

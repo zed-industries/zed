@@ -4,8 +4,8 @@ use gpui::{
     ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
     InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState, Interactivity,
     IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
-    Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle,
-    UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
+    TextStyle, UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -340,6 +340,13 @@ impl TerminalElement {
             wavy: flags.contains(Flags::UNDERCURL),
         });
 
+        let strikethrough = flags
+            .intersects(Flags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                color: Some(fg),
+                thickness: Pixels::from(1.0),
+            });
+
         let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
             FontWeight::BOLD
         } else {
@@ -362,7 +369,7 @@ impl TerminalElement {
                 ..text_style.font()
             },
             underline,
-            strikethrough: None,
+            strikethrough,
         };
 
         if let Some((style, range)) = hyperlink {

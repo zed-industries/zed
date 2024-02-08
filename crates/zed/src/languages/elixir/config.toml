@@ -1,4 +1,5 @@
 name = "Elixir"
+grammar = "elixir"
 path_suffixes = ["ex", "exs"]
 line_comments = ["# "]
 autoclose_before = ";:.,=}])>"

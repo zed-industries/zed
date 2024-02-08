@@ -1,4 +1,5 @@
 name = "Racket"
+grammar = "racket"
 path_suffixes = ["rkt"]
 line_comments = ["; "]
 autoclose_before = "])"
