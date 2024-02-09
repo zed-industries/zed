@@ -1,8 +1,9 @@
 mod runnables_settings;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use editor::{Editor, EditorElement, EditorStyle};
+use fs::Fs;
 use gpui::{
     actions, div, list, px, relative, rems, AppContext, EventEmitter, FocusHandle, FocusableView,
     FontStyle, FontWeight, IntoElement, ListAlignment, ListState, Model, ParentElement as _,
@@ -10,18 +11,20 @@ use gpui::{
     WhiteSpace, WindowContext,
 };
 use project::Inventory;
+use runnables_settings::{RunnablesDockPosition, RunnablesSettings};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{
-    v_flex, ActiveTheme, Button, Clickable, FluentBuilder, Icon, IconButton, IconName, ListItem,
-    StyledExt,
+    prelude::Pixels, v_flex, ActiveTheme, Button, Clickable, FluentBuilder, Icon, IconButton,
+    IconName, ListItem, StyledExt,
 };
 use workspace::{
-    dock::{Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
 
 pub fn init(cx: &mut AppContext) {
+    RunnablesSettings::register(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
@@ -37,10 +40,16 @@ pub struct RunnablesPanel {
     focus_handle: FocusHandle,
     // todo: po: should this be weak?
     inventory: Model<Inventory>,
+    width: Option<Pixels>,
+    fs: Arc<dyn Fs>,
 }
 
 impl RunnablesPanel {
-    pub fn new(inventory: Model<Inventory>, cx: &mut WindowContext<'_>) -> View<Self> {
+    pub fn new(
+        inventory: Model<Inventory>,
+        fs: Arc<dyn Fs>,
+        cx: &mut WindowContext<'_>,
+    ) -> View<Self> {
         cx.new_view(|cx| {
             let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -51,6 +60,8 @@ impl RunnablesPanel {
                 focus_handle: cx.focus_handle(),
                 filter_editor,
                 inventory,
+                width: None,
+                fs,
             }
         })
     }
@@ -101,40 +112,43 @@ impl Panel for RunnablesPanel {
         "RunnablesPanel"
     }
 
-    fn position(&self, cx: &ui::prelude::WindowContext) -> workspace::dock::DockPosition {
-        workspace::dock::DockPosition::Right
+    fn position(&self, cx: &WindowContext) -> DockPosition {
+        match RunnablesSettings::get_global(cx).dock {
+            RunnablesDockPosition::Left => DockPosition::Left,
+            RunnablesDockPosition::Right => DockPosition::Right,
+        }
     }
 
-    fn position_is_valid(&self, position: workspace::dock::DockPosition) -> bool {
-        matches!(
-            position,
-            workspace::dock::DockPosition::Left | workspace::dock::DockPosition::Right
-        )
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(
-        &mut self,
-        position: workspace::dock::DockPosition,
-        cx: &mut ui::prelude::ViewContext<Self>,
-    ) {
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        settings::update_settings_file::<RunnablesSettings>(self.fs.clone(), cx, move |settings| {
+            let dock = match position {
+                DockPosition::Left | DockPosition::Bottom => RunnablesDockPosition::Left,
+                DockPosition::Right => RunnablesDockPosition::Right,
+            };
+            settings.dock = Some(dock);
+        });
     }
 
-    fn size(&self, cx: &ui::prelude::WindowContext) -> ui::prelude::Pixels {
-        px(400.)
+    fn size(&self, cx: &ui::prelude::WindowContext) -> Pixels {
+        self.width
+            .unwrap_or_else(|| px(RunnablesSettings::get_global(cx).default_width))
     }
 
-    fn set_size(
-        &mut self,
-        size: Option<ui::prelude::Pixels>,
-        cx: &mut ui::prelude::ViewContext<Self>,
-    ) {
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ui::prelude::ViewContext<Self>) {
+        self.width = size;
+        //self.serialize(cx);
+        cx.notify();
     }
 
-    fn icon(&self, cx: &ui::prelude::WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, _cx: &ui::prelude::WindowContext) -> Option<ui::IconName> {
         Some(ui::IconName::Return)
     }
 
-    fn icon_tooltip(&self, cx: &ui::prelude::WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _cx: &ui::prelude::WindowContext) -> Option<&'static str> {
         Some("Runnables panel")
     }
 

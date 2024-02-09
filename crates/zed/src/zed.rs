@@ -214,6 +214,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 let runnables_panel = RunnablesPanel::new(
                     workspace.project().read(cx).runnable_inventory().clone(),
+                    workspace.app_state().fs.clone(),
                     cx,
                 );
                 workspace.add_panel(project_panel, cx);

@@ -222,6 +222,10 @@
     // 3. "gpt-4-1106-preview"
     "default_open_ai_model": "gpt-4-1106-preview"
   },
+  "runnables": {
+    "dock": "left",
+    "default_width": 300
+  },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
