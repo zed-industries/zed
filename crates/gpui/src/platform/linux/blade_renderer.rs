@@ -455,7 +455,7 @@ impl BladeRenderer {
                         sprites,
                     } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
-                        let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
+                        let instance_buf = self.instance_belt.alloc_data(sprites, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.mono_sprites);
                         encoder.bind(
                             0,
@@ -473,7 +473,7 @@ impl BladeRenderer {
                         sprites,
                     } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
-                        let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
+                        let instance_buf = self.instance_belt.alloc_data(sprites, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.poly_sprites);
                         encoder.bind(
                             0,

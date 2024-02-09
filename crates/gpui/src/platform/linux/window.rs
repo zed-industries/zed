@@ -77,7 +77,7 @@ pub(crate) struct LinuxWindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct LinuxWindow(pub(crate) Arc<LinuxWindowState>);
+pub(crate) struct LinuxWindow(pub(crate) Rc<LinuxWindowState>);
 
 //todo!(linux): Remove other RawWindowHandle implementation
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
@@ -191,7 +191,7 @@ impl LinuxWindowState {
 
         //Warning: it looks like this reported size is immediately invalidated
         // on some platforms, followed by a "ConfigureNotify" event.
-        let gpu_extent = query_render_extent(&xcb_connection, x_window);
+        let gpu_extent = query_render_extent(xcb_connection, x_window);
 
         let raw = RawWindow {
             connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
@@ -430,6 +430,6 @@ impl PlatformWindow for LinuxWindow {
     }
 
     fn set_graphics_profiler_enabled(&self, enabled: bool) {
-        todo!("linux")
+        unimplemented!("linux")
     }
 }
