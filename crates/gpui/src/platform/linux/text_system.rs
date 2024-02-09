@@ -126,7 +126,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         FontMetrics {
             units_per_em: metrics.units_per_em as u32,
             ascent: metrics.ascent,
-            descent: metrics.descent - 1000.0, // todo!(linux) extremely hacky but this means text doesn't get cut off, something to do with gutter padding in the editor
+            descent: -metrics.descent, // todo!(linux) extremely hacky but this means text doesn't get cut off, something to do with gutter padding in the editor
             line_gap: metrics.leading,
             underline_position: metrics.underline_offset,
             underline_thickness: metrics.stroke_size,
