@@ -3,9 +3,11 @@
 use std::{env, path::{Path, PathBuf}, rc::Rc, sync::Arc, time::Duration};
 
 use async_task::Runnable;
+use flume::{Receiver, Sender};
 use futures::channel::oneshot;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RawMutex};
 use time::UtcOffset;
+use wayland_client::Connection;
 
 use crate::{Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowOptions};
 use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
@@ -55,47 +57,74 @@ impl LinuxPlatform {
         let wayland_display = env::var_os("WAYLAND_DISPLAY");
         let use_wayland = wayland_display.is_some() && !wayland_display.unwrap().is_empty();
 
+        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
+        let text_system = Arc::new(LinuxTextSystem::new());
+        let callbacks = Mutex::new(Callbacks::default());
+        let state = Mutex::new(LinuxPlatformState {
+            quit_requested: false,
+        });
+
+        if use_wayland {
+            Self::new_wayland(main_sender, main_receiver, text_system, callbacks, state)
+        } else {
+            Self::new_x11(main_sender, main_receiver, text_system, callbacks, state)
+        }
+    }
+
+    fn new_wayland(
+        main_sender: Sender<Runnable>,
+        main_receiver: Receiver<Runnable>,
+        text_system: Arc<LinuxTextSystem>,
+        callbacks: Mutex<Callbacks>,
+        state: Mutex<LinuxPlatformState>
+    ) -> Self {
+            let conn = Arc::new(Connection::connect_to_env().unwrap());
+            let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = Arc::new(WaylandClientDispatcher::new(&conn));
+            let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
+            let inner = Arc::new(LinuxPlatformInner {
+                background_executor: BackgroundExecutor::new(dispatcher.clone()),
+                foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
+                main_receiver,
+                text_system,
+                callbacks,
+                state,
+            });
+            let client = Arc::new(WaylandClient::new(
+                Arc::clone(&inner),
+                Arc::clone(&conn)
+            ));
+            Self {
+                client,
+                inner: Arc::clone(&inner)
+            }
+    }
+
+    fn new_x11(
+        main_sender: Sender<Runnable>,
+        main_receiver: Receiver<Runnable>,
+        text_system: Arc<LinuxTextSystem>,
+        callbacks: Mutex<Callbacks>,
+        state: Mutex<LinuxPlatformState>
+    ) -> Self {
         let (xcb_connection, x_root_index) = xcb::Connection::connect(None).unwrap();
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
-
         let xcb_connection = Arc::new(xcb_connection);
-        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-
-        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = if use_wayland {
-            Arc::new(WaylandClientDispatcher::new())
-        } else {
-            Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index))
-        };
-
-        let dispatcher = LinuxDispatcher::new(
-            main_sender,
-            &client_dispatcher
-        );
-        let dispatcher = Arc::new(dispatcher);
-
-        let inner = LinuxPlatformInner {
+        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
+        let inner = Arc::new(LinuxPlatformInner {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             main_receiver,
-            text_system: Arc::new(LinuxTextSystem::new()),
-            callbacks: Mutex::new(Callbacks::default()),
-            state: Mutex::new(LinuxPlatformState {
-                quit_requested: false,
-            }),
-        };
-        let inner = Arc::new(inner);
-
-        let client: Arc<dyn Client> = if use_wayland {
-            Arc::new(WaylandClient::new())
-        } else {
-            Arc::new(X11Client::new(
-                Arc::clone(&inner),
-                xcb_connection,
-                x_root_index,
-                atoms
-            ))
-        };
-
+            text_system,
+            callbacks,
+            state,
+        });
+        let client = Arc::new(X11Client::new(
+            Arc::clone(&inner),
+            xcb_connection,
+            x_root_index,
+            atoms
+        ));
         Self {
             client,
             inner: Arc::clone(&inner)
