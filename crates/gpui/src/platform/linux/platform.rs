@@ -125,11 +125,8 @@ impl Platform for LinuxPlatform {
                             // window "x" button clicked by user, we gracefully exit
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
-                            if self.state.lock().windows.is_empty() {
-                                if let Some(ref mut fun) = self.callbacks.lock().quit {
-                                    fun();
-                                }
-                            }
+                            let mut state = self.state.lock();
+                            state.quit_requested |= state.windows.is_empty();
                         }
                     }
                 }
@@ -163,6 +160,10 @@ impl Platform for LinuxPlatform {
             if let Ok(runnable) = self.main_receiver.try_recv() {
                 runnable.run();
             }
+        }
+
+        if let Some(ref mut fun) = self.callbacks.lock().quit {
+            fun();
         }
     }
 
