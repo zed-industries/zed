@@ -6,7 +6,8 @@ use editor::{
 };
 use gpui::{
     list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext, WeakView,
+    IntoElement, ListState, ParentElement, Render, ScrollHandle, Styled, View, ViewContext,
+    WeakView,
 };
 use ui::prelude::*;
 use workspace::item::Item;
@@ -21,21 +22,22 @@ use crate::{
 
 pub struct MarkdownPreviewView {
     workspace: WeakView<Workspace>,
-    active_editor: View<Editor>,
+    scroll_handle: ScrollHandle,
+    active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
     contents: ParsedMarkdown,
     selected_block: usize,
     list_state: ListState,
 }
 
+struct EditorState {
+    editor: View<Editor>,
+    _subscription: gpui::Subscription,
+}
+
 impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, cx| {
-            if workspace.has_active_modal(cx) {
-                cx.propagate();
-                return;
-            }
-
             if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
                 let workspace_handle = workspace.weak_handle();
                 let view: View<MarkdownPreviewView> =
@@ -58,35 +60,6 @@ impl MarkdownPreviewView {
             let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
             let contents = editor.buffer().read(cx).snapshot(cx).text();
             let contents = parse_markdown(&contents, file_location);
-
-            cx.subscribe(&active_editor, |this, editor, event: &EditorEvent, cx| {
-                match event {
-                    EditorEvent::Edited => {
-                        let editor = editor.read(cx);
-                        let contents = editor.buffer().read(cx).snapshot(cx).text();
-                        let file_location =
-                            MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
-                        this.contents = parse_markdown(&contents, file_location);
-
-                        this.list_state.reset(this.contents.children.len());
-                        cx.notify();
-
-                        cx.defer(|this, cx| {
-                            this.list_state.scroll_to_reveal_item(this.selected_block);
-                            cx.notify();
-                        })
-                    }
-                    EditorEvent::SelectionsChanged { .. } => {
-                        let editor = editor.read(cx);
-                        let selection_range = editor.selections.last::<usize>(cx).range();
-                        this.selected_block = this.get_block_index_under_cursor(selection_range);
-                        this.list_state.scroll_to_reveal_item(this.selected_block);
-                        cx.notify();
-                    }
-                    _ => {}
-                };
-            })
-            .detach();
 
             let list_state = ListState::new(
                 contents.children.len(),
@@ -134,25 +107,87 @@ impl MarkdownPreviewView {
                 },
             );
 
-            Self {
+            let mut this = Self {
                 selected_block: 0,
                 focus_handle: cx.focus_handle(),
-                active_editor,
-                workspace,
+                active_editor: None,
+                scroll_handle: ScrollHandle::new(),
+                workspace: workspace.clone(),
                 contents,
                 list_state,
+            };
+
+            this.workspace_updated(Some(active_editor), cx);
+
+            if let Some(workspace) = &workspace.upgrade() {
+                cx.observe(workspace, |this, workspace, cx| {
+                    if let Some(item) = workspace.read(cx).active_item(cx) {
+                        if item.item_id() != cx.entity_id() {
+                            this.workspace_updated(item.act_as::<Editor>(cx), cx);
+                        }
+                    }
+                })
+                .detach();
+            } else {
+                log::error!("Failed to listen to workspace updates");
             }
+
+            this
         })
     }
 
-    fn update_editor_selection(&self, cx: &mut ViewContext<Self>, selection: Range<usize>) {
-        self.active_editor.update(cx, |editor, cx| {
-            editor.change_selections(
-                Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
-                cx,
-                |selections| selections.select_ranges(vec![selection]),
-            );
+    fn workspace_updated(&mut self, item: Option<View<Editor>>, cx: &mut ViewContext<Self>) {
+        if let Some(editor) = item {
+            self.set_editor(editor, cx);
+        }
+    }
+
+    fn set_editor(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+        if let Some(active) = &self.active_editor {
+            if active.editor == editor {
+                return;
+            }
+        }
+
+        let subscription = cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
+            match event {
+                EditorEvent::Edited => {
+                    let editor = editor.read(cx);
+                    let contents = editor.buffer().read(cx).snapshot(cx).text();
+                    let file_location =
+                        MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
+                    this.contents = parse_markdown(&contents, file_location);
+
+                    this.list_state.reset(this.contents.children.len());
+                    cx.notify();
+                }
+                EditorEvent::SelectionsChanged { .. } => {
+                    let editor = editor.read(cx);
+                    let selection_range = editor.selections.last::<usize>(cx).range();
+                    this.selected_block = this.get_block_index_under_cursor(selection_range);
+                    this.list_state.scroll_to_reveal_item(this.selected_block);
+                    cx.notify();
+                }
+                _ => {}
+            };
         });
+
+        self.active_editor = Some(EditorState {
+            editor,
+            _subscription: subscription,
+        });
+    }
+
+    fn update_editor_selection(&self, cx: &mut ViewContext<Self>, selection: Range<usize>) {
+        if let Some(state) = &self.active_editor {
+            state.editor.update(cx, |editor, cx| {
+                editor.change_selections(
+                    Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
+                    cx,
+                    |selections| selections.select_ranges(vec![selection]),
+                );
+            });
+        }
     }
 
     /// The absolute path of the file that is currently being previewed.
@@ -243,5 +278,6 @@ impl Render for MarkdownPreviewView {
                     .flex_grow()
                     .map(|this| this.child(list(self.list_state.clone()).full())),
             )
+            .track_scroll(&self.scroll_handle.clone())
     }
 }
