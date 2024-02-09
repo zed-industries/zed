@@ -59,7 +59,7 @@ pub(crate) struct LinuxPlatform {
 
 pub(crate) struct LinuxPlatformState {
     quit_requested: bool,
-    windows: HashMap<x::Window, Arc<LinuxWindowState>>,
+    windows: HashMap<x::Window, Rc<LinuxWindowState>>,
 }
 
 impl Default for LinuxPlatform {
@@ -133,7 +133,7 @@ impl Platform for LinuxPlatform {
                 xcb::Event::X(x::Event::Expose(ev)) => {
                     let window = {
                         let state = self.state.lock();
-                        Arc::clone(&state.windows[&ev.window()])
+                        Rc::clone(&state.windows[&ev.window()])
                     };
                     window.expose();
                 }
@@ -150,7 +150,7 @@ impl Platform for LinuxPlatform {
                     };
                     let window = {
                         let state = self.state.lock();
-                        Arc::clone(&state.windows[&ev.window()])
+                        Rc::clone(&state.windows[&ev.window()])
                     };
                     window.configure(bounds)
                 }
@@ -217,7 +217,7 @@ impl Platform for LinuxPlatform {
     ) -> Box<dyn PlatformWindow> {
         let x_window = self.xcb_connection.generate_id();
 
-        let window_ptr = Arc::new(LinuxWindowState::new(
+        let window_ptr = Rc::new(LinuxWindowState::new(
             options,
             &self.xcb_connection,
             self.x_root_index,
@@ -228,7 +228,7 @@ impl Platform for LinuxPlatform {
         self.state
             .lock()
             .windows
-            .insert(x_window, Arc::clone(&window_ptr));
+            .insert(x_window, Rc::clone(&window_ptr));
         Box::new(LinuxWindow(window_ptr))
     }
 
