@@ -6,8 +6,7 @@ use editor::{
 };
 use gpui::{
     list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ListState, ParentElement, Render, ScrollHandle, Styled, View, ViewContext,
-    WeakView,
+    IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext, WeakView,
 };
 use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
@@ -192,7 +191,7 @@ impl MarkdownPreviewView {
         if let Some(state) = &self.active_editor {
             state.editor.update(cx, |editor, cx| {
                 editor.change_selections(
-                    Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
+                    Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
                     cx,
                     |selections| selections.select_ranges(vec![selection]),
                 );
