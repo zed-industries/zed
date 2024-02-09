@@ -4085,7 +4085,7 @@ async fn join_channel_internal(
     anyhow::Ok(false)
 }
 
-pub fn join_channel(
+pub fn open_channel(
     channel_id: u64,
     app_state: Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,

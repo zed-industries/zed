@@ -1479,7 +1479,7 @@ impl CollabPanel {
                         if is_active {
                             self.open_channel_notes(channel.id, cx)
                         } else {
-                            self.join_channel(channel.id, cx)
+                            self.open_channel(channel.id, cx)
                         }
                     }
                     ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
@@ -1963,14 +1963,14 @@ impl CollabPanel {
             .detach_and_prompt_err("Call failed", cx, |_, _| None);
     }
 
-    fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+    fn open_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
         let Some(handle) = cx.window_handle().downcast::<Workspace>() else {
             return;
         };
-        workspace::join_channel(
+        workspace::open_channel(
             channel_id,
             workspace.read(cx).app_state().clone(),
             Some(handle),
@@ -1984,7 +1984,8 @@ impl CollabPanel {
             return;
         };
 
-        room.update(cx, |room, cx| room.join_call(cx));
+        room.update(cx, |room, cx| room.join_call(cx))
+            .detach_and_prompt_err("Failed to join call", cx, |_, _| None)
     }
 
     fn leave_channel_call(&mut self, cx: &mut ViewContext<Self>) {
@@ -2571,7 +2572,7 @@ impl CollabPanel {
                         }),
                     )
                     .on_click(cx.listener(move |this, _, cx| {
-                        this.join_channel(channel_id, cx);
+                        this.open_channel(channel_id, cx);
                         this.open_channel_notes(channel_id, cx);
                         this.join_channel_chat(channel_id, cx);
                     }))

@@ -150,7 +150,7 @@ impl Room {
             room_update_completed_rx,
         };
         if this.live_kit_connection_info.is_some() {
-            this.join_call(cx)
+            this.join_call(cx).detach_and_log_err(cx);
         }
         this
     }
@@ -1260,9 +1260,9 @@ impl Room {
     pub fn is_muted(&self) -> bool {
         self.live_kit
             .as_ref()
-            .map_or(false, |live_kit| match &live_kit.microphone_track {
+            .map_or(true, |live_kit| match &live_kit.microphone_track {
                 LocalTrack::None => true,
-                LocalTrack::Pending { .. } => false,
+                LocalTrack::Pending { .. } => true,
                 LocalTrack::Published { track_publication } => track_publication.is_muted(),
             })
     }
@@ -1443,9 +1443,9 @@ impl Room {
         }
     }
 
-    pub fn join_call(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn join_call(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.live_kit.is_some() {
-            return;
+            return Task::ready(Ok(()));
         }
 
         let room = live_kit_client::Room::new();
@@ -1487,8 +1487,17 @@ impl Room {
             }
         });
 
+        self.live_kit = Some(LiveKitRoom {
+            room: room.clone(),
+            screen_track: LocalTrack::None,
+            microphone_track: LocalTrack::None,
+            next_publish_id: 0,
+            speaking: false,
+            _maintain_room,
+            _handle_updates,
+        });
+
         cx.spawn({
-            let room = room.clone();
             let client = self.client.clone();
             let share_microphone = !self.read_only() && !Self::mute_on_join(cx);
             let connection_info = self.live_kit_connection_info.clone();
@@ -1548,17 +1557,6 @@ impl Room {
                 anyhow::Ok(())
             }
         })
-        .detach_and_log_err(cx);
-
-        self.live_kit = Some(LiveKitRoom {
-            room,
-            screen_track: LocalTrack::None,
-            microphone_track: LocalTrack::None,
-            next_publish_id: 0,
-            speaking: false,
-            _maintain_room,
-            _handle_updates,
-        });
     }
 
     pub fn leave_call(&mut self, cx: &mut ModelContext<Self>) {
