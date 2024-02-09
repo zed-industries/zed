@@ -71,7 +71,7 @@ impl Keymap {
     }
 
     /// Iterate over all bindings, in the order they were added.
-    pub fn bindings(&self) -> impl Iterator<Item = &KeyBinding> + DoubleEndedIterator {
+    pub fn bindings(&self) -> impl DoubleEndedIterator<Item = &KeyBinding> {
         self.bindings.iter()
     }
 
@@ -79,7 +79,7 @@ impl Keymap {
     pub fn bindings_for_action<'a>(
         &'a self,
         action: &'a dyn Action,
-    ) -> impl 'a + Iterator<Item = &'a KeyBinding> + DoubleEndedIterator {
+    ) -> impl 'a + DoubleEndedIterator<Item = &'a KeyBinding> {
         let action_id = action.type_id();
         self.binding_indices_by_action_id
             .get(&action_id)

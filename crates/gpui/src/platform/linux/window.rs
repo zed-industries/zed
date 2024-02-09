@@ -17,7 +17,10 @@ use std::{
     rc::Rc,
     sync::{self, Arc},
 };
-use xcb::{x, Xid as _};
+use xcb::{
+    x::{self, StackMode},
+    Xid as _,
+};
 
 #[derive(Default)]
 struct Callbacks {
@@ -77,7 +80,7 @@ pub(crate) struct LinuxWindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct LinuxWindow(pub(crate) Arc<LinuxWindowState>);
+pub(crate) struct LinuxWindow(pub(crate) Rc<LinuxWindowState>);
 
 //todo!(linux): Remove other RawWindowHandle implementation
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
@@ -337,8 +340,12 @@ impl PlatformWindow for LinuxWindow {
         unimplemented!()
     }
 
-    //todo!(linux)
-    fn activate(&self) {}
+    fn activate(&self) {
+        self.0.xcb_connection.send_request(&x::ConfigureWindow {
+            window: self.0.x_window,
+            value_list: &[x::ConfigWindow::StackMode(StackMode::Above)],
+        });
+    }
 
     fn set_title(&mut self, title: &str) {
         self.0.xcb_connection.send_request(&x::ChangeProperty {
@@ -427,5 +434,9 @@ impl PlatformWindow for LinuxWindow {
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         let inner = self.0.inner.lock();
         inner.renderer.atlas().clone()
+    }
+
+    fn set_graphics_profiler_enabled(&self, enabled: bool) {
+        unimplemented!("linux")
     }
 }

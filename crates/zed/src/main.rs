@@ -42,7 +42,6 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
@@ -930,6 +929,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 /// Spawns a background task to watch the themes directory for changes.
 #[cfg(target_os = "macos")]
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    use std::time::Duration;
     cx.spawn(|cx| async move {
         let mut events = fs
             .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
@@ -962,6 +962,8 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(debug_assertions)]
 async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
+    use std::time::Duration;
+
     let reload_debounce = Duration::from_millis(250);
 
     let mut events = fs
@@ -975,6 +977,8 @@ async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) 
 
 #[cfg(debug_assertions)]
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    use std::time::Duration;
+
     cx.spawn(|cx| async move {
         let mut events = fs
             .watch(
