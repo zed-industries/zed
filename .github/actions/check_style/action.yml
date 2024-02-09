@@ -8,15 +8,6 @@ runs:
           shell: bash -euxo pipefail {0}
           run: cargo fmt --all -- --check
 
-        - name: cargo clippy
-          shell: bash -euxo pipefail {0}
-          # clippy.toml is not currently supporting specifying allowed lints
-          # so specify those here, and disable the rest until Zed's workspace
-          # will have more fixes & suppression for the standard lint set
-          run: |
-              cargo clippy --release --workspace --all-features --all-targets -- -A clippy::all -D clippy::dbg_macro -D clippy::todo
-              cargo clippy -p gpui
-
         - name: Find modified migrations
           shell: bash -euxo pipefail {0}
           run: |

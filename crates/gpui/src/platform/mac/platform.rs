@@ -1,10 +1,9 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowAppearance,
-    WindowOptions,
+    ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu,
+    MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
+    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -146,7 +145,6 @@ pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<MacTextSystem>,
-    display_linker: MacDisplayLinker,
     instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
     pasteboard: id,
     text_hash_pasteboard_type: id,
@@ -177,7 +175,6 @@ impl MacPlatform {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system: Arc::new(MacTextSystem::new()),
-            display_linker: MacDisplayLinker::new(),
             instance_buffer_pool: Arc::default(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
@@ -512,25 +509,6 @@ impl Platform for MacPlatform {
             let appearance: id = msg_send![app, effectiveAppearance];
             WindowAppearance::from_native(appearance)
         }
-    }
-
-    fn set_display_link_output_callback(
-        &self,
-        display_id: DisplayId,
-        callback: Box<dyn FnMut() + Send>,
-    ) {
-        self.0
-            .lock()
-            .display_linker
-            .set_output_callback(display_id, callback);
-    }
-
-    fn start_display_link(&self, display_id: DisplayId) {
-        self.0.lock().display_linker.start(display_id);
-    }
-
-    fn stop_display_link(&self, display_id: DisplayId) {
-        self.0.lock().display_linker.stop(display_id);
     }
 
     fn open_url(&self, url: &str) {

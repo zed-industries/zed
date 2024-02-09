@@ -62,7 +62,7 @@ pub fn init(
     ElixirSettings::register(cx);
     DenoSettings::register(cx);
 
-    languages.add_grammars([
+    languages.register_native_grammars([
         ("bash", tree_sitter_bash::language()),
         ("beancount", tree_sitter_beancount::language()),
         ("c", tree_sitter_c::language()),
@@ -98,6 +98,7 @@ pub fn init(
         ),
         ("php", tree_sitter_php::language_php()),
         ("proto", tree_sitter_proto::language()),
+        #[cfg(not(target_os = "linux"))]
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
@@ -114,8 +115,15 @@ pub fn init(
         ("zig", tree_sitter_zig::language()),
     ]);
 
-    let language = |name: &'static str, adapters| {
-        languages.register(name, load_config(name), adapters, load_queries)
+    let language = |asset_dir_name: &'static str, adapters| {
+        let config = load_config(asset_dir_name);
+        languages.register_language(
+            config.name.clone(),
+            config.grammar.clone(),
+            config.matcher.clone(),
+            adapters,
+            move || Ok((config.clone(), load_queries(asset_dir_name))),
+        )
     };
 
     language("bash", vec![]);
@@ -286,6 +294,7 @@ pub fn init(
     language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language("proto", vec![]);
     language("terraform", vec![]);
+    language("terraform-vars", vec![]);
     language("hcl", vec![]);
 }
 

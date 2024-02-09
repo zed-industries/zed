@@ -145,14 +145,14 @@ impl BladePipelines {
                 data_layouts: &[&ShaderPathRasterizationData::layout()],
                 vertex: shader.at("vs_path_rasterization"),
                 primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    topology: gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_path_rasterization"),
                 color_targets: &[gpu::ColorTargetState {
                     format: PATH_TEXTURE_FORMAT,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(gpu::BlendState::ADDITIVE),
                     write_mask: gpu::ColorWrites::default(),
                 }],
             }),

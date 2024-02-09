@@ -17,7 +17,7 @@ use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::{http::HttpClient, ResultExt};
-use workspace::{ModalView, Toast, Workspace};
+use workspace::{DismissDecision, ModalView, Toast, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedRepo};
 
@@ -85,16 +85,16 @@ impl FocusableView for FeedbackModal {
 impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
-    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> DismissDecision {
         self.update_email_in_store(cx);
 
         if self.dismiss_modal {
-            return true;
+            return DismissDecision::Dismiss(true);
         }
 
         let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
         if !has_feedback {
-            return true;
+            return DismissDecision::Dismiss(true);
         }
 
         let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", None, &["Yes", "No"]);
@@ -110,7 +110,7 @@ impl ModalView for FeedbackModal {
         })
         .detach();
 
-        false
+        DismissDecision::Pending
     }
 }
 

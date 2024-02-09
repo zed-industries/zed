@@ -4,19 +4,24 @@ use gpui::{
 };
 use ui::{h_flex, v_flex};
 
+pub enum DismissDecision {
+    Dismiss(bool),
+    Pending,
+}
+
 pub trait ModalView: ManagedView {
-    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> bool {
-        true
+    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> DismissDecision {
+        DismissDecision::Dismiss(true)
     }
 }
 
 trait ModalViewHandle {
-    fn on_before_dismiss(&mut self, cx: &mut WindowContext) -> bool;
+    fn on_before_dismiss(&mut self, cx: &mut WindowContext) -> DismissDecision;
     fn view(&self) -> AnyView;
 }
 
 impl<V: ModalView> ModalViewHandle for View<V> {
-    fn on_before_dismiss(&mut self, cx: &mut WindowContext) -> bool {
+    fn on_before_dismiss(&mut self, cx: &mut WindowContext) -> DismissDecision {
         self.update(cx, |this, cx| this.on_before_dismiss(cx))
     }
 
@@ -34,11 +39,15 @@ pub struct ActiveModal {
 
 pub struct ModalLayer {
     active_modal: Option<ActiveModal>,
+    dismiss_on_focus_lost: bool,
 }
 
 impl ModalLayer {
     pub fn new() -> Self {
-        Self { active_modal: None }
+        Self {
+            active_modal: None,
+            dismiss_on_focus_lost: false,
+        }
     }
 
     pub fn toggle_modal<V, B>(&mut self, cx: &mut ViewContext<Self>, build_view: B)
@@ -69,7 +78,9 @@ impl ModalLayer {
                     this.hide_modal(cx);
                 }),
                 cx.on_focus_out(&focus_handle, |this, cx| {
-                    this.hide_modal(cx);
+                    if this.dismiss_on_focus_lost {
+                        this.hide_modal(cx);
+                    }
                 }),
             ],
             previous_focus_handle: cx.focused(),
@@ -81,12 +92,21 @@ impl ModalLayer {
 
     fn hide_modal(&mut self, cx: &mut ViewContext<Self>) -> bool {
         let Some(active_modal) = self.active_modal.as_mut() else {
+            self.dismiss_on_focus_lost = false;
             return false;
         };
 
-        let dismiss = active_modal.modal.on_before_dismiss(cx);
-        if !dismiss {
-            return false;
+        match active_modal.modal.on_before_dismiss(cx) {
+            DismissDecision::Dismiss(dismiss) => {
+                self.dismiss_on_focus_lost = !dismiss;
+                if !dismiss {
+                    return false;
+                }
+            }
+            DismissDecision::Pending => {
+                self.dismiss_on_focus_lost = false;
+                return false;
+            }
         }
 
         if let Some(active_modal) = self.active_modal.take() {

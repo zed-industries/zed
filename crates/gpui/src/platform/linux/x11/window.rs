@@ -1,3 +1,6 @@
+//todo!(linux): remove
+#![allow(unused)]
+
 use std::{
     ffi::c_void,
     mem,
@@ -63,7 +66,6 @@ fn query_render_extent(xcb_connection: &xcb::Connection, x_window: x::Window) ->
         drawable: x::Drawable::Window(x_window),
     });
     let reply = xcb_connection.wait_for_reply(cookie).unwrap();
-    println!("Got geometry {:?}", reply);
     gpu::Extent {
         width: reply.width() as u32,
         height: reply.height() as u32,
@@ -308,9 +310,7 @@ impl PlatformWindow for X11Window {
 
     //todo!(linux)
     fn appearance(&self) -> WindowAppearance {
-        unsafe {
-            WindowAppearance::Dark
-        }
+        WindowAppearance::Light
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
@@ -353,8 +353,15 @@ impl PlatformWindow for X11Window {
     //todo!(linux)
     fn activate(&self) {}
 
-    //todo!(linux)
-    fn set_title(&mut self, title: &str) {}
+    fn set_title(&mut self, title: &str) {
+        self.0.xcb_connection.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window: self.0.x_window,
+            property: x::ATOM_WM_NAME,
+            r#type: x::ATOM_STRING,
+            data: title.as_bytes(),
+        });
+    }
 
     //todo!(linux)
     fn set_edited(&mut self, edited: bool) {}

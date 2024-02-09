@@ -51,11 +51,9 @@ impl Client for X11Client {
                             // window "x" button clicked by user, we gracefully exit
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
-                            if self.state.lock().windows.is_empty() {
-                                if let Some(ref mut fun) = self.platform_inner.callbacks.lock().quit {
-                                    fun();
-                                }
-                            }
+                            let mut state = self.state.lock();
+                            let mut platform_state = self.platform_inner.state.lock();
+                            platform_state.quit_requested |= state.windows.is_empty();
                         }
                     }
                 }
@@ -89,6 +87,10 @@ impl Client for X11Client {
             if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
                 runnable.run();
             }
+        }
+
+        if let Some(ref mut fun) = self.platform_inner.callbacks.lock().quit {
+            fun();
         }
     }
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
