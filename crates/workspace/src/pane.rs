@@ -1436,7 +1436,22 @@ impl Pane {
                                 pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
                                     .map(|task| task.detach_and_log_err(cx));
                             }),
-                        );
+                        )
+                        .separator()
+                        .entry(
+                            "Copy Path",
+                            Some(Box::new(CopyPath)),
+                            cx.handler_for(&pane, |pane, cx| {
+                                pane.project.copy_path();
+                            }),
+                        )
+                        .entry(
+                            "Copy Relative Path",
+                            Some(Box::new(CopyRelativePath)),
+                            cx.handler_for(&pane, |pane, cx| {
+                                pane.project.copy_relative_path();
+                            }),
+                        )
 
                     if let Some(entry) = single_entry_to_resolve {
                         let entry_id = entry.to_proto();
