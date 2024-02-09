@@ -183,21 +183,9 @@
   },
   "extensions_panel": {
     // Default width of the project panel.
-    "default_width": 240,
+    "default_width": 480,
     // Where to dock project panel. Can be 'left' or 'right'.
-    "dock": "left",
-    // Whether to show file icons in the project panel.
-    "file_icons": true,
-    // Whether to show folder icons or chevrons for directories in the project panel.
-    "folder_icons": true,
-    // Whether to show the git status in the project panel.
-    "git_status": true,
-    // Amount of indentation for nested items.
-    "indent_size": 20,
-    // Whether to reveal it in the project panel automatically,
-    // when a corresponding project entry becomes active.
-    // Gitignored entries are never auto revealed.
-    "auto_reveal_entries": true
+    "dock": "left"
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.

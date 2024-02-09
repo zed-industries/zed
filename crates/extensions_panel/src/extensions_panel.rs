@@ -1,3 +1,4 @@
+mod extension;
 mod extensions_panel_settings;
 use anyhow::{anyhow, Result};
 use client::{ErrorCode, ErrorExt};
@@ -157,6 +158,10 @@ impl ExtensionsPanel {
             cx.emit(Event::Focus);
         }
     }
+
+    fn render_entry(&self, details: Entry, cx: &mut ViewContext<Self>) -> Div {
+        div().child(div().child(Label::new(details.name).render(cx)))
+    }
 }
 
 impl EventEmitter<Event> for ExtensionsPanel {}
@@ -200,7 +205,7 @@ impl Panel for ExtensionsPanel {
     }
 
     fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::FileTree)
+        Some(ui::IconName::Extensions)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
