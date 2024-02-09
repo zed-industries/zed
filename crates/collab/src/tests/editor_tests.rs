@@ -532,35 +532,6 @@ async fn test_collaborating_with_code_actions(
             Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                 lsp::CodeAction {
                     title: "Inline into all callers".to_string(),
-                    edit: Some(lsp::WorkspaceEdit {
-                        changes: Some(
-                            [
-                                (
-                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
-                                    vec![lsp::TextEdit::new(
-                                        lsp::Range::new(
-                                            lsp::Position::new(1, 22),
-                                            lsp::Position::new(1, 34),
-                                        ),
-                                        "4".to_string(),
-                                    )],
-                                ),
-                                (
-                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
-                                    vec![lsp::TextEdit::new(
-                                        lsp::Range::new(
-                                            lsp::Position::new(0, 0),
-                                            lsp::Position::new(0, 27),
-                                        ),
-                                        "".to_string(),
-                                    )],
-                                ),
-                            ]
-                            .into_iter()
-                            .collect(),
-                        ),
-                        ..Default::default()
-                    }),
                     data: Some(json!({
                         "codeActionParams": {
                             "range": {

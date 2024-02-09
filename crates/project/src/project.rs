@@ -5134,14 +5134,20 @@ impl Project {
             let range = action.range.to_point_utf16(buffer);
 
             cx.spawn(move |this, mut cx| async move {
-                if let Some(lsp_range) = action
-                    .lsp_action
-                    .data
-                    .as_mut()
-                    .and_then(|d| d.get_mut("codeActionParams"))
-                    .and_then(|d| d.get_mut("range"))
-                {
-                    *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
+                if action.lsp_action.command.is_none() && action.lsp_action.edit.is_none() {
+                    // Sync the range in the action with the range in the buffer
+                    if let Some(lsp_range) = action.lsp_action.data.as_mut().and_then(|d| {
+                        if d.get("codeActionParams").is_some() {
+                            // rust-analyzer puts range in data.codeActionParams
+                            d.get_mut("codeActionParams")
+                                .and_then(|d| d.get_mut("range"))
+                        } else {
+                            // elm-language-server puts range in data
+                            d.get_mut("range")
+                        }
+                    }) {
+                        *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
+                    }
                     action.lsp_action = lang_server
                         .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
                         .await?;
