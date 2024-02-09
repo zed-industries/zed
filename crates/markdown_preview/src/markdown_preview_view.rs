@@ -10,7 +10,7 @@ use gpui::{
     WeakView,
 };
 use ui::prelude::*;
-use workspace::item::Item;
+use workspace::item::{Item, ItemHandle};
 use workspace::Workspace;
 
 use crate::{
@@ -22,7 +22,6 @@ use crate::{
 
 pub struct MarkdownPreviewView {
     workspace: WeakView<Workspace>,
-    scroll_handle: ScrollHandle,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
     contents: ParsedMarkdown,
@@ -111,21 +110,17 @@ impl MarkdownPreviewView {
                 selected_block: 0,
                 focus_handle: cx.focus_handle(),
                 active_editor: None,
-                scroll_handle: ScrollHandle::new(),
                 workspace: workspace.clone(),
                 contents,
                 list_state,
             };
 
-            this.workspace_updated(Some(active_editor), cx);
+            this.set_editor(active_editor, cx);
 
             if let Some(workspace) = &workspace.upgrade() {
                 cx.observe(workspace, |this, workspace, cx| {
-                    if let Some(item) = workspace.read(cx).active_item(cx) {
-                        if item.item_id() != cx.entity_id() {
-                            this.workspace_updated(item.act_as::<Editor>(cx), cx);
-                        }
-                    }
+                    let item = workspace.read(cx).active_item(cx);
+                    this.workspace_updated(item, cx);
                 })
                 .detach();
             } else {
@@ -136,9 +131,17 @@ impl MarkdownPreviewView {
         })
     }
 
-    fn workspace_updated(&mut self, item: Option<View<Editor>>, cx: &mut ViewContext<Self>) {
-        if let Some(editor) = item {
-            self.set_editor(editor, cx);
+    fn workspace_updated(
+        &mut self,
+        active_item: Option<Box<dyn ItemHandle>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(item) = active_item {
+            if item.item_id() != cx.entity_id() {
+                if let Some(editor) = item.act_as::<Editor>(cx) {
+                    self.set_editor(editor, cx);
+                }
+            }
         }
     }
 
@@ -152,14 +155,7 @@ impl MarkdownPreviewView {
         let subscription = cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
             match event {
                 EditorEvent::Edited => {
-                    let editor = editor.read(cx);
-                    let contents = editor.buffer().read(cx).snapshot(cx).text();
-                    let file_location =
-                        MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
-                    this.contents = parse_markdown(&contents, file_location);
-
-                    this.list_state.reset(this.contents.children.len());
-                    cx.notify();
+                    this.on_editor_edited(cx);
                 }
                 EditorEvent::SelectionsChanged { .. } => {
                     let editor = editor.read(cx);
@@ -176,6 +172,20 @@ impl MarkdownPreviewView {
             editor,
             _subscription: subscription,
         });
+
+        self.on_editor_edited(cx);
+    }
+
+    fn on_editor_edited(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(state) = &self.active_editor {
+            let editor = state.editor.read(cx);
+            let contents = editor.buffer().read(cx).snapshot(cx).text();
+            let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
+            self.contents = parse_markdown(&contents, file_location);
+
+            self.list_state.reset(self.contents.children.len());
+            cx.notify();
+        }
     }
 
     fn update_editor_selection(&self, cx: &mut ViewContext<Self>, selection: Range<usize>) {
@@ -278,6 +288,5 @@ impl Render for MarkdownPreviewView {
                     .flex_grow()
                     .map(|this| this.child(list(self.list_state.clone()).full())),
             )
-            .track_scroll(&self.scroll_handle.clone())
     }
 }
