@@ -26,8 +26,13 @@ impl super::LspAdapter for ClojureLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("clojure-lsp/clojure-lsp", true, false, delegate.http_client()).await?;
+        let release = latest_github_release(
+            "clojure-lsp/clojure-lsp",
+            true,
+            false,
+            delegate.http_client(),
+        )
+        .await?;
         let platform = match consts::ARCH {
             "x86_64" => "amd64",
             "aarch64" => "aarch64",
