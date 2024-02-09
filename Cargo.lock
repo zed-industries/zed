@@ -2689,6 +2689,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "extensions_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "project",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings",
+ "toml",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10763,6 +10784,7 @@ dependencies = [
  "editor",
  "env_logger",
  "extension",
+ "extensions_ui",
  "feature_flags",
  "feedback",
  "file_finder",

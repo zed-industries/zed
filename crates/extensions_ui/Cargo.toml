@@ -1,0 +1,32 @@
+[package]
+name = "extensions_ui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/extensions_panel.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+util.workspace = true
+workspace.workspace = true
+settings.workspace = true
+ui.workspace = true
+project.workspace = true
+
+[dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
