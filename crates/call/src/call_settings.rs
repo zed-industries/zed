@@ -7,7 +7,6 @@ use settings::Settings;
 #[derive(Deserialize, Debug)]
 pub struct CallSettings {
     pub mute_on_join: bool,
-    pub share_on_join: bool,
 }
 
 /// Configuration of voice calls in Zed.
@@ -17,11 +16,6 @@ pub struct CallSettingsContent {
     ///
     /// Default: false
     pub mute_on_join: Option<bool>,
-
-    /// Whether your current project should be shared when joining an empty channel.
-    ///
-    /// Default: true
-    pub share_on_join: Option<bool>,
 }
 
 impl Settings for CallSettings {

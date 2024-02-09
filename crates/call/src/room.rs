@@ -569,10 +569,6 @@ impl Room {
         self.local_participant.role == proto::ChannelRole::Admin
     }
 
-    pub fn local_participant_is_guest(&self) -> bool {
-        self.local_participant.role == proto::ChannelRole::Guest
-    }
-
     pub fn set_participant_role(
         &mut self,
         user_id: u64,
@@ -1159,7 +1155,7 @@ impl Room {
         })
     }
 
-    pub fn share_project(
+    pub(crate) fn share_project(
         &mut self,
         project: Model<Project>,
         cx: &mut ModelContext<Self>,

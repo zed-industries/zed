@@ -40,7 +40,7 @@ use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
-    OpenChannelNotes, Workspace,
+    Workspace,
 };
 
 actions!(
@@ -68,19 +68,6 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(cx);
-        });
-        workspace.register_action(|_, _: &OpenChannelNotes, cx| {
-            let channel_id = ActiveCall::global(cx)
-                .read(cx)
-                .room()
-                .and_then(|room| room.read(cx).channel_id());
-
-            if let Some(channel_id) = channel_id {
-                let workspace = cx.view().clone();
-                cx.window_context().defer(move |cx| {
-                    ChannelView::open(channel_id, None, workspace, cx).detach_and_log_err(cx)
-                });
-            }
         });
     })
     .detach();
