@@ -156,7 +156,7 @@ impl PlatformTextSystem for LinuxTextSystem {
             size: size(
                 glyph_metrics.advance_width(glyph_id),
                 glyph_metrics.advance_height(glyph_id),
-            ), 
+            ),
         })
     }
 
@@ -285,10 +285,7 @@ impl LinuxTextSystemState {
             .unwrap();
         Ok(Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
-            size: size(
-                image.placement.width.into(),
-                image.placement.height.into(),
-            ),
+            size: size(image.placement.width.into(), image.placement.height.into()),
         })
     }
 
