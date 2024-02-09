@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{
-    prelude::Pixels, v_flex, ActiveTheme, Button, Clickable, FluentBuilder, Icon, IconButton,
-    IconName, ListItem, StyledExt,
+    prelude::Pixels, v_flex, ActiveTheme, Button, Clickable, Color, FluentBuilder, Icon,
+    IconButton, IconName, ListItem, StyledExt,
 };
 use util::{ResultExt as _, TryFutureExt};
 use workspace::{
@@ -210,6 +210,10 @@ impl Panel for RunnablesPanel {
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
+    }
+    fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
+    fn collapsed_icon_color(&self, _: &WindowContext) -> Option<Color> {
+        Some(Color::Modified)
     }
 }
 
