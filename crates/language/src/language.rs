@@ -28,6 +28,11 @@ use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
 use regex::Regex;
+use schemars::{
+    gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
+    JsonSchema,
+};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::{
@@ -363,7 +368,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: Arc<str>,
@@ -374,6 +379,7 @@ pub struct LanguageConfig {
     pub matcher: LanguageMatcher,
     /// List of bracket types in a language.
     #[serde(default)]
+    #[schemars(schema_with = "bracket_pair_config_json_schema")]
     pub brackets: BracketPairConfig,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
@@ -382,10 +388,12 @@ pub struct LanguageConfig {
     /// A regex that is used to determine whether the indentation level should be
     /// increased in the following line.
     #[serde(default, deserialize_with = "deserialize_regex")]
+    #[schemars(schema_with = "regex_json_schema")]
     pub increase_indent_pattern: Option<Regex>,
     /// A regex that is used to determine whether the indentation level should be
     /// decreased in the following line.
     #[serde(default, deserialize_with = "deserialize_regex")]
+    #[schemars(schema_with = "regex_json_schema")]
     pub decrease_indent_pattern: Option<Regex>,
     /// A list of characters that trigger the automatic insertion of a closing
     /// bracket when they immediately precede the point where an opening
@@ -418,7 +426,7 @@ pub struct LanguageConfig {
     pub prettier_parser_name: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
 pub struct LanguageMatcher {
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     #[serde(default)]
@@ -429,6 +437,7 @@ pub struct LanguageMatcher {
         serialize_with = "serialize_regex",
         deserialize_with = "deserialize_regex"
     )]
+    #[schemars(schema_with = "regex_json_schema")]
     pub first_line_pattern: Option<Regex>,
 }
 
@@ -441,13 +450,14 @@ pub struct LanguageScope {
     override_id: Option<u32>,
 }
 
-#[derive(Clone, Deserialize, Default, Debug)]
+#[derive(Clone, Deserialize, Default, Debug, JsonSchema)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comments: Override<Vec<Arc<str>>>,
     #[serde(default)]
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
     #[serde(skip_deserializing)]
+    #[schemars(skip)]
     pub disabled_bracket_ixs: Vec<u16>,
     #[serde(default)]
     pub word_characters: Override<HashSet<char>>,
@@ -455,7 +465,7 @@ pub struct LanguageConfigOverride {
     pub opt_into_language_servers: Vec<String>,
 }
 
-#[derive(Clone, Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Override<T> {
     Remove { remove: bool },
@@ -513,6 +523,13 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
     }
 }
 
+fn regex_json_schema(_: &mut SchemaGenerator) -> Schema {
+    Schema::Object(SchemaObject {
+        instance_type: Some(InstanceType::String.into()),
+        ..Default::default()
+    })
+}
+
 fn serialize_regex<S>(regex: &Option<Regex>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -539,13 +556,26 @@ pub struct FakeLspAdapter {
 ///
 /// This struct includes settings for defining which pairs of characters are considered brackets and
 /// also specifies any language-specific scopes where these pairs should be ignored for bracket matching purposes.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, JsonSchema)]
 pub struct BracketPairConfig {
     /// A list of character pairs that should be treated as brackets in the context of a given language.
     pub pairs: Vec<BracketPair>,
     /// A list of tree-sitter scopes for which a given bracket should not be active.
     /// N-th entry in `[Self::disabled_scopes_by_bracket_ix]` contains a list of disabled scopes for an n-th entry in `[Self::pairs]`
+    #[schemars(skip)]
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
+}
+
+fn bracket_pair_config_json_schema(gen: &mut SchemaGenerator) -> Schema {
+    Option::<Vec<BracketPairContent>>::json_schema(gen)
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct BracketPairContent {
+    #[serde(flatten)]
+    pub bracket_pair: BracketPair,
+    #[serde(default)]
+    pub not_in: Vec<String>,
 }
 
 impl<'de> Deserialize<'de> for BracketPairConfig {
@@ -553,15 +583,7 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        pub struct Entry {
-            #[serde(flatten)]
-            pub bracket_pair: BracketPair,
-            #[serde(default)]
-            pub not_in: Vec<String>,
-        }
-
-        let result = Vec::<Entry>::deserialize(deserializer)?;
+        let result = Vec::<BracketPairContent>::deserialize(deserializer)?;
         let mut brackets = Vec::with_capacity(result.len());
         let mut disabled_scopes_by_bracket_ix = Vec::with_capacity(result.len());
         for entry in result {
@@ -578,7 +600,7 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
 
 /// Describes a single bracket pair and how an editor should react to e.g. inserting
 /// an opening bracket or to a newline character insertion in between `start` and `end` characters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema)]
 pub struct BracketPair {
     /// Starting substring for a bracket.
     pub start: String,
