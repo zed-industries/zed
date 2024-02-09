@@ -65,13 +65,19 @@ impl PlatformTextSystem for LinuxTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    // todo!(linux) 
+    // todo!(linux)
     // Need to check that this is working correctly, probably requires xcb input support
     fn all_font_names(&self) -> Vec<String> {
-        self.0.read().font_system.db().faces().map(|face| face.post_script_name.clone()).collect()
+        self.0
+            .read()
+            .font_system
+            .db()
+            .faces()
+            .map(|face| face.post_script_name.clone())
+            .collect()
     }
 
-    // todo!(linux) 
+    // todo!(linux)
     fn all_font_families(&self) -> Vec<String> {
         Vec::new()
     }
@@ -108,7 +114,7 @@ impl PlatformTextSystem for LinuxTextSystem {
             {
                 FontId(font_id)
             } else {
-                // todo!(linux) 
+                // todo!(linux)
                 // Font isn't in fonts so add it there, this is because we query all the fonts in the db and maybe we haven't loaded it yet
                 let font_id = FontId(lock.fonts.len());
                 let font = lock.font_system.get_font(id).unwrap();
@@ -187,7 +193,6 @@ impl PlatformTextSystem for LinuxTextSystem {
     ) -> Vec<usize> {
         unimplemented!()
     }
-
 }
 
 impl LinuxTextSystemState {
