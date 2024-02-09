@@ -1,9 +1,9 @@
 use crate::{settings_store::SettingsStore, Settings};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{AppContext, BackgroundExecutor};
-use std::{io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
+use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
 pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
@@ -115,8 +115,14 @@ pub fn update_settings_file<T: Settings>(
         let new_text = cx.read_global(|store: &SettingsStore, _cx| {
             store.new_text_for_update::<T>(old_text, update)
         })?;
-        let resolved_settings_path = fs.canonicalize(paths::SETTINGS.clone().as_path()).await?;
-        fs.atomic_write(resolved_settings_path, new_text).await?;
+        let initial_path = paths::SETTINGS.as_path();
+        let resolved_path = fs
+            .canonicalize(initial_path)
+            .await
+            .with_context(|| format!("Failed to canonicalize settings path {:?}", initial_path))?;
+        fs.atomic_write(resolved_path.clone(), new_text)
+            .await
+            .with_context(|| format!("Failed to write settings to file {:?}", resolved_path))?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
