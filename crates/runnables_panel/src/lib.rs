@@ -19,7 +19,7 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{
     prelude::Pixels, v_flex, ActiveTheme, Button, Clickable, Color, FluentBuilder, Icon,
-    IconButton, IconName, ListItem, StyledExt,
+    IconButton, IconName, ListHeader, ListItem, StyledExt,
 };
 use util::{ResultExt as _, TryFutureExt};
 use workspace::{
@@ -271,8 +271,10 @@ impl Render for RunnablesPanel {
             },
         );
         v_flex()
+            .p_1()
             .size_full()
             //.child(list(self.list_state.clone()).full())
+            .child(ListHeader::new("Active runnables"))
             .child(list(state).full())
             .child(
                 v_flex()

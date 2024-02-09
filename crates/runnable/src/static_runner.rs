@@ -1,9 +1,6 @@
 //! This module is responsible for executing static runnables, that is runnables defined by the user
 //! in the config file.
-use std::{
-    error::Error,
-    sync::{atomic::AtomicU64, Arc},
-};
+use std::{error::Error, sync::Arc};
 
 use crate::{ExecutionResult, Runnable, TaskHandle};
 use async_process::Command;
