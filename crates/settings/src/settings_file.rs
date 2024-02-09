@@ -115,7 +115,8 @@ pub fn update_settings_file<T: Settings>(
         let new_text = cx.read_global(|store: &SettingsStore, _cx| {
             store.new_text_for_update::<T>(old_text, update)
         })?;
-        fs.atomic_write(paths::SETTINGS.clone(), new_text).await?;
+        let resolved_settings_path = fs.canonicalize(paths::SETTINGS.clone().as_path()).await?;
+        fs.atomic_write(resolved_settings_path, new_text).await?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
