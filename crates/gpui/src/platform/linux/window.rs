@@ -428,4 +428,8 @@ impl PlatformWindow for LinuxWindow {
         let inner = self.0.inner.lock();
         inner.renderer.atlas().clone()
     }
+
+    fn set_graphics_profiler_enabled(&self, enabled: bool) {
+        todo!("linux")
+    }
 }
