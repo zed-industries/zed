@@ -194,7 +194,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace_handle.clone(),
                 cx.clone(),
             );
-
+            let runnables_panel = RunnablesPanel::load(workspace_handle.clone(), cx.clone());
             let (
                 project_panel,
                 terminal_panel,
@@ -202,6 +202,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 channels_panel,
                 chat_panel,
                 notification_panel,
+                runnables_panel,
             ) = futures::try_join!(
                 project_panel,
                 terminal_panel,
@@ -209,14 +210,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 channels_panel,
                 chat_panel,
                 notification_panel,
+                runnables_panel,
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                let runnables_panel = RunnablesPanel::new(
-                    workspace.project().read(cx).runnable_inventory().clone(),
-                    workspace.app_state().fs.clone(),
-                    cx,
-                );
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);

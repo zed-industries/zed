@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow.workspace = true
+db.workspace = true
 editor.workspace = true
 fs.workspace = true
 gpui.workspace = true
@@ -18,4 +19,5 @@ serde_json = "1.0.113"
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
+util.workspace = true
 workspace.workspace = true

@@ -2,26 +2,32 @@ mod runnables_settings;
 
 use std::{path::PathBuf, sync::Arc};
 
+use anyhow::{anyhow, Result};
+use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
 use gpui::{
-    actions, div, list, px, relative, rems, AppContext, EventEmitter, FocusHandle, FocusableView,
-    FontStyle, FontWeight, IntoElement, ListAlignment, ListState, Model, ParentElement as _,
-    Render, SharedString, Styled as _, TextStyle, View, ViewContext, VisualContext as _,
-    WhiteSpace, WindowContext,
+    actions, div, list, px, relative, rems, AppContext, AsyncWindowContext, EventEmitter,
+    FocusHandle, FocusableView, FontStyle, FontWeight, IntoElement, ListAlignment, ListState,
+    Model, ParentElement as _, Render, SharedString, Styled as _, Task, TextStyle, View,
+    ViewContext, VisualContext as _, WeakView, WhiteSpace, WindowContext,
 };
 use project::Inventory;
 use runnables_settings::{RunnablesDockPosition, RunnablesSettings};
+use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{
     prelude::Pixels, v_flex, ActiveTheme, Button, Clickable, FluentBuilder, Icon, IconButton,
     IconName, ListItem, StyledExt,
 };
+use util::{ResultExt as _, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
+
+const RUNNABLES_PANEL_KEY: &'static str = "RunnablesPanel";
 
 pub fn init(cx: &mut AppContext) {
     RunnablesSettings::register(cx);
@@ -42,14 +48,16 @@ pub struct RunnablesPanel {
     inventory: Model<Inventory>,
     width: Option<Pixels>,
     fs: Arc<dyn Fs>,
+    pending_serialization: Task<Option<()>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializedRunnablesPanel {
+    width: Option<Pixels>,
 }
 
 impl RunnablesPanel {
-    pub fn new(
-        inventory: Model<Inventory>,
-        fs: Arc<dyn Fs>,
-        cx: &mut WindowContext<'_>,
-    ) -> View<Self> {
+    fn new(inventory: Model<Inventory>, fs: Arc<dyn Fs>, cx: &mut WindowContext<'_>) -> View<Self> {
         cx.new_view(|cx| {
             let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -62,9 +70,11 @@ impl RunnablesPanel {
                 inventory,
                 width: None,
                 fs,
+                pending_serialization: Task::ready(None),
             }
         })
     }
+
     fn render_filter_input(
         &self,
         editor: &View<Editor>,
@@ -97,6 +107,52 @@ impl RunnablesPanel {
                 ..Default::default()
             },
         )
+    }
+
+    pub async fn load(
+        workspace: WeakView<Workspace>,
+        mut cx: AsyncWindowContext,
+    ) -> Result<View<Self>> {
+        let serialized_panel = cx
+            .background_executor()
+            .spawn(async move { KEY_VALUE_STORE.read_kvp(RUNNABLES_PANEL_KEY) })
+            .await
+            .map_err(|e| anyhow!("Failed to load project panel: {}", e))
+            .log_err()
+            .flatten()
+            .map(|panel| serde_json::from_str::<SerializedRunnablesPanel>(&panel))
+            .transpose()
+            .log_err()
+            .flatten();
+
+        workspace.update(&mut cx, |workspace, cx| {
+            let inventory = workspace.project().read(cx).runnable_inventory().clone();
+            let fs = workspace.app_state().fs.clone();
+            let panel = RunnablesPanel::new(inventory, fs, cx);
+            if let Some(serialized_panel) = serialized_panel {
+                panel.update(cx, |panel, cx| {
+                    panel.width = serialized_panel.width;
+                    cx.notify();
+                });
+            }
+            panel
+        })
+    }
+
+    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let width = self.width;
+        self.pending_serialization = cx.background_executor().spawn(
+            async move {
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        RUNNABLES_PANEL_KEY.into(),
+                        serde_json::to_string(&SerializedRunnablesPanel { width })?,
+                    )
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
     }
 }
 actions!(runnables_panel, [ToggleFocus]);
@@ -140,7 +196,7 @@ impl Panel for RunnablesPanel {
 
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ui::prelude::ViewContext<Self>) {
         self.width = size;
-        //self.serialize(cx);
+        self.serialize(cx);
         cx.notify();
     }
 
