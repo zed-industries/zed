@@ -42,6 +42,7 @@ impl Element for Svg {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
+        wet: bool,
         element_state: &mut Self::State,
         cx: &mut ElementContext,
     ) where

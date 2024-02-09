@@ -29,7 +29,13 @@ impl Element for &'static str {
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        wet: bool,
+        state: &mut TextState,
+        cx: &mut ElementContext,
+    ) {
         state.paint(bounds, self, cx)
     }
 }
@@ -71,7 +77,13 @@ impl Element for SharedString {
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        wet: bool,
+        state: &mut TextState,
+        cx: &mut ElementContext,
+    ) {
         let text_str: &str = self.as_ref();
         state.paint(bounds, text_str, cx)
     }
@@ -150,7 +162,13 @@ impl Element for StyledText {
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        wet: bool,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
         state.paint(bounds, &self.text, cx)
     }
 }
@@ -419,7 +437,13 @@ impl Element for InteractiveText {
         }
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        wet: bool,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
         if let Some(click_listener) = self.click_listener.take() {
             let mouse_position = cx.mouse_position();
             if let Some(ix) = state.text_state.index_for_position(bounds, mouse_position) {
@@ -547,7 +571,7 @@ impl Element for InteractiveText {
             }
         }
 
-        self.text.paint(bounds, &mut state.text_state, cx)
+        self.text.paint(bounds, wet, &mut state.text_state, cx)
     }
 }
 

@@ -104,8 +104,16 @@ impl<V: Render> Element for View<V> {
         })
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
-        cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        wet: bool,
+        element: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        cx.paint_view(self.entity_id(), |cx| {
+            element.as_mut().unwrap().paint(wet, cx)
+        });
     }
 }
 
@@ -247,6 +255,7 @@ impl AnyView {
         self.model.entity_id()
     }
 
+    /// Draws this view at the given origin, with its sizing based on the `available_space`.
     pub(crate) fn draw(
         &self,
         origin: Point<Pixels>,
@@ -257,7 +266,8 @@ impl AnyView {
             cx.with_absolute_element_offset(origin, |cx| {
                 let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
                 cx.compute_layout(layout_id, available_space);
-                rendered_element.paint(cx)
+                rendered_element.paint(false, cx);
+                rendered_element.paint(true, cx);
             });
         })
     }
@@ -301,10 +311,16 @@ impl Element for AnyView {
         })
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        wet: bool,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
         cx.paint_view(self.entity_id(), |cx| {
             if !self.cache {
-                state.element.take().unwrap().paint(cx);
+                state.element.as_mut().unwrap().paint(wet, cx);
                 return;
             }
 
@@ -321,7 +337,7 @@ impl Element for AnyView {
                 }
             }
 
-            if let Some(mut element) = state.element.take() {
+            if let Some(mut element) = state.element.as_mut() {
                 element.paint(cx);
             } else {
                 let mut element = (self.request_layout)(self, cx).1;

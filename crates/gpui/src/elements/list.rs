@@ -372,6 +372,7 @@ impl Element for List {
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
+        wet: bool,
         _state: &mut Self::State,
         cx: &mut crate::ElementContext,
     ) {

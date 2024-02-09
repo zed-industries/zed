@@ -157,6 +157,7 @@ impl Element for UniformList {
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
+        wet: bool,
         element_state: &mut Self::State,
         cx: &mut ElementContext,
     ) {

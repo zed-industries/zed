@@ -191,7 +191,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         element_state: &mut Self::State,
         cx: &mut ElementContext,
     ) {
-        if let Some(mut child) = element_state.child_element.take() {
+        if let Some(mut child) = element_state.child_element.as_mut() {
             child.paint(cx);
         }
 
@@ -199,7 +199,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             element_state.child_bounds = Some(cx.layout_bounds(child_layout_id));
         }
 
-        if let Some(mut menu) = element_state.menu_element.take() {
+        if let Some(mut menu) = element_state.menu_element.as_mut() {
             menu.paint(cx);
 
             if let Some(child_bounds) = element_state.child_bounds {

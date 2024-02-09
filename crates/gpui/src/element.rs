@@ -60,8 +60,19 @@ pub trait Element: 'static + IntoElement {
     ) -> (LayoutId, Self::State);
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
+    /// If `wet` is false, this is a dry run, which is used to determine which geometry will be closest
+    /// to the user in the painted scene for purposes of hover state calculations. Avoid unnecessary
+    /// computation in the dry phase, but be sure to push opaque layers at a Z-index that matches what
+    /// you'll draw in the final scene.
+    ///
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext);
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        wet: bool,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    );
 
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
@@ -108,10 +119,9 @@ pub trait IntoElement: Sized {
             phase: ElementDrawPhase::Start,
         };
 
-        let frame_state =
-            DrawableElement::draw(element, origin, available_space.map(Into::into), cx);
+        element.draw(origin, available_space.map(Into::into), cx);
 
-        if let Some(mut frame_state) = frame_state {
+        if let Some(mut frame_state) = element.into_frame_state() {
             f(&mut frame_state, cx)
         } else {
             cx.with_element_state(element_id.unwrap(), |element_state, cx| {
@@ -203,8 +213,14 @@ impl<C: RenderOnce> Element for Component<C> {
         (layout_id, element)
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
-        element.paint(cx)
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        wet: bool,
+        element: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        element.paint(wet, cx)
     }
 }
 
@@ -229,7 +245,7 @@ trait ElementObject {
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
 
-    fn paint(&mut self, cx: &mut ElementContext);
+    fn paint(&mut self, wet: bool, cx: &mut ElementContext);
 
     fn measure(
         &mut self,
@@ -301,7 +317,7 @@ impl<E: Element> DrawableElement<E> {
         layout_id
     }
 
-    fn paint(mut self, cx: &mut ElementContext) -> Option<E::State> {
+    fn paint(&mut self, wet: bool, cx: &mut ElementContext) {
         match self.phase {
             ElementDrawPhase::LayoutRequested {
                 layout_id,
@@ -315,11 +331,8 @@ impl<E: Element> DrawableElement<E> {
                 let bounds = cx.layout_bounds(layout_id);
 
                 if let Some(mut frame_state) = frame_state {
-                    self.element
-                        .take()
-                        .unwrap()
-                        .paint(bounds, &mut frame_state, cx);
-                    Some(frame_state)
+                    let mut element = self.element.as_mut().unwrap();
+                    element.paint(bounds, wet, &mut frame_state, cx);
                 } else {
                     let element_id = self
                         .element
@@ -329,17 +342,22 @@ impl<E: Element> DrawableElement<E> {
                         .expect("if we don't have frame state, we should have element state");
                     cx.with_element_state(element_id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();
-                        self.element
-                            .take()
-                            .unwrap()
-                            .paint(bounds, &mut element_state, cx);
+                        let mut element = self.element.as_mut().unwrap();
+                        element.paint(bounds, wet, &mut element_state, cx);
                         ((), element_state)
                     });
-                    None
                 }
             }
 
             _ => panic!("must call layout before paint"),
+        }
+    }
+
+    fn into_frame_state(self) -> Option<E::State> {
+        match self.phase {
+            ElementDrawPhase::Start => None,
+            ElementDrawPhase::LayoutRequested { frame_state, .. }
+            | ElementDrawPhase::LayoutComputed { frame_state, .. } => frame_state,
         }
     }
 
@@ -384,13 +402,16 @@ impl<E: Element> DrawableElement<E> {
     }
 
     fn draw(
-        mut self,
+        &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) -> Option<E::State> {
+    ) {
         self.measure(available_space, cx);
-        cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
+        cx.with_absolute_element_offset(origin, |cx| {
+            self.paint(false, cx);
+            self.paint(true, cx);
+        })
     }
 }
 
@@ -407,8 +428,8 @@ where
         DrawableElement::request_layout(self.as_mut().unwrap(), cx)
     }
 
-    fn paint(&mut self, cx: &mut ElementContext) {
-        DrawableElement::paint(self.take().unwrap(), cx);
+    fn paint(&mut self, wet: bool, cx: &mut ElementContext) {
+        DrawableElement::paint(self.as_mut().unwrap(), wet, cx);
     }
 
     fn measure(
@@ -425,7 +446,7 @@ where
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) {
-        DrawableElement::draw(self.take().unwrap(), origin, available_space, cx);
+        DrawableElement::draw(self.as_mut().unwrap(), origin, available_space, cx);
     }
 }
 
@@ -451,8 +472,8 @@ impl AnyElement {
     }
 
     /// Paints the element stored in this `AnyElement`.
-    pub fn paint(&mut self, cx: &mut ElementContext) {
-        self.0.paint(cx)
+    pub fn paint(&mut self, wet: bool, cx: &mut ElementContext) {
+        self.0.paint(wet, cx)
     }
 
     /// Initializes this element and performs layout within the given available space to determine its size.
@@ -492,8 +513,14 @@ impl Element for AnyElement {
         (layout_id, ())
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut ElementContext) {
-        self.paint(cx)
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        wet: bool,
+        _: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        self.paint(wet, cx)
     }
 }
 
@@ -542,6 +569,7 @@ impl Element for () {
     fn paint(
         &mut self,
         _bounds: Bounds<Pixels>,
+        _wet: bool,
         _state: &mut Self::State,
         _cx: &mut ElementContext,
     ) {

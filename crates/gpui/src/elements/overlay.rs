@@ -96,6 +96,7 @@ impl Element for Overlay {
     fn paint(
         &mut self,
         bounds: crate::Bounds<crate::Pixels>,
+        wet: bool,
         element_state: &mut Self::State,
         cx: &mut ElementContext,
     ) {
@@ -170,7 +171,7 @@ impl Element for Overlay {
         cx.with_absolute_element_offset(offset, |cx| {
             cx.break_content_mask(|cx| {
                 for child in &mut self.children {
-                    child.paint(cx);
+                    child.paint(wet, cx);
                 }
             })
         })

@@ -1084,6 +1084,7 @@ impl Element for Div {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
+        wet: bool,
         element_state: &mut Self::State,
         cx: &mut ElementContext,
     ) {
@@ -1128,7 +1129,7 @@ impl Element for Div {
             |_style, scroll_offset, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
-                        child.paint(cx);
+                        child.paint(wet, cx);
                     }
                 })
             },
@@ -2136,8 +2137,14 @@ where
         self.element.request_layout(state, cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
-        self.element.paint(bounds, state, cx)
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        wet: bool,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        self.element.paint(bounds, wet, state, cx)
     }
 }
 
@@ -2211,8 +2218,14 @@ where
         self.element.request_layout(state, cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
-        self.element.paint(bounds, state, cx)
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        wet: bool,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        self.element.paint(bounds, wet, state, cx)
     }
 }
 
