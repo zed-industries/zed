@@ -2681,6 +2681,7 @@ dependencies = [
  "gpui",
  "language",
  "parking_lot 0.11.2",
+ "schemars",
  "serde",
  "serde_json",
  "theme",
