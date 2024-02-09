@@ -155,7 +155,7 @@ impl PlatformTextSystem for LinuxTextSystem {
             size: size(
                 glyph_metrics.advance_width(glyph_id),
                 glyph_metrics.advance_height(glyph_id),
-            ), // todo!(linux) this height is probably incorect
+            ), // todo!(linux) this height is probably incorrect
         })
     }
 
@@ -359,7 +359,7 @@ impl LinuxTextSystemState {
                     .unwrap(),
             );
             let mut glyphs = SmallVec::new();
-            // todo!(linux) this is definetly wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
+            // todo!(linux) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
             glyphs.push(ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
                 position: point((glyph.x).into(), glyph.y.into()),
