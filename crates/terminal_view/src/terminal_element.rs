@@ -4,8 +4,8 @@ use gpui::{
     ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
     InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState, Interactivity,
     IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
-    Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle,
-    UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
+    TextStyle, UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -340,7 +340,14 @@ impl TerminalElement {
             wavy: flags.contains(Flags::UNDERCURL),
         });
 
-        let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
+        let strikethrough = flags
+            .intersects(Flags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                color: Some(fg),
+                thickness: Pixels::from(1.0),
+            });
+
+        let weight = if flags.intersects(Flags::BOLD) {
             FontWeight::BOLD
         } else {
             FontWeight::NORMAL
@@ -362,6 +369,7 @@ impl TerminalElement {
                 ..text_style.font()
             },
             underline,
+            strikethrough,
         };
 
         if let Some((style, range)) = hyperlink {
@@ -414,6 +422,7 @@ impl TerminalElement {
                 color: Some(theme.colors().link_text_hover),
                 wavy: false,
             }),
+            strikethrough: None,
             fade_out: None,
         };
 
@@ -427,6 +436,7 @@ impl TerminalElement {
             white_space: WhiteSpace::Normal,
             // These are going to be overridden per-cell
             underline: None,
+            strikethrough: None,
             color: theme.colors().text,
             font_weight: FontWeight::NORMAL,
         };
@@ -545,6 +555,7 @@ impl TerminalElement {
                             color: theme.colors().terminal_background,
                             background_color: None,
                             underline: Default::default(),
+                            strikethrough: None,
                         }],
                     )
                     .unwrap()

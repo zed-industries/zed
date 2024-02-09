@@ -1,4 +1,5 @@
 name = "TOML"
+grammar = "toml"
 path_suffixes = ["Cargo.lock", "toml"]
 line_comments = ["# "]
 autoclose_before = ",]}"

@@ -8,7 +8,9 @@ use editor::Bias;
 use fs::{repository::GitFileStatus, FakeFs, Fs as _};
 use futures::StreamExt;
 use gpui::{BackgroundExecutor, Model, TestAppContext};
-use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
+use language::{
+    range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
+};
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
 use project::{search::SearchQuery, Project, ProjectPath};
@@ -1022,7 +1024,10 @@ impl RandomizedTest for ProjectCollaborationTest {
         let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             None,

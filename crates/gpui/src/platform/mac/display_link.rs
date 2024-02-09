@@ -1,93 +1,96 @@
-use std::{
-    ffi::c_void,
-    mem,
-    sync::{Arc, Weak},
+use crate::{
+    dispatch_get_main_queue,
+    dispatch_sys::{
+        _dispatch_source_type_data_add, dispatch_resume, dispatch_set_context,
+        dispatch_source_cancel, dispatch_source_create, dispatch_source_merge_data,
+        dispatch_source_set_event_handler_f, dispatch_source_t, dispatch_suspend,
+    },
 };
+use anyhow::Result;
+use core_graphics::display::CGDirectDisplayID;
+use std::ffi::c_void;
+use util::ResultExt;
 
-use crate::DisplayId;
-use collections::HashMap;
-use parking_lot::Mutex;
-
-pub(crate) struct MacDisplayLinker {
-    links: HashMap<DisplayId, MacDisplayLink>,
+pub struct DisplayLink {
+    display_link: sys::DisplayLink,
+    frame_requests: dispatch_source_t,
 }
 
-struct MacDisplayLink {
-    system_link: sys::DisplayLink,
-    _output_callback: Arc<OutputCallback>,
-}
-
-impl MacDisplayLinker {
-    pub fn new() -> Self {
-        MacDisplayLinker {
-            links: Default::default(),
+impl DisplayLink {
+    pub fn new(
+        display_id: CGDirectDisplayID,
+        data: *mut c_void,
+        callback: unsafe extern "C" fn(*mut c_void),
+    ) -> Result<DisplayLink> {
+        unsafe extern "C" fn display_link_callback(
+            _display_link_out: *mut sys::CVDisplayLink,
+            _current_time: *const sys::CVTimeStamp,
+            _output_time: *const sys::CVTimeStamp,
+            _flags_in: i64,
+            _flags_out: *mut i64,
+            frame_requests: *mut c_void,
+        ) -> i32 {
+            let frame_requests = frame_requests as dispatch_source_t;
+            dispatch_source_merge_data(frame_requests, 1);
+            0
         }
-    }
-}
 
-type OutputCallback = Mutex<Box<dyn FnMut() + Send>>;
-
-impl MacDisplayLinker {
-    pub fn set_output_callback(
-        &mut self,
-        display_id: DisplayId,
-        output_callback: Box<dyn FnMut() + Send>,
-    ) {
-        if let Some(mut system_link) = unsafe { sys::DisplayLink::on_display(display_id.0) } {
-            let callback = Arc::new(Mutex::new(output_callback));
-            let weak_callback_ptr: *const OutputCallback = Arc::downgrade(&callback).into_raw();
-            unsafe { system_link.set_output_callback(trampoline, weak_callback_ptr as *mut c_void) }
-
-            self.links.insert(
-                display_id,
-                MacDisplayLink {
-                    _output_callback: callback,
-                    system_link,
-                },
+        unsafe {
+            let frame_requests = dispatch_source_create(
+                &_dispatch_source_type_data_add,
+                0,
+                0,
+                dispatch_get_main_queue(),
             );
-        } else {
-            log::warn!("DisplayLink could not be obtained for {:?}", display_id);
+            dispatch_set_context(
+                crate::dispatch_sys::dispatch_object_t {
+                    _ds: frame_requests,
+                },
+                data,
+            );
+            dispatch_source_set_event_handler_f(frame_requests, Some(callback));
+
+            let display_link = sys::DisplayLink::new(
+                display_id,
+                display_link_callback,
+                frame_requests as *mut c_void,
+            )?;
+
+            Ok(Self {
+                display_link,
+                frame_requests,
+            })
         }
     }
 
-    pub fn start(&mut self, display_id: DisplayId) {
-        if let Some(link) = self.links.get_mut(&display_id) {
-            unsafe {
-                link.system_link.start();
-            }
-        } else {
-            log::warn!("No DisplayLink callback registered for {:?}", display_id)
+    pub fn start(&mut self) -> Result<()> {
+        unsafe {
+            dispatch_resume(crate::dispatch_sys::dispatch_object_t {
+                _ds: self.frame_requests,
+            });
+            self.display_link.start()?;
         }
+        Ok(())
     }
 
-    pub fn stop(&mut self, display_id: DisplayId) {
-        if let Some(link) = self.links.get_mut(&display_id) {
-            unsafe {
-                link.system_link.stop();
-            }
-        } else {
-            log::warn!("No DisplayLink callback registered for {:?}", display_id)
+    pub fn stop(&mut self) -> Result<()> {
+        unsafe {
+            dispatch_suspend(crate::dispatch_sys::dispatch_object_t {
+                _ds: self.frame_requests,
+            });
+            self.display_link.stop()?;
         }
+        Ok(())
     }
 }
 
-unsafe extern "C" fn trampoline(
-    _display_link_out: *mut sys::CVDisplayLink,
-    current_time: *const sys::CVTimeStamp,
-    output_time: *const sys::CVTimeStamp,
-    _flags_in: i64,
-    _flags_out: *mut i64,
-    user_data: *mut c_void,
-) -> i32 {
-    if let Some((_current_time, _output_time)) = current_time.as_ref().zip(output_time.as_ref()) {
-        let output_callback: Weak<OutputCallback> =
-            Weak::from_raw(user_data as *mut OutputCallback);
-        if let Some(output_callback) = output_callback.upgrade() {
-            (output_callback.lock())()
+impl Drop for DisplayLink {
+    fn drop(&mut self) {
+        self.stop().log_err();
+        unsafe {
+            dispatch_source_cancel(self.frame_requests);
         }
-        mem::forget(output_callback);
     }
-    0
 }
 
 mod sys {
@@ -96,10 +99,12 @@ mod sys {
     //! Apple docs: [CVDisplayLink](https://developer.apple.com/documentation/corevideo/cvdisplaylinkoutputcallback?language=objc)
     #![allow(dead_code, non_upper_case_globals)]
 
+    use anyhow::Result;
+    use core_graphics::display::CGDirectDisplayID;
     use foreign_types::{foreign_type, ForeignType};
     use std::{
         ffi::c_void,
-        fmt::{Debug, Formatter, Result},
+        fmt::{self, Debug, Formatter},
     };
 
     #[derive(Debug)]
@@ -114,7 +119,7 @@ mod sys {
     }
 
     impl Debug for DisplayLink {
-        fn fmt(&self, formatter: &mut Formatter) -> Result {
+        fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
             formatter
                 .debug_tuple("DisplayLink")
                 .field(&self.as_ptr())
@@ -201,18 +206,14 @@ mod sys {
         pub fn CVDisplayLinkCreateWithActiveCGDisplays(
             display_link_out: *mut *mut CVDisplayLink,
         ) -> i32;
-        pub fn CVDisplayLinkCreateWithCGDisplay(
+        pub fn CVDisplayLinkSetCurrentCGDisplay(
+            display_link: &mut DisplayLinkRef,
             display_id: u32,
-            display_link_out: *mut *mut CVDisplayLink,
         ) -> i32;
         pub fn CVDisplayLinkSetOutputCallback(
             display_link: &mut DisplayLinkRef,
             callback: CVDisplayLinkOutputCallback,
             user_info: *mut c_void,
-        ) -> i32;
-        pub fn CVDisplayLinkSetCurrentCGDisplay(
-            display_link: &mut DisplayLinkRef,
-            display_id: u32,
         ) -> i32;
         pub fn CVDisplayLinkStart(display_link: &mut DisplayLinkRef) -> i32;
         pub fn CVDisplayLinkStop(display_link: &mut DisplayLinkRef) -> i32;
@@ -221,52 +222,46 @@ mod sys {
     }
 
     impl DisplayLink {
-        /// Apple docs: [CVDisplayLinkCreateWithActiveCGDisplays](https://developer.apple.com/documentation/corevideo/1456863-cvdisplaylinkcreatewithactivecgd?language=objc)
-        pub unsafe fn new() -> Option<Self> {
-            let mut display_link: *mut CVDisplayLink = 0 as _;
-            let code = CVDisplayLinkCreateWithActiveCGDisplays(&mut display_link);
-            if code == 0 {
-                Some(DisplayLink::from_ptr(display_link))
-            } else {
-                None
-            }
-        }
-
         /// Apple docs: [CVDisplayLinkCreateWithCGDisplay](https://developer.apple.com/documentation/corevideo/1456981-cvdisplaylinkcreatewithcgdisplay?language=objc)
-        pub unsafe fn on_display(display_id: u32) -> Option<Self> {
+        pub unsafe fn new(
+            display_id: CGDirectDisplayID,
+            callback: CVDisplayLinkOutputCallback,
+            user_info: *mut c_void,
+        ) -> Result<Self> {
             let mut display_link: *mut CVDisplayLink = 0 as _;
-            let code = CVDisplayLinkCreateWithCGDisplay(display_id, &mut display_link);
-            if code == 0 {
-                Some(DisplayLink::from_ptr(display_link))
-            } else {
-                None
-            }
+
+            let code = CVDisplayLinkCreateWithActiveCGDisplays(&mut display_link);
+            anyhow::ensure!(code == 0, "could not create display link, code: {}", code);
+
+            let mut display_link = DisplayLink::from_ptr(display_link);
+
+            let code = CVDisplayLinkSetOutputCallback(&mut display_link, callback, user_info);
+            anyhow::ensure!(code == 0, "could not set output callback, code: {}", code);
+
+            let code = CVDisplayLinkSetCurrentCGDisplay(&mut display_link, display_id);
+            anyhow::ensure!(
+                code == 0,
+                "could not assign display to display link, code: {}",
+                code
+            );
+
+            Ok(display_link)
         }
     }
 
     impl DisplayLinkRef {
-        /// Apple docs: [CVDisplayLinkSetOutputCallback](https://developer.apple.com/documentation/corevideo/1457096-cvdisplaylinksetoutputcallback?language=objc)
-        pub unsafe fn set_output_callback(
-            &mut self,
-            callback: CVDisplayLinkOutputCallback,
-            user_info: *mut c_void,
-        ) {
-            assert_eq!(CVDisplayLinkSetOutputCallback(self, callback, user_info), 0);
-        }
-
-        /// Apple docs: [CVDisplayLinkSetCurrentCGDisplay](https://developer.apple.com/documentation/corevideo/1456768-cvdisplaylinksetcurrentcgdisplay?language=objc)
-        pub unsafe fn set_current_display(&mut self, display_id: u32) {
-            assert_eq!(CVDisplayLinkSetCurrentCGDisplay(self, display_id), 0);
-        }
-
         /// Apple docs: [CVDisplayLinkStart](https://developer.apple.com/documentation/corevideo/1457193-cvdisplaylinkstart?language=objc)
-        pub unsafe fn start(&mut self) {
-            assert_eq!(CVDisplayLinkStart(self), 0);
+        pub unsafe fn start(&mut self) -> Result<()> {
+            let code = CVDisplayLinkStart(self);
+            anyhow::ensure!(code == 0, "could not start display link, code: {}", code);
+            Ok(())
         }
 
         /// Apple docs: [CVDisplayLinkStop](https://developer.apple.com/documentation/corevideo/1457281-cvdisplaylinkstop?language=objc)
-        pub unsafe fn stop(&mut self) {
-            assert_eq!(CVDisplayLinkStop(self), 0);
+        pub unsafe fn stop(&mut self) -> Result<()> {
+            let code = CVDisplayLinkStop(self);
+            anyhow::ensure!(code == 0, "could not stop display link, code: {}", code);
+            Ok(())
         }
     }
 }

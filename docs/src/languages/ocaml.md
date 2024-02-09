@@ -7,7 +7,7 @@
 If you have the development environment already setup, you can skip to [Launching Zed](#launching-zed)
 
 ### Using OPAM
-Opam is the official package manager for OCaml and is highly recommended for getting started with OCaml. To get started using Opam, please follow the instructions provided [here](https://opam.ocaml.org/doc/Install.html). 
+Opam is the official package manager for OCaml and is highly recommended for getting started with OCaml. To get started using Opam, please follow the instructions provided [here](https://ocaml.org/install). 
 
 Once you install opam and setup a switch with your development environment as per the instructions, you can proceed.
 

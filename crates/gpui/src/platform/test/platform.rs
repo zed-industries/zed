@@ -1,7 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
     Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow,
-    WindowOptions,
+    WindowAppearance, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -120,7 +120,11 @@ impl Platform for TestPlatform {
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        Arc::new(crate::platform::mac::MacTextSystem::new())
+        #[cfg(target_os = "linux")]
+        return Arc::new(crate::platform::test::TestTextSystem {});
+
+        #[cfg(target_os = "macos")]
+        return Arc::new(crate::platform::mac::MacTextSystem::new());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -178,17 +182,9 @@ impl Platform for TestPlatform {
         Box::new(window)
     }
 
-    fn set_display_link_output_callback(
-        &self,
-        _display_id: DisplayId,
-        mut callback: Box<dyn FnMut() + Send>,
-    ) {
-        callback()
+    fn window_appearance(&self) -> WindowAppearance {
+        WindowAppearance::Light
     }
-
-    fn start_display_link(&self, _display_id: DisplayId) {}
-
-    fn stop_display_link(&self, _display_id: DisplayId) {}
 
     fn open_url(&self, url: &str) {
         *self.opened_url.borrow_mut() = Some(url.to_string())

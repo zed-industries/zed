@@ -52,6 +52,14 @@
   "{" @punctuation.special
   "}" @punctuation.special) @embedded
 
+; Docstrings.
+(function_definition
+  "async"?
+  "def"
+  name: (_)
+  (parameters)?
+  body: (block (expression_statement (string) @string.doc)))
+
 [
   "-"
   "-="

@@ -1,4 +1,5 @@
 name = "Vue.js"
+grammar = "vue"
 path_suffixes = ["vue"]
 block_comment = ["<!-- ", " -->"]
 autoclose_before = ";:.,=}])>"

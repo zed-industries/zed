@@ -1,4 +1,5 @@
 name = "JavaScript"
+grammar = "tsx"
 path_suffixes = ["js", "jsx", "mjs", "cjs"]
 first_line_pattern = '^#!.*\bnode\b'
 line_comments = ["// "]

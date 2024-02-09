@@ -1,5 +1,10 @@
+// todo!(linux): remove
+#![cfg_attr(target_os = "linux", allow(dead_code))]
+
 mod app_menu;
 mod keystroke;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(any(test, feature = "test-support"))]
@@ -33,6 +38,8 @@ use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keystroke::*;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -43,6 +50,10 @@ pub use util::SemanticVersion;
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new())
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn current_platform() -> Rc<dyn Platform> {
+    Rc::new(LinuxPlatform::new())
 }
 
 pub(crate) trait Platform: 'static {
@@ -67,13 +78,8 @@ pub(crate) trait Platform: 'static {
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
 
-    fn set_display_link_output_callback(
-        &self,
-        display_id: DisplayId,
-        callback: Box<dyn FnMut() + Send>,
-    );
-    fn start_display_link(&self, display_id: DisplayId);
-    fn stop_display_link(&self, display_id: DisplayId);
+    /// Returns the appearance of the application's windows.
+    fn window_appearance(&self) -> WindowAppearance;
 
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
@@ -295,6 +301,7 @@ pub(crate) trait PlatformAtlas: Send + Sync {
 pub(crate) struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
     pub(crate) tile_id: TileId,
+    pub(crate) padding: u32,
     pub(crate) bounds: Bounds<DevicePixels>,
 }
 
@@ -559,29 +566,30 @@ pub enum WindowBounds {
     Fixed(Bounds<GlobalPixels>),
 }
 
-/// The appearance of the window, as defined by the operating system
-/// On macOS, this corresponds to named [NSAppearance](https://developer.apple.com/documentation/appkit/nsappearance)
-/// values
+/// The appearance of the window, as defined by the operating system.
+///
+/// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
+/// values.
 #[derive(Copy, Clone, Debug)]
 pub enum WindowAppearance {
-    /// A light appearance
+    /// A light appearance.
     ///
-    /// on macOS, this corresponds to the `aqua` appearance
+    /// On macOS, this corresponds to the `aqua` appearance.
     Light,
 
-    /// A light appearance with vibrant colors
+    /// A light appearance with vibrant colors.
     ///
-    /// on macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance
+    /// On macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance.
     VibrantLight,
 
-    /// A dark appearance
+    /// A dark appearance.
     ///
-    /// on macOS, this corresponds to the `darkAqua` appearance
+    /// On macOS, this corresponds to the `darkAqua` appearance.
     Dark,
 
-    /// A dark appearance with vibrant colors
+    /// A dark appearance with vibrant colors.
     ///
-    /// on macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance
+    /// On macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance.
     VibrantDark,
 }
 

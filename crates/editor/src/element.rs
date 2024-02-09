@@ -278,6 +278,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_relative_path);
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, Editor::copy_permalink_to_line);
+        register_action(view, cx, Editor::open_permalink_to_line);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -330,6 +331,8 @@ impl EditorElement {
         register_action(view, cx, Editor::context_menu_next);
         register_action(view, cx, Editor::context_menu_last);
         register_action(view, cx, Editor::display_cursor_names);
+        register_action(view, cx, Editor::unique_lines_case_insensitive);
+        register_action(view, cx, Editor::unique_lines_case_sensitive);
     }
 
     fn register_key_listeners(
@@ -1073,6 +1076,7 @@ impl EditorElement {
                                                         font: self.style.text.font(),
                                                         color: self.style.background,
                                                         background_color: None,
+                                                        strikethrough: None,
                                                         underline: None,
                                                     }],
                                                 )
@@ -1713,6 +1717,7 @@ impl EditorElement {
                     color: Hsla::default(),
                     background_color: None,
                     underline: None,
+                    strikethrough: None,
                 }],
             )
             .unwrap();
@@ -1849,6 +1854,7 @@ impl EditorElement {
                         color,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     };
                     let shaped_line = cx
                         .text_system()
@@ -1906,6 +1912,7 @@ impl EditorElement {
                         color: placeholder_color,
                         background_color: None,
                         underline: Default::default(),
+                        strikethrough: None,
                     };
                     cx.text_system()
                         .shape_line(line.to_string().into(), font_size, &[run])
@@ -2321,6 +2328,7 @@ impl EditorElement {
                         color: cx.theme().colors().editor_invisible,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     }],
                 )
                 .unwrap();
@@ -2335,6 +2343,7 @@ impl EditorElement {
                         color: cx.theme().colors().editor_invisible,
                         background_color: None,
                         underline: None,
+                        strikethrough: None,
                     }],
                 )
                 .unwrap();
@@ -2868,6 +2877,7 @@ impl LineWithInvisibles {
                         color: text_style.color,
                         background_color: text_style.background_color,
                         underline: text_style.underline,
+                        strikethrough: text_style.strikethrough,
                     });
 
                     if editor_mode == EditorMode::Full {
@@ -3281,6 +3291,7 @@ fn layout_line(
             color: Hsla::default(),
             background_color: None,
             underline: None,
+            strikethrough: None,
         }],
     )
 }
