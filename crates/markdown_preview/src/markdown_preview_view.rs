@@ -1,6 +1,9 @@
 use std::{ops::Range, path::PathBuf};
 
-use editor::{Editor, EditorEvent};
+use editor::{
+    scroll::{Autoscroll, AutoscrollStrategy},
+    Editor, EditorEvent,
+};
 use gpui::{
     list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext, WeakView,
@@ -18,6 +21,7 @@ use crate::{
 
 pub struct MarkdownPreviewView {
     workspace: WeakView<Workspace>,
+    active_editor: View<Editor>,
     focus_handle: FocusHandle,
     contents: ParsedMarkdown,
     selected_block: usize,
@@ -63,14 +67,14 @@ impl MarkdownPreviewView {
                         let file_location =
                             MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
                         this.contents = parse_markdown(&contents, file_location);
+
                         this.list_state.reset(this.contents.children.len());
                         cx.notify();
 
-                        // TODO: This does not work as expected.
-                        // The scroll request appears to be dropped
-                        // after `.reset` is called.
-                        this.list_state.scroll_to_reveal_item(this.selected_block);
-                        cx.notify();
+                        cx.defer(|this, cx| {
+                            this.list_state.scroll_to_reveal_item(this.selected_block);
+                            cx.notify();
+                        })
                     }
                     EditorEvent::SelectionsChanged { .. } => {
                         let editor = editor.read(cx);
@@ -95,7 +99,18 @@ impl MarkdownPreviewView {
                                 RenderContext::new(Some(view.workspace.clone()), cx);
                             let block = view.contents.children.get(ix).unwrap();
                             let block = render_markdown_block(block, &mut render_cx);
-                            let block = div().child(block).pl_4().pb_3();
+                            let block =
+                                div()
+                                    .child(block)
+                                    .pl_4()
+                                    .pb_3()
+                                    .id(ix)
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        if let Some(block) = this.contents.children.get(ix) {
+                                            let start = block.source_range().start;
+                                            this.update_editor_selection(cx, start..start);
+                                        }
+                                    }));
 
                             if ix == view.selected_block {
                                 let indicator = div()
@@ -122,11 +137,22 @@ impl MarkdownPreviewView {
             Self {
                 selected_block: 0,
                 focus_handle: cx.focus_handle(),
+                active_editor,
                 workspace,
                 contents,
                 list_state,
             }
         })
+    }
+
+    fn update_editor_selection(&self, cx: &mut ViewContext<Self>, selection: Range<usize>) {
+        self.active_editor.update(cx, |editor, cx| {
+            editor.change_selections(
+                Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
+                cx,
+                |selections| selections.select_ranges(vec![selection]),
+            );
+        });
     }
 
     /// The absolute path of the file that is currently being previewed.
