@@ -175,7 +175,7 @@ fn main() {
         assistant::init(cx);
 
         extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
-        extensions_ui::init(cx);
+        extensions_panel::init(cx);
         load_user_themes_in_background(fs.clone(), cx);
         #[cfg(target_os = "macos")]
         watch_themes(fs.clone(), cx);

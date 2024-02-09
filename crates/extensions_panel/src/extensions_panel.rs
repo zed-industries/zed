@@ -1,4 +1,7 @@
 mod extensions_panel_settings;
+use anyhow::{anyhow, Result};
+use client::{ErrorCode, ErrorExt};
+use db::kvp::KEY_VALUE_STORE;
 use extensions_panel_settings::{ExtensionsPanelDockPosition, ExtensionsPanelSettings};
 use gpui::{
     actions, div, overlay, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
@@ -11,9 +14,11 @@ use project::{
     repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
     Worktree, WorktreeId,
 };
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{cmp::Ordering, ffi::OsStr, ops::Range, path::Path, sync::Arc};
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
@@ -26,6 +31,8 @@ pub enum Event {
     SplitEntry {},
     Focus,
 }
+
+const EXTENSIONS_PANEL_KEY: &'static str = "ExtensionsPanel";
 pub struct ExtensionsPanel {
     fs: Arc<dyn Fs>,
     list: UniformListScrollHandle,
@@ -35,7 +42,7 @@ pub struct ExtensionsPanel {
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
-    // pending_serialization: Task<Option<()>>,
+    pending_serialization: Task<Option<()>>,
 }
 
 actions!(
@@ -76,6 +83,11 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+#[derive(Serialize, Deserialize)]
+struct SerializedExtensionsPanel {
+    width: Option<Pixels>,
+}
+
 impl ExtensionsPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
@@ -90,7 +102,7 @@ impl ExtensionsPanel {
                 context_menu: None,
                 workspace: workspace.weak_handle(),
                 width: None,
-                // pending_serialization: Task::None,
+                pending_serialization: Task::ready(None),
             };
 
             this
@@ -101,12 +113,45 @@ impl ExtensionsPanel {
         workspace: WeakView<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<View<Self>> {
+        let serialized_panel = cx
+            .background_executor()
+            .spawn(async move { KEY_VALUE_STORE.read_kvp(EXTENSIONS_PANEL_KEY) })
+            .await
+            .map_err(|e| anyhow!("Failed to load extensions panel: {}", e))
+            .log_err()
+            .flatten()
+            .map(|panel| serde_json::from_str::<SerializedExtensionsPanel>(&panel))
+            .transpose()
+            .log_err()
+            .flatten();
+
         workspace.update(&mut cx, |workspace, cx| {
             let panel = ExtensionsPanel::new(workspace, cx);
-
+            if let Some(serialized_panel) = serialized_panel {
+                panel.update(cx, |panel, cx| {
+                    panel.width = serialized_panel.width;
+                    cx.notify();
+                });
+            }
             panel
         })
     }
+    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let width = self.width;
+        self.pending_serialization = cx.background_executor().spawn(
+            async move {
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        EXTENSIONS_PANEL_KEY.into(),
+                        serde_json::to_string(&SerializedExtensionsPanel { width })?,
+                    )
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
+    }
+
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         if !self.focus_handle.contains_focused(cx) {
             cx.emit(Event::Focus);
@@ -150,7 +195,7 @@ impl Panel for ExtensionsPanel {
 
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         self.width = size;
-        // self.serialize(cx);
+        self.serialize(cx);
         cx.notify();
     }
 
