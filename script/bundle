@@ -79,11 +79,6 @@ version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
 local_target_triple=${host_line#*: }
 
-if [ -z "$ZED_CLIENT_CHECKSUM_SEED" ]; then
-    echo "Missing ZED_CLIENT_CHECKSUM_SEED environment variable"
-    exit 1
-fi
-
 if [ "$local_arch" = true ]; then
     echo "Building for local target only."
     cargo build ${build_flag} --package ${zed_crate}

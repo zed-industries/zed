@@ -366,7 +366,8 @@ mod tests {
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
     use language::{
-        language_settings, tree_sitter_rust, Buffer, BufferId, Language, LanguageConfig, Point,
+        language_settings, tree_sitter_rust, Buffer, BufferId, Language, LanguageConfig,
+        LanguageMatcher, Point,
     };
     use rand::prelude::*;
     use serde::Serialize;
@@ -675,7 +676,10 @@ mod tests {
         Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),

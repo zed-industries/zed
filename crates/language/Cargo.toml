@@ -52,6 +52,7 @@ smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
+toml.workspace = true
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 pulldown-cmark.workspace = true

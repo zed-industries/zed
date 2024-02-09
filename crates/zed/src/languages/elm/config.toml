@@ -1,4 +1,5 @@
 name = "Elm"
+grammar = "elm"
 path_suffixes = ["elm"]
 line_comments = ["-- "]
 block_comment = ["{- ", " -}"]

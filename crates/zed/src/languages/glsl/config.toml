@@ -1,4 +1,5 @@
 name = "GLSL"
+grammar = "glsl"
 path_suffixes = ["vert", "frag", "tesc", "tese", "geom", "comp"]
 line_comments = ["// "]
 block_comment = ["/* ", " */"]

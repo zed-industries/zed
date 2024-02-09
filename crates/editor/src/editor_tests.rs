@@ -15,7 +15,8 @@ use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry, Override, Point,
+    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageRegistry,
+    Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -2785,6 +2786,126 @@ async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
         dddˇ»
 
     "});
+
+    // Adding new line
+    cx.set_state(indoc! {"
+        aa«a
+        bbˇ»b
+    "});
+    cx.update_editor(|e, cx| e.manipulate_lines(cx, |lines| lines.push("added_line")));
+    cx.assert_editor_state(indoc! {"
+        «aaa
+        bbb
+        added_lineˇ»
+    "});
+
+    // Removing line
+    cx.set_state(indoc! {"
+        aa«a
+        bbbˇ»
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.pop();
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        «aaaˇ»
+    "});
+
+    // Removing all lines
+    cx.set_state(indoc! {"
+        aa«a
+        bbbˇ»
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.drain(..);
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_unique_lines_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Consider continuous selection as single selection
+    cx.set_state(indoc! {"
+        Aaa«aa
+        cˇ»c«c
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaaa
+        ccc
+        bb
+        aaaaaˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        Aaa«aa
+        cˇ»c«c
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaaa
+        ccc
+        bbˇ»
+    "});
+
+    // Consider non continuous selection as distinct dedup operations
+    cx.set_state(indoc! {"
+        «aaaaa
+        bb
+        aaaaa
+        aaaaaˇ»
+
+        aaa«aaˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaaa
+        bbˇ»
+
+        «aaaaaˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_unique_lines_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «Aaa
+        aAa
+        Aaaˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaa
+        aAaˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «Aaa
+        aAa
+        aaAˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaˇ»
+    "});
 }
 
 #[gpui::test]
@@ -2833,6 +2954,44 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         bb
         ccc
         ddddˇ»
+    "});
+
+    // Adding lines on each selection
+    cx.set_state(indoc! {"
+        2«
+        1ˇ»
+
+        bb«bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.manipulate_lines(cx, |lines| lines.push("added line")));
+    cx.assert_editor_state(indoc! {"
+        «2
+        1
+        added lineˇ»
+
+        «bbbb
+        aaaaa
+        added lineˇ»
+    "});
+
+    // Removing lines on each selection
+    cx.set_state(indoc! {"
+        2«
+        1ˇ»
+
+        bb«bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.pop();
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        «2ˇ»
+
+        «bbbbˇ»
     "});
 }
 
@@ -5077,7 +5236,10 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5196,7 +5358,10 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5318,7 +5483,10 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             // Enable Prettier formatting for the same buffer, and ensure
             // LSP is called instead of Prettier.
             prettier_parser_name: Some("test_parser".to_string()),
@@ -7747,7 +7915,10 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "{".to_string(),
@@ -7859,7 +8030,10 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let mut language = Language::new(
         LanguageConfig {
             name: Arc::clone(&language_name),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -8086,7 +8260,10 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     let mut cx = EditorLspTestContext::new(
         Language::new(
             LanguageConfig {
-                path_suffixes: vec!["jsx".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["jsx".into()],
+                    ..Default::default()
+                },
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
@@ -8187,7 +8364,10 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },

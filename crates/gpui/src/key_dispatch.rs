@@ -304,7 +304,7 @@ impl DispatchTree {
     pub fn bindings_for_action(
         &self,
         action: &dyn Action,
-        context_stack: &Vec<KeyContext>,
+        context_stack: &[KeyContext],
     ) -> Vec<KeyBinding> {
         let keymap = self.keymap.borrow();
         keymap
