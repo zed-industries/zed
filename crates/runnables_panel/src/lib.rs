@@ -8,9 +8,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
 use gpui::{
     actions, div, list, px, relative, rems, AppContext, AsyncWindowContext, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, IntoElement, ListAlignment, ListState,
-    Model, ParentElement as _, Render, SharedString, Styled as _, Task, TextStyle, View,
-    ViewContext, VisualContext as _, WeakView, WhiteSpace, WindowContext,
+    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement,
+    ListAlignment, ListState, Model, ParentElement as _, Render, SharedString, Styled as _, Task,
+    TextStyle, View, ViewContext, VisualContext as _, WeakView, WhiteSpace, WindowContext,
 };
 use project::Inventory;
 use runnables_settings::{RunnablesDockPosition, RunnablesSettings};
@@ -271,6 +271,7 @@ impl Render for RunnablesPanel {
             },
         );
         v_flex()
+            .track_focus(&self.focus_handle)
             .p_1()
             .size_full()
             //.child(list(self.list_state.clone()).full())
