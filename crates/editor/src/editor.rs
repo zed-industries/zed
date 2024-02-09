@@ -1186,6 +1186,15 @@ impl Default for CopilotState {
 }
 
 impl CopilotState {
+    fn reset(&mut self) {
+        self.cycled = false;
+        self.pending_cycling_refresh = Task::ready(None);
+        self.completions.clear();
+        self.active_completion_index = 0;
+        self.excerpt_id = None;
+        self.suggestion = None;
+    }
+
     fn active_completion(&self) -> Option<&copilot::Completion> {
         self.completions.get(self.active_completion_index)
     }
@@ -3753,10 +3762,7 @@ impl Editor {
 
             this.update(&mut cx, |this, cx| {
                 if !completions.is_empty() {
-                    this.copilot_state.cycled = false;
-                    this.copilot_state.pending_cycling_refresh = Task::ready(None);
-                    this.copilot_state.completions.clear();
-                    this.copilot_state.active_completion_index = 0;
+                    this.copilot_state.reset();
                     this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
                     for completion in completions {
                         this.copilot_state.push_completion(completion);
@@ -3890,17 +3896,17 @@ impl Editor {
     }
 
     fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| {
+                    copilot.discard_completions(&self.copilot_state.completions, cx)
+                })
+                .detach_and_log_err(cx);
+
+            self.report_copilot_event(None, false, cx)
+        }
+
         if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
-            if let Some(copilot) = Copilot::global(cx) {
-                copilot
-                    .update(cx, |copilot, cx| {
-                        copilot.discard_completions(&self.copilot_state.completions, cx)
-                    })
-                    .detach_and_log_err(cx);
-
-                self.report_copilot_event(None, false, cx)
-            }
-
             self.display_map.update(cx, |map, cx| {
                 map.splice_inlays(vec![suggestion.id], Vec::new(), cx)
             });
@@ -3934,14 +3940,19 @@ impl Editor {
     }
 
     fn take_active_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<Inlay> {
-        let suggestion = self.copilot_state.suggestion.take()?;
-        self.display_map.update(cx, |map, cx| {
-            map.splice_inlays(vec![suggestion.id], Default::default(), cx);
-        });
-        let buffer = self.buffer.read(cx).read(cx);
+        let suggestion = self.copilot_state.suggestion.take();
+        self.copilot_state.reset();
 
-        if suggestion.position.is_valid(&buffer) {
-            Some(suggestion)
+        if let Some(suggestion) = suggestion {
+            self.display_map.update(cx, |map, cx| {
+                map.splice_inlays(vec![suggestion.id], Default::default(), cx);
+            });
+            let buffer = self.buffer.read(cx).read(cx);
+            if suggestion.position.is_valid(&buffer) {
+                Some(suggestion)
+            } else {
+                None
+            }
         } else {
             None
         }
