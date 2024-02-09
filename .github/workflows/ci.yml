@@ -51,14 +51,14 @@ jobs:
             - name: Ensure fresh merge
               shell: bash -euxo pipefail {0}
               run: |
-                if [ -z "$GITHUB_BASE_REF" ];
-                then
-                  echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> $GITHUB_ENV
-                else
-                  git checkout -B temp
-                  git merge -q origin/$GITHUB_BASE_REF -m "merge main into temp"
-                  echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> $GITHUB_ENV
-                fi
+                  if [ -z "$GITHUB_BASE_REF" ];
+                  then
+                    echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> $GITHUB_ENV
+                  else
+                    git checkout -B temp
+                    git merge -q origin/$GITHUB_BASE_REF -m "merge main into temp"
+                    echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> $GITHUB_ENV
+                  fi
 
             - uses: bufbuild/buf-setup-action@v1
             - uses: bufbuild/buf-breaking-action@v1
@@ -96,34 +96,34 @@ jobs:
         name: (Linux) Run Clippy and tests
         runs-on: ubuntu-latest
         steps:
-          - name: Checkout repo
-            uses: actions/checkout@v4
-            with:
-              clean: false
-              submodules: "recursive"
+            - name: Checkout repo
+              uses: actions/checkout@v4
+              with:
+                  clean: false
+                  submodules: "recursive"
 
-          - name: Restore from cache
-            uses: actions/cache@v3
-            with:
-                path: |
-                  ~/.cargo/bin/
-                  ~/.cargo/registry/index/
-                  ~/.cargo/registry/cache/
-                  ~/.cargo/git/db/
-                  target/
-                key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-                restore-keys: ${{ runner.os }}-cargo-
+            - name: Restore from cache
+              uses: actions/cache@v3
+              with:
+                  path: |
+                      ~/.cargo/bin/
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      target/
+                  key: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-
 
-          - name: configure linux
-            shell: bash -euxo pipefail {0}
-            run: script/linux
+            - name: configure linux
+              shell: bash -euxo pipefail {0}
+              run: script/linux
 
-          - name: cargo clippy
-            shell: bash -euxo pipefail {0}
-            run: script/clippy
+            - name: cargo clippy
+              shell: bash -euxo pipefail {0}
+              run: script/clippy
 
-          - name: Build Zed
-            run: cargo build -p zed
+            - name: Build Zed
+              run: cargo build -p zed
     bundle:
         name: Bundle app
         runs-on:
