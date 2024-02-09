@@ -5,17 +5,17 @@ pub mod static_runnable_file;
 pub mod static_runner;
 pub mod static_source;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use core::future::Future;
 use futures::future::{BoxFuture, Shared};
 pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, Abortable};
 use futures::FutureExt;
-use gpui::{AppContext, AsyncAppContext, EntityId, Model, Task};
+use gpui::{AppContext, AsyncAppContext, EntityId, Model, Task, WeakModel};
 pub use static_runner::StaticRunner;
+use std::any::Any;
 use std::error::Error;
 use std::path::Path;
-use std::sync::atomic::{self, AtomicU64};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -62,52 +62,17 @@ pub struct ExecutionResult {
     /// Contains user-facing details for inspection. It could be e.g. stdout/stderr of a task.
     pub details: String,
 }
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RunnableId(u64);
-
-impl std::fmt::Display for RunnableId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<RunnableId> for u64 {
-    fn from(value: RunnableId) -> Self {
-        value.0
-    }
-}
 
 /// Represents a short lived handle to a runnable, whose main purpose
 /// is to get spawned
 pub trait Runnable {
-    fn id(&self) -> RunnableId;
     fn name(&self) -> String;
     fn exec(&self, cx: gpui::AsyncAppContext) -> Result<TaskHandle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SourceId(u64);
-
-impl std::fmt::Display for SourceId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-// runnables_for_path(..) -> [("a"), ("b")]
-// schedule("a")
-// runnables_for_path(..) -> [("a"), ("b")]
-//
-// trait Source: EventEmitter<SourceEvent> {
-static SOURCE_ID: AtomicU64 = AtomicU64::new(0);
-
-pub fn next_source_id() -> SourceId {
-    SourceId(SOURCE_ID.fetch_add(1, atomic::Ordering::Relaxed))
-}
-
-pub trait Source {
-    fn id(&self, cx: &AppContext) -> SourceId;
+pub trait Source: Any {
+    fn as_any(&mut self) -> &mut dyn Any;
     fn runnables_for_path<'a>(
         &'a self,
         path: &Path,
@@ -118,10 +83,8 @@ pub trait Source {
 /// Uniquely represents a runnable in an inventory.
 /// Two different instances of a runnable (e.g. two different runs of the same static task)
 /// must have a different RunnableLens
-#[derive(Clone)]
 pub struct RunnableLens {
-    source_id: SourceId,
-    runnable_id: RunnableId,
+    source: WeakModel<Box<dyn Source>>,
     display_name: String,
 }
 

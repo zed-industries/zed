@@ -11,16 +11,12 @@ use futures::FutureExt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StaticRunner {
-    id: crate::RunnableId,
     runnable: super::static_runnable_file::Definition,
 }
-static NEXT_RUNNABLE_ID: AtomicU64 = AtomicU64::new(0);
 
 impl StaticRunner {
     pub fn new(runnable: super::static_runnable_file::Definition) -> Self {
-        let id =
-            crate::RunnableId(NEXT_RUNNABLE_ID.fetch_add(1, std::sync::atomic::Ordering::AcqRel));
-        Self { id, runnable }
+        Self { runnable }
     }
 }
 impl Runnable for StaticRunner {
@@ -50,10 +46,6 @@ impl Runnable for StaticRunner {
                 .boxed(),
             cx.clone(),
         )
-    }
-
-    fn id(&self) -> crate::RunnableId {
-        self.id
     }
 
     fn name(&self) -> String {

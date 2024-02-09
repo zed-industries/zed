@@ -6,13 +6,12 @@ use serde::Deserialize;
 use util::ResultExt;
 
 use crate::{
-    next_source_id, static_runnable_file::RunnableProvider, RunState, Runnable, RunnablePebble,
-    Source, SourceId, StaticRunner,
+    static_runnable_file::RunnableProvider, RunState, Runnable, RunnablePebble, Source,
+    StaticRunner,
 };
 use futures::channel::mpsc::UnboundedReceiver;
 
 pub struct StaticSource {
-    id: SourceId,
     // This is gonna come into play later once we tackle handling multiple instances of a single runnable (spawning multiple runnables from a single static runnable definition).
     #[allow(unused)]
     definitions: Model<TrackedFile<RunnableProvider>>,
@@ -64,51 +63,52 @@ impl StaticSource {
     pub fn new(
         definitions: Model<TrackedFile<RunnableProvider>>,
         cx: &mut AppContext,
-    ) -> Model<Self> {
+    ) -> Model<Box<dyn Source>> {
         cx.new_model(|cx| {
-            let _subscription = cx.observe(&definitions, |this: &mut Self, new_definitions, cx| {
+            let _subscription = cx.observe(&definitions, |this, new_definitions, cx| {
                 let tasks = new_definitions.read(cx).get().tasks.clone();
                 let runnables = tasks
                     .into_iter()
                     .map(|task| {
-                        let source_id = this.id;
                         let runner = StaticRunner::new(task.clone());
                         let display_name = runner.name();
-                        let runnable_id = runner.id();
+                        let source = cx.weak_model();
                         let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
                         crate::RunnablePebble {
                             metadata: Arc::new(crate::RunnableLens {
-                                source_id,
-                                runnable_id,
+                                source,
                                 display_name,
                             }),
                             state,
                         }
                     })
                     .collect();
-                this.runnables = runnables;
-                cx.notify();
+                let this: Option<&mut Self> = this.as_any().downcast_mut();
+
+                if let Some(this) = this {
+                    this.runnables = runnables;
+                    cx.notify();
+                }
             });
-            Self {
-                id: next_source_id(),
+            Box::new(Self {
                 definitions, // TODO kb use Option instead?
                 runnables: vec![],
                 _subscription,
-            }
+            })
         })
     }
 }
 
-impl Source for Model<StaticSource> {
-    fn id(&self, cx: &AppContext) -> crate::SourceId {
-        self.read(cx).id
-    }
-
+impl Source for StaticSource {
     fn runnables_for_path<'a>(
         &'a self,
         _: &std::path::Path,
-        cx: &'a AppContext,
+        _cx: &'a AppContext,
     ) -> anyhow::Result<Box<dyn Iterator<Item = crate::RunnablePebble> + 'a>> {
-        Ok(Box::new(self.read(cx).runnables.iter().cloned()))
+        Ok(Box::new(self.runnables.iter().cloned()))
+    }
+
+    fn as_any(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

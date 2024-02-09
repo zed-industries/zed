@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use anyhow::{bail, Result};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use runnable::{RunnablePebble, Source};
 
@@ -18,8 +17,7 @@ impl Inventory {
     pub(crate) fn new(cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|_| Self { sources: vec![] })
     }
-    pub fn add_source(&mut self, source: impl Source + 'static, cx: &mut ModelContext<Self>) {
-        let source: Model<Box<dyn Source>> = cx.new_model(|_| Box::new(source) as Box<dyn Source>);
+    pub fn add_source(&mut self, source: Model<Box<dyn Source>>, cx: &mut ModelContext<Self>) {
         let _subscription = cx.observe(&source, |_, _, cx| {
             cx.notify();
         });
