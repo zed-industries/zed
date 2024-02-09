@@ -145,7 +145,7 @@ impl Panel for RunnablesPanel {
     }
 
     fn icon(&self, _cx: &ui::prelude::WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::Return)
+        Some(ui::IconName::Play)
     }
 
     fn icon_tooltip(&self, _cx: &ui::prelude::WindowContext) -> Option<&'static str> {
