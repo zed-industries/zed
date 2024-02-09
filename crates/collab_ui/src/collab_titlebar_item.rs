@@ -102,6 +102,10 @@ impl Render for CollabTitlebarItem {
                                 room.remote_participants().values().collect::<Vec<_>>();
                             remote_participants.sort_by_key(|p| p.participant_index.0);
 
+                            if !room.in_call() {
+                                return this;
+                            }
+
                             let current_user_face_pile = self.render_collaborator(
                                 &current_user,
                                 peer_id,
@@ -132,6 +136,10 @@ impl Render for CollabTitlebarItem {
                                         collaborator.location
                                             == ParticipantLocation::SharedProject { project_id }
                                     });
+
+                                    if !collaborator.in_call {
+                                        return None;
+                                    }
 
                                     let face_pile = self.render_collaborator(
                                         &collaborator.user,
