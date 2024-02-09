@@ -159,16 +159,19 @@ mod linux {
 
 #[cfg(target_os = "macos")]
 mod mac_os {
+    use anyhow::Context;
     use core_foundation::{
         array::{CFArray, CFIndex},
         string::kCFStringEncodingUTF8,
         url::{CFURLCreateWithBytes, CFURL},
     };
     use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
-    use std::path::Path;
+    use std::{fs, path::Path, ptr};
 
-    use cli::{CliRequest, CliResponse};
-    use ipc_channel::ipc::{IpcReceiver, IpcSender};
+    use cli::{CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME};
+    use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
+
+    use crate::{locate_bundle, Bundle, InfoPlist};
 
 
 

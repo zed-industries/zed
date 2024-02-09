@@ -430,6 +430,6 @@ impl PlatformWindow for LinuxWindow {
     }
 
     fn set_graphics_profiler_enabled(&self, enabled: bool) {
-        todo!("linux")
+        unimplemented!("linux")
     }
 }
