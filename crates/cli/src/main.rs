@@ -12,7 +12,6 @@ use std::{
 };
 use util::paths::PathLikeWithPosition;
 
-
 #[derive(Parser)]
 #[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
 struct Args {
@@ -172,8 +171,6 @@ mod mac_os {
     use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
 
     use crate::{locate_bundle, Bundle, InfoPlist};
-
-
 
     impl Bundle {
         pub fn detect(args_bundle_path: Option<&Path>) -> anyhow::Result<Self> {
