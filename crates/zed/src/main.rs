@@ -314,7 +314,7 @@ fn main() {
                 cx.spawn(|cx| async move {
                     // ignore errors here, we'll show a generic "not signed in"
                     let _ = authenticate(client, &cx).await;
-                    cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))?
+                    cx.update(|cx| workspace::open_channel(channel_id, app_state, None, cx))?
                         .await?;
                     anyhow::Ok(())
                 })
@@ -369,7 +369,7 @@ fn main() {
                         cx.update(|mut cx| {
                             cx.spawn(|cx| async move {
                                 cx.update(|cx| {
-                                    workspace::join_channel(channel_id, app_state, None, cx)
+                                    workspace::open_channel(channel_id, app_state, None, cx)
                                 })?
                                 .await?;
                                 anyhow::Ok(())
