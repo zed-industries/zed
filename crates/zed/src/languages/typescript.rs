@@ -254,7 +254,7 @@ impl LspAdapter for EsLintLspAdapter {
         )
         .await?;
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: release.tarball_url,
         }))
     }

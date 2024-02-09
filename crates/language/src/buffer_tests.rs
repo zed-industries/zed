@@ -5,6 +5,7 @@ use crate::language_settings::{
 use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
+use futures::FutureExt as _;
 use gpui::{AppContext, Model};
 use gpui::{Context, TestAppContext};
 use indoc::indoc;

@@ -1,25 +1,7 @@
 #!/usr/bin/bash -e
 
-# if not on Linux, do nothing
-[[ $(uname) == "Linux" ]] || exit 0
-
-# Copy assets to the user's home directory if they don't exist
-mkdir -p "$HOME/.config/zed"
-
-mkdir -p "$HOME/.config/zed/plugins"
-
-mkdir -p "$HOME/.config/zed/themes"
-cp -ruL ./assets/themes/*/*.json "$HOME/.config/zed/themes"
-
-test -f "$HOME/.config/zed/settings.json" ||
-  cp -uL ./assets/settings/initial_user_settings.json "$HOME/.config/zed/settings.json"
-
-test -f "$HOME/.config/zed/keymap.json" ||
-  cp -uL ./assets/keymaps/default.json "$HOME/.config/zed/keymap.json"
-
 # if sudo is not installed, define an empty alias
 maysudo=$(command -v sudo || true)
-export maysudo
 
 # Ubuntu, Debian, etc.
 # https://packages.ubuntu.com/

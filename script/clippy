@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# clippy.toml is not currently supporting specifying allowed lints
+# so specify those here, and disable the rest until Zed's workspace
+# will have more fixes & suppression for the standard lint set
+cargo clippy --release --workspace --all-features --all-targets -- -A clippy::all -D clippy::dbg_macro -D clippy::todo
+cargo clippy -p gpui

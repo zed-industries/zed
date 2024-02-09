@@ -37,7 +37,7 @@ impl LspAdapter for TaploLspAdapter {
             .context(format!("no asset found matching {asset_name:?}"))?;
 
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         }))
     }
