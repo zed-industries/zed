@@ -1222,7 +1222,12 @@ impl CopilotState {
         if completion_range.is_empty()
             && completion_range.start == cursor.text_anchor.to_offset(&completion_buffer)
         {
-            Some(&completion.text[prefix_len..completion.text.len() - suffix_len])
+            let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
+            if completion_text.trim().is_empty() {
+                None
+            } else {
+                Some(completion_text)
+            }
         } else {
             None
         }
