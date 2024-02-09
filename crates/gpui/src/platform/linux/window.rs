@@ -192,10 +192,6 @@ impl LinuxWindowState {
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
 
-        //Warning: it looks like this reported size is immediately invalidated
-        // on some platforms, followed by a "ConfigureNotify" event.
-        let gpu_extent = query_render_extent(xcb_connection, x_window);
-
         let raw = RawWindow {
             connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                 xcb_connection,
@@ -216,6 +212,10 @@ impl LinuxWindowState {
             }
             .unwrap(),
         );
+
+        // Note: this has to be done after the GPU init, or otherwise
+        // the sizes are immediately invalidated.
+        let gpu_extent = query_render_extent(&xcb_connection, x_window);
 
         Self {
             xcb_connection: Arc::clone(xcb_connection),
