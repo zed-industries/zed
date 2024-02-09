@@ -70,10 +70,22 @@
   "**" @operator
 ) @constant.builtin
 
+(constant) @type
 ((constant) @constant
  (#match? @constant "^[A-Z\\d_]+$"))
 
-(constant) @type
+(scope_resolution
+  ((constant) @superclass
+  (#match? @type "^([A-Z][a-zA-Z]*(?:::[A-Z][a-zA-Z]*)+)$"))
+) @operator
+
+(class
+  (constant) @type
+)
+
+(superclass
+  (constant) @superclass
+)
 
 (self) @variable.special
 (super) @variable.special
