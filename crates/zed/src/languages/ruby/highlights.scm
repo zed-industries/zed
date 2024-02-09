@@ -71,6 +71,7 @@
 ) @constant.builtin
 
 (constant) @type
+
 ((constant) @constant
  (#match? @constant "^[A-Z\\d_]+$"))
 
