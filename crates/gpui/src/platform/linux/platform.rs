@@ -1,23 +1,17 @@
 #![allow(unused)]
 
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-    time::Duration,
-};
+use std::{env, path::{Path, PathBuf}, rc::Rc, sync::Arc, time::Duration};
 
 use async_task::Runnable;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
 
-use collections::{HashMap, HashSet};
-
-use crate::{Action, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, X11Display, LinuxTextSystem, X11Window, X11WindowState, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Point, Result, SemanticVersion, Size, Task, WindowAppearance, WindowOptions};
+use crate::{Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowOptions};
 use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
 use crate::platform::linux::client::Client;
 use crate::platform::linux::client_dispatcher::ClientDispatcher;
+use crate::platform::linux::wayland::{WaylandClient, WaylandClientDispatcher};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -58,12 +52,21 @@ impl Default for LinuxPlatform {
 
 impl LinuxPlatform {
     pub(crate) fn new() -> Self {
+        let wayland_display = env::var_os("WAYLAND_DISPLAY");
+        let use_wayland = wayland_display.is_some() && !wayland_display.unwrap().is_empty();
+
         let (xcb_connection, x_root_index) = xcb::Connection::connect(None).unwrap();
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
 
         let xcb_connection = Arc::new(xcb_connection);
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
+
+        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = if use_wayland {
+            Arc::new(WaylandClientDispatcher::new())
+        } else {
+            Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index))
+        };
+
         let dispatcher = LinuxDispatcher::new(
             main_sender,
             &client_dispatcher
@@ -82,16 +85,19 @@ impl LinuxPlatform {
         };
         let inner = Arc::new(inner);
 
-        let x11client = X11Client::new(
-            Arc::clone(&inner),
-            xcb_connection,
-            x_root_index,
-            atoms
-        );
-        let x11client = Arc::new(x11client);
+        let client: Arc<dyn Client> = if use_wayland {
+            Arc::new(WaylandClient::new())
+        } else {
+            Arc::new(X11Client::new(
+                Arc::clone(&inner),
+                xcb_connection,
+                x_root_index,
+                atoms
+            ))
+        };
 
         Self {
-            client: x11client,
+            client,
             inner: Arc::clone(&inner)
         }
     }
