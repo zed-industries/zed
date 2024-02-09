@@ -308,7 +308,7 @@ To override settings for a language, add an entry for that language server's nam
 
 ## Auto close
 - Description: Whether or not to automatically type closing characters for you.
-- Setting: `use autoclose`
+- Setting: `use_autoclose`
 - Default: `true`
 
 **Options**
