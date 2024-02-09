@@ -3476,7 +3476,6 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
- "swash",
  "taffy",
  "thiserror",
  "time",
