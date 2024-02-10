@@ -9150,6 +9150,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-clojure"
+version = "0.0.9"
+source = "git+https://github.com/prcastro/tree-sitter-clojure?branch=update-ts#38b4f8d264248b2fd09575fbce66f7c22e8929d5"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-cpp"
 version = "0.20.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-cpp?rev=f44509141e7e483323d2ec178f2d2e6c0fc041c1#f44509141e7e483323d2ec178f2d2e6c0fc041c1"
@@ -10841,6 +10850,7 @@ dependencies = [
  "tree-sitter-beancount",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
+ "tree-sitter-clojure",
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-elixir",
