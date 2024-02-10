@@ -3,7 +3,7 @@ mod base_keymap_setting;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
 use gpui::{
-    svg, uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    svg, uniform_list, AnyElement, AppContext, EventEmitter, Fill, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
@@ -68,190 +68,19 @@ impl Render for ExtensionsPage {
             .track_focus(&self.focus_handle)
             .child(
                 v_flex()
-                    .w_96()
-                    .gap_4()
-                    .mx_auto()
+                    .full()
+                    .p(px(16.))
                     .child(
-                        svg()
-                            .path("icons/logo_96.svg")
-                            .text_color(gpui::white())
-                            .w(px(96.))
-                            .h(px(96.))
-                            .mx_auto(),
+                        h_flex()
+                            .w_full()
+                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
                     )
                     .child(
                         h_flex()
-                            .justify_center()
-                            .child(Label::new("Extensions Page")),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("choose-theme", "Choose a theme")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.telemetry.report_app_event(
-                                            "welcome page: change theme".to_string(),
-                                        );
-                                        this.workspace
-                                            .update(cx, |workspace, cx| {
-                                                theme_selector::toggle(
-                                                    workspace,
-                                                    &Default::default(),
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    })),
-                            )
-                            .child(
-                                Button::new("choose-keymap", "Choose a keymap")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.telemetry.report_app_event(
-                                            "welcome page: change keymap".to_string(),
-                                        );
-                                        this.workspace
-                                            .update(cx, |workspace, cx| {
-                                                base_keymap_picker::toggle(
-                                                    workspace,
-                                                    &Default::default(),
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    })),
-                            )
-                            .child(
-                                Button::new("install-cli", "Install the CLI")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.telemetry.report_app_event(
-                                            "welcome page: install cli".to_string(),
-                                        );
-                                        cx.app_mut()
-                                            .spawn(|cx| async move {
-                                                install_cli::install_cli(&cx).await
-                                            })
-                                            .detach_and_log_err(cx);
-                                    })),
-                            ),
-                    )
-                    .child(self.render_extensions(cx))
-                    .child(
-                        v_flex()
-                            .p_3()
-                            .gap_2()
-                            .bg(cx.theme().colors().elevated_surface_background)
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .rounded_md()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Checkbox::new(
-                                            "enable-vim",
-                                            if VimModeSetting::get_global(cx).0 {
-                                                ui::Selection::Selected
-                                            } else {
-                                                ui::Selection::Unselected
-                                            },
-                                        )
-                                        .on_click(
-                                            cx.listener(move |this, selection, cx| {
-                                                this.telemetry.report_app_event(
-                                                    "welcome page: toggle vim".to_string(),
-                                                );
-                                                this.update_settings::<VimModeSetting>(
-                                                    selection,
-                                                    cx,
-                                                    |setting, value| *setting = Some(value),
-                                                );
-                                            }),
-                                        ),
-                                    )
-                                    .child(Label::new("Enable vim mode")),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Checkbox::new(
-                                            "enable-telemetry",
-                                            if TelemetrySettings::get_global(cx).metrics {
-                                                ui::Selection::Selected
-                                            } else {
-                                                ui::Selection::Unselected
-                                            },
-                                        )
-                                        .on_click(
-                                            cx.listener(move |this, selection, cx| {
-                                                this.telemetry.report_app_event(
-                                                    "welcome page: toggle metric telemetry"
-                                                        .to_string(),
-                                                );
-                                                this.update_settings::<TelemetrySettings>(
-                                                    selection,
-                                                    cx,
-                                                    {
-                                                        let telemetry = this.telemetry.clone();
-
-                                                        move |settings, value| {
-                                                            settings.metrics = Some(value);
-
-                                                            telemetry.report_setting_event(
-                                                                "metric telemetry",
-                                                                value.to_string(),
-                                                            );
-                                                        }
-                                                    },
-                                                );
-                                            }),
-                                        ),
-                                    )
-                                    .child(Label::new("Send anonymous usage data")),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Checkbox::new(
-                                            "enable-crash",
-                                            if TelemetrySettings::get_global(cx).diagnostics {
-                                                ui::Selection::Selected
-                                            } else {
-                                                ui::Selection::Unselected
-                                            },
-                                        )
-                                        .on_click(
-                                            cx.listener(move |this, selection, cx| {
-                                                this.telemetry.report_app_event(
-                                                    "welcome page: toggle diagnostic telemetry"
-                                                        .to_string(),
-                                                );
-                                                this.update_settings::<TelemetrySettings>(
-                                                    selection,
-                                                    cx,
-                                                    {
-                                                        let telemetry = this.telemetry.clone();
-
-                                                        move |settings, value| {
-                                                            settings.diagnostics = Some(value);
-
-                                                            telemetry.report_setting_event(
-                                                                "diagnostic telemetry",
-                                                                value.to_string(),
-                                                            );
-                                                        }
-                                                    },
-                                                );
-                                            }),
-                                        ),
-                                    )
-                                    .child(Label::new("Send crash reports")),
-                            ),
+                            .flex_col()
+                            .items_start()
+                            .full()
+                            .child(self.render_extensions(cx)),
                     ),
             )
     }
@@ -259,38 +88,32 @@ impl Render for ExtensionsPage {
 
 impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        let project = workspace.project().clone();
         let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
-            // cx.observe(&project, |this, _, cx| {
-            //     this.get_extensions_from_server(cx);
-            //     cx.notify();
-            // });
             let focus_handle = cx.focus_handle();
+
             cx.on_focus(&focus_handle, Self::focus_in).detach();
 
             cx.on_release(|this: &mut Self, _, _| {
                 this.telemetry
-                    .report_app_event("welcome page: close".to_string());
-                println!("Extensions page closed");
+                    .report_app_event("extensions page: close".to_string());
             })
             .detach();
-            let this = Self {
+            let mut this = Self {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
                 telemetry: workspace.client().telemetry().clone(),
                 extensions_entries: Vec::new(),
             };
+            this.get_extensions_from_server();
 
             this
         });
-
         extensions_panel
     }
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         // if !self.focus_handle.contains_focused(cx) {
         //     cx.emit(Event::Focus);
         // }
-        println!("Extensions page focused");
         self.get_extensions_from_server();
     }
 
@@ -327,68 +150,94 @@ impl ExtensionsPage {
 
         self.extensions_entries = extensions;
     }
+
+    fn install_extension(&self, extension_name: String) {
+        // let download_url = &extension.download_url;
+        println!("INSTALL EXTENSION {}", extension_name.to_string())
+    }
+
+    fn get_extension(&self, name: String) -> Option<&Extension> {
+        self.extensions_entries.iter().find(|e| e.name == name)
+    }
     fn render_extensions(&self, cx: &mut ViewContext<Self>) -> Div {
-        let mut entries = div().h_full().w_full().child(Label::new("Extensions"));
-        println!(
-            "extensions len: {:?}",
-            self.extensions_entries.len().to_string()
-        );
+        let mut items = div().flex_col().full().justify_start().gap_4();
         for extension in &self.extensions_entries {
-            println!("extension: {:?}", extension.name.to_string());
-            entries = entries.child(self.render_entry(extension, cx));
+            items = items.child(self.render_entry(extension.name.to_string(), cx));
         }
-        entries
+        items
     }
-    fn render_entry(&self, entry: &Extension, cx: &mut ViewContext<Self>) -> Div {
-        // let installed = entry.installed;
-        let name = &entry.name;
-        // let version = entry.version;
-        // let author = entry.author;
-        // let description = entry.description;
-        // let repository = entry.repository;
-        // let download_url = entry.download_url;
+    fn render_entry(&self, name: String, cx: &mut ViewContext<Self>) -> Div {
+        if let Some(extension) = self.get_extension(name.to_string()) {
+            let installed = extension.installed;
+            let name = extension.name.to_string();
+            let version = extension.version.to_string();
+            let author = extension.author.to_string();
+            let description = extension.description.to_string();
+            let repository = extension.repository.to_string();
 
-        // let mut button = Button::new("install", "Install")
-        //     .on_click(cx.listener(move |this, _, cx| {
-        //         this.telemetry
-        //             .report_app_event("welcome page: install extension".to_string());
-        //         // this.install_extension(&name, &download_url, cx);
-        //     }))
-        //     .disabled(installed);
+            let mut button = Button::new("install", "Install")
+                .color(Color::Accent)
+                .on_click(cx.listener(|this, _, cx| {
+                    // let name = name.clone();
+                    println!("INSTALL EXTENSION {}", name);
+                    this.telemetry
+                        .report_app_event("extensions page: install extension".to_string());
+                    // this.install_extension(entry.name.to_string());
+                }))
+                .disabled(installed);
 
-        // if installed {
-        //     button = button.disabled(true).child(Label::new("Installed"));
-        // }
+            if installed {
+                button = Button::new("install", "Install").disabled(true);
+            }
 
-        div().h_full().w_full().child(
-            v_flex()
-                .p_3()
-                .gap_2()
-                .bg(cx.theme().colors().elevated_surface_background)
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_md()
-                .child(Label::new(name.to_string())),
-        )
-    }
-    fn update_settings<T: Settings>(
-        &mut self,
-        selection: &Selection,
-        cx: &mut ViewContext<Self>,
-        callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
-    ) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            let fs = workspace.read(cx).app_state().fs.clone();
-            let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings| {
-                let value = match selection {
-                    Selection::Unselected => false,
-                    Selection::Selected => true,
-                    _ => return,
-                };
-
-                callback(settings, value)
-            });
+            div().w_full().child(
+                v_flex()
+                    .w_full()
+                    .p_3()
+                    .mt_4()
+                    .gap_2()
+                    .bg(cx.theme().colors().elevated_surface_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .child(Headline::new(name.to_string()).size(HeadlineSize::Medium)),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                Label::new(description.to_string())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Default),
+                            )
+                            .child(button),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                Label::new(format!("Author: {}", author))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Default),
+                            )
+                            .child(
+                                Label::new(format!("Version: {}", version))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Default),
+                            ),
+                    ),
+            )
+        } else {
+            div().child(Label::new("Extension not found").color(Color::Error))
         }
     }
 }
