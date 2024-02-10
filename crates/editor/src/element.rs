@@ -716,20 +716,27 @@ impl EditorElement {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
 
-        let show_gutter = matches!(
+        let show_git_gutter = matches!(
             ProjectSettings::get_global(cx).git.git_gutter,
             Some(GitGutterSetting::TrackedFiles)
         );
 
-        if show_gutter {
+        if show_git_gutter {
             Self::paint_diff_hunks(bounds, layout, cx);
         }
+
+        let gutter_settings = EditorSettings::get_global(cx).gutter;
+        let line_number_right_padding = if gutter_settings.buttons {
+            layout.gutter_padding
+        } else {
+            layout.gutter_padding / 2.0
+        };
 
         for (ix, line) in layout.line_numbers.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin
                     + point(
-                        bounds.size.width - line.width - layout.gutter_padding,
+                        bounds.size.width - line.width - line_number_right_padding,
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
 
@@ -740,6 +747,7 @@ impl EditorElement {
         cx.with_z_index(1, |cx| {
             for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
                 if let Some(fold_indicator) = fold_indicator {
+                    assert!(gutter_settings.buttons);
                     let mut fold_indicator = fold_indicator.into_any_element();
                     let available_space = size(
                         AvailableSpace::MinContent,
@@ -762,6 +770,7 @@ impl EditorElement {
             }
 
             if let Some(indicator) = layout.code_actions_indicator.take() {
+                assert!(gutter_settings.buttons);
                 let mut button = indicator.button.into_any_element();
                 let available_space = size(
                     AvailableSpace::MinContent,
@@ -1819,7 +1828,10 @@ impl EditorElement {
         Vec<Option<(FoldStatus, BufferRow, bool)>>,
     ) {
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
-        let include_line_numbers = snapshot.mode == EditorMode::Full;
+        let include_line_numbers =
+            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
+        let include_fold_statuses =
+            EditorSettings::get_global(cx).gutter.buttons && snapshot.mode == EditorMode::Full;
         let mut shaped_line_numbers = Vec::with_capacity(rows.len());
         let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
@@ -1864,6 +1876,8 @@ impl EditorElement {
                         .shape_line(line_number.clone().into(), font_size, &[run])
                         .unwrap();
                     shaped_line_numbers.push(Some(shaped_line));
+                }
+                if include_fold_statuses {
                     fold_statuses.push(
                         is_singleton
                             .then(|| {
@@ -1960,7 +1974,13 @@ impl EditorElement {
                 .unwrap()
                 .width;
 
-            let gutter_dimensions = snapshot.gutter_dimensions(font_id, font_size, em_width, self.max_line_number_width(&snapshot, cx), cx);
+            let gutter_dimensions = snapshot.gutter_dimensions(
+                font_id,
+                font_size,
+                em_width,
+                self.max_line_number_width(&snapshot, cx),
+                cx,
+            );
 
             editor.gutter_width = gutter_dimensions.width;
 
@@ -2251,6 +2271,8 @@ impl EditorElement {
                 snapshot = editor.snapshot(cx);
             }
 
+            let gutter_settings = EditorSettings::get_global(cx).gutter;
+
             let mut context_menu = None;
             let mut code_actions_indicator = None;
             if let Some(newest_selection_head) = newest_selection_head {
@@ -2272,12 +2294,14 @@ impl EditorElement {
                         Some(crate::ContextMenu::CodeActions(_))
                     );
 
-                    code_actions_indicator = editor
-                        .render_code_actions_indicator(&style, active, cx)
-                        .map(|element| CodeActionsIndicator {
-                            row: newest_selection_head.row(),
-                            button: element,
-                        });
+                    if gutter_settings.buttons {
+                        code_actions_indicator = editor
+                            .render_code_actions_indicator(&style, active, cx)
+                            .map(|element| CodeActionsIndicator {
+                                row: newest_selection_head.row(),
+                                button: element,
+                            });
+                    }
                 }
             }
 
@@ -2295,29 +2319,32 @@ impl EditorElement {
                 None
             } else {
                 editor.hover_state.render(
-                &snapshot,
-                &style,
-                visible_rows,
-                max_size,
-                editor.workspace.as_ref().map(|(w, _)| w.clone()),
-                cx,
-            )
+                    &snapshot,
+                    &style,
+                    visible_rows,
+                    max_size,
+                    editor.workspace.as_ref().map(|(w, _)| w.clone()),
+                    cx,
+                )
             };
 
             let editor_view = cx.view().clone();
-            let fold_indicators = cx.with_element_context(|cx| {
-
-                cx.with_element_id(Some("gutter_fold_indicators"), |_cx| {
-                editor.render_fold_indicators(
-                    fold_statuses,
-                    &style,
-                    editor.gutter_hovered,
-                    line_height,
-                    gutter_dimensions.margin,
-                    editor_view,
-                )
-            })
-            });
+            let fold_indicators = if gutter_settings.buttons {
+                cx.with_element_context(|cx| {
+                    cx.with_element_id(Some("gutter_fold_indicators"), |_cx| {
+                        editor.render_fold_indicators(
+                            fold_statuses,
+                            &style,
+                            editor.gutter_hovered,
+                            line_height,
+                            gutter_dimensions.margin,
+                            editor_view,
+                        )
+                    })
+                })
+            } else {
+                Vec::new()
+            };
 
             let invisible_symbol_font_size = font_size / 2.;
             let tab_invisible = cx

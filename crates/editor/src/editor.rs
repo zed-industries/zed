@@ -88,6 +88,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
+use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -9640,10 +9641,31 @@ impl EditorSnapshot {
             let descent = cx.text_system().descent(font_id, font_size);
             let gutter_padding_factor = 4.0;
             let gutter_padding = (em_width * gutter_padding_factor).round();
-            // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
-            let min_width_for_number_on_gutter = em_width * 4.0;
-            let gutter_width =
-                max_line_number_width.max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
+
+            let show_git_gutter = matches!(
+                ProjectSettings::get_global(cx).git.git_gutter,
+                Some(GitGutterSetting::TrackedFiles)
+            );
+            let gutter_settings = EditorSettings::get_global(cx).gutter;
+
+            let line_gutter_width = {
+                // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
+                let min_width_for_number_on_gutter = em_width * 4.0;
+                max_line_number_width.max(min_width_for_number_on_gutter)
+            };
+
+            let gutter_width = match (
+                show_git_gutter,
+                gutter_settings.line_numbers,
+                gutter_settings.buttons,
+            ) {
+                (false, false, false) => 0.0.into(),
+                (true, false, false) => em_width,
+                (_, true, false) => line_gutter_width + gutter_padding,
+                (_, false, true) => gutter_padding * 2.0,
+                (_, true, true) => line_gutter_width + gutter_padding * 2.0,
+            };
+
             let gutter_margin = -descent;
 
             GutterDimensions {
