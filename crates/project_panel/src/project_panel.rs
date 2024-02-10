@@ -17,7 +17,7 @@ use gpui::{
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
     repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
+    Snapshot, Worktree, WorktreeId,
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
@@ -49,6 +49,7 @@ pub struct ProjectPanel {
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    collapsed_dir_paths: HashMap<ProjectEntryId, String>,
     selection: Option<Selection>,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
@@ -234,6 +235,7 @@ impl ProjectPanel {
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
                 expanded_dir_ids: Default::default(),
+                collapsed_dir_paths: Default::default(),
                 selection: None,
                 edit_state: None,
                 context_menu: None,
@@ -1120,11 +1122,34 @@ impl ProjectPanel {
                 }
             }
 
+            let root_name = OsStr::new(snapshot.root_name());
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true);
-
+            let mut collapsed_paths: Vec<String> = Vec::new();
             while let Some(entry) = entry_iter.entry() {
-                visible_worktree_entries.push(entry.clone());
+                let mut filename = ProjectPanel::get_path_collapsed_level(snapshot.clone(), entry);
+                if filename.is_empty() {
+                    filename = root_name.to_str().unwrap().to_string();
+                }
+
+                if collapsed_paths.iter().any(|path| path.contains(&filename)) {
+                    entry_iter.advance();
+                    continue;
+                } else {
+                    if filename
+                        != entry
+                            .path
+                            .file_name()
+                            .unwrap_or(root_name)
+                            .to_str()
+                            .unwrap()
+                    {
+                        self.collapsed_dir_paths.insert(entry.id, filename.clone());
+                    }
+                    collapsed_paths.push(filename.clone());
+                    visible_worktree_entries.push(entry.clone());
+                };
+
                 if Some(entry.id) == new_entry_parent_id {
                     visible_worktree_entries.push(Entry {
                         id: NEW_ENTRY_ID,
@@ -1183,6 +1208,47 @@ impl ProjectPanel {
                 entry_id,
             });
         }
+    }
+
+    fn get_path_collapsed_level(snapshot: Snapshot, entry: &Entry) -> String {
+        if entry.kind.is_dir() {
+            let children: Vec<_> = snapshot
+                .entries(true)
+                .into_iter()
+                .filter(|e| e.path.parent() == Some(&*entry.path))
+                .collect();
+
+            if children.len() == 1 && children[0].kind.is_dir() {
+                let sub_entry = &children[0];
+                let snapshot_clone = snapshot.clone();
+                return snapshot_clone
+                    .entry_for_path(sub_entry.path.clone())
+                    .map_or(
+                        entry
+                            .path
+                            .file_name()
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .to_string(),
+                        |sub_entry: &Entry| {
+                            format!(
+                                "{}/{}",
+                                entry.path.file_name().unwrap().to_str().unwrap(),
+                                ProjectPanel::get_path_collapsed_level(snapshot, sub_entry)
+                            )
+                        },
+                    );
+            }
+        }
+
+        return entry
+            .path
+            .file_name()
+            .unwrap_or(OsStr::new(""))
+            .to_str()
+            .unwrap()
+            .to_string();
     }
 
     fn expand_entry(
@@ -1274,16 +1340,35 @@ impl ProjectPanel {
                         }
                     };
 
-                    let mut details = EntryDetails {
-                        filename: entry
+                    let filename = if let Some(file_name) = self.collapsed_dir_paths.get(&entry.id) {
+                        file_name.clone()
+                    } else {
+                        entry
                             .path
                             .file_name()
                             .unwrap_or(root_name)
                             .to_string_lossy()
-                            .to_string(),
+                            .to_string()
+                    };
+
+                    let depth = if let Some(parent_dir) = entry.path.parent() {
+                        let mut adjusted_depth = entry.path.components().count();
+                        for collapsed_name in self.collapsed_dir_paths.values() {
+                            if parent_dir.to_string_lossy().contains(collapsed_name) {
+                                let count = collapsed_name.chars().filter(|&c| c == '/').count();
+                                adjusted_depth -= count;
+                            }
+                        }
+                        adjusted_depth
+                    } else {
+                        0
+                    };
+
+                    let mut details = EntryDetails {
+                        filename,
                         icon,
                         path: entry.path.clone(),
-                        depth: entry.path.components().count(),
+                        depth,
                         kind: entry.kind,
                         is_ignored: entry.is_ignored,
                         is_expanded,
