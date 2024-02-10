@@ -504,6 +504,20 @@ impl CollabPanel {
                         role: proto::ChannelRole::Member,
                     }));
             }
+        } else if let Some(channel_id) = ActiveCall::global(cx).read(cx).pending_channel_id() {
+            self.entries.push(ListEntry::Header(Section::ActiveCall));
+            if !old_entries
+                .iter()
+                .any(|entry| matches!(entry, ListEntry::Header(Section::ActiveCall)))
+            {
+                scroll_to_top = true;
+            }
+
+            if query.is_empty() {
+                self.entries.push(ListEntry::ChannelCall { channel_id });
+                self.entries.push(ListEntry::ChannelNotes { channel_id });
+                self.entries.push(ListEntry::ChannelChat { channel_id });
+            }
         }
 
         let mut request_entries = Vec::new();
@@ -2195,7 +2209,10 @@ impl CollabPanel {
         let text = match section {
             Section::ActiveCall => {
                 let channel_name = maybe!({
-                    let channel_id = ActiveCall::global(cx).read(cx).channel_id(cx)?;
+                    let channel_id = ActiveCall::global(cx)
+                        .read(cx)
+                        .channel_id(cx)
+                        .or_else(|| ActiveCall::global(cx).read(cx).pending_channel_id())?;
 
                     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
 
