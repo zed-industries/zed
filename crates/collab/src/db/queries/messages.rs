@@ -388,6 +388,30 @@ impl Database {
         Ok(())
     }
 
+    pub async fn observed_channel_messages(
+        &self,
+        channel_ids: &[ChannelId],
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<proto::ChannelMessageId>> {
+        let rows = observed_channel_messages::Entity::find()
+            .filter(observed_channel_messages::Column::UserId.eq(user_id))
+            .filter(
+                observed_channel_messages::Column::ChannelId
+                    .is_in(channel_ids.iter().map(|id| id.0)),
+            )
+            .all(&*tx)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|message| proto::ChannelMessageId {
+                channel_id: message.channel_id.to_proto(),
+                message_id: message.channel_message_id.to_proto(),
+            })
+            .collect())
+    }
+
     pub async fn latest_channel_messages(
         &self,
         channel_ids: &[ChannelId],

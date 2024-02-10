@@ -10,6 +10,7 @@ use channel::{ChannelBuffer, ChannelStore};
 use client::{
     self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
+use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
@@ -764,6 +765,16 @@ impl TestClient {
 pub fn join_channel_call(cx: &mut TestAppContext) -> Task<anyhow::Result<()>> {
     let room = cx.read(|cx| ActiveCall::global(cx).read(cx).room().cloned());
     room.unwrap().update(cx, |room, cx| room.join_call(cx))
+}
+
+pub fn open_channel_notes(
+    channel_id: u64,
+    cx: &mut VisualTestContext,
+) -> Task<anyhow::Result<View<ChannelView>>> {
+    let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+    let view = window.root_view(cx).unwrap();
+
+    cx.update(|cx| ChannelView::open(channel_id, None, view.clone(), cx))
 }
 
 impl Drop for TestClient {

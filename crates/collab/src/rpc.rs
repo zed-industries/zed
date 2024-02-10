@@ -620,7 +620,7 @@ impl Server {
                 let mut pool = this.connection_pool.lock();
                 pool.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
-                this.peer.send(connection_id, build_update_user_channels(&channels_for_user.channel_memberships))?;
+                this.peer.send(connection_id, build_update_user_channels(&channels_for_user))?;
                 this.peer.send(connection_id, build_channels_update(
                     channels_for_user,
                     channel_invites
@@ -3440,17 +3440,18 @@ fn notify_membership_updated(
     }
 }
 
-fn build_update_user_channels(
-    memberships: &Vec<db::channel_member::Model>,
-) -> proto::UpdateUserChannels {
+fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserChannels {
     proto::UpdateUserChannels {
-        channel_memberships: memberships
+        channel_memberships: channels
+            .channel_memberships
             .iter()
             .map(|m| proto::ChannelMembership {
                 channel_id: m.channel_id.to_proto(),
                 role: m.role.into(),
             })
             .collect(),
+        observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
+        observed_channel_message_id: channels.observed_channel_messages.clone(),
         ..Default::default()
     }
 }
