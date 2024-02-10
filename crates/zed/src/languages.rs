@@ -27,6 +27,7 @@ mod lua;
 mod nu;
 mod ocaml;
 mod php;
+mod prisma;
 mod purescript;
 mod python;
 mod ruby;
@@ -97,6 +98,7 @@ pub fn init(
             tree_sitter_ocaml::language_ocaml_interface(),
         ),
         ("php", tree_sitter_php::language_php()),
+        ("prisma", tree_sitter_prisma_io::language()),
         ("proto", tree_sitter_proto::language()),
         #[cfg(not(target_os = "linux"))]
         ("purescript", tree_sitter_purescript::language()),
@@ -290,12 +292,21 @@ pub fn init(
     language("nu", vec![Arc::new(nu::NuLanguageServer {})]);
     language("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
     language("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
-    language("vue", vec![Arc::new(vue::VueLspAdapter::new(node_runtime))]);
+    language(
+        "vue",
+        vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))],
+    );
     language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language("proto", vec![]);
     language("terraform", vec![]);
     language("terraform-vars", vec![]);
     language("hcl", vec![]);
+    language(
+        "prisma",
+        vec![Arc::new(prisma::PrismaLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -9372,6 +9372,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-prisma-io"
+version = "1.4.0"
+source = "git+https://github.com/victorhqc/tree-sitter-prisma#eca2596a355b1a9952b4f80f8f9caed300a272b5"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-proto"
 version = "0.0.2"
 source = "git+https://github.com/rewinfrey/tree-sitter-proto?rev=36d54f288aee112f13a67b550ad32634d0c2cb52#36d54f288aee112f13a67b550ad32634d0c2cb52"
@@ -10855,6 +10864,7 @@ dependencies = [
  "tree-sitter-nu",
  "tree-sitter-ocaml",
  "tree-sitter-php",
+ "tree-sitter-prisma-io",
  "tree-sitter-proto",
  "tree-sitter-purescript",
  "tree-sitter-python",

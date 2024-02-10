@@ -135,6 +135,7 @@ tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
 tree-sitter-ocaml.workspace = true
 tree-sitter-php.workspace = true
+tree-sitter-prisma-io.workspace = true
 tree-sitter-proto.workspace = true
 tree-sitter-purescript.workspace = true
 tree-sitter-python.workspace = true

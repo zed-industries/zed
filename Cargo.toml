@@ -250,6 +250,7 @@ tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", re
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "26bbaecda0039df4067861ab38ea8ea169f7f5aa" }
 tree-sitter-ocaml = { git = "https://github.com/tree-sitter/tree-sitter-ocaml", rev = "4abfdc1c7af2c6c77a370aee974627be1c285b3b" }
 tree-sitter-php = "0.21.1"
+tree-sitter-prisma-io = { git = "https://github.com/victorhqc/tree-sitter-prisma" }
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
 tree-sitter-purescript = { git = "https://github.com/ivanmoreau/tree-sitter-purescript", rev = "a37140f0c7034977b90faa73c94fcb8a5e45ed08" }
 tree-sitter-python = "0.20.2"
