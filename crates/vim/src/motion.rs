@@ -802,20 +802,25 @@ fn next_word_end(
 ) -> DisplayPoint {
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
-        if point.column() < map.line_len(point.row()) {
-            *point.column_mut() += 1;
-        } else if point.row() < map.max_buffer_row() {
-            *point.row_mut() += 1;
-            *point.column_mut() = 0;
+        let mut new_point = point;
+        if new_point.column() < map.line_len(new_point.row()) {
+            *new_point.column_mut() += 1;
+        } else if new_point.row() < map.max_buffer_row() {
+            *new_point.row_mut() += 1;
+            *new_point.column_mut() = 0;
         }
 
-        let new_point =
-            movement::find_boundary_exclusive(map, point, FindRange::MultiLine, |left, right| {
+        let new_point = movement::find_boundary_exclusive(
+            map,
+            new_point,
+            FindRange::MultiLine,
+            |left, right| {
                 let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
                 let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
                 left_kind != right_kind && left_kind != CharKind::Whitespace
-            });
+            },
+        );
         let new_point = map.clip_point(new_point, Bias::Left);
         if point == new_point {
             break;
