@@ -5,8 +5,7 @@ use client::{telemetry::Telemetry, TelemetrySettings};
 
 use gpui::{
     svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -44,12 +43,20 @@ pub fn show_extensions_view(app_state: &Arc<AppState>, cx: &mut AppContext) {
     })
     .detach();
 }
-
+pub struct Extension {
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub author: String,
+    pub repository: String,
+    pub download_url: String,
+    pub installed: bool,
+}
 pub struct ExtensionsPage {
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     telemetry: Arc<Telemetry>,
-    _settings_subscription: Subscription,
+    extensions: Vec<Extension>,
 }
 
 impl Render for ExtensionsPage {
@@ -261,14 +268,51 @@ impl ExtensionsPage {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
                 telemetry: workspace.client().telemetry().clone(),
-                _settings_subscription: cx
-                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+                extensions: Vec::new(),
+                get_extensions_from_server: None,
             }
         });
 
+        this.get_extensions_from_server();
         this
     }
+    fn get_extensions_from_server() -> Result<Vec<Extension>, String> {
+        let extensions = vec![
+            Extension {
+                name: "Vim Mode".to_string(),
+                version: "1.0.0".to_string(),
+                author: "Zed".to_string(),
+                description: "Zed extension for lang rust".to_string(),
+                repository: "https://github.com/zed-industries/zed-extensions".to_string(),
+                download_url: "https://download-url".to_string(),
+                installed: false,
+            },
+            Extension {
+                name: "Zed Mode".to_string(),
+                version: "1.0.0".to_string(),
+                author: "Zed".to_string(),
+                description: "Zed extension for lang rust".to_string(),
+                repository: "https://github.com/zed-industries/zed-extensions".to_string(),
+                download_url: "https://download-url".to_string(),
+                installed: false,
+            },
+            Extension {
+                name: "Lang Mode".to_string(),
+                version: "1.0.0".to_string(),
+                author: "Zed".to_string(),
+                description: "Zed extension for lang rust".to_string(),
+                repository: "https://github.com/zed-industries/zed-extensions".to_string(),
+                download_url: "https://download-url".to_string(),
+                installed: false,
+            },
+        ];
+        if extensions.is_empty() {
+            return Err("No extensions found".into());
+        }
 
+        Ok(extensions)
+    }
+    fn render_entry(&self, cx: &mut ViewContext<Self>) {}
     fn update_settings<T: Settings>(
         &mut self,
         selection: &Selection,
