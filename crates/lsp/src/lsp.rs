@@ -31,6 +31,7 @@ use std::{
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
 
+const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
@@ -307,7 +308,7 @@ impl LanguageServer {
         response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
         cx: AsyncAppContext,
-    ) -> Result<()>
+    ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
         F: FnMut(AnyNotification) + 'static + Send,
@@ -320,36 +321,20 @@ impl LanguageServer {
             }
         });
         let mut buffer = Vec::new();
-        'outer: loop {
+        loop {
             buffer.clear();
 
-            while let Ok(bytes_read) = stdout.read_until(b'\n', &mut buffer).await {
-                if bytes_read == 0 {
-                    break 'outer;
-                }
-                if buffer.ends_with(b"\r\n\r\n") {
-                    break;
-                }
-            }
+            read_headers(&mut stdout, &mut buffer).await?;
 
-            let header = str::from_utf8(&buffer)?;
-            let mut message_len: Option<usize> = None;
-            while let Some(header_line) = header.lines().next() {
-                if header_line.starts_with(CONTENT_LEN_HEADER) {
-                    message_len = Some(header_line
-                        .strip_prefix(CONTENT_LEN_HEADER)
-                        .with_context(|| format!("invalid LSP message header `{header}`"))?
-                        .parse::<usize>().with_context(|| {
-                        format!("failed to parse Content-Length of LSP message header: `{header}`")
-                    })?);
-                    break;
-                }
-            }
-            if message_len.is_none() {
-                warn!("missing Content-Length header in LSP message: `{header}`");
-                continue;
-            }
-            let message_len = message_len.unwrap();
+            let headers = std::str::from_utf8(&buffer)?;
+
+            let message_len = headers
+                .split("\n")
+                .find(|line| line.starts_with(CONTENT_LEN_HEADER))
+                .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
+                .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
+                .trim_end()
+                .parse()?;
 
             buffer.resize(message_len, 0);
             stdout.read_exact(&mut buffer).await?;
@@ -391,22 +376,20 @@ impl LanguageServer {
             } else {
                 warn!(
                     "failed to deserialize LSP message:\n{}",
-                    str::from_utf8(&buffer)?
+                    std::str::from_utf8(&buffer)?
                 );
             }
 
             // Don't starve the main thread when receiving lots of messages at once.
             smol::future::yield_now().await;
         }
-
-        Ok(())
     }
 
     async fn handle_stderr<Stderr>(
         stderr: Stderr,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
         stderr_capture: Arc<Mutex<Option<String>>>,
-    ) -> Result<()>
+    ) -> anyhow::Result<()>
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
@@ -443,7 +426,7 @@ impl LanguageServer {
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
-    ) -> Result<()>
+    ) -> anyhow::Result<()>
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
     {
@@ -642,7 +625,7 @@ impl LanguageServer {
             let outbound_tx = self.outbound_tx.clone();
             let executor = self.executor.clone();
             let mut output_done = self.output_done_rx.lock().take().unwrap();
-            let shutdown_request = Self::request_internal::<Shutdown>(
+            let shutdown_request = Self::request_internal::<request::Shutdown>(
                 &next_id,
                 &response_handlers,
                 &outbound_tx,
@@ -872,7 +855,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl 'static + Future<Output = Result<T::Result>>
+    ) -> impl 'static + Future<Output = anyhow::Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -1240,6 +1223,26 @@ impl FakeLanguageServer {
     }
 }
 
+pub(self) async fn read_headers<Stdout>(
+    reader: &mut BufReader<Stdout>,
+    buffer: &mut Vec<u8>,
+) -> Result<()>
+where
+    Stdout: AsyncRead + Unpin + Send + 'static,
+{
+    loop {
+        if buffer.len() >= HEADER_DELIMITER.len()
+            && buffer[(buffer.len() - HEADER_DELIMITER.len())..] == HEADER_DELIMITER[..]
+        {
+            return Ok(());
+        }
+
+        if reader.read_until(b'\n', buffer).await? == 0 {
+            return Err(anyhow!("cannot read LSP message headers"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1312,5 +1315,29 @@ mod tests {
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_read_headers() {
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Length: 123\r\n\r\n" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(buf, b"Content-Length: 123\r\n\r\n");
+
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n{\"somecontent\":123}" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(
+            buf,
+            b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n"
+        );
+
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n{\"somecontent\":true}" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(
+            buf,
+            b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n"
+        );
     }
 }

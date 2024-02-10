@@ -102,6 +102,10 @@ impl Render for CollabTitlebarItem {
                                 room.remote_participants().values().collect::<Vec<_>>();
                             remote_participants.sort_by_key(|p| p.participant_index.0);
 
+                            if !room.in_call() {
+                                return this;
+                            }
+
                             let current_user_face_pile = self.render_collaborator(
                                 &current_user,
                                 peer_id,
@@ -132,6 +136,10 @@ impl Render for CollabTitlebarItem {
                                         collaborator.location
                                             == ParticipantLocation::SharedProject { project_id }
                                     });
+
+                                    if !collaborator.in_call {
+                                        return None;
+                                    }
 
                                     let face_pile = self.render_collaborator(
                                         &collaborator.user,
@@ -185,7 +193,7 @@ impl Render for CollabTitlebarItem {
                         let is_local = project.is_local();
                         let is_shared = is_local && project.is_shared();
                         let is_muted = room.is_muted();
-                        let is_deafened = room.is_deafened().unwrap_or(false);
+                        let is_connected_to_livekit = room.in_call();
                         let is_screen_sharing = room.is_screen_sharing();
                         let read_only = room.read_only();
 
@@ -220,22 +228,28 @@ impl Render for CollabTitlebarItem {
                                 )),
                             )
                         })
-                        .child(
-                            div()
-                                .child(
-                                    IconButton::new("leave-call", ui::IconName::Exit)
-                                        .style(ButtonStyle::Subtle)
-                                        .tooltip(|cx| Tooltip::text("Leave call", cx))
-                                        .icon_size(IconSize::Small)
-                                        .on_click(move |_, cx| {
-                                            ActiveCall::global(cx)
-                                                .update(cx, |call, cx| call.hang_up(cx))
-                                                .detach_and_log_err(cx);
-                                        }),
-                                )
-                                .pr_2(),
-                        )
-                        .when(!read_only, |this| {
+                        .when(is_connected_to_livekit, |el| {
+                            el.child(
+                                div()
+                                    .child(
+                                        IconButton::new("leave-call", ui::IconName::Exit)
+                                            .style(ButtonStyle::Subtle)
+                                            .tooltip(|cx| Tooltip::text("Leave call", cx))
+                                            .icon_size(IconSize::Small)
+                                            .on_click(move |_, cx| {
+                                                ActiveCall::global(cx).update(cx, |call, cx| {
+                                                    if let Some(room) = call.room() {
+                                                        room.update(cx, |room, cx| {
+                                                            room.leave_call(cx)
+                                                        })
+                                                    }
+                                                })
+                                            }),
+                                    )
+                                    .pl_2(),
+                            )
+                        })
+                        .when(!read_only && is_connected_to_livekit, |this| {
                             this.child(
                                 IconButton::new(
                                     "mute-microphone",
@@ -262,34 +276,7 @@ impl Render for CollabTitlebarItem {
                                 .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
                         })
-                        .child(
-                            IconButton::new(
-                                "mute-sound",
-                                if is_deafened {
-                                    ui::IconName::AudioOff
-                                } else {
-                                    ui::IconName::AudioOn
-                                },
-                            )
-                            .style(ButtonStyle::Subtle)
-                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                            .icon_size(IconSize::Small)
-                            .selected(is_deafened)
-                            .tooltip(move |cx| {
-                                if !read_only {
-                                    Tooltip::with_meta(
-                                        "Deafen Audio",
-                                        None,
-                                        "Mic will be muted",
-                                        cx,
-                                    )
-                                } else {
-                                    Tooltip::text("Deafen Audio", cx)
-                                }
-                            })
-                            .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
-                        )
-                        .when(!read_only, |this| {
+                        .when(!read_only && is_connected_to_livekit, |this| {
                             this.child(
                                 IconButton::new("screen-share", ui::IconName::Screen)
                                     .style(ButtonStyle::Subtle)

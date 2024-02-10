@@ -97,11 +97,57 @@ impl Database {
         .await
     }
 
+    pub async fn set_in_channel_call(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        in_call: bool,
+    ) -> Result<(proto::Room, ChannelRole)> {
+        self.transaction(move |tx| async move {
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            let role = self.channel_role_for_user(&channel, user_id, &*tx).await?;
+            if role.is_none() || role == Some(ChannelRole::Banned) {
+                Err(ErrorCode::Forbidden.anyhow())?
+            }
+            let role = role.unwrap();
+
+            let Some(room) = room::Entity::find()
+                .filter(room::Column::ChannelId.eq(channel_id))
+                .one(&*tx)
+                .await?
+            else {
+                Err(anyhow!("no room exists"))?
+            };
+
+            let result = room_participant::Entity::update_many()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room.id))
+                        .add(room_participant::Column::UserId.eq(user_id)),
+                )
+                .set(room_participant::ActiveModel {
+                    in_call: ActiveValue::Set(in_call),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+
+            if result.rows_affected != 1 {
+                Err(anyhow!("not in channel"))?
+            }
+
+            let room = self.get_room(room.id, &*tx).await?;
+            Ok((room, role))
+        })
+        .await
+    }
+
     /// Adds a user to the specified channel.
     pub async fn join_channel(
         &self,
         channel_id: ChannelId,
         user_id: UserId,
+        autojoin: bool,
         connection: ConnectionId,
         environment: &str,
     ) -> Result<(JoinRoom, Option<MembershipUpdated>, ChannelRole)> {
@@ -166,7 +212,7 @@ impl Database {
                 .get_or_create_channel_room(channel_id, &live_kit_room, environment, &*tx)
                 .await?;
 
-            self.join_channel_room_internal(room_id, user_id, connection, role, &*tx)
+            self.join_channel_room_internal(room_id, user_id, autojoin, connection, role, &*tx)
                 .await
                 .map(|jr| (jr, accept_invite_result, role))
         })
@@ -627,18 +673,40 @@ impl Database {
         }
 
         let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
+
+        let mut channel_ids_by_buffer_id = HashMap::default();
+        let mut rows = buffer::Entity::find()
+            .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
+            .stream(&*tx)
+            .await?;
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            channel_ids_by_buffer_id.insert(row.id, row.channel_id);
+        }
+        drop(rows);
+
         let latest_buffer_versions = self
-            .latest_channel_buffer_changes(&channel_ids, &*tx)
+            .latest_channel_buffer_changes(&channel_ids_by_buffer_id, &*tx)
             .await?;
 
-        let latest_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
+        let latest_channel_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
+
+        let observed_buffer_versions = self
+            .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, &*tx)
+            .await?;
+
+        let observed_channel_messages = self
+            .observed_channel_messages(&channel_ids, user_id, &*tx)
+            .await?;
 
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
             channel_participants,
             latest_buffer_versions,
-            latest_channel_messages: latest_messages,
+            latest_channel_messages,
+            observed_buffer_versions,
+            observed_channel_messages,
         })
     }
 

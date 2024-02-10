@@ -2787,7 +2787,8 @@ impl Project {
             None => return,
         };
 
-        let project_settings = ProjectSettings::get_global(cx);
+        let project_settings =
+            ProjectSettings::get(Some((worktree_id.to_proto() as usize, Path::new(""))), cx);
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 

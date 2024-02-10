@@ -141,21 +141,27 @@ impl ExtensionStore {
     }
 
     fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) {
-        for (grammar_name, grammar) in &manifest.grammars {
-            let mut grammar_path = self.extensions_dir.clone();
-            grammar_path.extend([grammar.extension.as_ref(), grammar.path.as_path()]);
-            self.language_registry
-                .register_grammar(grammar_name.clone(), grammar_path);
-        }
+        self.language_registry
+            .register_wasm_grammars(manifest.grammars.iter().map(|(grammar_name, grammar)| {
+                let mut grammar_path = self.extensions_dir.clone();
+                grammar_path.extend([grammar.extension.as_ref(), grammar.path.as_path()]);
+                (grammar_name.clone(), grammar_path)
+            }));
+
         for (language_name, language) in &manifest.languages {
             let mut language_path = self.extensions_dir.clone();
             language_path.extend([language.extension.as_ref(), language.path.as_path()]);
-            self.language_registry.register_extension(
-                language_path.into(),
+            self.language_registry.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
-                load_plugin_queries,
+                vec![],
+                move || {
+                    let config = std::fs::read(language_path.join("config.toml"))?;
+                    let config: LanguageConfig = ::toml::from_slice(&config)?;
+                    let queries = load_plugin_queries(&language_path);
+                    Ok((config, queries))
+                },
             );
         }
         let fs = self.fs.clone();

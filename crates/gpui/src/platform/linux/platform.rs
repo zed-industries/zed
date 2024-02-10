@@ -59,7 +59,7 @@ pub(crate) struct LinuxPlatform {
 
 pub(crate) struct LinuxPlatformState {
     quit_requested: bool,
-    windows: HashMap<x::Window, Arc<LinuxWindowState>>,
+    windows: HashMap<x::Window, Rc<LinuxWindowState>>,
 }
 
 impl Default for LinuxPlatform {
@@ -125,18 +125,15 @@ impl Platform for LinuxPlatform {
                             // window "x" button clicked by user, we gracefully exit
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
-                            if self.state.lock().windows.is_empty() {
-                                if let Some(ref mut fun) = self.callbacks.lock().quit {
-                                    fun();
-                                }
-                            }
+                            let mut state = self.state.lock();
+                            state.quit_requested |= state.windows.is_empty();
                         }
                     }
                 }
                 xcb::Event::X(x::Event::Expose(ev)) => {
                     let window = {
                         let state = self.state.lock();
-                        Arc::clone(&state.windows[&ev.window()])
+                        Rc::clone(&state.windows[&ev.window()])
                     };
                     window.expose();
                 }
@@ -153,7 +150,7 @@ impl Platform for LinuxPlatform {
                     };
                     let window = {
                         let state = self.state.lock();
-                        Arc::clone(&state.windows[&ev.window()])
+                        Rc::clone(&state.windows[&ev.window()])
                     };
                     window.configure(bounds)
                 }
@@ -163,6 +160,10 @@ impl Platform for LinuxPlatform {
             if let Ok(runnable) = self.main_receiver.try_recv() {
                 runnable.run();
             }
+        }
+
+        if let Some(ref mut fun) = self.callbacks.lock().quit {
+            fun();
         }
     }
 
@@ -216,7 +217,7 @@ impl Platform for LinuxPlatform {
     ) -> Box<dyn PlatformWindow> {
         let x_window = self.xcb_connection.generate_id();
 
-        let window_ptr = Arc::new(LinuxWindowState::new(
+        let window_ptr = Rc::new(LinuxWindowState::new(
             options,
             &self.xcb_connection,
             self.x_root_index,
@@ -227,24 +228,8 @@ impl Platform for LinuxPlatform {
         self.state
             .lock()
             .windows
-            .insert(x_window, Arc::clone(&window_ptr));
+            .insert(x_window, Rc::clone(&window_ptr));
         Box::new(LinuxWindow(window_ptr))
-    }
-
-    fn set_display_link_output_callback(
-        &self,
-        display_id: DisplayId,
-        callback: Box<dyn FnMut() + Send>,
-    ) {
-        log::warn!("unimplemented: set_display_link_output_callback");
-    }
-
-    fn start_display_link(&self, display_id: DisplayId) {
-        unimplemented!()
-    }
-
-    fn stop_display_link(&self, display_id: DisplayId) {
-        unimplemented!()
     }
 
     fn open_url(&self, url: &str) {

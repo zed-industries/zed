@@ -42,7 +42,7 @@ impl super::LspAdapter for LuaLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let version = &release.name;
+        let version = &release.tag_name;
         let asset_name = format!("lua-language-server-{version}-darwin-{platform}.tar.gz");
         let asset = release
             .assets
@@ -50,7 +50,7 @@ impl super::LspAdapter for LuaLspAdapter {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         let version = GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)

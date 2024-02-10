@@ -79,7 +79,7 @@ impl LspAdapter for DenoLspAdapter {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         let version = GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
