@@ -1,5 +1,4 @@
 use gpui::{div, Element, Render, Subscription, ViewContext};
-use settings::SettingsStore;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
 use crate::{state::Mode, Vim};
@@ -7,20 +6,16 @@ use crate::{state::Mode, Vim};
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
     pub(crate) mode: Option<Mode>,
-    _subscriptions: Vec<Subscription>,
+    _subscription: Subscription,
 }
 
 impl ModeIndicator {
     /// Construct a new mode indicator in this window.
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let _subscriptions = vec![
-            cx.observe_global::<Vim>(|this, cx| this.update_mode(cx)),
-            cx.observe_global::<SettingsStore>(|this, cx| this.update_mode(cx)),
-        ];
-
+        let _subscription = cx.observe_global::<Vim>(|this, cx| this.update_mode(cx));
         let mut this = Self {
             mode: None,
-            _subscriptions,
+            _subscription,
         };
         this.update_mode(cx);
         this
