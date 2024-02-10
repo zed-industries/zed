@@ -1,4 +1,5 @@
 mod runnables_settings;
+mod status_bar_icon;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -13,6 +14,7 @@ use gpui::{
     TextStyle, View, ViewContext, VisualContext as _, WeakView, WhiteSpace, WindowContext,
 };
 use project::Inventory;
+use runnable::TaskHandle;
 use runnables_settings::{RunnablesDockPosition, RunnablesSettings};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
@@ -42,6 +44,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct RunnablesPanel {
+    is_active: bool,
     filter_editor: View<Editor>,
     focus_handle: FocusHandle,
     // todo: po: should this be weak?
@@ -49,6 +52,7 @@ pub struct RunnablesPanel {
     width: Option<Pixels>,
     fs: Arc<dyn Fs>,
     pending_serialization: Task<Option<()>>,
+    scheduled_in_current_open: Vec<TaskHandle>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -71,6 +75,8 @@ impl RunnablesPanel {
                 width: None,
                 fs,
                 pending_serialization: Task::ready(None),
+                scheduled_in_current_open: vec![],
+                is_active: false,
             }
         })
     }
@@ -211,8 +217,17 @@ impl Panel for RunnablesPanel {
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }
-    fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
+    fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
+        self.is_active = active;
+        if active {
+            self.scheduled_in_current_open.clear();
+        }
+    }
     fn collapsed_icon_color(&self, _: &WindowContext) -> Option<Color> {
+        if self.is_active {
+            // We don't care about the color if we're active.
+            return None;
+        }
         Some(Color::Modified)
     }
 }

@@ -108,10 +108,7 @@ pub enum RunState {
 
 impl RunnablePebble {
     /// Schedules a task or returns a handle to it if it's already running.
-    pub fn schedule(
-        &self,
-        cx: &mut AppContext,
-    ) -> Result<impl Future<Output = Result<ExecutionResult, TaskTerminated>>> {
+    pub fn schedule(&self, cx: &mut AppContext) -> Result<TaskHandle> {
         let mut spawned_first_time = false;
         let ret = self.state.update(cx, |this, cx| match this {
             RunState::NotScheduled(runnable) => {
