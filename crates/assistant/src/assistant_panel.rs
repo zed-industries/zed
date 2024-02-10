@@ -7,12 +7,12 @@ use crate::{
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
 use ai::prompts::repository_context::PromptCodeSnippet;
+use ai::providers::open_ai::OPEN_AI_API_URL;
 use ai::{
     auth::ProviderCredential,
     completion::{CompletionProvider, CompletionRequest},
     providers::open_ai::{OpenAiCompletionProvider, OpenAiRequest, RequestMessage},
 };
-use ai::providers::open_ai::OPEN_AI_API_URL;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use client::telemetry::AssistantKind;
