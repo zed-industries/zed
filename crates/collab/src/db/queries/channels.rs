@@ -673,18 +673,40 @@ impl Database {
         }
 
         let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
+
+        let mut channel_ids_by_buffer_id = HashMap::default();
+        let mut rows = buffer::Entity::find()
+            .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
+            .stream(&*tx)
+            .await?;
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            channel_ids_by_buffer_id.insert(row.id, row.channel_id);
+        }
+        drop(rows);
+
         let latest_buffer_versions = self
-            .latest_channel_buffer_changes(&channel_ids, &*tx)
+            .latest_channel_buffer_changes(&channel_ids_by_buffer_id, &*tx)
             .await?;
 
-        let latest_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
+        let latest_channel_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
+
+        let observed_buffer_versions = self
+            .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, &*tx)
+            .await?;
+
+        let observed_channel_messages = self
+            .observed_channel_messages(&channel_ids, user_id, &*tx)
+            .await?;
 
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
             channel_participants,
             latest_buffer_versions,
-            latest_channel_messages: latest_messages,
+            latest_channel_messages,
+            observed_buffer_versions,
+            observed_channel_messages,
         })
     }
 
