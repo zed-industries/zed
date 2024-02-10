@@ -1153,6 +1153,7 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
+        let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_collapse_dirs;
         let project = self.project.read(cx);
         self.last_worktree_root_id = project
             .visible_worktrees(cx)
@@ -1197,7 +1198,8 @@ impl ProjectPanel {
             let mut entry_iter = snapshot.entries(true);
             let mut collapsed_paths: Vec<String> = Vec::new();
             while let Some(entry) = entry_iter.entry() {
-                if !self.excluded_collapsed_dir_paths.contains_key(&entry.id)
+                if auto_collapse_dirs
+                    && !self.excluded_collapsed_dir_paths.contains_key(&entry.id)
                     && !self
                         .excluded_collapsed_dir_paths
                         .values()
@@ -1226,6 +1228,7 @@ impl ProjectPanel {
                         visible_worktree_entries.push(entry.clone());
                     };
                 } else {
+                    self.collapsed_dir_paths.remove(&entry.id);
                     visible_worktree_entries.push(entry.clone());
                 }
 
@@ -1306,14 +1309,14 @@ impl ProjectPanel {
                         entry
                             .path
                             .file_name()
-                            .unwrap()
+                            .unwrap_or_default()
                             .to_str()
                             .unwrap()
                             .to_string(),
                         |sub_entry: &Entry| {
                             format!(
                                 "{}/{}",
-                                entry.path.file_name().unwrap().to_str().unwrap(),
+                                entry.path.file_name().unwrap_or_default().to_str().unwrap(),
                                 ProjectPanel::get_path_collapsed_level(snapshot, sub_entry)
                             )
                         },
@@ -1326,7 +1329,7 @@ impl ProjectPanel {
             .file_name()
             .unwrap_or(OsStr::new(""))
             .to_str()
-            .unwrap()
+            .unwrap_or_default()
             .to_string();
     }
 
