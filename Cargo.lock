@@ -2689,33 +2689,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "extensions_panel"
+name = "extensions"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "collections",
  "db",
  "editor",
  "fs",
- "futures 0.3.28",
+ "fuzzy",
  "gpui",
- "language",
- "menu",
- "postage",
- "pretty_assertions",
+ "install_cli",
+ "log",
+ "picker",
  "project",
  "schemars",
- "search",
  "serde",
- "serde_derive",
- "serde_json",
  "settings",
- "smallvec",
  "theme",
+ "theme_selector",
  "ui",
- "unicase",
  "util",
+ "vim",
  "workspace",
 ]
 
@@ -10794,7 +10789,7 @@ dependencies = [
  "editor",
  "env_logger",
  "extension",
- "extensions_panel",
+ "extensions",
  "feature_flags",
  "feedback",
  "file_finder",

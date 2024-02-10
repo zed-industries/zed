@@ -175,7 +175,7 @@ fn main() {
         assistant::init(cx);
 
         extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
-        extensions_panel::init(cx);
+
         load_user_themes_in_background(fs.clone(), cx);
         #[cfg(target_os = "macos")]
         watch_themes(fs.clone(), cx);
@@ -255,6 +255,7 @@ fn main() {
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
+        extensions::init(cx);
 
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);
