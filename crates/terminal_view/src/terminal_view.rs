@@ -11,7 +11,6 @@ use gpui::{
     Render, Styled, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
-use lazy_static::lazy_static;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
 use terminal::{
@@ -41,12 +40,15 @@ use settings::Settings;
 use smol::Timer;
 
 use std::{
-    collections::HashSet,
     ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+
+const REGEX_SPECIAL_CHARS: &[char] = &[
+    '\\', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '^', '$',
+];
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -641,14 +643,6 @@ fn possible_open_targets(
     };
 
     possible_open_paths_metadata(fs, row, column, potential_abs_paths, cx)
-}
-
-lazy_static! {
-    pub static ref REGEX_SPECIAL_CHARS: HashSet<char> = {
-        HashSet::from([
-            '\\', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '^', '$',
-        ])
-    };
 }
 
 fn regex_to_literal(regex: &str) -> String {
