@@ -34,6 +34,7 @@ impl LspAdapter for TerraformLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         // TODO: maybe use release API instead
+        // https://api.releases.hashicorp.com/v1/releases/terraform-ls?limit=1
         let release = latest_github_release(
             "hashicorp/terraform-ls",
             false,
@@ -58,13 +59,12 @@ impl LspAdapter for TerraformLspAdapter {
         let zip_path = container_dir.join(format!("terraform-ls_{}.zip", version.name));
         let version_dir = container_dir.join(format!("terraform-ls_{}", version.name));
         let binary_path = version_dir.join("terraform-ls");
-        // TODO! use version and platform in url
-        let url = "https://releases.hashicorp.com/terraform-ls/0.32.6/terraform-ls_0.32.6_darwin_arm64.zip";
+        let url = build_download_url(version.name)?;
 
         if fs::metadata(&binary_path).await.is_err() {
             let mut response = delegate
                 .http_client()
-                .get(url, Default::default(), true)
+                .get(&url, Default::default(), true)
                 .await
                 .context("error downloading release")?;
             let mut file = File::create(&zip_path).await?;
@@ -129,6 +129,31 @@ impl LspAdapter for TerraformLspAdapter {
             ("Terraform Vars".into(), "terraform-vars".into()),
         ])
     }
+}
+
+fn build_download_url(version: String) -> Result<String> {
+    let v = version.strip_prefix("v").unwrap_or(&version);
+    let os = match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "darwin",
+        "win" => "windows",
+        _ => Err(anyhow!("unsupported OS {}", std::env::consts::OS))?,
+    }
+    .to_string();
+    let arch = match std::env::consts::ARCH {
+        "x86" => "386",
+        "x86_64" => "amd64",
+        "arm" => "arm",
+        "aarch64" => "arm64",
+        _ => Err(anyhow!("unsupported ARCH {}", std::env::consts::ARCH))?,
+    }
+    .to_string();
+
+    let url = format!(
+        "https://releases.hashicorp.com/terraform-ls/{v}/terraform-ls_{v}_{os}_{arch}.zip",
+    );
+
+    Ok(url)
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
