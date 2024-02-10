@@ -169,7 +169,6 @@ impl EditorState {
 
     pub fn keymap_context_layer(&self) -> KeyContext {
         let mut context = KeyContext::default();
-        context.add("VimEnabled");
         context.set(
             "vim_mode",
             match self.mode {

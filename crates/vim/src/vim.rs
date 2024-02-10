@@ -199,13 +199,6 @@ impl Vim {
 
     fn activate_editor(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
         if editor.read(cx).mode() != EditorMode::Full {
-            editor.update(cx, |editor, cx| {
-                // we set the VimEnabled context on all editors so that we
-                // can distinguish between vim mode and non-vim mode in the BufferSearchBar.
-                let mut context = KeyContext::default();
-                context.add("VimEnabled");
-                editor.set_keymap_context_layer::<Self>(context, cx)
-            });
             return;
         }
 
