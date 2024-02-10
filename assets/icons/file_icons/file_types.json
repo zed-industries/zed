@@ -129,6 +129,8 @@
     "svelte": "template",
     "svg": "image",
     "swift": "code",
+    "tf": "terraform",
+    "tfvars": "terraform",
     "tiff": "image",
     "toml": "toml",
     "ts": "typescript",
@@ -259,6 +261,9 @@
     },
     "template": {
       "icon": "icons/file_icons/html.svg"
+    },
+    "terraform": {
+      "icon": "icons/file_icons/terraform.svg"
     },
     "terminal": {
       "icon": "icons/file_icons/terminal.svg"
