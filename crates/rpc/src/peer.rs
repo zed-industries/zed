@@ -25,7 +25,7 @@ use std::{
 };
 use tracing::instrument;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
 pub struct ConnectionId {
     pub owner_id: u32,
     pub id: u32,

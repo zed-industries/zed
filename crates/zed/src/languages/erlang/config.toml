@@ -1,4 +1,5 @@
 name = "Erlang"
+grammar = "erlang"
 # TODO: support parsing rebar.config files
 # # https://github.com/WhatsApp/tree-sitter-erlang/issues/3
 path_suffixes = ["erl", "hrl", "app.src", "escript", "xrl", "yrl", "Emakefile", "rebar.config"]

@@ -13,15 +13,15 @@ doctest = false
 anyhow.workspace = true
 chrono = "0.4"
 dirs = "4.0"
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
+editor.workspace = true
+gpui.workspace = true
 log.workspace = true
 schemars.workspace = true
 serde.workspace = true
-settings = { path = "../settings" }
+settings.workspace = true
 shellexpand = "2.1.0"
-util = { path = "../util" }
-workspace = { path = "../workspace" }
+util.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }

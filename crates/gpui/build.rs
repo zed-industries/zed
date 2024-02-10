@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "macos"), allow(unused))]
+
 use std::{
     env,
     path::{Path, PathBuf},
@@ -6,10 +8,14 @@ use std::{
 use cbindgen::Config;
 
 fn main() {
+    #[cfg(target_os = "macos")]
     generate_dispatch_bindings();
+    #[cfg(target_os = "macos")]
     let header_path = generate_shader_bindings();
+    #[cfg(target_os = "macos")]
     #[cfg(feature = "runtime_shaders")]
     emit_stitched_shaders(&header_path);
+    #[cfg(target_os = "macos")]
     #[cfg(not(feature = "runtime_shaders"))]
     compile_metal_shaders(&header_path);
 }
@@ -21,12 +27,21 @@ fn generate_dispatch_bindings() {
     let bindings = bindgen::Builder::default()
         .header("src/platform/mac/dispatch.h")
         .allowlist_var("_dispatch_main_q")
+        .allowlist_var("_dispatch_source_type_data_add")
         .allowlist_var("DISPATCH_QUEUE_PRIORITY_DEFAULT")
+        .allowlist_var("DISPATCH_QUEUE_PRIORITY_HIGH")
         .allowlist_var("DISPATCH_TIME_NOW")
         .allowlist_function("dispatch_get_global_queue")
         .allowlist_function("dispatch_async_f")
         .allowlist_function("dispatch_after_f")
         .allowlist_function("dispatch_time")
+        .allowlist_function("dispatch_source_merge_data")
+        .allowlist_function("dispatch_source_create")
+        .allowlist_function("dispatch_source_set_event_handler_f")
+        .allowlist_function("dispatch_resume")
+        .allowlist_function("dispatch_suspend")
+        .allowlist_function("dispatch_source_cancel")
+        .allowlist_function("dispatch_set_context")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .layout_tests(false)
         .generate()

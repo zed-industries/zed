@@ -11,7 +11,12 @@ use objc::{
 };
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
-use std::{ffi::c_void, ptr::NonNull, sync::Arc, time::Duration};
+use std::{
+    ffi::c_void,
+    ptr::{addr_of, NonNull},
+    sync::Arc,
+    time::Duration,
+};
 
 /// All items in the generated file are marked as pub, so we're gonna wrap it in a separate mod to prevent
 /// these pub items from leaking into public API.
@@ -21,7 +26,7 @@ pub(crate) mod dispatch_sys {
 
 use dispatch_sys::*;
 pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
-    unsafe { &_dispatch_main_q as *const _ as dispatch_queue_t }
+    unsafe { addr_of!(_dispatch_main_q) as *const _ as dispatch_queue_t }
 }
 
 pub(crate) struct MacDispatcher {
@@ -51,7 +56,7 @@ impl PlatformDispatcher for MacDispatcher {
     fn dispatch(&self, runnable: Runnable, _: Option<TaskLabel>) {
         unsafe {
             dispatch_async_f(
-                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0),
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0),
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline),
             );

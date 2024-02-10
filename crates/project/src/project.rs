@@ -2787,7 +2787,8 @@ impl Project {
             None => return,
         };
 
-        let project_settings = ProjectSettings::get_global(cx);
+        let project_settings =
+            ProjectSettings::get(Some((worktree_id.to_proto() as usize, Path::new(""))), cx);
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
@@ -3987,7 +3988,7 @@ impl Project {
                 range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Right);
                 if range.start == range.end && range.end.column > 0 {
                     range.start.column -= 1;
-                    range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Left);
+                    range.start = snapshot.clip_point_utf16(Unclipped(range.start), Bias::Left);
                 }
             }
 

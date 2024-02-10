@@ -19,7 +19,7 @@ use gpui::{TestAppContext, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
-    tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig,
+    tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
 };
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
@@ -269,7 +269,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -455,7 +458,10 @@ async fn test_collaborating_with_code_actions(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -668,7 +674,10 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -853,7 +862,10 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -1144,7 +1156,10 @@ async fn test_on_input_format_from_host_to_guest(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -1272,7 +1287,10 @@ async fn test_on_input_format_from_guest_to_host(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -1431,7 +1449,10 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -1697,7 +1718,10 @@ async fn test_inlay_hint_refresh_is_forwarded(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),

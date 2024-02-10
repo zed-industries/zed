@@ -10,10 +10,11 @@ use channel::{ChannelBuffer, ChannelStore};
 use client::{
     self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
+use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
-use gpui::{BackgroundExecutor, Context, Model, TestAppContext, View, VisualTestContext};
+use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 
@@ -36,7 +37,7 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
+use util::{http::FakeHttpClient, SemanticVersion};
 use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
@@ -123,7 +124,12 @@ impl TestServer {
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
         let channel_id = server
-            .make_channel("a", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
+            .make_channel(
+                "test-channel",
+                None,
+                (&client_a, cx_a),
+                &mut [(&client_b, cx_b)],
+            )
             .await;
         cx_a.run_until_parked();
 
@@ -225,6 +231,7 @@ impl TestServer {
                                 server_conn,
                                 client_name,
                                 user,
+                                SemanticVersion::default(),
                                 None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
@@ -680,7 +687,7 @@ impl TestClient {
         channel_id: u64,
         cx: &'a mut TestAppContext,
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
-        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
+        cx.update(|cx| workspace::open_channel(channel_id, self.app_state.clone(), None, cx))
             .await
             .unwrap();
         cx.run_until_parked();
@@ -753,6 +760,21 @@ impl TestClient {
         // it might be nice to try and cleanup these at the end of each test.
         (view, cx)
     }
+}
+
+pub fn join_channel_call(cx: &mut TestAppContext) -> Task<anyhow::Result<()>> {
+    let room = cx.read(|cx| ActiveCall::global(cx).read(cx).room().cloned());
+    room.unwrap().update(cx, |room, cx| room.join_call(cx))
+}
+
+pub fn open_channel_notes(
+    channel_id: u64,
+    cx: &mut VisualTestContext,
+) -> Task<anyhow::Result<View<ChannelView>>> {
+    let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+    let view = window.root_view(cx).unwrap();
+
+    cx.update(|cx| ChannelView::open(channel_id, None, view.clone(), cx))
 }
 
 impl Drop for TestClient {

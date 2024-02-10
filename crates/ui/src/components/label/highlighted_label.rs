@@ -79,6 +79,7 @@ impl RenderOnce for HighlightedLabel {
         let mut text_style = cx.text_style().clone();
         text_style.color = self.base.color.color(cx);
 
-        LabelLike::new().child(StyledText::new(self.label).with_highlights(&text_style, highlights))
+        self.base
+            .child(StyledText::new(self.label).with_highlights(&text_style, highlights))
     }
 }

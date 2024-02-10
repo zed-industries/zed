@@ -197,6 +197,9 @@ pub struct TextStyle {
     /// The underline style of the text
     pub underline: Option<UnderlineStyle>,
 
+    /// The strikethrough style of the text
+    pub strikethrough: Option<StrikethroughStyle>,
+
     /// How to handle whitespace in the text
     pub white_space: WhiteSpace,
 }
@@ -205,8 +208,12 @@ impl Default for TextStyle {
     fn default() -> Self {
         TextStyle {
             color: black(),
-            // Helvetica is a web safe font, so it should be available
-            font_family: "Helvetica".into(),
+            // todo!(linux) make this configurable or choose better default
+            font_family: if cfg!(target_os = "linux") {
+                "FreeMono".into()
+            } else {
+                "Helvetica".into()
+            },
             font_features: FontFeatures::default(),
             font_size: rems(1.).into(),
             line_height: phi(),
@@ -214,6 +221,7 @@ impl Default for TextStyle {
             font_style: FontStyle::default(),
             background_color: None,
             underline: None,
+            strikethrough: None,
             white_space: WhiteSpace::Normal,
         }
     }
@@ -244,6 +252,10 @@ impl TextStyle {
 
         if let Some(underline) = style.underline {
             self.underline = Some(underline);
+        }
+
+        if let Some(strikethrough) = style.strikethrough {
+            self.strikethrough = Some(strikethrough);
         }
 
         self
@@ -277,6 +289,7 @@ impl TextStyle {
             color: self.color,
             background_color: self.background_color,
             underline: self.underline,
+            strikethrough: self.strikethrough,
         }
     }
 }
@@ -299,6 +312,9 @@ pub struct HighlightStyle {
 
     /// The underline style of the text
     pub underline: Option<UnderlineStyle>,
+
+    /// The underline style of the text
+    pub strikethrough: Option<StrikethroughStyle>,
 
     /// Similar to the CSS `opacity` property, this will cause the text to be less vibrant.
     pub fade_out: Option<f32>,
@@ -553,6 +569,17 @@ pub struct UnderlineStyle {
     pub wavy: bool,
 }
 
+/// The properties that can be applied to a strikethrough.
+#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[refineable(Debug)]
+pub struct StrikethroughStyle {
+    /// The thickness of the strikethrough.
+    pub thickness: Pixels,
+
+    /// The color of the strikethrough.
+    pub color: Option<Hsla>,
+}
+
 /// The kinds of fill that can be applied to a shape.
 #[derive(Clone, Debug)]
 pub enum Fill {
@@ -601,6 +628,7 @@ impl From<&TextStyle> for HighlightStyle {
             font_style: Some(other.font_style),
             background_color: other.background_color,
             underline: other.underline,
+            strikethrough: other.strikethrough,
             fade_out: None,
         }
     }
@@ -634,6 +662,10 @@ impl HighlightStyle {
 
         if other.underline.is_some() {
             self.underline = other.underline;
+        }
+
+        if other.strikethrough.is_some() {
+            self.strikethrough = other.strikethrough;
         }
 
         match (other.fade_out, self.fade_out) {

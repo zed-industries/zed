@@ -61,8 +61,8 @@ use gpui::{
     DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
     ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView,
-    WhiteSpace, WindowContext,
+    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
+    WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -120,6 +120,7 @@ use ui::{
     Tooltip,
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::Toast;
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -374,6 +375,7 @@ pub struct Editor {
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
+    show_breadcrumbs: bool,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -851,7 +853,7 @@ impl CompletionsMenu {
         let selected_item = self.selected_item;
         let style = style.clone();
 
-        let multiline_docs = {
+        let multiline_docs = if show_completion_documentation {
             let mat = &self.matches[selected_item];
             let multiline_docs = match &self.completions.read()[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
@@ -882,6 +884,8 @@ impl CompletionsMenu {
                     // because that would move the cursor.
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             })
+        } else {
+            None
         };
 
         let list = uniform_list(
@@ -1218,7 +1222,12 @@ impl CopilotState {
         if completion_range.is_empty()
             && completion_range.start == cursor.text_anchor.to_offset(&completion_buffer)
         {
-            Some(&completion.text[prefix_len..completion.text.len() - suffix_len])
+            let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
+            if completion_text.trim().is_empty() {
+                None
+            } else {
+                Some(completion_text)
+            }
         } else {
             None
         }
@@ -1448,6 +1457,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
+            show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
@@ -2485,7 +2495,12 @@ impl Editor {
             let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
-            if !brace_inserted && EditorSettings::get_global(cx).use_on_type_format {
+            if brace_inserted {
+                // If we inserted a brace while composing text (i.e. typing `"` on a
+                // Brazilian keyboard), exit the composing state because most likely
+                // the user wanted to surround the selection.
+                this.unmark_text(cx);
+            } else if EditorSettings::get_global(cx).use_on_type_format {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
@@ -4650,6 +4665,28 @@ impl Editor {
         self.manipulate_lines(cx, |lines| lines.sort_by_key(|line| line.to_lowercase()))
     }
 
+    pub fn unique_lines_case_insensitive(
+        &mut self,
+        _: &UniqueLinesCaseInsensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |lines| {
+            let mut seen = HashSet::default();
+            lines.retain(|line| seen.insert(line.to_lowercase()));
+        })
+    }
+
+    pub fn unique_lines_case_sensitive(
+        &mut self,
+        _: &UniqueLinesCaseSensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |lines| {
+            let mut seen = HashSet::default();
+            lines.retain(|line| seen.insert(*line));
+        })
+    }
+
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
         self.manipulate_lines(cx, |lines| lines.reverse())
     }
@@ -4660,7 +4697,7 @@ impl Editor {
 
     fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
     where
-        Fn: FnMut(&mut [&str]),
+        Fn: FnMut(&mut Vec<&str>),
     {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -4671,6 +4708,8 @@ impl Editor {
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
+        let mut added_lines = 0;
+        let mut removed_lines = 0;
 
         while let Some(selection) = selections.next() {
             let (start_row, end_row) = consume_contiguous_rows(
@@ -4685,36 +4724,54 @@ impl Editor {
             let text = buffer
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
+
             let mut lines = text.split("\n").collect_vec();
 
-            let lines_len = lines.len();
+            let lines_before = lines.len();
             callback(&mut lines);
-
-            // This is a current limitation with selections.
-            // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
-            debug_assert!(
-                lines.len() == lines_len,
-                "callback should not change the number of lines"
-            );
+            let lines_after = lines.len();
 
             edits.push((start_point..end_point, lines.join("\n")));
-            let start_anchor = buffer.anchor_after(start_point);
-            let end_anchor = buffer.anchor_before(end_point);
 
-            // Make selection and push
+            // Selections must change based on added and removed line count
+            let start_row = start_point.row + added_lines as u32 - removed_lines as u32;
+            let end_row = start_row + lines_after.saturating_sub(1) as u32;
             new_selections.push(Selection {
                 id: selection.id,
-                start: start_anchor.to_offset(&buffer),
-                end: end_anchor.to_offset(&buffer),
+                start: start_row,
+                end: end_row,
                 goal: SelectionGoal::None,
                 reversed: selection.reversed,
             });
+
+            if lines_after > lines_before {
+                added_lines += lines_after - lines_before;
+            } else if lines_before > lines_after {
+                removed_lines += lines_before - lines_after;
+            }
         }
 
         self.transact(cx, |this, cx| {
-            this.buffer.update(cx, |buffer, cx| {
+            let buffer = this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, None, cx);
+                buffer.snapshot(cx)
             });
+
+            // Recalculate offsets on newly edited buffer
+            let new_selections = new_selections
+                .iter()
+                .map(|s| {
+                    let start_point = Point::new(s.start, 0);
+                    let end_point = Point::new(s.end, buffer.line_len(s.end));
+                    Selection {
+                        id: s.id,
+                        start: buffer.point_to_offset(start_point),
+                        end: buffer.point_to_offset(end_point),
+                        goal: s.goal,
+                        reversed: s.reversed,
+                    }
+                })
+                .collect();
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
@@ -7260,10 +7317,6 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        let Some(workspace) = self.workspace() else {
-            return;
-        };
-        let pane = workspace.read(cx).active_pane().clone();
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
@@ -7281,6 +7334,11 @@ impl Editor {
                 let target = target_task.await.context("target resolution task")?;
                 if let Some(target) = target {
                     editor.update(&mut cx, |editor, cx| {
+                        let Some(workspace) = editor.workspace() else {
+                            return;
+                        };
+                        let pane = workspace.read(cx).active_pane().clone();
+
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
@@ -7321,7 +7379,7 @@ impl Editor {
         } else if !definitions.is_empty() {
             let replica_id = self.replica_id(cx);
             cx.spawn(|editor, mut cx| async move {
-                let (title, location_tasks) = editor
+                let (title, location_tasks, workspace) = editor
                     .update(&mut cx, |editor, cx| {
                         let title = definitions
                             .iter()
@@ -7349,7 +7407,7 @@ impl Editor {
                                 HoverLink::Url(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
-                        (title, location_tasks)
+                        (title, location_tasks, editor.workspace().clone())
                     })
                     .context("location tasks preparation")?;
 
@@ -7359,6 +7417,10 @@ impl Editor {
                     .filter_map(|location| location.transpose())
                     .collect::<Result<_>>()
                     .context("location tasks")?;
+
+                let Some(workspace) = workspace else {
+                    return Ok(());
+                };
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         Self::open_locations_in_multibuffer(
@@ -7897,7 +7959,7 @@ impl Editor {
                 .insert_blocks(
                     diagnostic_group.iter().map(|entry| {
                         let diagnostic = entry.diagnostic.clone();
-                        let message_height = diagnostic.message.lines().count() as u8;
+                        let message_height = diagnostic.message.matches('\n').count() as u8 + 1;
                         BlockProperties {
                             style: BlockStyle::Fixed,
                             position: buffer.anchor_after(entry.range.start),
@@ -8341,40 +8403,91 @@ impl Editor {
         }
     }
 
-    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
-        let permalink = maybe!({
-            let project = self.project.clone()?;
-            let project = project.read(cx);
+        let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
+        let project = project.read(cx);
 
-            let worktree = project.visible_worktrees(cx).next()?;
+        let worktree = project
+            .visible_worktrees(cx)
+            .next()
+            .ok_or_else(|| anyhow!("no worktree"))?;
 
-            let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-            cwd.push(".git");
+        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+        cwd.push(".git");
 
-            let repo = project.fs().open_repo(&cwd)?;
-            let origin_url = repo.lock().remote_url("origin")?;
-            let sha = repo.lock().head_sha()?;
+        const REMOTE_NAME: &'static str = "origin";
+        let repo = project
+            .fs()
+            .open_repo(&cwd)
+            .ok_or_else(|| anyhow!("no Git repo"))?;
+        let origin_url = repo
+            .lock()
+            .remote_url(REMOTE_NAME)
+            .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+        let sha = repo
+            .lock()
+            .head_sha()
+            .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
+        let path = maybe!({
             let buffer = self.buffer().read(cx).as_singleton()?;
             let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-            let path = file.path().to_str().map(|path| path.to_string())?;
+            file.path().to_str().map(|path| path.to_string())
+        })
+        .ok_or_else(|| anyhow!("failed to determine file path"))?;
 
-            let selections = self.selections.all::<Point>(cx);
-            let selection = selections.iter().peekable().next();
+        let selections = self.selections.all::<Point>(cx);
+        let selection = selections.iter().peekable().next();
 
-            build_permalink(BuildPermalinkParams {
-                remote_url: &origin_url,
-                sha: &sha,
-                path: &path,
-                selection: selection.map(|selection| selection.range()),
-            })
-            .log_err()
-        });
+        build_permalink(BuildPermalinkParams {
+            remote_url: &origin_url,
+            sha: &sha,
+            path: &path,
+            selection: selection.map(|selection| selection.range()),
+        })
+    }
 
-        if let Some(permalink) = permalink {
-            cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+        let permalink = self.get_permalink_to_line(cx);
+
+        match permalink {
+            Ok(permalink) => {
+                cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+            }
+            Err(err) => {
+                let message = format!("Failed to copy permalink: {err}");
+
+                Err::<(), anyhow::Error>(err).log_err();
+
+                if let Some(workspace) = self.workspace() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                    })
+                }
+            }
+        }
+    }
+
+    pub fn open_permalink_to_line(&mut self, _: &OpenPermalinkToLine, cx: &mut ViewContext<Self>) {
+        let permalink = self.get_permalink_to_line(cx);
+
+        match permalink {
+            Ok(permalink) => {
+                cx.open_url(&permalink.to_string());
+            }
+            Err(err) => {
+                let message = format!("Failed to open permalink: {err}");
+
+                Err::<(), anyhow::Error>(err).log_err();
+
+                if let Some(workspace) = self.workspace() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_toast(Toast::new(0x45a8978, message), cx)
+                    })
+                }
+            }
         }
     }
 
@@ -8734,6 +8847,10 @@ impl Editor {
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed => cx.emit(EditorEvent::Reparsed),
+            multi_buffer::Event::LanguageChanged => {
+                cx.emit(EditorEvent::Reparsed);
+                cx.notify();
+            }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
             multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
@@ -8762,8 +8879,9 @@ impl Editor {
             )),
             cx,
         );
-        self.scroll_manager.vertical_scroll_margin =
-            EditorSettings::get_global(cx).vertical_scroll_margin;
+        let editor_settings = EditorSettings::get_global(cx);
+        self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
+        self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
         cx.notify();
     }
 
@@ -9456,6 +9574,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 background_color: None,
                 underline: None,
+                strikethrough: None,
                 white_space: WhiteSpace::Normal,
             },
 
@@ -9469,6 +9588,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 background_color: None,
                 underline: None,
+                strikethrough: None,
                 white_space: WhiteSpace::Normal,
             },
         };
@@ -9585,6 +9705,7 @@ impl ViewInputHandler for Editor {
                 this.change_selections(None, cx, |selections| {
                     selections.select_ranges(new_selected_ranges)
                 });
+                this.backspace(&Default::default(), cx);
             }
 
             this.handle_input(text, cx);
@@ -9675,12 +9796,23 @@ impl ViewInputHandler for Editor {
             } else {
                 this.highlight_text::<InputComposition>(
                     marked_ranges.clone(),
-                    HighlightStyle::default(), // todo!() this.style(cx).composition_mark,
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
                     cx,
                 );
             }
 
+            // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
+            let use_autoclose = this.use_autoclose;
+            this.set_use_autoclose(false);
             this.handle_input(text, cx);
+            this.set_use_autoclose(use_autoclose);
 
             if let Some(new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);

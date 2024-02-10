@@ -11,17 +11,17 @@ path = "src/git.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-clock = { path = "../clock" }
-collections = { path = "../collections" }
+clock.workspace = true
+collections.workspace = true
 futures.workspace = true
 git2.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
-sum_tree = { path = "../sum_tree" }
-text = { path = "../text" }
-util = { path = "../util" }
+sum_tree.workspace = true
+text.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 unindent.workspace = true

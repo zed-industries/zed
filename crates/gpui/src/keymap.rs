@@ -7,12 +7,9 @@ pub use context::*;
 pub(crate) use matcher::*;
 
 use crate::{Action, Keystroke, NoAction};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use smallvec::SmallVec;
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-};
+use std::any::{Any, TypeId};
 
 /// An opaque identifier of which version of the keymap is currently active.
 /// The keymap's version is changed whenever bindings are added or removed.
@@ -74,7 +71,7 @@ impl Keymap {
     }
 
     /// Iterate over all bindings, in the order they were added.
-    pub fn bindings(&self) -> impl Iterator<Item = &KeyBinding> + DoubleEndedIterator {
+    pub fn bindings(&self) -> impl DoubleEndedIterator<Item = &KeyBinding> {
         self.bindings.iter()
     }
 
@@ -82,7 +79,7 @@ impl Keymap {
     pub fn bindings_for_action<'a>(
         &'a self,
         action: &'a dyn Action,
-    ) -> impl 'a + Iterator<Item = &'a KeyBinding> + DoubleEndedIterator {
+    ) -> impl 'a + DoubleEndedIterator<Item = &'a KeyBinding> {
         let action_id = action.type_id();
         self.binding_indices_by_action_id
             .get(&action_id)

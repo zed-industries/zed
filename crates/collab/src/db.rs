@@ -587,6 +587,9 @@ pub struct ChannelsForUser {
     pub channels: Vec<Channel>,
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
+
+    pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
+    pub observed_channel_messages: Vec<proto::ChannelMessageId>,
     pub latest_buffer_versions: Vec<proto::ChannelBufferVersion>,
     pub latest_channel_messages: Vec<proto::ChannelMessageId>,
 }
@@ -692,7 +695,7 @@ impl ProjectCollaborator {
 pub struct LeftProject {
     pub id: ProjectId,
     pub host_user_id: UserId,
-    pub host_connection_id: ConnectionId,
+    pub host_connection_id: Option<ConnectionId>,
     pub connection_ids: Vec<ConnectionId>,
 }
 

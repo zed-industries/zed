@@ -1,6 +1,5 @@
 use gpui::{Menu, MenuItem, OsAction};
 
-#[cfg(target_os = "macos")]
 pub fn app_menus() -> Vec<Menu<'static>> {
     use zed_actions::Quit;
 
@@ -156,6 +155,10 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
+                MenuItem::action(
+                    "Toggle Graphics Profiler",
+                    workspace::ToggleGraphicsProfiler,
+                ),
                 MenuItem::separator(),
                 MenuItem::separator(),
                 MenuItem::action(

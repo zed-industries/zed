@@ -163,7 +163,8 @@ CREATE TABLE "room_participants" (
     "calling_connection_id" INTEGER NOT NULL,
     "calling_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE SET NULL,
     "participant_index" INTEGER,
-    "role" TEXT
+    "role" TEXT,
+    "in_call" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");
 CREATE INDEX "index_room_participants_on_room_id" ON "room_participants" ("room_id");
@@ -217,7 +218,8 @@ CREATE TABLE IF NOT EXISTS "channel_messages" (
     "sender_id" INTEGER NOT NULL REFERENCES users (id),
     "body" TEXT NOT NULL,
     "sent_at" TIMESTAMP,
-    "nonce" BLOB NOT NULL
+    "nonce" BLOB NOT NULL,
+    "reply_to_message_id" INTEGER DEFAULT NULL
 );
 CREATE INDEX "index_channel_messages_on_channel_id" ON "channel_messages" ("channel_id");
 CREATE UNIQUE INDEX "index_channel_messages_on_sender_id_nonce" ON "channel_messages" ("sender_id", "nonce");

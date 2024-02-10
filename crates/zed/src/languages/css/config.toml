@@ -1,4 +1,5 @@
 name = "CSS"
+grammar = "css"
 path_suffixes = ["css"]
 autoclose_before = ";:.,=}])>"
 brackets = [

@@ -1,4 +1,5 @@
 name = "Lua"
+grammar = "lua"
 path_suffixes = ["lua"]
 line_comments = ["-- "]
 autoclose_before = ",]}"

@@ -14,11 +14,12 @@ use smol::future::FutureExt;
 pub use test_context::*;
 use time::UtcOffset;
 
+use crate::WindowAppearance;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
+    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
+    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
     TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
 };
@@ -192,7 +193,6 @@ impl App {
     }
 }
 
-pub(crate) type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 'static>;
@@ -212,8 +212,6 @@ pub struct AppContext {
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
-    pub(crate) next_frame_callbacks: FxHashMap<DisplayId, Vec<FrameCallback>>,
-    pub(crate) frame_consumers: FxHashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -274,8 +272,6 @@ impl AppContext {
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
-                next_frame_callbacks: FxHashMap::default(),
-                frame_consumers: FxHashMap::default(),
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -380,6 +376,11 @@ impl AppContext {
         })
     }
 
+    pub(crate) fn new_observer(&mut self, key: EntityId, value: Handler) -> Subscription {
+        let (subscription, activate) = self.observers.insert(key, value);
+        self.defer(move |_| activate());
+        subscription
+    }
     pub(crate) fn observe_internal<W, E>(
         &mut self,
         entity: &E,
@@ -391,7 +392,7 @@ impl AppContext {
     {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
-        let (subscription, activate) = self.observers.insert(
+        self.new_observer(
             entity_id,
             Box::new(move |cx| {
                 if let Some(handle) = E::upgrade_from(&handle) {
@@ -400,9 +401,7 @@ impl AppContext {
                     false
                 }
             }),
-        );
-        self.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Arrange for the given callback to be invoked whenever the given model or view emits an event of a given type.
@@ -423,6 +422,15 @@ impl AppContext {
         })
     }
 
+    pub(crate) fn new_subscription(
+        &mut self,
+        key: EntityId,
+        value: (TypeId, Listener),
+    ) -> Subscription {
+        let (subscription, activate) = self.event_listeners.insert(key, value);
+        self.defer(move |_| activate());
+        subscription
+    }
     pub(crate) fn subscribe_internal<T, E, Evt>(
         &mut self,
         entity: &E,
@@ -435,7 +443,7 @@ impl AppContext {
     {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
-        let (subscription, activate) = self.event_listeners.insert(
+        self.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -448,9 +456,7 @@ impl AppContext {
                     }
                 }),
             ),
-        );
-        self.defer(move |_| activate());
-        subscription
+        )
     }
 
     /// Returns handles to all open windows in the application.
@@ -510,6 +516,11 @@ impl AppContext {
     /// Returns the list of currently active displays.
     pub fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.platform.displays()
+    }
+
+    /// Returns the appearance of the application's windows.
+    pub fn window_appearance(&self) -> WindowAppearance {
+        self.platform.window_appearance()
     }
 
     /// Writes data to the platform clipboard.
@@ -658,7 +669,7 @@ impl AppContext {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        (window.dirty.get() || window.focus_invalidated).then_some(window.handle)
+                        window.dirty.get().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
@@ -930,13 +941,22 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
+    pub(crate) fn new_view_observer(
+        &mut self,
+        key: TypeId,
+        value: NewViewListener,
+    ) -> Subscription {
+        let (subscription, activate) = self.new_view_observers.insert(key, value);
+        activate();
+        subscription
+    }
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
         &mut self,
         on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
     ) -> Subscription {
-        let (subscription, activate) = self.new_view_observers.insert(
+        self.new_view_observer(
             TypeId::of::<V>(),
             Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
                 any_view
@@ -946,9 +966,7 @@ impl AppContext {
                         on_new(view_state, cx);
                     })
             }),
-        );
-        activate();
-        subscription
+        )
     }
 
     /// Observe the release of a model or view. The callback is invoked after the model or view
@@ -980,9 +998,15 @@ impl AppContext {
         &mut self,
         f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
-        let (subscription, activate) = self.keystroke_observers.insert((), Box::new(f));
-        activate();
-        subscription
+        fn inner(
+            keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_observers.insert((), handler);
+            activate();
+            subscription
+        }
+        inner(&mut self.keystroke_observers, Box::new(f))
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {

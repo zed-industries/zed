@@ -72,10 +72,10 @@ pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RevealInProjectPanel {
-    pub entry_id: u64,
+    pub entry_id: Option<u64>,
 }
 
 impl_actions!(
@@ -762,6 +762,7 @@ impl Pane {
         save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
+        println!("{}", std::backtrace::Backtrace::force_capture());
         self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
     }
 
@@ -1442,7 +1443,9 @@ impl Pane {
                         let entry_id = entry.to_proto();
                         menu = menu.separator().entry(
                             "Reveal In Project Panel",
-                            Some(Box::new(RevealInProjectPanel { entry_id })),
+                            Some(Box::new(RevealInProjectPanel {
+                                entry_id: Some(entry_id),
+                            })),
                             cx.handler_for(&pane, move |pane, cx| {
                                 pane.project.update(cx, |_, cx| {
                                     cx.emit(project::Event::RevealInProjectPanel(
@@ -1807,11 +1810,15 @@ impl Render for Pane {
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, cx| {
-                    pane.project.update(cx, |_, cx| {
-                        cx.emit(project::Event::RevealInProjectPanel(
-                            ProjectEntryId::from_proto(action.entry_id),
-                        ))
-                    })
+                    let entry_id = action
+                        .entry_id
+                        .map(ProjectEntryId::from_proto)
+                        .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
+                    if let Some(entry_id) = entry_id {
+                        pane.project.update(cx, |_, cx| {
+                            cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                        });
+                    }
                 }),
             )
             .when(self.active_item().is_some(), |pane| {

@@ -4,8 +4,8 @@ use gpui::{
     ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
     InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState, Interactivity,
     IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
-    Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle,
-    UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
+    TextStyle, UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -329,8 +329,13 @@ impl TerminalElement {
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
     ) -> TextRun {
         let flags = indexed.cell.flags;
-        let fg = convert_color(&fg, &colors);
-        // let bg = convert_color(&bg, &colors);
+        let mut fg = convert_color(&fg, &colors);
+
+        // Ghostty uses (175/255) as the multiplier (~0.69), Alacritty uses 0.66, Kitty
+        // uses 0.75. We're using 0.7 because it's pretty well in the middle of that.
+        if flags.intersects(Flags::DIM) {
+            fg.a *= 0.7;
+        }
 
         let underline = (flags.intersects(Flags::ALL_UNDERLINES)
             || indexed.cell.hyperlink().is_some())
@@ -340,7 +345,14 @@ impl TerminalElement {
             wavy: flags.contains(Flags::UNDERCURL),
         });
 
-        let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
+        let strikethrough = flags
+            .intersects(Flags::STRIKEOUT)
+            .then(|| StrikethroughStyle {
+                color: Some(fg),
+                thickness: Pixels::from(1.0),
+            });
+
+        let weight = if flags.intersects(Flags::BOLD) {
             FontWeight::BOLD
         } else {
             FontWeight::NORMAL
@@ -362,6 +374,7 @@ impl TerminalElement {
                 ..text_style.font()
             },
             underline,
+            strikethrough,
         };
 
         if let Some((style, range)) = hyperlink {
@@ -414,6 +427,7 @@ impl TerminalElement {
                 color: Some(theme.colors().link_text_hover),
                 wavy: false,
             }),
+            strikethrough: None,
             fade_out: None,
         };
 
@@ -427,6 +441,7 @@ impl TerminalElement {
             white_space: WhiteSpace::Normal,
             // These are going to be overridden per-cell
             underline: None,
+            strikethrough: None,
             color: theme.colors().text,
             font_weight: FontWeight::NORMAL,
         };
@@ -449,6 +464,13 @@ impl TerminalElement {
 
             let mut size = bounds.size.clone();
             size.width -= gutter;
+
+            // https://github.com/zed-industries/zed/issues/2750
+            // if the terminal is one column wide, rendering 🦀
+            // causes alacritty to misbehave.
+            if size.width < cell_width * 2.0 {
+                size.width = cell_width * 2.0;
+            }
 
             TerminalSize::new(line_height, cell_width, size)
         };
@@ -538,6 +560,7 @@ impl TerminalElement {
                             color: theme.colors().terminal_background,
                             background_color: None,
                             underline: Default::default(),
+                            strikethrough: None,
                         }],
                     )
                     .unwrap()
@@ -776,7 +799,6 @@ impl Element for TerminalElement {
         self.interactivity
             .paint(bounds, bounds.size, state, cx, |_, _, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
-                cx.keymatch_mode_immediate();
 
                 cx.on_key_event({
                     let this = self.terminal.clone();
