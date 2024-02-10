@@ -46,6 +46,10 @@ use std::{
     time::Duration,
 };
 
+const REGEX_SPECIAL_CHARS: &[char] = &[
+    '\\', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '^', '$',
+];
+
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 ///Event to transmit the scroll from the element to the view
@@ -436,21 +440,6 @@ impl TerminalView {
         .detach();
     }
 
-    pub fn find_matches(
-        &mut self,
-        query: Arc<project::search::SearchQuery>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Vec<RangeInclusive<Point>>> {
-        let searcher = regex_search_for_query(&query);
-
-        if let Some(searcher) = searcher {
-            self.terminal
-                .update(cx, |term, cx| term.find_matches(searcher, cx))
-        } else {
-            cx.background_executor().spawn(async { Vec::new() })
-        }
-    }
-
     pub fn terminal(&self) -> &Model<Terminal> {
         &self.terminal
     }
@@ -654,6 +643,19 @@ fn possible_open_targets(
     };
 
     possible_open_paths_metadata(fs, row, column, potential_abs_paths, cx)
+}
+
+fn regex_to_literal(regex: &str) -> String {
+    regex
+        .chars()
+        .flat_map(|c| {
+            if REGEX_SPECIAL_CHARS.contains(&c) {
+                vec!['\\', c]
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
 }
 
 pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
@@ -916,12 +918,27 @@ impl SearchableItem for TerminalView {
     /// Get all of the matches for this query, should be done on the background
     fn find_matches(
         &mut self,
-        query: Arc<project::search::SearchQuery>,
+        query: Arc<SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Self::Match>> {
-        if let Some(searcher) = regex_search_for_query(&query) {
+        let searcher = match &*query {
+            SearchQuery::Text { .. } => regex_search_for_query(
+                &(SearchQuery::text(
+                    regex_to_literal(&query.as_str()),
+                    query.whole_word(),
+                    query.case_sensitive(),
+                    query.include_ignored(),
+                    query.files_to_include().to_vec(),
+                    query.files_to_exclude().to_vec(),
+                )
+                .unwrap()),
+            ),
+            SearchQuery::Regex { .. } => regex_search_for_query(&query),
+        };
+
+        if let Some(s) = searcher {
             self.terminal()
-                .update(cx, |term, cx| term.find_matches(searcher, cx))
+                .update(cx, |term, cx| term.find_matches(s, cx))
         } else {
             Task::ready(vec![])
         }
@@ -1211,5 +1228,15 @@ mod tests {
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
+    }
+
+    #[test]
+    fn escapes_only_special_characters() {
+        assert_eq!(regex_to_literal(r"test(\w)"), r"test\(\\w\)".to_string());
+    }
+
+    #[test]
+    fn empty_string_stays_empty() {
+        assert_eq!(regex_to_literal(""), "".to_string());
     }
 }
