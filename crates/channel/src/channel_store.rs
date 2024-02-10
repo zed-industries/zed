@@ -1131,9 +1131,10 @@ impl ChannelState {
         if let Some(latest_version) = &self.latest_notes_versions {
             if let Some(observed_version) = &self.observed_notes_versions {
                 latest_version.epoch > observed_version.epoch
-                    || latest_version
-                        .version
-                        .changed_since(&observed_version.version)
+                    || (latest_version.epoch == observed_version.epoch
+                        && latest_version
+                            .version
+                            .changed_since(&observed_version.version))
             } else {
                 true
             }

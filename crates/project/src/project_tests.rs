@@ -2861,21 +2861,16 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
     let languages = project.update(cx, |project, _| project.languages().clone());
-    languages.add_grammars([("rust", tree_sitter_rust::language())]);
-    languages.register(
-        "/some/path",
-        LanguageConfig {
-            name: "Rust".into(),
-            grammar: Some("rust".into()),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".into()],
-                ..Default::default()
-            },
+    languages.register_native_grammars([("rust", tree_sitter_rust::language())]);
+    languages.register_test_language(LanguageConfig {
+        name: "Rust".into(),
+        grammar: Some("rust".into()),
+        matcher: LanguageMatcher {
+            path_suffixes: vec!["rs".into()],
             ..Default::default()
         },
-        vec![],
-        |_| Default::default(),
-    );
+        ..Default::default()
+    });
 
     let buffer = project.update(cx, |project, cx| {
         project.create_buffer("", None, cx).unwrap()

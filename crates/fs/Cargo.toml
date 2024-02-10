@@ -10,6 +10,7 @@ path = "src/fs.rs"
 
 [dependencies]
 collections.workspace = true
+fsevent.workspace = true
 rope.workspace = true
 text.workspace = true
 util.workspace = true
@@ -32,9 +33,6 @@ libc = "0.2"
 time.workspace = true
 
 gpui = { workspace = true, optional = true}
-
-[target.'cfg(target_os = "macos")'.dependencies]
-fsevent.workspace = true
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "6.1.1"

@@ -145,14 +145,14 @@ impl BladePipelines {
                 data_layouts: &[&ShaderPathRasterizationData::layout()],
                 vertex: shader.at("vs_path_rasterization"),
                 primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    topology: gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_path_rasterization"),
                 color_targets: &[gpu::ColorTargetState {
                     format: PATH_TEXTURE_FORMAT,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(gpu::BlendState::ADDITIVE),
                     write_mask: gpu::ColorWrites::default(),
                 }],
             }),
@@ -455,7 +455,7 @@ impl BladeRenderer {
                         sprites,
                     } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
-                        let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
+                        let instance_buf = self.instance_belt.alloc_data(sprites, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.mono_sprites);
                         encoder.bind(
                             0,
@@ -473,7 +473,7 @@ impl BladeRenderer {
                         sprites,
                     } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
-                        let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
+                        let instance_buf = self.instance_belt.alloc_data(sprites, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.poly_sprites);
                         encoder.bind(
                             0,

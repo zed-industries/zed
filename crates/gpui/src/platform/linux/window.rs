@@ -1,3 +1,6 @@
+//todo!(linux): remove
+#![allow(unused)]
+
 use super::BladeRenderer;
 use crate::{
     Bounds, GlobalPixels, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
@@ -14,7 +17,10 @@ use std::{
     rc::Rc,
     sync::{self, Arc},
 };
-use xcb::{x, Xid as _};
+use xcb::{
+    x::{self, StackMode},
+    Xid as _,
+};
 
 #[derive(Default)]
 struct Callbacks {
@@ -50,7 +56,6 @@ fn query_render_extent(xcb_connection: &xcb::Connection, x_window: x::Window) ->
         drawable: x::Drawable::Window(x_window),
     });
     let reply = xcb_connection.wait_for_reply(cookie).unwrap();
-    println!("Got geometry {:?}", reply);
     gpu::Extent {
         width: reply.width() as u32,
         height: reply.height() as u32,
@@ -75,7 +80,7 @@ pub(crate) struct LinuxWindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct LinuxWindow(pub(crate) Arc<LinuxWindowState>);
+pub(crate) struct LinuxWindow(pub(crate) Rc<LinuxWindowState>);
 
 //todo!(linux): Remove other RawWindowHandle implementation
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
@@ -187,10 +192,6 @@ impl LinuxWindowState {
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
 
-        //Warning: it looks like this reported size is immediately invalidated
-        // on some platforms, followed by a "ConfigureNotify" event.
-        let gpu_extent = query_render_extent(&xcb_connection, x_window);
-
         let raw = RawWindow {
             connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                 xcb_connection,
@@ -211,6 +212,10 @@ impl LinuxWindowState {
             }
             .unwrap(),
         );
+
+        // Note: this has to be done after the GPU init, or otherwise
+        // the sizes are immediately invalidated.
+        let gpu_extent = query_render_extent(&xcb_connection, x_window);
 
         Self {
             xcb_connection: Arc::clone(xcb_connection),
@@ -295,7 +300,7 @@ impl PlatformWindow for LinuxWindow {
 
     //todo!(linux)
     fn appearance(&self) -> WindowAppearance {
-        unimplemented!()
+        WindowAppearance::Light
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
@@ -335,11 +340,22 @@ impl PlatformWindow for LinuxWindow {
         unimplemented!()
     }
 
-    //todo!(linux)
-    fn activate(&self) {}
+    fn activate(&self) {
+        self.0.xcb_connection.send_request(&x::ConfigureWindow {
+            window: self.0.x_window,
+            value_list: &[x::ConfigWindow::StackMode(StackMode::Above)],
+        });
+    }
 
-    //todo!(linux)
-    fn set_title(&mut self, title: &str) {}
+    fn set_title(&mut self, title: &str) {
+        self.0.xcb_connection.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window: self.0.x_window,
+            property: x::ATOM_WM_NAME,
+            r#type: x::ATOM_STRING,
+            data: title.as_bytes(),
+        });
+    }
 
     //todo!(linux)
     fn set_edited(&mut self, edited: bool) {}
@@ -418,5 +434,9 @@ impl PlatformWindow for LinuxWindow {
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         let inner = self.0.inner.lock();
         inner.renderer.atlas().clone()
+    }
+
+    fn set_graphics_profiler_enabled(&self, enabled: bool) {
+        unimplemented!("linux")
     }
 }

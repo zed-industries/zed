@@ -1,3 +1,6 @@
+// todo!(linux): remove
+#![cfg_attr(target_os = "linux", allow(dead_code))]
+
 mod app_menu;
 mod keystroke;
 #[cfg(target_os = "linux")]
@@ -77,14 +80,6 @@ pub(crate) trait Platform: 'static {
 
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
-
-    fn set_display_link_output_callback(
-        &self,
-        display_id: DisplayId,
-        callback: Box<dyn FnMut() + Send>,
-    );
-    fn start_display_link(&self, display_id: DisplayId);
-    fn stop_display_link(&self, display_id: DisplayId);
 
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
@@ -187,8 +182,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
-
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn set_graphics_profiler_enabled(&self, enabled: bool);
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

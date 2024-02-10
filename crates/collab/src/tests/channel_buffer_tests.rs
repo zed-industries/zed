@@ -1,6 +1,6 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::TestServer,
+    tests::{test_server::open_channel_notes, TestServer},
 };
 use call::ActiveCall;
 use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
@@ -605,113 +605,75 @@ async fn test_channel_buffer_changes(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    let mut server = TestServer::start(deterministic.clone()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
+    let (server, client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+    let (_, cx_a) = client_a.build_test_workspace(cx_a).await;
+    let (workspace_b, cx_b) = client_b.build_test_workspace(cx_b).await;
+    let channel_store_b = client_b.channel_store().clone();
 
-    let channel_id = server
-        .make_channel(
-            "the-channel",
-            None,
-            (&client_a, cx_a),
-            &mut [(&client_b, cx_b)],
-        )
-        .await;
-
-    let channel_buffer_a = client_a
-        .channel_store()
-        .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
-        .await
-        .unwrap();
-
-    // Client A makes an edit, and client B should see that the note has changed.
-    channel_buffer_a.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "1")], None, cx);
-        })
+    // Editing the channel notes should set them to dirty
+    open_channel_notes(channel_id, cx_a).await.unwrap();
+    cx_a.simulate_keystrokes("1");
+    channel_store_b.read_with(cx_b, |channel_store, _| {
+        assert!(channel_store.has_channel_buffer_changed(channel_id))
     });
-    deterministic.run_until_parked();
-
-    let has_buffer_changed = cx_b.update(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_channel_buffer_changed(channel_id)
-    });
-    assert!(has_buffer_changed);
 
     // Opening the buffer should clear the changed flag.
-    let project_b = client_b.build_empty_local_project(cx_b);
-    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
-    let channel_view_b = cx_b
-        .update(|cx| ChannelView::open(channel_id, None, workspace_b.clone(), cx))
-        .await
-        .unwrap();
-    deterministic.run_until_parked();
-
-    let has_buffer_changed = cx_b.update(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_channel_buffer_changed(channel_id)
+    open_channel_notes(channel_id, cx_b).await.unwrap();
+    channel_store_b.read_with(cx_b, |channel_store, _| {
+        assert!(!channel_store.has_channel_buffer_changed(channel_id))
     });
-    assert!(!has_buffer_changed);
 
     // Editing the channel while the buffer is open should not show that the buffer has changed.
-    channel_buffer_a.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "2")], None, cx);
-        })
+    cx_a.simulate_keystrokes("2");
+    channel_store_b.read_with(cx_b, |channel_store, _| {
+        assert!(!channel_store.has_channel_buffer_changed(channel_id))
     });
-    deterministic.run_until_parked();
-
-    let has_buffer_changed = cx_b.read(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_channel_buffer_changed(channel_id)
-    });
-    assert!(!has_buffer_changed);
-
-    deterministic.advance_clock(ACKNOWLEDGE_DEBOUNCE_INTERVAL);
 
     // Test that the server is tracking things correctly, and we retain our 'not changed'
     // state across a disconnect
+    deterministic.advance_clock(ACKNOWLEDGE_DEBOUNCE_INTERVAL);
     server
         .simulate_long_connection_interruption(client_b.peer_id().unwrap(), deterministic.clone());
-    let has_buffer_changed = cx_b.read(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_channel_buffer_changed(channel_id)
+    channel_store_b.read_with(cx_b, |channel_store, _| {
+        assert!(!channel_store.has_channel_buffer_changed(channel_id))
     });
-    assert!(!has_buffer_changed);
 
     // Closing the buffer should re-enable change tracking
     cx_b.update(|cx| {
         workspace_b.update(cx, |workspace, cx| {
             workspace.close_all_items_and_panes(&Default::default(), cx)
         });
-
-        drop(channel_view_b)
-    });
-
-    deterministic.run_until_parked();
-
-    channel_buffer_a.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "3")], None, cx);
-        })
     });
     deterministic.run_until_parked();
 
-    let has_buffer_changed = cx_b.read(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_channel_buffer_changed(channel_id)
+    cx_a.simulate_keystrokes("3");
+    channel_store_b.read_with(cx_b, |channel_store, _| {
+        assert!(channel_store.has_channel_buffer_changed(channel_id))
     });
-    assert!(has_buffer_changed);
+}
+
+#[gpui::test]
+async fn test_channel_buffer_changes_persist(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_b2: &mut TestAppContext,
+) {
+    let (mut server, client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+    let (_, cx_a) = client_a.build_test_workspace(cx_a).await;
+    let (_, cx_b) = client_b.build_test_workspace(cx_b).await;
+
+    // a) edits the notes
+    open_channel_notes(channel_id, cx_a).await.unwrap();
+    cx_a.simulate_keystrokes("1");
+    // b) opens them to observe the current version
+    open_channel_notes(channel_id, cx_b).await.unwrap();
+
+    // On boot the client should get the correct state.
+    let client_b2 = server.create_client(cx_b2, "user_b").await;
+    let channel_store_b2 = client_b2.channel_store().clone();
+    channel_store_b2.read_with(cx_b2, |channel_store, _| {
+        assert!(!channel_store.has_channel_buffer_changed(channel_id))
+    });
 }
 
 #[track_caller]

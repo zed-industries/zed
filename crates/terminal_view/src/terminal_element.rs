@@ -329,8 +329,13 @@ impl TerminalElement {
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
     ) -> TextRun {
         let flags = indexed.cell.flags;
-        let fg = convert_color(&fg, &colors);
-        // let bg = convert_color(&bg, &colors);
+        let mut fg = convert_color(&fg, &colors);
+
+        // Ghostty uses (175/255) as the multiplier (~0.69), Alacritty uses 0.66, Kitty
+        // uses 0.75. We're using 0.7 because it's pretty well in the middle of that.
+        if flags.intersects(Flags::DIM) {
+            fg.a *= 0.7;
+        }
 
         let underline = (flags.intersects(Flags::ALL_UNDERLINES)
             || indexed.cell.hyperlink().is_some())
@@ -347,7 +352,7 @@ impl TerminalElement {
                 thickness: Pixels::from(1.0),
             });
 
-        let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
+        let weight = if flags.intersects(Flags::BOLD) {
             FontWeight::BOLD
         } else {
             FontWeight::NORMAL

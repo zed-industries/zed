@@ -208,8 +208,12 @@ impl Default for TextStyle {
     fn default() -> Self {
         TextStyle {
             color: black(),
-            // Helvetica is a web safe font, so it should be available
-            font_family: "Helvetica".into(),
+            // todo!(linux) make this configurable or choose better default
+            font_family: if cfg!(target_os = "linux") {
+                "FreeMono".into()
+            } else {
+                "Helvetica".into()
+            },
             font_features: FontFeatures::default(),
             font_size: rems(1.).into(),
             line_height: phi(),

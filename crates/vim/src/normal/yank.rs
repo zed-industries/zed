@@ -1,4 +1,4 @@
-use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim};
+use crate::{motion::Motion, object::Object, utils::copy_and_flash_selections_content, Vim};
 use collections::HashMap;
 use gpui::WindowContext;
 
@@ -15,7 +15,7 @@ pub fn yank_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut
                     motion.expand_selection(map, selection, times, true, &text_layout_details);
                 });
             });
-            copy_selections_content(editor, motion.linewise(), cx);
+            copy_and_flash_selections_content(editor, motion.linewise(), cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|_, selection| {
                     let (head, goal) = original_positions.remove(&selection.id).unwrap();
@@ -38,7 +38,7 @@ pub fn yank_object(vim: &mut Vim, object: Object, around: bool, cx: &mut WindowC
                     original_positions.insert(selection.id, original_position);
                 });
             });
-            copy_selections_content(editor, false, cx);
+            copy_and_flash_selections_content(editor, false, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|_, selection| {
                     let (head, goal) = original_positions.remove(&selection.id).unwrap();

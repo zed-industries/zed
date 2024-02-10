@@ -1,6 +1,8 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
+//todo!(linux): remove
+#![allow(unused_variables)]
 
 use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
@@ -107,7 +109,7 @@ impl PlatformDispatcher for LinuxDispatcher {
         let moment = Instant::now() + duration;
         let mut timed_tasks = self.timed_tasks.lock();
         timed_tasks.push((moment, runnable));
-        timed_tasks.sort_unstable_by(|&(ref a, _), &(ref b, _)| b.cmp(a));
+        timed_tasks.sort_unstable_by(|(a, _), (b, _)| b.cmp(a));
     }
 
     fn tick(&self, background_only: bool) -> bool {
