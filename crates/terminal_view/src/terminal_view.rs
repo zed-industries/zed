@@ -874,7 +874,7 @@ impl SearchableItem for TerminalView {
         SearchOptions {
             case: false,
             word: false,
-            regex: false,
+            regex: true,
             replacement: false,
         }
     }
