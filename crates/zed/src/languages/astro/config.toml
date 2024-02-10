@@ -1,4 +1,5 @@
 name = "Astro"
+grammar = "astro"
 path_suffixes = ["astro"]
 block_comment = ["<!-- ", " -->"]
 autoclose_before = ";:.,=}])>"
@@ -12,6 +13,7 @@ brackets = [
     { start = "`", end = "`", close = true, newline = false, not_in = ["string"] },
     { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
 ]
+word_characters = ["#", "$", "-"]
 scope_opt_in_language_servers = ["tailwindcss-language-server"]
 prettier_parser_name = "astro"
 

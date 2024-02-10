@@ -142,7 +142,6 @@ tree-sitter-python.workspace = true
 tree-sitter-racket.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-rust.workspace = true
-tree-sitter-scss.workspace = true
 tree-sitter-scheme.workspace = true
 tree-sitter-svelte.workspace = true
 tree-sitter-toml.workspace = true
