@@ -50,6 +50,7 @@ pub struct ProjectPanel {
     last_worktree_root_id: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     collapsed_dir_paths: HashMap<ProjectEntryId, String>,
+    excluded_collapsed_dir_paths: HashMap<ProjectEntryId, String>,
     selection: Option<Selection>,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
@@ -124,6 +125,8 @@ actions!(
         Open,
         ToggleFocus,
         NewSearchInDirectory,
+        UnfoldTheChildren,
+        FoldTheChildren,
     ]
 );
 
@@ -236,6 +239,7 @@ impl ProjectPanel {
                 last_worktree_root_id: Default::default(),
                 expanded_dir_ids: Default::default(),
                 collapsed_dir_paths: Default::default(),
+                excluded_collapsed_dir_paths: Default::default(),
                 selection: None,
                 edit_state: None,
                 context_menu: None,
@@ -376,6 +380,7 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let is_root = Some(entry) == worktree.root_entry();
             let is_dir = entry.is_dir();
+            let is_folded = self.collapsed_dir_paths.contains_key(&entry_id);
             let worktree_id = worktree.id();
             let is_local = project.is_local();
             let is_read_only = project.is_read_only();
@@ -425,6 +430,12 @@ impl ProjectPanel {
                         .when(is_dir, |menu| {
                             menu.action("Open in Terminal", Box::new(OpenInTerminal))
                                 .action("Search Inside", Box::new(NewSearchInDirectory))
+                        })
+                        .when(is_folded && is_dir, |menu| {
+                            menu.action("Unfold the Children", Box::new(UnfoldTheChildren))
+                        })
+                        .when(!is_folded && is_dir, |menu| {
+                            menu.action("Fold the Children", Box::new(FoldTheChildren))
                         })
                         .separator()
                         .action("Rename", Box::new(Rename))
@@ -800,6 +811,65 @@ impl ProjectPanel {
         });
     }
 
+    fn unfold_children(&mut self, _: &UnfoldTheChildren, cx: &mut ViewContext<Self>) {
+        if let Some((_, entry)) = self.selected_entry(cx) {
+            self.excluded_collapsed_dir_paths.insert(
+                entry.id,
+                entry.path.to_str().unwrap_or_default().to_string(),
+            );
+
+            let entry_path = entry.path.clone();
+            let mut to_remove = vec![];
+            for (id, path) in &self.collapsed_dir_paths {
+                if path.contains(&entry_path.to_str().unwrap_or_default().to_string())
+                    || path.contains(
+                        &entry_path
+                            .to_str()
+                            .unwrap_or_default()
+                            .to_string()
+                            .split('/')
+                            .last()
+                            .unwrap_or_default()
+                            .to_string(),
+                    )
+                {
+                    to_remove.push(*id);
+                }
+            }
+            for id in to_remove {
+                self.collapsed_dir_paths.remove(&id);
+            }
+
+            self.update_visible_entries(None, cx);
+            cx.notify();
+        }
+    }
+
+    fn fold_children(&mut self, _: &FoldTheChildren, cx: &mut ViewContext<Self>) {
+        if let Some((_, entry)) = self.selected_entry(cx) {
+            self.excluded_collapsed_dir_paths.remove(&entry.id);
+
+            let entry_path = entry.path.clone();
+            let mut to_remove = vec![];
+            for (id, path) in &self.excluded_collapsed_dir_paths {
+                if entry_path
+                    .to_str()
+                    .unwrap_or_default()
+                    .to_string()
+                    .contains(path)
+                {
+                    to_remove.push(*id);
+                }
+            }
+            for id in to_remove {
+                self.excluded_collapsed_dir_paths.remove(&id);
+            }
+
+            self.update_visible_entries(None, cx);
+            cx.notify();
+        }
+    }
+
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.selection {
             let (mut worktree_ix, mut entry_ix, _) =
@@ -1127,28 +1197,37 @@ impl ProjectPanel {
             let mut entry_iter = snapshot.entries(true);
             let mut collapsed_paths: Vec<String> = Vec::new();
             while let Some(entry) = entry_iter.entry() {
-                let mut filename = ProjectPanel::get_path_collapsed_level(snapshot.clone(), entry);
-                if filename.is_empty() {
-                    filename = root_name.to_str().unwrap().to_string();
-                }
-
-                if collapsed_paths.iter().any(|path| path.contains(&filename)) {
-                    entry_iter.advance();
-                    continue;
-                } else {
-                    if filename
-                        != entry
-                            .path
-                            .file_name()
-                            .unwrap_or(root_name)
-                            .to_str()
-                            .unwrap()
-                    {
-                        self.collapsed_dir_paths.insert(entry.id, filename.clone());
+                if !self.excluded_collapsed_dir_paths.contains_key(&entry.id)
+                    && !self
+                        .excluded_collapsed_dir_paths
+                        .values()
+                        .any(|path| entry.path.to_str().unwrap().to_string().contains(path))
+                {
+                    let mut filename =
+                        ProjectPanel::get_path_collapsed_level(snapshot.clone(), entry);
+                    if filename.is_empty() {
+                        filename = root_name.to_str().unwrap().to_string();
                     }
-                    collapsed_paths.push(filename.clone());
+                    if collapsed_paths.iter().any(|path| path.contains(&filename)) {
+                        entry_iter.advance();
+                        continue;
+                    } else {
+                        if filename
+                            != entry
+                                .path
+                                .file_name()
+                                .unwrap_or(root_name)
+                                .to_str()
+                                .unwrap()
+                        {
+                            self.collapsed_dir_paths.insert(entry.id, filename.clone());
+                        }
+                        collapsed_paths.push(filename.clone());
+                        visible_worktree_entries.push(entry.clone());
+                    };
+                } else {
                     visible_worktree_entries.push(entry.clone());
-                };
+                }
 
                 if Some(entry.id) == new_entry_parent_id {
                     visible_worktree_entries.push(Entry {
@@ -1340,7 +1419,8 @@ impl ProjectPanel {
                         }
                     };
 
-                    let filename = if let Some(file_name) = self.collapsed_dir_paths.get(&entry.id) {
+                    let filename = if let Some(file_name) = self.collapsed_dir_paths.get(&entry.id)
+                    {
                         file_name.clone()
                     } else {
                         entry
@@ -1567,6 +1647,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::copy_path))
                 .on_action(cx.listener(Self::copy_relative_path))
                 .on_action(cx.listener(Self::new_search_in_directory))
+                .on_action(cx.listener(Self::unfold_children))
+                .on_action(cx.listener(Self::fold_children))
                 .when(!project.is_read_only(), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
