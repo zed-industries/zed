@@ -20,8 +20,8 @@ use command_palette::CommandPaletteInterceptor;
 use copilot::CommandPaletteFilter;
 use editor::{movement, Editor, EditorEvent, EditorMode};
 use gpui::{
-    actions, impl_actions, Action, AppContext, EntityId, Global, KeyContext, Subscription, View,
-    ViewContext, WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, EntityId, Global, Subscription, View, ViewContext,
+    WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
