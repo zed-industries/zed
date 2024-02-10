@@ -36,7 +36,7 @@ const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, &str, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -65,7 +65,7 @@ pub struct LanguageServer {
     capabilities: ServerCapabilities,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
-    response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
+    response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
     executor: BackgroundExecutor,
     #[allow(clippy::type_complexity)]
@@ -92,13 +92,23 @@ pub enum Subscription {
     },
 }
 
+/// Language server protocol RPC request message ID.
+///
+/// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RequestId {
+    Int(usize),
+    Str(String),
+}
+
 /// Language server protocol RPC request message.
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
 #[derive(Serialize, Deserialize)]
 pub struct Request<'a, T> {
     jsonrpc: &'static str,
-    id: usize,
+    id: RequestId,
     method: &'a str,
     params: T,
 }
@@ -107,7 +117,7 @@ pub struct Request<'a, T> {
 #[derive(Serialize, Deserialize)]
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
-    id: usize,
+    id: RequestId,
     #[serde(default)]
     error: Option<Error>,
     #[serde(borrow)]
@@ -120,7 +130,7 @@ struct AnyResponse<'a> {
 #[derive(Serialize)]
 struct Response<T> {
     jsonrpc: &'static str,
-    id: usize,
+    id: RequestId,
     result: Option<T>,
     error: Option<Error>,
 }
@@ -140,7 +150,7 @@ struct Notification<'a, T> {
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
     #[serde(default)]
-    id: Option<usize>,
+    id: Option<RequestId>,
     #[serde(borrow)]
     method: &'a str,
     #[serde(borrow, default)]
@@ -305,7 +315,7 @@ impl LanguageServer {
         stdout: Stdout,
         mut on_unhandled_notification: F,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
-        response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
+        response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
         cx: AsyncAppContext,
     ) -> anyhow::Result<()>
@@ -424,7 +434,7 @@ impl LanguageServer {
         stdin: Stdin,
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
-        response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
+        response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
     ) -> anyhow::Result<()>
     where
@@ -851,7 +861,7 @@ impl LanguageServer {
 
     fn request_internal<T: request::Request>(
         next_id: &AtomicUsize,
-        response_handlers: &Mutex<Option<HashMap<usize, ResponseHandler>>>,
+        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
@@ -862,7 +872,7 @@ impl LanguageServer {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
             jsonrpc: JSON_RPC_VERSION,
-            id,
+            id: RequestId::Int(id),
             method: T::METHOD,
             params,
         })
@@ -876,7 +886,7 @@ impl LanguageServer {
             .map(|handlers| {
                 let executor = executor.clone();
                 handlers.insert(
-                    id,
+                    RequestId::Int(id),
                     Box::new(move |result| {
                         executor
                             .spawn(async move {
@@ -1339,5 +1349,32 @@ mod tests {
             buf,
             b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n"
         );
+    }
+
+    #[gpui::test]
+    fn test_deserialize_string_digit_id() {
+        let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
+        let notification = serde_json::from_str::<AnyNotification>(json)
+            .expect("message with string id should be parsed");
+        let expected_id = RequestId::Str("2".to_string());
+        assert_eq!(notification.id, Some(expected_id));
+    }
+
+    #[gpui::test]
+    fn test_deserialize_string_id() {
+        let json = r#"{"jsonrpc":"2.0","id":"anythingAtAll","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
+        let notification = serde_json::from_str::<AnyNotification>(json)
+            .expect("message with string id should be parsed");
+        let expected_id = RequestId::Str("anythingAtAll".to_string());
+        assert_eq!(notification.id, Some(expected_id));
+    }
+
+    #[gpui::test]
+    fn test_deserialize_int_id() {
+        let json = r#"{"jsonrpc":"2.0","id":2,"method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
+        let notification = serde_json::from_str::<AnyNotification>(json)
+            .expect("message with string id should be parsed");
+        let expected_id = RequestId::Int(2);
+        assert_eq!(notification.id, Some(expected_id));
     }
 }
