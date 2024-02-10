@@ -2,10 +2,10 @@ mod base_keymap_picker;
 mod base_keymap_setting;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
-
 use gpui::{
-    svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView, WindowContext,
+    svg, uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -52,11 +52,12 @@ pub struct Extension {
     pub download_url: String,
     pub installed: bool,
 }
+
 pub struct ExtensionsPage {
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     telemetry: Arc<Telemetry>,
-    extensions: Vec<Extension>,
+    extensions_entries: Vec<Extension>,
 }
 
 impl Render for ExtensionsPage {
@@ -137,6 +138,7 @@ impl Render for ExtensionsPage {
                                     })),
                             ),
                     )
+                    .child(self.render_extensions(cx))
                     .child(
                         v_flex()
                             .p_3()
@@ -257,26 +259,42 @@ impl Render for ExtensionsPage {
 
 impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        let this = cx.new_view(|cx| {
+        let project = workspace.project().clone();
+        let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
+            // cx.observe(&project, |this, _, cx| {
+            //     this.get_extensions_from_server(cx);
+            //     cx.notify();
+            // });
+            let focus_handle = cx.focus_handle();
+            cx.on_focus(&focus_handle, Self::focus_in).detach();
+
             cx.on_release(|this: &mut Self, _, _| {
                 this.telemetry
-                    .report_app_event("extensions page: close".to_string());
+                    .report_app_event("welcome page: close".to_string());
+                println!("Extensions page closed");
             })
             .detach();
-
-            ExtensionsPage {
+            let this = Self {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
                 telemetry: workspace.client().telemetry().clone(),
-                extensions: Vec::new(),
-                get_extensions_from_server: None,
-            }
+                extensions_entries: Vec::new(),
+            };
+
+            this
         });
 
-        this.get_extensions_from_server();
-        this
+        extensions_panel
     }
-    fn get_extensions_from_server() -> Result<Vec<Extension>, String> {
+    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        // if !self.focus_handle.contains_focused(cx) {
+        //     cx.emit(Event::Focus);
+        // }
+        println!("Extensions page focused");
+        self.get_extensions_from_server();
+    }
+
+    fn get_extensions_from_server(&mut self) {
         let extensions = vec![
             Extension {
                 name: "Vim Mode".to_string(),
@@ -306,13 +324,53 @@ impl ExtensionsPage {
                 installed: false,
             },
         ];
-        if extensions.is_empty() {
-            return Err("No extensions found".into());
-        }
 
-        Ok(extensions)
+        self.extensions_entries = extensions;
     }
-    fn render_entry(&self, cx: &mut ViewContext<Self>) {}
+    fn render_extensions(&self, cx: &mut ViewContext<Self>) -> Div {
+        let mut entries = div().h_full().w_full().child(Label::new("Extensions"));
+        println!(
+            "extensions len: {:?}",
+            self.extensions_entries.len().to_string()
+        );
+        for extension in &self.extensions_entries {
+            println!("extension: {:?}", extension.name.to_string());
+            entries = entries.child(self.render_entry(extension, cx));
+        }
+        entries
+    }
+    fn render_entry(&self, entry: &Extension, cx: &mut ViewContext<Self>) -> Div {
+        // let installed = entry.installed;
+        let name = &entry.name;
+        // let version = entry.version;
+        // let author = entry.author;
+        // let description = entry.description;
+        // let repository = entry.repository;
+        // let download_url = entry.download_url;
+
+        // let mut button = Button::new("install", "Install")
+        //     .on_click(cx.listener(move |this, _, cx| {
+        //         this.telemetry
+        //             .report_app_event("welcome page: install extension".to_string());
+        //         // this.install_extension(&name, &download_url, cx);
+        //     }))
+        //     .disabled(installed);
+
+        // if installed {
+        //     button = button.disabled(true).child(Label::new("Installed"));
+        // }
+
+        div().h_full().w_full().child(
+            v_flex()
+                .p_3()
+                .gap_2()
+                .bg(cx.theme().colors().elevated_surface_background)
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_md()
+                .child(Label::new(name.to_string())),
+        )
+    }
     fn update_settings<T: Settings>(
         &mut self,
         selection: &Selection,
@@ -373,7 +431,7 @@ impl Item for ExtensionsPage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            extensions_entries: Default::default(),
         }))
     }
 
