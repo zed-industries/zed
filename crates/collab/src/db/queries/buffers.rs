@@ -561,7 +561,6 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<()> {
         use observed_buffer_edits::Column;
-
         observed_buffer_edits::Entity::insert(observed_buffer_edits::ActiveModel {
             user_id: ActiveValue::Set(user_id),
             buffer_id: ActiveValue::Set(buffer_id),
@@ -671,7 +670,7 @@ impl Database {
                 buffer_id: row.buffer_id,
                 epoch: row.epoch,
                 lamport_timestamp: row.lamport_timestamp,
-                replica_id: row.lamport_timestamp,
+                replica_id: row.replica_id,
                 value: Default::default(),
             });
             operations.push(proto::Operation {
@@ -750,25 +749,44 @@ impl Database {
 
     pub async fn latest_channel_buffer_changes(
         &self,
-        channel_ids: &[ChannelId],
+        channel_ids_by_buffer_id: &HashMap<BufferId, ChannelId>,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<proto::ChannelBufferVersion>> {
-        let mut channel_ids_by_buffer_id = HashMap::default();
-        let mut rows = buffer::Entity::find()
-            .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
-            .stream(&*tx)
-            .await?;
-        while let Some(row) = rows.next().await {
-            let row = row?;
-            channel_ids_by_buffer_id.insert(row.id, row.channel_id);
-        }
-        drop(rows);
-
         let latest_operations = self
             .get_latest_operations_for_buffers(channel_ids_by_buffer_id.keys().copied(), &*tx)
             .await?;
 
         Ok(latest_operations
+            .iter()
+            .flat_map(|op| {
+                Some(proto::ChannelBufferVersion {
+                    channel_id: channel_ids_by_buffer_id.get(&op.buffer_id)?.to_proto(),
+                    epoch: op.epoch as u64,
+                    version: vec![proto::VectorClockEntry {
+                        replica_id: op.replica_id as u32,
+                        timestamp: op.lamport_timestamp as u32,
+                    }],
+                })
+            })
+            .collect())
+    }
+
+    pub async fn observed_channel_buffer_changes(
+        &self,
+        channel_ids_by_buffer_id: &HashMap<BufferId, ChannelId>,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<proto::ChannelBufferVersion>> {
+        let observed_operations = observed_buffer_edits::Entity::find()
+            .filter(observed_buffer_edits::Column::UserId.eq(user_id))
+            .filter(
+                observed_buffer_edits::Column::BufferId
+                    .is_in(channel_ids_by_buffer_id.keys().copied()),
+            )
+            .all(&*tx)
+            .await?;
+
+        Ok(observed_operations
             .iter()
             .flat_map(|op| {
                 Some(proto::ChannelBufferVersion {

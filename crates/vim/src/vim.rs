@@ -20,8 +20,8 @@ use command_palette::CommandPaletteInterceptor;
 use copilot::CommandPaletteFilter;
 use editor::{movement, Editor, EditorEvent, EditorMode};
 use gpui::{
-    actions, impl_actions, Action, AppContext, EntityId, Global, KeyContext, Subscription, View,
-    ViewContext, WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, EntityId, Global, Subscription, View, ViewContext,
+    WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
@@ -197,7 +197,11 @@ impl Vim {
         cx.update_global(update)
     }
 
-    fn set_active_editor(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+    fn activate_editor(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+        if editor.read(cx).mode() != EditorMode::Full {
+            return;
+        }
+
         self.active_editor = Some(editor.clone().downgrade());
         self.editor_subscription = Some(cx.subscribe(&editor, |editor, event, cx| match event {
             EditorEvent::SelectionsChanged { local: true } => {
@@ -219,19 +223,17 @@ impl Vim {
             _ => {}
         }));
 
-        if self.enabled {
-            let editor = editor.read(cx);
-            let editor_mode = editor.mode();
-            let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
+        let editor = editor.read(cx);
+        let editor_mode = editor.mode();
+        let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
 
-            if editor_mode == EditorMode::Full
+        if editor_mode == EditorMode::Full
                 && !newest_selection_empty
                 && self.state().mode == Mode::Normal
                 // When following someone, don't switch vim mode.
                 && editor.leader_peer_id().is_none()
-            {
-                self.switch_mode(Mode::Visual, true, cx);
-            }
+        {
+            self.switch_mode(Mode::Visual, true, cx);
         }
 
         self.sync_vim_settings(cx);
@@ -504,43 +506,39 @@ impl Vim {
     }
 
     fn set_enabled(&mut self, enabled: bool, cx: &mut AppContext) {
-        if self.enabled != enabled {
-            self.enabled = enabled;
-
+        if self.enabled == enabled {
+            return;
+        }
+        if !enabled {
+            let _ = cx.remove_global::<CommandPaletteInterceptor>();
             cx.update_global::<CommandPaletteFilter, _>(|filter, _| {
-                if self.enabled {
-                    filter.hidden_namespaces.remove("vim");
-                } else {
-                    filter.hidden_namespaces.insert("vim");
-                }
+                filter.hidden_namespaces.insert("vim");
             });
+            *self = Default::default();
+            return;
+        }
 
-            if self.enabled {
-                cx.set_global::<CommandPaletteInterceptor>(CommandPaletteInterceptor(Box::new(
-                    command::command_interceptor,
-                )));
-            } else if cx.has_global::<CommandPaletteInterceptor>() {
-                let _ = cx.remove_global::<CommandPaletteInterceptor>();
-            }
+        self.enabled = true;
+        cx.update_global::<CommandPaletteFilter, _>(|filter, _| {
+            filter.hidden_namespaces.remove("vim");
+        });
+        cx.set_global::<CommandPaletteInterceptor>(CommandPaletteInterceptor(Box::new(
+            command::command_interceptor,
+        )));
 
-            if let Some(active_window) = cx.active_window() {
-                active_window
-                    .update(cx, |root_view, cx| {
-                        if self.enabled {
-                            let active_editor = root_view
-                                .downcast::<Workspace>()
-                                .ok()
-                                .and_then(|workspace| workspace.read(cx).active_item(cx))
-                                .and_then(|item| item.downcast::<Editor>());
-                            if let Some(active_editor) = active_editor {
-                                self.set_active_editor(active_editor, cx);
-                            }
-                            self.switch_mode(Mode::Normal, false, cx);
-                        }
-                        self.sync_vim_settings(cx);
-                    })
-                    .ok();
-            }
+        if let Some(active_window) = cx
+            .active_window()
+            .and_then(|window| window.downcast::<Workspace>())
+        {
+            active_window
+                .update(cx, |workspace, cx| {
+                    let active_editor = workspace.active_item_as::<Editor>(cx);
+                    if let Some(active_editor) = active_editor {
+                        self.activate_editor(active_editor, cx);
+                        self.switch_mode(Mode::Normal, false, cx);
+                    }
+                })
+                .ok();
         }
     }
 
@@ -569,45 +567,29 @@ impl Vim {
 
     fn sync_vim_settings(&self, cx: &mut WindowContext) {
         let state = self.state();
-        let cursor_shape = state.cursor_shape();
 
         self.update_active_editor(cx, |editor, cx| {
-            if self.enabled && editor.mode() == EditorMode::Full {
-                editor.set_cursor_shape(cursor_shape, cx);
-                editor.set_clip_at_line_ends(state.clip_at_line_ends(), cx);
-                editor.set_collapse_matches(true);
-                editor.set_input_enabled(!state.vim_controlled());
-                editor.set_autoindent(state.should_autoindent());
-                editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
-                let context_layer = state.keymap_context_layer();
-                editor.set_keymap_context_layer::<Self>(context_layer, cx);
-            } else {
-                // Note: set_collapse_matches is not in unhook_vim_settings, as that method is called on blur,
-                // but we need collapse_matches to persist when the search bar is focused.
-                editor.set_collapse_matches(false);
-                self.unhook_vim_settings(editor, cx);
-            }
+            editor.set_cursor_shape(state.cursor_shape(), cx);
+            editor.set_clip_at_line_ends(state.clip_at_line_ends(), cx);
+            editor.set_collapse_matches(true);
+            editor.set_input_enabled(!state.vim_controlled());
+            editor.set_autoindent(state.should_autoindent());
+            editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
+            let context_layer = state.keymap_context_layer();
+            editor.set_keymap_context_layer::<Self>(context_layer, cx);
         });
     }
 
-    fn unhook_vim_settings(&self, editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-        editor.set_cursor_shape(CursorShape::Bar, cx);
-        editor.set_clip_at_line_ends(false, cx);
-        editor.set_input_enabled(true);
-        editor.set_autoindent(true);
-        editor.selections.line_mode = false;
-
-        // we set the VimEnabled context on all editors so that we
-        // can distinguish between vim mode and non-vim mode in the BufferSearchBar.
-        // This is a bit of a hack, but currently the search crate does not depend on vim,
-        // and it seems nice to keep it that way.
-        if self.enabled {
-            let mut context = KeyContext::default();
-            context.add("VimEnabled");
-            editor.set_keymap_context_layer::<Self>(context, cx)
-        } else {
-            editor.remove_keymap_context_layer::<Self>(cx);
+    fn unhook_vim_settings(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        if editor.mode() == EditorMode::Full {
+            editor.set_cursor_shape(CursorShape::Bar, cx);
+            editor.set_clip_at_line_ends(false, cx);
+            editor.set_collapse_matches(false);
+            editor.set_input_enabled(true);
+            editor.set_autoindent(true);
+            editor.selections.line_mode = false;
         }
+        editor.remove_keymap_context_layer::<Self>(cx)
     }
 }
 
@@ -633,19 +615,17 @@ fn local_selections_changed(
     cx: &mut WindowContext,
 ) {
     Vim::update(cx, |vim, cx| {
-        if vim.enabled {
-            if vim.state().mode == Mode::Normal && !newest.is_empty() {
-                if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
-                    vim.switch_mode(Mode::VisualBlock, false, cx);
-                } else {
-                    vim.switch_mode(Mode::Visual, false, cx)
-                }
-            } else if newest.is_empty()
-                && !is_multicursor
-                && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&vim.state().mode)
-            {
-                vim.switch_mode(Mode::Normal, true, cx)
+        if vim.state().mode == Mode::Normal && !newest.is_empty() {
+            if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
+                vim.switch_mode(Mode::VisualBlock, false, cx);
+            } else {
+                vim.switch_mode(Mode::Visual, false, cx)
             }
+        } else if newest.is_empty()
+            && !is_multicursor
+            && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&vim.state().mode)
+        {
+            vim.switch_mode(Mode::Normal, true, cx)
         }
     })
 }

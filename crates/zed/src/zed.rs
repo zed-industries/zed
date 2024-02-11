@@ -32,6 +32,7 @@ use util::{
     ResultExt,
 };
 use uuid::Uuid;
+use vim::VimModeSetting;
 use welcome::BaseKeymap;
 use workspace::Pane;
 use workspace::{
@@ -495,13 +496,17 @@ pub fn handle_keymap_file_changes(
     cx: &mut AppContext,
 ) {
     BaseKeymap::register(cx);
+    VimModeSetting::register(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
+    let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
-        if new_base_keymap != old_base_keymap {
+        let new_vim_enabled = VimModeSetting::get_global(cx).0;
+        if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
             old_base_keymap = new_base_keymap.clone();
+            old_vim_enabled = new_vim_enabled;
             base_keymap_tx.unbounded_send(()).unwrap();
         }
     })
@@ -538,8 +543,9 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
 }
 
 pub fn load_default_keymap(cx: &mut AppContext) {
-    for path in ["keymaps/default.json", "keymaps/vim.json"] {
-        KeymapFile::load_asset(path, cx).unwrap();
+    KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+    if VimModeSetting::get_global(cx).0 {
+        KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
     }
 
     if let Some(asset_path) = BaseKeymap::get_global(cx).asset_path() {

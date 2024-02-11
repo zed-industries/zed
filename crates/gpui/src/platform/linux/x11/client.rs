@@ -11,7 +11,7 @@ use crate::platform::{X11Display, LinuxPlatformInner, X11Window, X11WindowState,
 use crate::platform::linux::client::Client;
 
 pub(crate) struct X11ClientState {
-    pub(crate) windows: HashMap<x::Window, Arc<X11WindowState>>,
+    pub(crate) windows: HashMap<x::Window, Rc<X11WindowState>>,
 }
 
 pub(crate) struct X11Client {
@@ -52,15 +52,14 @@ impl Client for X11Client {
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
                             let mut state = self.state.lock();
-                            let mut platform_state = self.platform_inner.state.lock();
-                            platform_state.quit_requested |= state.windows.is_empty();
+                            self.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
                         }
                     }
                 }
                 xcb::Event::X(x::Event::Expose(ev)) => {
                     let window = {
                         let state = self.state.lock();
-                        Arc::clone(&state.windows[&ev.window()])
+                        Rc::clone(&state.windows[&ev.window()])
                     };
                     window.expose();
                 }
@@ -77,7 +76,7 @@ impl Client for X11Client {
                     };
                     let window = {
                         let state = self.state.lock();
-                        Arc::clone(&state.windows[&ev.window()])
+                        Rc::clone(&state.windows[&ev.window()])
                     };
                     window.configure(bounds)
                 }
@@ -118,7 +117,7 @@ impl Client for X11Client {
     ) -> Box<dyn PlatformWindow> {
         let x_window = self.xcb_connection.generate_id();
 
-        let window_ptr = Arc::new(X11WindowState::new(
+        let window_ptr = Rc::new(X11WindowState::new(
             options,
             &self.xcb_connection,
             self.x_root_index,
@@ -129,7 +128,7 @@ impl Client for X11Client {
         self.state
             .lock()
             .windows
-            .insert(x_window, Arc::clone(&window_ptr));
+            .insert(x_window, Rc::clone(&window_ptr));
         Box::new(X11Window(window_ptr))
     }
 }

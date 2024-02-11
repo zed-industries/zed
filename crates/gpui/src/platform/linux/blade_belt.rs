@@ -52,7 +52,7 @@ impl BladeBelt {
         let index_maybe = self
             .buffers
             .iter()
-            .position(|&(ref rb, ref sp)| size <= rb.size && gpu.wait_for(sp, 0));
+            .position(|(rb, sp)| size <= rb.size && gpu.wait_for(sp, 0));
         if let Some(index) = index_maybe {
             let (rb, _) = self.buffers.remove(index);
             let piece = rb.raw.into();
@@ -85,7 +85,7 @@ impl BladeBelt {
             "Type alignment {} is too big",
             type_alignment
         );
-        let total_bytes = data.len() * mem::size_of::<T>();
+        let total_bytes = std::mem::size_of_val(data);
         let bp = self.alloc(total_bytes as u64, gpu);
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, bp.data(), total_bytes);

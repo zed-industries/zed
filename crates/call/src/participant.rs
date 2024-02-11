@@ -49,6 +49,7 @@ pub struct RemoteParticipant {
     pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
+    pub in_call: bool,
     pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
     pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
 }

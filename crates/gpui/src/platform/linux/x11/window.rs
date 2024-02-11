@@ -13,7 +13,7 @@ use std::{
 use blade_graphics as gpu;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
-use xcb::{x, Xid as _};
+use xcb::{x::{self, StackMode}, Xid as _};
 
 use crate::{
     Bounds, GlobalPixels, X11Display, Pixels, PlatformDisplay, PlatformInputHandler,
@@ -90,7 +90,7 @@ pub(crate) struct X11WindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct X11Window(pub(crate) Arc<X11WindowState>);
+pub(crate) struct X11Window(pub(crate) Rc<X11WindowState>);
 
 //todo!(linux): Remove other RawWindowHandle implementation
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
@@ -202,10 +202,6 @@ impl X11WindowState {
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
 
-        //Warning: it looks like this reported size is immediately invalidated
-        // on some platforms, followed by a "ConfigureNotify" event.
-        let gpu_extent = query_render_extent(&xcb_connection, x_window);
-
         let raw = RawWindow {
             connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                 xcb_connection,
@@ -226,6 +222,10 @@ impl X11WindowState {
             }
             .unwrap(),
         );
+
+        // Note: this has to be done after the GPU init, or otherwise
+        // the sizes are immediately invalidated.
+        let gpu_extent = query_render_extent(&xcb_connection, x_window);
 
         Self {
             xcb_connection: Arc::clone(xcb_connection),
@@ -350,8 +350,12 @@ impl PlatformWindow for X11Window {
         unimplemented!()
     }
 
-    //todo!(linux)
-    fn activate(&self) {}
+    fn activate(&self) {
+        self.0.xcb_connection.send_request(&x::ConfigureWindow {
+            window: self.0.x_window,
+            value_list: &[x::ConfigWindow::StackMode(StackMode::Above)],
+        });
+    }
 
     fn set_title(&mut self, title: &str) {
         self.0.xcb_connection.send_request(&x::ChangeProperty {
@@ -440,5 +444,9 @@ impl PlatformWindow for X11Window {
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         let inner = self.0.inner.lock();
         inner.renderer.atlas().clone()
+    }
+
+    fn set_graphics_profiler_enabled(&self, enabled: bool) {
+        unimplemented!("linux")
     }
 }

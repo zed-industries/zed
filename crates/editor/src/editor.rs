@@ -1222,7 +1222,12 @@ impl CopilotState {
         if completion_range.is_empty()
             && completion_range.start == cursor.text_anchor.to_offset(&completion_buffer)
         {
-            Some(&completion.text[prefix_len..completion.text.len() - suffix_len])
+            let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
+            if completion_text.trim().is_empty() {
+                None
+            } else {
+                Some(completion_text)
+            }
         } else {
             None
         }
@@ -2490,7 +2495,12 @@ impl Editor {
             let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
-            if !brace_inserted && EditorSettings::get_global(cx).use_on_type_format {
+            if brace_inserted {
+                // If we inserted a brace while composing text (i.e. typing `"` on a
+                // Brazilian keyboard), exit the composing state because most likely
+                // the user wanted to surround the selection.
+                this.unmark_text(cx);
+            } else if EditorSettings::get_global(cx).use_on_type_format {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
@@ -9695,6 +9705,7 @@ impl ViewInputHandler for Editor {
                 this.change_selections(None, cx, |selections| {
                     selections.select_ranges(new_selected_ranges)
                 });
+                this.backspace(&Default::default(), cx);
             }
 
             this.handle_input(text, cx);
@@ -9797,7 +9808,11 @@ impl ViewInputHandler for Editor {
                 );
             }
 
+            // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
+            let use_autoclose = this.use_autoclose;
+            this.set_use_autoclose(false);
             this.handle_input(text, cx);
+            this.set_use_autoclose(use_autoclose);
 
             if let Some(new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);

@@ -10,6 +10,7 @@ use util::asset_str;
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
+mod clojure;
 mod csharp;
 mod css;
 mod deno;
@@ -27,6 +28,7 @@ mod lua;
 mod nu;
 mod ocaml;
 mod php;
+mod prisma;
 mod purescript;
 mod python;
 mod ruby;
@@ -67,6 +69,7 @@ pub fn init(
         ("beancount", tree_sitter_beancount::language()),
         ("c", tree_sitter_c::language()),
         ("c_sharp", tree_sitter_c_sharp::language()),
+        ("clojure", tree_sitter_clojure::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
         ("elixir", tree_sitter_elixir::language()),
@@ -97,6 +100,7 @@ pub fn init(
             tree_sitter_ocaml::language_ocaml_interface(),
         ),
         ("php", tree_sitter_php::language_php()),
+        ("prisma", tree_sitter_prisma_io::language()),
         ("proto", tree_sitter_proto::language()),
         #[cfg(not(target_os = "linux"))]
         ("purescript", tree_sitter_purescript::language()),
@@ -129,6 +133,7 @@ pub fn init(
     language("bash", vec![]);
     language("beancount", vec![]);
     language("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
+    language("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
     language("cpp", vec![Arc::new(c::CLspAdapter)]);
     language("csharp", vec![Arc::new(csharp::OmniSharpAdapter {})]);
     language(
@@ -290,12 +295,21 @@ pub fn init(
     language("nu", vec![Arc::new(nu::NuLanguageServer {})]);
     language("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
     language("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
-    language("vue", vec![Arc::new(vue::VueLspAdapter::new(node_runtime))]);
+    language(
+        "vue",
+        vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))],
+    );
     language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language("proto", vec![]);
     language("terraform", vec![]);
     language("terraform-vars", vec![]);
     language("hcl", vec![]);
+    language(
+        "prisma",
+        vec![Arc::new(prisma::PrismaLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
 }
 
 #[cfg(any(test, feature = "test-support"))]

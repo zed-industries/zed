@@ -279,6 +279,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    graphics_profiler_enabled: bool,
 }
 
 #[derive(Default, Debug)]
@@ -462,6 +463,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            graphics_profiler_enabled: false,
         }
     }
     fn new_focus_listener(
@@ -1461,6 +1463,14 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    /// Toggle the graphics profiler to debug your application's rendering performance.
+    pub fn toggle_graphics_profiler(&mut self) {
+        self.window.graphics_profiler_enabled = !self.window.graphics_profiler_enabled;
+        self.window
+            .platform_window
+            .set_graphics_profiler_enabled(self.window.graphics_profiler_enabled);
+    }
+
     /// Register the given handler to be invoked whenever the global of the given type
     /// is updated.
     pub fn observe_global<G: Global>(
@@ -1547,7 +1557,7 @@ impl<'a> WindowContext<'a> {
         let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
             return vec![];
         };
-        let context_stack = dispatch_tree
+        let context_stack: Vec<_> = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())

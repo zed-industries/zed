@@ -1,12 +1,12 @@
 use crate::{
-    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    Hsla, MetalAtlas, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch,
-    Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
+    platform::mac::ns_string, point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds,
+    ContentMask, DevicePixels, Hsla, MetalAtlas, MonochromeSprite, Path, PathId, PathVertex,
+    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use block::ConcreteBlock;
 use cocoa::{
-    base::{NO, YES},
-    foundation::NSUInteger,
+    base::{nil, NO, YES},
+    foundation::{NSDictionary, NSUInteger},
     quartzcore::AutoresizingMask,
 };
 use collections::HashMap;
@@ -198,6 +198,23 @@ impl MetalRenderer {
 
     pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
         &self.sprite_atlas
+    }
+
+    /// Enables or disables the Metal HUD for debugging purposes. Note that this only works
+    /// when the app is bundled and it has the `MetalHudEnabled` key set to true in Info.plist.
+    pub fn set_hud_enabled(&mut self, enabled: bool) {
+        unsafe {
+            if enabled {
+                let hud_properties = NSDictionary::dictionaryWithObject_forKey_(
+                    nil,
+                    ns_string("default"),
+                    ns_string("mode"),
+                );
+                let _: () = msg_send![&*self.layer, setDeveloperHUDProperties: hud_properties];
+            } else {
+                let _: () = msg_send![&*self.layer, setDeveloperHUDProperties: NSDictionary::dictionary(nil)];
+            }
+        }
     }
 
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
