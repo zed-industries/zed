@@ -3,12 +3,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use parking_lot::Mutex;
 use wayland_client::{
-    delegate_noop,
-    protocol::{
+    delegate_noop, protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool,
         wl_surface,
-    },
-    Connection, Dispatch, QueueHandle, EventQueue
+    }, Connection, Dispatch, EventQueue, Proxy, QueueHandle
 };
 
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -124,7 +122,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
 
 delegate_noop!(WaylandClientState: ignore wl_compositor::WlCompositor);
 delegate_noop!(WaylandClientState: ignore wl_surface::WlSurface);
-delegate_noop!(WaylandClientState: ignore xdg_toplevel::XdgToplevel);
 delegate_noop!(WaylandClientState: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
@@ -145,6 +142,29 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
             for window in &state.windows {
                 if &window.0 == xdg_surface {
                     window.1.update();
+                    return;
+                }
+            }
+        }
+    }
+}
+
+impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        xdg_toplevel: &xdg_toplevel::XdgToplevel,
+        event: <xdg_toplevel::XdgToplevel as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let xdg_toplevel::Event::Configure { width, height, states } = event {
+            if width == 0 || height == 0 {
+                return;
+            }
+            for window in &state.windows {
+                if window.1.toplevel.id() == xdg_toplevel.id() {
+                    window.1.resize(width, height);
                     return;
                 }
             }
