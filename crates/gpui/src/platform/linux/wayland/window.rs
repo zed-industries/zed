@@ -7,8 +7,7 @@ use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
-use crate::{Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WindowAppearance,
-     WindowBounds, WindowOptions};
+use crate::{px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WindowAppearance, WindowBounds, WindowOptions};
 use crate::platform::linux::blade_renderer::BladeRenderer;
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::scene::Scene;
@@ -96,7 +95,7 @@ pub(crate) struct WaylandWindowState {
     inner: Mutex<WaylandWindowInner>,
     callbacks: Mutex<Callbacks>,
     surface: Arc<wl_surface::WlSurface>,
-    toplevel: Arc<xdg_toplevel::XdgToplevel>
+    pub(crate) toplevel: Arc<xdg_toplevel::XdgToplevel>
 }
 
 impl WaylandWindowState {
@@ -106,6 +105,12 @@ impl WaylandWindowState {
         toplevel: Arc<xdg_toplevel::XdgToplevel>,
         options: WindowOptions,
     ) -> Self {
+        if options.bounds == WindowBounds::Maximized {
+            toplevel.set_maximized();
+        } else if options.bounds == WindowBounds::Fullscreen {
+            toplevel.set_fullscreen(None);
+        }
+
         let bounds: Bounds<i32> = match options.bounds {
             WindowBounds::Fullscreen | WindowBounds::Maximized => Bounds {
                 origin: Point::default(),
@@ -136,6 +141,29 @@ impl WaylandWindowState {
         let mut cb = self.callbacks.lock();
         if let Some(ref mut fun) = cb.request_frame {
             fun();
+        }
+    }
+
+    pub fn resize(&self, width: i32, height: i32) {
+        {
+            let mut inner = self.inner.lock();
+            inner.bounds.size.width = width;
+            inner.bounds.size.height = height;
+            inner.renderer.resize(gpu::Extent {
+                width: width as u32,
+                height: height as u32,
+                depth: 1,
+            });  
+        }
+        let mut callbacks = self.callbacks.lock();
+        if let Some(ref mut fun) = callbacks.resize {
+            fun(Size {
+                width: px(width as f32),
+                height: px(height as f32),
+            }, 1.0);
+        }
+        if let Some(ref mut fun) = callbacks.moved {
+            fun()
         }
     }
 }
@@ -265,7 +293,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        //todo!(linux)
+        self.0.callbacks.lock().resize = Some(callback);
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
@@ -273,7 +301,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        //todo!(linux)
+        self.0.callbacks.lock().moved = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
