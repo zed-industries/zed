@@ -127,9 +127,9 @@ impl OpenListener {
         let paths: Vec<_> = urls
             .iter()
             .flat_map(|url| url.strip_prefix("file://"))
-            .map(|url| {
+            .flat_map(|url| {
                 let decoded = urlencoding::decode_binary(url.as_bytes());
-                PathBuf::try_from_bytes(decoded.as_ref()).unwrap()
+                PathBuf::try_from_bytes(decoded.as_ref()).log_err()
             })
             .collect();
 
