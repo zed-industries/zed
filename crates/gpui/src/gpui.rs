@@ -81,6 +81,7 @@ mod key_dispatch;
 mod keymap;
 mod platform;
 pub mod prelude;
+#[cfg(any(not(target_os = "macos"), feature = "macos-blade"))]
 mod render;
 mod scene;
 mod shared_string;
@@ -131,6 +132,7 @@ use key_dispatch::*;
 pub use keymap::*;
 pub use platform::*;
 pub use refineable::*;
+#[cfg(any(not(target_os = "macos"), feature = "macos-blade"))]
 use render::*;
 pub use scene::*;
 use seal::Sealed;

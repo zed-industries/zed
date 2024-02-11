@@ -306,8 +306,13 @@ impl BladeRenderer {
         self.viewport_size
     }
 
-    pub fn atlas(&self) -> &Arc<BladeAtlas> {
+    pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
         &self.atlas
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn layer(&self) -> metal::MetalLayer {
+        self.gpu.metal_layer().unwrap()
     }
 
     fn rasterize_paths(&mut self, paths: &[Path<ScaledPixels>]) {
