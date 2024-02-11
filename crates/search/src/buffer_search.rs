@@ -9,13 +9,16 @@ use crate::{
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::{actions::Tab, Editor, EditorElement, EditorStyle};
+use editor::{
+    actions::{Tab, TabPrev},
+    Editor, EditorElement, EditorStyle,
+};
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
-    FontStyle, FontWeight, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
-    Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _,
-    WhiteSpace, WindowContext,
+    FontStyle, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyContext,
+    ParentElement as _, Render, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext as _, WhiteSpace, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -57,7 +60,9 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct BufferSearchBar {
     query_editor: View<Editor>,
+    query_editor_focused: bool,
     replacement_editor: View<Editor>,
+    replacement_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
@@ -78,7 +83,7 @@ impl BufferSearchBar {
     fn render_text_input(
         &self,
         editor: &View<Editor>,
-        color: Color,
+        color: Hsla,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
@@ -86,7 +91,7 @@ impl BufferSearchBar {
             color: if editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
-                color.color(cx)
+                color
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features,
@@ -216,8 +221,7 @@ impl Render for BufferSearchBar {
                     .min_w(rems(MIN_INPUT_WIDHT_REMS))
                     .max_w(rems(MAX_INPUT_WIDHT_REMS))
                     .rounded_lg()
-                    // .child(Icon::new(IconName::MagnifyingGlass))
-                    .child(self.render_text_input(&self.query_editor, match_color, cx))
+                    .child(self.render_text_input(&self.query_editor, match_color.color(cx), cx))
                     .children(supported_options.case.then(|| {
                         self.render_search_option_button(
                             SearchOptions::CASE_SENSITIVE,
@@ -337,7 +341,11 @@ impl Render for BufferSearchBar {
                         .rounded_lg()
                         .min_w(rems(MIN_INPUT_WIDHT_REMS))
                         .max_w(rems(MAX_INPUT_WIDHT_REMS))
-                        .child(self.render_text_input(&self.replacement_editor, match_color, cx)),
+                        .child(self.render_text_input(
+                            &self.replacement_editor,
+                            cx.theme().colors().text,
+                            cx,
+                        )),
                 )
                 .when(should_show_replace_input, |this| {
                     this.child(
@@ -360,6 +368,7 @@ impl Render for BufferSearchBar {
         v_flex()
             .key_context(key_context)
             .capture_action(cx.listener(Self::tab))
+            .capture_action(cx.listener(Self::tab_prev))
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
             .on_action(cx.listener(Self::dismiss))
@@ -507,11 +516,13 @@ impl BufferSearchBar {
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
         let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
-        cx.subscribe(&replacement_editor, Self::on_query_editor_event)
+        cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
         Self {
             query_editor,
+            query_editor_focused: false,
             replacement_editor,
+            replacement_editor_focused: false,
             active_searchable_item: None,
             active_searchable_item_subscription: None,
             active_match_index: None,
@@ -784,15 +795,33 @@ impl BufferSearchBar {
         event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::EditorEvent::Edited = event {
-            self.query_contains_error = false;
-            self.clear_matches(cx);
-            let search = self.update_matches(cx);
-            cx.spawn(|this, mut cx| async move {
-                search.await?;
-                this.update(&mut cx, |this, cx| this.activate_current_match(cx))
-            })
-            .detach_and_log_err(cx);
+        match event {
+            editor::EditorEvent::Focused => self.query_editor_focused = true,
+            editor::EditorEvent::Blurred => self.query_editor_focused = false,
+            editor::EditorEvent::Edited => {
+                self.query_contains_error = false;
+                self.clear_matches(cx);
+                let search = self.update_matches(cx);
+                cx.spawn(|this, mut cx| async move {
+                    search.await?;
+                    this.update(&mut cx, |this, cx| this.activate_current_match(cx))
+                })
+                .detach_and_log_err(cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn on_replacement_editor_event(
+        &mut self,
+        _: View<Editor>,
+        event: &editor::EditorEvent,
+        _: &mut ViewContext<Self>,
+    ) {
+        match event {
+            editor::EditorEvent::Focused => self.replacement_editor_focused = true,
+            editor::EditorEvent::Blurred => self.replacement_editor_focused = false,
+            _ => {}
         }
     }
 
@@ -930,11 +959,29 @@ impl BufferSearchBar {
     }
 
     fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        if let Some(item) = self.active_searchable_item.as_ref() {
-            let focus_handle = item.focus_handle(cx);
-            cx.focus(&focus_handle);
-            cx.stop_propagation();
-        }
+        // Search -> Replace -> Editor
+        let focus_handle = if self.replace_enabled && self.query_editor_focused {
+            self.replacement_editor.focus_handle(cx)
+        } else if let Some(item) = self.active_searchable_item.as_ref() {
+            item.focus_handle(cx)
+        } else {
+            return;
+        };
+        cx.focus(&focus_handle);
+        cx.stop_propagation();
+    }
+
+    fn tab_prev(&mut self, _: &TabPrev, cx: &mut ViewContext<Self>) {
+        // Search -> Replace -> Search
+        let focus_handle = if self.replace_enabled && self.query_editor_focused {
+            self.replacement_editor.focus_handle(cx)
+        } else if self.replacement_editor_focused {
+            self.query_editor.focus_handle(cx)
+        } else {
+            return;
+        };
+        cx.focus(&focus_handle);
+        cx.stop_propagation();
     }
 
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
@@ -964,10 +1011,12 @@ impl BufferSearchBar {
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(_) = &self.active_searchable_item {
             self.replace_enabled = !self.replace_enabled;
-            if !self.replace_enabled {
-                let handle = self.query_editor.focus_handle(cx);
-                cx.focus(&handle);
-            }
+            let handle = if self.replace_enabled {
+                self.replacement_editor.focus_handle(cx)
+            } else {
+                self.query_editor.focus_handle(cx)
+            };
+            cx.focus(&handle);
             cx.notify();
         }
     }
