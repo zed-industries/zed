@@ -153,7 +153,7 @@
     "auto_reveal_entries": true,
     /// Whether to collapse directories automatically
     /// when directory has only one directory inside.
-    "auto_collapse_dirs": false
+    "auto_collapse_dirs": true
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.

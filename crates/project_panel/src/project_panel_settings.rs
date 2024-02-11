@@ -58,7 +58,7 @@ pub struct ProjectPanelSettingsContent {
     /// Whether to collapse directories automatically
     /// when directory has only one directory inside.
     ///
-    /// Default: false
+    /// Default: true
     pub auto_collapse_dirs: Option<bool>,
 }
 

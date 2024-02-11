@@ -378,9 +378,11 @@ impl ProjectPanel {
         });
 
         if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_collapse_dirs;
             let is_root = Some(entry) == worktree.root_entry();
             let is_dir = entry.is_dir();
-            let is_folded = self.collapsed_dir_paths.contains_key(&entry_id);
+            let is_collapsed = self.collapsed_dir_paths.contains_key(&entry_id);
+            let can_be_collapsed = is_dir && auto_collapse_dirs;
             let worktree_id = worktree.id();
             let is_local = project.is_local();
             let is_read_only = project.is_read_only();
@@ -431,10 +433,10 @@ impl ProjectPanel {
                             menu.action("Open in Terminal", Box::new(OpenInTerminal))
                                 .action("Search Inside", Box::new(NewSearchInDirectory))
                         })
-                        .when(is_folded && is_dir, |menu| {
+                        .when(is_collapsed && can_be_collapsed, |menu| {
                             menu.action("Unfold the Children", Box::new(UnfoldTheChildren))
                         })
-                        .when(!is_folded && is_dir, |menu| {
+                        .when(!is_collapsed && can_be_collapsed, |menu| {
                             menu.action("Fold the Children", Box::new(FoldTheChildren))
                         })
                         .separator()
@@ -1199,6 +1201,7 @@ impl ProjectPanel {
             let mut collapsed_paths: Vec<String> = Vec::new();
             while let Some(entry) = entry_iter.entry() {
                 if auto_collapse_dirs
+                    && entry.kind.is_dir()
                     && !self.excluded_collapsed_dir_paths.contains_key(&entry.id)
                     && !self
                         .excluded_collapsed_dir_paths
@@ -1206,10 +1209,11 @@ impl ProjectPanel {
                         .any(|path| entry.path.to_str().unwrap().to_string().contains(path))
                 {
                     let mut filename =
-                        ProjectPanel::get_path_collapsed_level(snapshot.clone(), entry);
+                        ProjectPanel::get_collapsed_dir_path(snapshot.clone(), entry);
                     if filename.is_empty() {
                         filename = root_name.to_str().unwrap().to_string();
                     }
+
                     if collapsed_paths.iter().any(|path| path.contains(&filename)) {
                         entry_iter.advance();
                         continue;
@@ -1226,7 +1230,7 @@ impl ProjectPanel {
                         }
                         collapsed_paths.push(filename.clone());
                         visible_worktree_entries.push(entry.clone());
-                    };
+                    }
                 } else {
                     self.collapsed_dir_paths.remove(&entry.id);
                     visible_worktree_entries.push(entry.clone());
@@ -1292,8 +1296,15 @@ impl ProjectPanel {
         }
     }
 
-    fn get_path_collapsed_level(snapshot: Snapshot, entry: &Entry) -> String {
-        if entry.kind.is_dir() {
+    fn get_collapsed_dir_path(snapshot: Snapshot, entry: &Entry) -> String {
+        let entry_filename = entry
+            .path
+            .file_name()
+            .unwrap_or(OsStr::new(""))
+            .to_str()
+            .unwrap_or_default();
+
+        if entry.kind.is_dir() && !entry_filename.is_empty() {
             let children: Vec<_> = snapshot
                 .entries(true)
                 .into_iter()
@@ -1305,32 +1316,17 @@ impl ProjectPanel {
                 let snapshot_clone = snapshot.clone();
                 return snapshot_clone
                     .entry_for_path(sub_entry.path.clone())
-                    .map_or(
-                        entry
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_str()
-                            .unwrap()
-                            .to_string(),
-                        |sub_entry: &Entry| {
-                            format!(
-                                "{}/{}",
-                                entry.path.file_name().unwrap_or_default().to_str().unwrap(),
-                                ProjectPanel::get_path_collapsed_level(snapshot, sub_entry)
-                            )
-                        },
-                    );
+                    .map_or(entry_filename.to_string(), |sub_entry: &Entry| {
+                        format!(
+                            "{}/{}",
+                            entry_filename,
+                            ProjectPanel::get_collapsed_dir_path(snapshot, sub_entry)
+                        )
+                    });
             }
         }
 
-        return entry
-            .path
-            .file_name()
-            .unwrap_or(OsStr::new(""))
-            .to_str()
-            .unwrap_or_default()
-            .to_string();
+        return entry_filename.to_string();
     }
 
     fn expand_entry(
@@ -2004,7 +2000,7 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    > b",
+                "    > b/3",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -2019,8 +2015,8 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    v b  <== selected",
-                "        > 3",
+                "    v b/3  <== selected",
+                "          Q",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -2035,8 +2031,8 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    v b",
-                "        > 3",
+                "    v b/3",
+                "          Q",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -2051,13 +2047,122 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    v b",
-                "        > 3",
+                "    v b/3",
+                "          Q",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    v d",
                 "    v e  <== selected",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "dir_1": {
+                    "nested_dir_1": {
+                        "nested_dir_2": {
+                            "nested_dir_3": {
+                                "file_a.java": "// File contents",
+                                "file_b.java": "// File contents",
+                                "file_c.java": "// File contents",
+                                "nested_dir_4": {
+                                    "nested_dir_5": {
+                                        "file_d.java": "// File contents",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "dir_2": {
+                    "file_1.java": "// File contents",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+                "v root2",
+                "    > dir_2",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root1/dir_1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected",
+                "        > nested_dir_4/nested_dir_5",
+                "          file_a.java",
+                "          file_b.java",
+                "          file_c.java",
+                "v root2",
+                "    > dir_2",
+            ]
+        );
+
+        toggle_expand_dir(
+            &panel,
+            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3/nested_dir_4",
+            cx,
+        );
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+                "        v nested_dir_4/nested_dir_5  <== selected",
+                "              file_d.java",
+                "          file_a.java",
+                "          file_b.java",
+                "          file_c.java",
+                "v root2",
+                "    > dir_2",
+            ]
+        );
+        toggle_expand_dir(
+            &panel,
+            "root2/dir_2",
+            cx,
+        );
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+                "        v nested_dir_4/nested_dir_5",
+                "              file_d.java",
+                "          file_a.java",
+                "          file_b.java",
+                "          file_c.java",
+                "v root2",
+                "    v dir_2  <== selected",
+                "          file_1.java",
             ]
         );
     }
@@ -2540,9 +2645,8 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    > b",
-                "    v bdir1",
-                "        v dir2",
-                "              the-new-filename  <== selected",
+                "    v bdir1/dir2",
+                "          the-new-filename  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
