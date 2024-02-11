@@ -75,17 +75,17 @@
 ((constant) @constant
  (#match? @constant "^[A-Z\\d_]+$"))
 
-(scope_resolution
-  ((constant) @superclass
-  (#match? @type "^([A-Z][a-zA-Z]*(?:::[A-Z][a-zA-Z]*)+)$"))
-) @operator
-
 (class
   (constant) @type
 )
 
+(scope_resolution
+  ((constant) @type.super
+  (#match? @type "^([A-Z][a-zA-Z]*(?:::[A-Z][a-zA-Z]*)+)$"))
+) @operator
+
 (superclass
-  (constant) @superclass
+  (constant) @type.super
 )
 
 (self) @variable.special
