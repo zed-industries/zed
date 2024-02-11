@@ -23,7 +23,7 @@ use settings::Settings;
 use std::{any::Any, sync::Arc};
 use theme::ThemeSettings;
 
-use ui::{h_flex, prelude::*, Icon, IconButton, IconName, ToggleButton, Tooltip};
+use ui::{h_flex, prelude::*, IconButton, IconName, ToggleButton, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -33,6 +33,9 @@ use workspace::{
 
 pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
+
+const MIN_INPUT_WIDHT_REMS: f32 = 15.;
+const MAX_INPUT_WIDHT_REMS: f32 = 25.;
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
@@ -72,13 +75,18 @@ pub struct BufferSearchBar {
 }
 
 impl BufferSearchBar {
-    fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_text_input(
+        &self,
+        editor: &View<Editor>,
+        color: Color,
+        cx: &ViewContext<Self>,
+    ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
-                cx.theme().colors().text
+                color.color(cx)
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features,
@@ -161,7 +169,8 @@ impl Render for BufferSearchBar {
             editor.set_placeholder_text("Replace with...", cx);
         });
 
-        let match_count = self
+        let mut match_color = Color::Default;
+        let match_text = self
             .active_searchable_item
             .as_ref()
             .and_then(|searchable_item| {
@@ -171,14 +180,15 @@ impl Render for BufferSearchBar {
                 let matches = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())?;
-                let message = if let Some(match_ix) = self.active_match_index {
-                    format!("{}/{}", match_ix + 1, matches.len())
+                if let Some(match_ix) = self.active_match_index {
+                    Some(format!("{}/{}", match_ix + 1, matches.len()))
                 } else {
-                    "No matches".to_string()
-                };
-
-                Some(ui::Label::new(message))
-            });
+                    match_color = Color::Error; // No matches found
+                    None
+                }
+            })
+            .unwrap_or_else(|| "No matches".to_string());
+        let match_count = Label::new(match_text).color(match_color);
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
@@ -192,35 +202,9 @@ impl Render for BufferSearchBar {
         } else {
             cx.theme().colors().border
         };
-        h_flex()
-            .w_full()
+
+        let search_line = h_flex()
             .gap_2()
-            .key_context(key_context)
-            .capture_action(cx.listener(Self::tab))
-            .on_action(cx.listener(Self::previous_history_query))
-            .on_action(cx.listener(Self::next_history_query))
-            .on_action(cx.listener(Self::dismiss))
-            .on_action(cx.listener(Self::select_next_match))
-            .on_action(cx.listener(Self::select_prev_match))
-            .on_action(cx.listener(|this, _: &ActivateRegexMode, cx| {
-                this.activate_search_mode(SearchMode::Regex, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ActivateTextMode, cx| {
-                this.activate_search_mode(SearchMode::Text, cx);
-            }))
-            .when(self.supported_options().replacement, |this| {
-                this.on_action(cx.listener(Self::toggle_replace))
-                    .when(in_replace, |this| {
-                        this.on_action(cx.listener(Self::replace_next))
-                            .on_action(cx.listener(Self::replace_all))
-                    })
-            })
-            .when(self.supported_options().case, |this| {
-                this.on_action(cx.listener(Self::toggle_case_sensitive))
-            })
-            .when(self.supported_options().word, |this| {
-                this.on_action(cx.listener(Self::toggle_whole_word))
-            })
             .child(
                 h_flex()
                     .flex_1()
@@ -229,10 +213,11 @@ impl Render for BufferSearchBar {
                     .gap_2()
                     .border_1()
                     .border_color(editor_border)
-                    .min_w(rems(384. / 16.))
+                    .min_w(rems(MIN_INPUT_WIDHT_REMS))
+                    .max_w(rems(MAX_INPUT_WIDHT_REMS))
                     .rounded_lg()
-                    .child(Icon::new(IconName::MagnifyingGlass))
-                    .child(self.render_text_input(&self.query_editor, cx))
+                    // .child(Icon::new(IconName::MagnifyingGlass))
+                    .child(self.render_text_input(&self.query_editor, match_color, cx))
                     .children(supported_options.case.then(|| {
                         self.render_search_option_button(
                             SearchOptions::CASE_SENSITIVE,
@@ -311,49 +296,6 @@ impl Render for BufferSearchBar {
             .child(
                 h_flex()
                     .gap_0p5()
-                    .flex_1()
-                    .when(self.replace_enabled, |this| {
-                        this.child(
-                            h_flex()
-                                .flex_1()
-                                // We're giving this a fixed height to match the height of the search input,
-                                // which has an icon inside that is increasing its height.
-                                .h_8()
-                                .px_2()
-                                .py_1()
-                                .gap_2()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .rounded_lg()
-                                .child(self.render_text_input(&self.replacement_editor, cx)),
-                        )
-                        .when(should_show_replace_input, |this| {
-                            this.child(
-                                IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
-                                    .tooltip(move |cx| {
-                                        Tooltip::for_action("Replace next", &ReplaceNext, cx)
-                                    })
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.replace_next(&ReplaceNext, cx)
-                                    })),
-                            )
-                            .child(
-                                IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
-                                    .tooltip(move |cx| {
-                                        Tooltip::for_action("Replace all", &ReplaceAll, cx)
-                                    })
-                                    .on_click(
-                                        cx.listener(|this, _, cx| {
-                                            this.replace_all(&ReplaceAll, cx)
-                                        }),
-                                    ),
-                            )
-                        })
-                    }),
-            )
-            .child(
-                h_flex()
-                    .gap_0p5()
                     .flex_none()
                     .child(
                         IconButton::new("select-all", ui::IconName::SelectAll)
@@ -362,7 +304,7 @@ impl Render for BufferSearchBar {
                                 Tooltip::for_action("Select all matches", &SelectAllMatches, cx)
                             }),
                     )
-                    .children(match_count)
+                    .child(div().min_w(rems(6.)).child(match_count))
                     .child(render_nav_button(
                         ui::IconName::ChevronLeft,
                         self.active_match_index.is_some(),
@@ -375,7 +317,84 @@ impl Render for BufferSearchBar {
                         "Select next match",
                         &SelectNextMatch,
                     )),
+            );
+
+        let replace_line = self.replace_enabled.then(|| {
+            h_flex()
+                .gap_0p5()
+                .flex_1()
+                .child(
+                    h_flex()
+                        .flex_1()
+                        // We're giving this a fixed height to match the height of the search input,
+                        // which has an icon inside that is increasing its height.
+                        // .h_8()
+                        .px_2()
+                        .py_1()
+                        .gap_2()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_lg()
+                        .min_w(rems(MIN_INPUT_WIDHT_REMS))
+                        .max_w(rems(MAX_INPUT_WIDHT_REMS))
+                        .child(self.render_text_input(&self.replacement_editor, match_color, cx)),
+                )
+                .when(should_show_replace_input, |this| {
+                    this.child(
+                        IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
+                            .tooltip(move |cx| {
+                                Tooltip::for_action("Replace next", &ReplaceNext, cx)
+                            })
+                            .on_click(
+                                cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
+                            ),
+                    )
+                    .child(
+                        IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
+                            .tooltip(move |cx| Tooltip::for_action("Replace all", &ReplaceAll, cx))
+                            .on_click(cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx))),
+                    )
+                })
+        });
+
+        v_flex()
+            .key_context(key_context)
+            .capture_action(cx.listener(Self::tab))
+            .on_action(cx.listener(Self::previous_history_query))
+            .on_action(cx.listener(Self::next_history_query))
+            .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::select_next_match))
+            .on_action(cx.listener(Self::select_prev_match))
+            .on_action(cx.listener(|this, _: &ActivateRegexMode, cx| {
+                this.activate_search_mode(SearchMode::Regex, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ActivateTextMode, cx| {
+                this.activate_search_mode(SearchMode::Text, cx);
+            }))
+            .when(self.supported_options().replacement, |this| {
+                this.on_action(cx.listener(Self::toggle_replace))
+                    .when(in_replace, |this| {
+                        this.on_action(cx.listener(Self::replace_next))
+                            .on_action(cx.listener(Self::replace_all))
+                    })
+            })
+            .when(self.supported_options().case, |this| {
+                this.on_action(cx.listener(Self::toggle_case_sensitive))
+            })
+            .when(self.supported_options().word, |this| {
+                this.on_action(cx.listener(Self::toggle_whole_word))
+            })
+            .gap_1()
+            .child(
+                h_flex().child(search_line.w_full()).child(
+                    IconButton::new(SharedString::from("Close"), IconName::Close)
+                        .tooltip(move |cx| Tooltip::for_action("Close search bar", &Dismiss, cx))
+                        .on_click(
+                            cx.listener(|this, _: &ClickEvent, cx| this.dismiss(&Dismiss, cx)),
+                        ),
+                ),
             )
+            .children(replace_line)
     }
 }
 
