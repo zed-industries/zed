@@ -1,6 +1,19 @@
 //todo!(linux): remove
 #![allow(unused)]
 
+use crate::{
+    BladeRenderer, Bounds, GlobalPixels, Pixels, PlatformDisplay, PlatformInputHandler,
+    PlatformWindow, Point, Size, WindowAppearance, WindowBounds, WindowOptions, X11Display,
+};
+use blade_graphics as gpu;
+use parking_lot::Mutex;
+use raw_window_handle as rwh;
+
+use xcb::{
+    x::{self, StackMode},
+    Xid as _,
+};
+
 use std::{
     ffi::c_void,
     mem,
@@ -8,20 +21,6 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
-};
-
-use blade_graphics as gpu;
-use parking_lot::Mutex;
-use raw_window_handle as rwh;
-use xcb::{
-    x::{self, StackMode},
-    Xid as _,
-};
-
-use crate::platform::linux::blade_renderer::BladeRenderer;
-use crate::{
-    Bounds, GlobalPixels, Pixels, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    Size, WindowAppearance, WindowBounds, WindowOptions, X11Display,
 };
 
 #[derive(Default)]
