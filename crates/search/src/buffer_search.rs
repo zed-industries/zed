@@ -37,8 +37,8 @@ use workspace::{
 pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
-const MIN_INPUT_WIDHT_REMS: f32 = 15.;
-const MAX_INPUT_WIDHT_REMS: f32 = 25.;
+const MIN_INPUT_WIDTH_REMS: f32 = 15.;
+const MAX_INPUT_WIDTH_REMS: f32 = 25.;
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
@@ -218,8 +218,8 @@ impl Render for BufferSearchBar {
                     .gap_2()
                     .border_1()
                     .border_color(editor_border)
-                    .min_w(rems(MIN_INPUT_WIDHT_REMS))
-                    .max_w(rems(MAX_INPUT_WIDHT_REMS))
+                    .min_w(rems(MIN_INPUT_WIDTH_REMS))
+                    .max_w(rems(MAX_INPUT_WIDTH_REMS))
                     .rounded_lg()
                     .child(self.render_text_input(&self.query_editor, match_color.color(cx), cx))
                     .children(supported_options.case.then(|| {
@@ -339,8 +339,8 @@ impl Render for BufferSearchBar {
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .rounded_lg()
-                        .min_w(rems(MIN_INPUT_WIDHT_REMS))
-                        .max_w(rems(MAX_INPUT_WIDHT_REMS))
+                        .min_w(rems(MIN_INPUT_WIDTH_REMS))
+                        .max_w(rems(MAX_INPUT_WIDTH_REMS))
                         .child(self.render_text_input(
                             &self.replacement_editor,
                             cx.theme().colors().text,
