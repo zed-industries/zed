@@ -296,12 +296,15 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
 
+    //TODO: use on macOS as well
+    #[cfg(target_os = "linux")]
     pub fn resize(&mut self, size: gpu::Extent) {
         self.wait_for_gpu();
         self.gpu.resize(Self::make_surface_config(size));
         self.viewport_size = size;
     }
 
+    #[cfg(target_os = "linux")]
     pub fn viewport_size(&self) -> gpu::Extent {
         self.viewport_size
     }

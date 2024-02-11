@@ -479,11 +479,12 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
+#[cfg(feature = "macos-blade")]
 struct RawWindow {
     window: *mut c_void,
     view: *mut c_void,
 }
-
+#[cfg(feature = "macos-blade")]
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
     fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
         let mut wh = blade_rwh::AppKitWindowHandle::empty();
@@ -492,6 +493,7 @@ unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
         wh.into()
     }
 }
+#[cfg(feature = "macos-blade")]
 unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
     fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
         let dh = blade_rwh::AppKitDisplayHandle::empty();
@@ -584,11 +586,19 @@ impl MacWindow {
                 .unwrap(),
             );
             #[cfg(feature = "macos-blade")]
-            //TODO: query from NSView
-            let gpu_size = gpu::Extent {
-                width: 1024,
-                height: 768,
-                depth: 1,
+            let gpu_size = {
+                let bounds = match options.bounds {
+                    WindowBounds::Fullscreen | WindowBounds::Maximized => {
+                        native_window.screen().visibleFrame()
+                    }
+                    WindowBounds::Fixed(bounds) => global_bounds_to_ns_rect(bounds),
+                };
+                let scale = get_scale_factor(native_window);
+                gpu::Extent {
+                    width: (bounds.size.width as f32 * scale) as u32,
+                    height: (bounds.size.height as f32 * scale) as u32,
+                    depth: 1,
+                }
             };
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -757,6 +767,7 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        #[cfg(feature = "macos-blade")]
         this.renderer.destroy();
         let window = this.native_window;
         this.display_link.take();

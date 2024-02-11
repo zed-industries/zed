@@ -111,11 +111,11 @@ mod sys {
     pub enum CVDisplayLink {}
 
     foreign_type! {
-        type CType = CVDisplayLink;
-        fn drop = CVDisplayLinkRelease;
-        fn clone = CVDisplayLinkRetain;
-        pub struct DisplayLink;
-        pub struct DisplayLinkRef;
+        pub unsafe type DisplayLink {
+            type CType = CVDisplayLink;
+            fn drop = CVDisplayLinkRelease;
+            fn clone = CVDisplayLinkRetain;
+        }
     }
 
     impl Debug for DisplayLink {

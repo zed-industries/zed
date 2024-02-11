@@ -181,8 +181,8 @@ anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-tar = "0.4.2"
 async-trait = "0.1"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "c4f951a88b345724cb952e920ad30e39851f7760" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "c4f951a88b345724cb952e920ad30e39851f7760" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "0dd584ae02f052aa19b8745d63793c67474ffc68" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "0dd584ae02f052aa19b8745d63793c67474ffc68" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
 ctor = "0.2.6"
@@ -287,10 +287,6 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fc
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
-
-[patch."https://github.com/kvark/blade"]
-blade-graphics = { path = "../blade/blade-graphics" }
-blade-macros = { path = "../blade/blade-macros" }
 
 # todo!(linux) - Remove this
 [profile.dev.package.blade-graphics]

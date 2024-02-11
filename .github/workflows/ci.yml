@@ -91,9 +91,9 @@ jobs:
             - name: Build other binaries
               run: cargo build --workspace --bins --all-features
 
-            - name: Build Blade version
-              run: cargo test --feature "macos-blade"
-              working-directory: ./crates/gpui
+            - name: Build Blade GPUI
+              run: cargo check --features "macos-blade"
+              working-directory: "crates/gpui"
 
     # todo!(linux): Actually run the tests
     linux_tests:
