@@ -321,7 +321,11 @@ impl<D: PickerDelegate> Picker<D> {
                 div()
                     .size_full()
                     .id("candidates")
-                    .child(list(state.clone()).size_full()) //TODO fix layout
+                    .child(
+                        list(state.clone())
+                            .size_full()
+                            .h(self.max_height.unwrap_or(rems(18.).into())), //TODO fix layout
+                    )
                     .into_any_element()
             }
         }
