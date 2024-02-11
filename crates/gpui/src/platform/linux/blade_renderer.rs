@@ -237,12 +237,19 @@ pub struct BladeRenderer {
 }
 
 impl BladeRenderer {
-    pub fn new(gpu: Arc<gpu::Context>, size: gpu::Extent) -> Self {
-        let surface_format = gpu.resize(gpu::SurfaceConfig {
+    fn make_surface_config(size: gpu::Extent) -> gpu::SurfaceConfig {
+        gpu::SurfaceConfig {
             size,
             usage: gpu::TextureUsage::TARGET,
             frame_count: SURFACE_FRAME_COUNT,
-        });
+            //Note: this matches the original logic of the Metal backend,
+            // but ultimaterly we need to switch to `Linear`.
+            color_space: gpu::ColorSpace::Srgb,
+        }
+    }
+
+    pub fn new(gpu: Arc<gpu::Context>, size: gpu::Extent) -> Self {
+        let surface_format = gpu.resize(Self::make_surface_config(size));
         let command_encoder = gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
@@ -291,11 +298,7 @@ impl BladeRenderer {
 
     pub fn resize(&mut self, size: gpu::Extent) {
         self.wait_for_gpu();
-        self.gpu.resize(gpu::SurfaceConfig {
-            size,
-            usage: gpu::TextureUsage::TARGET,
-            frame_count: SURFACE_FRAME_COUNT,
-        });
+        self.gpu.resize(Self::make_surface_config(size));
         self.viewport_size = size;
     }
 
@@ -455,7 +458,7 @@ impl BladeRenderer {
                         sprites,
                     } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
-                        let instance_buf = self.instance_belt.alloc_data(sprites, &self.gpu);
+                        let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.mono_sprites);
                         encoder.bind(
                             0,
@@ -473,7 +476,7 @@ impl BladeRenderer {
                         sprites,
                     } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
-                        let instance_buf = self.instance_belt.alloc_data(sprites, &self.gpu);
+                        let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
                         let mut encoder = pass.with(&self.pipelines.poly_sprites);
                         encoder.bind(
                             0,
