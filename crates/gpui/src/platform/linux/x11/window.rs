@@ -467,7 +467,7 @@ impl PlatformWindow for X11Window {
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         let inner = self.0.inner.lock();
-        inner.renderer.atlas().clone()
+        inner.renderer.sprite_atlas().clone()
     }
 
     fn set_graphics_profiler_enabled(&self, enabled: bool) {

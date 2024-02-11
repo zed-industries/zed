@@ -1,4 +1,8 @@
-use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, MetalRenderer, NSRange};
+#[cfg(not(feature = "macos-blade"))]
+use super::MetalRenderer;
+use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, NSRange};
+#[cfg(feature = "macos-blade")]
+use crate::BladeRenderer;
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
     Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
@@ -7,6 +11,8 @@ use crate::{
     PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
     WindowOptions,
 };
+#[cfg(feature = "macos-blade")]
+use blade_graphics as gpu;
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -23,7 +29,6 @@ use cocoa::{
 };
 use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
-use foreign_types::ForeignTypeRef;
 use futures::channel::oneshot;
 use objc::{
     class,
@@ -322,7 +327,10 @@ struct MacWindowState {
     native_window: id,
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
+    #[cfg(not(feature = "macos-blade"))]
     renderer: MetalRenderer,
+    #[cfg(feature = "macos-blade")]
+    renderer: BladeRenderer,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
@@ -471,6 +479,26 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
+struct RawWindow {
+    window: *mut c_void,
+    view: *mut c_void,
+}
+
+unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
+    fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
+        let mut wh = blade_rwh::AppKitWindowHandle::empty();
+        wh.ns_window = self.window;
+        wh.ns_view = self.view;
+        wh.into()
+    }
+}
+unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
+    fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
+        let dh = blade_rwh::AppKitDisplayHandle::empty();
+        dh.into()
+    }
+}
+
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
@@ -478,7 +506,7 @@ impl MacWindow {
         handle: AnyWindowHandle,
         options: WindowOptions,
         executor: ForegroundExecutor,
-        instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
+        #[cfg(not(feature = "macos-blade"))] instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -541,13 +569,38 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
+            #[cfg(feature = "macos-blade")]
+            let gpu = Arc::new(
+                gpu::Context::init_windowed(
+                    &RawWindow {
+                        window: native_window as *mut _,
+                        view: native_view as *mut _,
+                    },
+                    gpu::ContextDesc {
+                        validation: cfg!(debug_assertions),
+                        capture: false,
+                    },
+                )
+                .unwrap(),
+            );
+            #[cfg(feature = "macos-blade")]
+            //TODO: query from NSView
+            let gpu_size = gpu::Extent {
+                width: 1024,
+                height: 768,
+                depth: 1,
+            };
+
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
                 display_link: None,
+                #[cfg(not(feature = "macos-blade"))]
                 renderer: MetalRenderer::new(instance_buffer_pool),
+                #[cfg(feature = "macos-blade")]
+                renderer: BladeRenderer::new(gpu, gpu_size),
                 kind: options.kind,
                 request_frame_callback: None,
                 event_callback: None,
@@ -704,6 +757,7 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        this.renderer.destroy();
         let window = this.native_window;
         this.display_link.take();
         this.executor
@@ -1031,7 +1085,10 @@ impl PlatformWindow for MacWindow {
     /// Enables or disables the Metal HUD for debugging purposes. Note that this only works
     /// when the app is bundled and it has the `MetalHudEnabled` key set to true in Info.plist.
     fn set_graphics_profiler_enabled(&self, enabled: bool) {
+        #[cfg(not(feature = "macos-blade"))]
         self.0.lock().renderer.set_hud_enabled(enabled);
+        #[cfg(feature = "macos-blade")]
+        let _ = enabled;
     }
 }
 
@@ -1485,6 +1542,11 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 }
 
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
+    #[cfg(not(feature = "macos-blade"))]
+    use foreign_types::ForeignTypeRef as _;
+    #[cfg(feature = "macos-blade")]
+    use metal::foreign_types::ForeignType as _;
+
     let window_state = unsafe { get_window_state(this) };
     let window_state = window_state.as_ref().lock();
     window_state.renderer.layer().as_ptr() as id
@@ -1561,6 +1623,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     if let Some(mut callback) = lock.request_frame_callback.take() {
+        #[cfg(not(feature = "macos-blade"))]
         lock.renderer.set_presents_with_transaction(true);
         lock.stop_display_link();
         drop(lock);
@@ -1568,6 +1631,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
+        #[cfg(not(feature = "macos-blade"))]
         lock.renderer.set_presents_with_transaction(false);
         lock.start_display_link();
     }

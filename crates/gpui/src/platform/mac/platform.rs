@@ -145,6 +145,7 @@ pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<MacTextSystem>,
+    #[cfg(not(feature = "macos-blade"))]
     instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
     pasteboard: id,
     text_hash_pasteboard_type: id,
@@ -175,6 +176,7 @@ impl MacPlatform {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system: Arc::new(MacTextSystem::new()),
+            #[cfg(not(feature = "macos-blade"))]
             instance_buffer_pool: Arc::default(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
@@ -494,12 +496,12 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let instance_buffer_pool = self.0.lock().instance_buffer_pool.clone();
         Box::new(MacWindow::open(
             handle,
             options,
             self.foreground_executor(),
-            instance_buffer_pool,
+            #[cfg(not(feature = "macos-blade"))]
+            self.0.lock().instance_buffer_pool.clone(),
         ))
     }
 
