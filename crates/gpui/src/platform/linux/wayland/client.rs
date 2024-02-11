@@ -130,7 +130,6 @@ delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
 delegate_noop!(WaylandClientState: ignore wl_seat::WlSeat);
 delegate_noop!(WaylandClientState: ignore wl_keyboard::WlKeyboard);
-delegate_noop!(WaylandClientState: ignore xdg_wm_base::XdgWmBase);
 
 impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
     fn event(
@@ -148,7 +147,22 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
                     window.1.update();
                     return;
                 }
-            };
+            }
+        }
+    }
+}
+
+impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        wm_base: &xdg_wm_base::XdgWmBase,
+        event: <xdg_wm_base::XdgWmBase as wayland_client::Proxy>::Event,
+        data: &(),
+        conn: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        if let xdg_wm_base::Event::Ping { serial } = event {
+            wm_base.pong(serial);
         }
     }
 }
