@@ -6,7 +6,7 @@ use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWi
 use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
-use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
+use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow, TestWindow};
 use crate::{px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WindowAppearance, WindowBounds, WindowOptions};
 use crate::platform::linux::blade_renderer::BladeRenderer;
 use crate::platform::linux::wayland::display::WaylandDisplay;
@@ -329,5 +329,9 @@ impl PlatformWindow for WaylandWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let inner = self.0.inner.lock();
         inner.renderer.atlas().clone()
+    }
+
+    fn set_graphics_profiler_enabled(&self, enabled: bool) {
+        //todo!(linux)
     }
 }
