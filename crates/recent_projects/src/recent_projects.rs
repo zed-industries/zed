@@ -30,7 +30,7 @@ impl ModalView for RecentProjects {}
 
 impl RecentProjects {
     fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::list(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
@@ -235,16 +235,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(h_flex().gap_2().child(highlighted_location.names).when(
+                .child(v_flex().child(highlighted_location.names).when(
                     self.render_paths,
                     |this| {
-                        this.child(
-                            v_flex().children(highlighted_location.paths.into_iter().map(|path| {
-                                HighlightedLabel::new(path.text, path.highlight_positions)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                            })),
-                        )
+                        this.children(highlighted_location.paths.into_iter().map(|path| {
+                            HighlightedLabel::new(path.text, path.highlight_positions)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                        }))
                     },
                 )),
         )

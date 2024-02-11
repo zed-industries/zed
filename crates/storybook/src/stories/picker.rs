@@ -190,7 +190,7 @@ impl PickerStory {
                     ]);
                     delegate.update_matches("".into(), cx).detach();
 
-                    let picker = Picker::new(delegate, cx);
+                    let picker = Picker::uniform_list(delegate, cx);
                     picker.focus(cx);
                     picker
                 }),
