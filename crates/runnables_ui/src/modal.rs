@@ -154,7 +154,11 @@ impl PickerDelegate for RunnablesModalDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {}
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+        let current_match_index = self.selected_index();
+        let ix = self.matches[current_match_index].candidate_id;
+        self.candidates[ix].schedule(cx).log_err();
+    }
 
     fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {
         cx.emit(DismissEvent);
@@ -164,7 +168,7 @@ impl PickerDelegate for RunnablesModalDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ui::prelude::ViewContext<picker::Picker<Self>>,
+        _cx: &mut ui::prelude::ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         //let runnable = self.candidates[target_index].metadata();
