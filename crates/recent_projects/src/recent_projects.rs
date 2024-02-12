@@ -10,7 +10,7 @@ use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{prelude::*, tooltip_container, HighlightedLabel, ListItem, ListItemSpacing};
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceLocation, WORKSPACE_DB};
 
@@ -230,21 +230,53 @@ impl PickerDelegate for RecentProjectsDelegate {
             &self.workspace_locations[r#match.candidate_id],
         );
 
+        let tooltip_highlighted_location = highlighted_location.clone();
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(v_flex().child(highlighted_location.names).when(
-                    self.render_paths,
-                    |this| {
-                        this.children(highlighted_location.paths.into_iter().map(|path| {
-                            HighlightedLabel::new(path.text, path.highlight_positions)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                        }))
-                    },
-                )),
+                .child(
+                    v_flex()
+                        .child(highlighted_location.names)
+                        .when(self.render_paths, |this| {
+                            this.children(highlighted_location.paths.into_iter().map(|path| {
+                                HighlightedLabel::new(path.text, path.highlight_positions)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                            }))
+                        }),
+                )
+                .tooltip(move |cx| {
+                    let tooltip_highlighted_location = tooltip_highlighted_location.clone();
+                    cx.new_view(move |_| MatchTooltip {
+                        highlighted_location: tooltip_highlighted_location,
+                    })
+                    .into()
+                }),
         )
+    }
+}
+
+struct MatchTooltip {
+    highlighted_location: HighlightedWorkspaceLocation,
+}
+
+impl Render for MatchTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        tooltip_container(cx, |div, _| {
+            div.children(
+                self.highlighted_location
+                    .paths
+                    .clone()
+                    .into_iter()
+                    .map(|path| {
+                        HighlightedLabel::new(path.text, path.highlight_positions)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    }),
+            )
+        })
     }
 }
