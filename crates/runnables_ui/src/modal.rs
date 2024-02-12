@@ -10,9 +10,7 @@ use workspace::ModalView;
 
 actions!(runnables, [New]);
 /// A modal used to spawn new runnables.
-pub(crate) struct RunnablesModalDelegate {
-    candidates: Vec<Model<Box<dyn Runnable>>>,
-}
+pub(crate) struct RunnablesModalDelegate;
 
 pub(crate) struct RunnablesModal(View<Picker<RunnablesModalDelegate>>);
 
