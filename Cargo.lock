@@ -7109,6 +7109,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "log",
+ "picker",
  "project",
  "runnable",
  "schemars",

@@ -13,6 +13,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
+picker.workspace = true
 project.workspace = true
 runnable.workspace = true
 schemars.workspace = true
