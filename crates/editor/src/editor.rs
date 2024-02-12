@@ -8505,6 +8505,17 @@ impl Editor {
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
+        let snapshot = self.snapshot(cx);
+        // this is to try and catch a panic sooner
+        for range in &ranges {
+            snapshot
+                .buffer_snapshot
+                .summary_for_anchor::<usize>(&range.start);
+            snapshot
+                .buffer_snapshot
+                .summary_for_anchor::<usize>(&range.end);
+        }
+
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, ranges));
         cx.notify();
