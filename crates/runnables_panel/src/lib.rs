@@ -18,7 +18,7 @@ use runnable::TaskHandle;
 use runnables_settings::{RunnablesDockPosition, RunnablesSettings};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use status_bar_icon::RunnablesStatusBarIcon;
+use status_bar_icon::StatusIconTracker;
 use theme::ThemeSettings;
 use ui::{
     prelude::Pixels, v_flex, ActiveTheme, Button, Clickable, Color, FluentBuilder, Icon,
@@ -52,7 +52,7 @@ pub struct RunnablesPanel {
     width: Option<Pixels>,
     fs: Arc<dyn Fs>,
     pending_serialization: Task<Option<()>>,
-    status_bar_tracker: Option<Model<RunnablesStatusBarIcon>>,
+    status_bar_tracker: Option<Model<StatusIconTracker>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -233,7 +233,7 @@ impl Panel for RunnablesPanel {
                 })
                 .collect();
             if !tasks.is_empty() {
-                self.status_bar_tracker = Some(RunnablesStatusBarIcon::new(tasks, cx));
+                self.status_bar_tracker = Some(StatusIconTracker::new(tasks, cx));
                 cx.notify();
             }
         }

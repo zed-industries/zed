@@ -8,7 +8,7 @@ type Succeeded = bool;
 /// Tracks status of collapsed runnables panel;
 /// tl;dr: it implements that bit where the status bar icon changes color depending on
 /// the state of a task.
-pub(super) struct RunnablesStatusBarIcon {
+pub(super) struct StatusIconTracker {
     /// Tracks the state of currently executing tasks;
     /// None -> none of the tasks have failed, though there are still tasks underway.
     /// Some(true) -> all of the tasks have succeeded.
@@ -19,7 +19,7 @@ pub(super) struct RunnablesStatusBarIcon {
     _task_poller: Task<()>,
 }
 
-impl RunnablesStatusBarIcon {
+impl StatusIconTracker {
     pub(crate) fn new<'a>(tasks: Vec<TaskHandle>, cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|cx| {
             let mut futures: FuturesUnordered<TaskHandle> = tasks.into_iter().collect();
