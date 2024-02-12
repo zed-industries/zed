@@ -212,6 +212,8 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
+    // The default OpenAI API endpoint to use when starting new conversations.
+    "openai_api_url": "https://api.openai.com/v1",
     // The default OpenAI model to use when starting new conversations. This
     // setting can take three values:
     //
