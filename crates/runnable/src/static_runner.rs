@@ -3,7 +3,8 @@
 use std::{error::Error, sync::Arc};
 
 use crate::{ExecutionResult, Runnable, TaskHandle};
-use async_process::Command;
+use anyhow::Context;
+use async_process::{Command, Stdio};
 use futures::FutureExt;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,26 +17,40 @@ impl StaticRunner {
         Self { runnable }
     }
 }
+
 impl Runnable for StaticRunner {
     fn boxed_clone(&self) -> Box<dyn Runnable> {
         Box::new(self.clone())
     }
 
     fn exec(&self, cx: gpui::AsyncAppContext) -> anyhow::Result<crate::TaskHandle> {
+        let mut command = Command::new(self.runnable.command.clone());
+        let mut command = command.args(self.runnable.args.clone());
+        if let Some(env_path) = std::env::var_os("PATH") {
+            command = command.env("PATH", env_path);
+        }
+        command = command
+            .stderr(Stdio::piped())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true);
+        let command_handle = command
+            .spawn()
+            .with_context(|| format!("Failed to spawn command `{command:?}`"))?;
+
         TaskHandle::new(
-            Command::new(self.runnable.command.clone())
-                .args(self.runnable.args.clone())
+            command_handle
                 .output()
                 .map(|output| {
                     let (status, details): (Result<_, Arc<dyn Error>>, _) = match output {
                         Ok(output) => {
                             let details = String::from_utf8_lossy(&output.stdout).into_owned();
+                            let sterr_details =
+                                String::from_utf8_lossy(&output.stderr).into_owned();
+                            // TODO kb remove this and send the handle into new terminal tab to print its output
+                            dbg!(output.status, sterr_details, &details);
                             (Ok(()), details)
                         }
-                        e @ Err(_) => (
-                            e.map(|_| ()).map_err(|e| Arc::new(e) as Arc<dyn Error>),
-                            "".to_owned(),
-                        ),
+                        Err(e) => (Err(Arc::new(e) as Arc<dyn Error>), String::new()),
                     };
 
                     ExecutionResult { status, details }
@@ -91,7 +106,7 @@ mod tests {
     #[gpui::test]
     async fn test_cancel(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
-        let mut runner = StaticRunner::new(Definition {
+        let runner = StaticRunner::new(Definition {
             command: "sleep".into(),
             args: vec!["500".into()],
             ..definition_fill_in()

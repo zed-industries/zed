@@ -115,6 +115,7 @@ impl RunnablePebble {
         let mut spawned_first_time = false;
         let ret = self.state.update(cx, |this, cx| match this {
             RunState::NotScheduled(runnable) => {
+                dbg!("##############");
                 let handle = runnable.exec(cx.to_async())?;
                 spawned_first_time = true;
                 *this = RunState::Scheduled(handle.clone());
@@ -123,7 +124,7 @@ impl RunnablePebble {
             }
             RunState::Scheduled(handle) => Ok(handle.clone()),
         });
-        if spawned_first_time {
+        if dbg!(spawned_first_time) {
             // todo: this should be a noop when ran multiple times, but we should still strive to do it just once.
             cx.spawn(|_| async_process::driver()).detach();
             self.state.update(cx, |_, cx| {
@@ -151,6 +152,7 @@ impl RunnablePebble {
         }
         ret
     }
+
     pub fn result<'a>(
         &self,
         cx: &'a AppContext,
