@@ -1,15 +1,16 @@
-use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
 use anyhow::Result;
 use uuid::Uuid;
 
+use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
+
 #[derive(Debug)]
-pub(crate) struct LinuxDisplay {
+pub(crate) struct X11Display {
     x_screen_index: i32,
     bounds: Bounds<GlobalPixels>,
     uuid: Uuid,
 }
 
-impl LinuxDisplay {
+impl X11Display {
     pub(crate) fn new(xc: &xcb::Connection, x_screen_index: i32) -> Self {
         let screen = xc.get_setup().roots().nth(x_screen_index as usize).unwrap();
         Self {
@@ -26,7 +27,7 @@ impl LinuxDisplay {
     }
 }
 
-impl PlatformDisplay for LinuxDisplay {
+impl PlatformDisplay for X11Display {
     fn id(&self) -> DisplayId {
         DisplayId(self.x_screen_index as u32)
     }

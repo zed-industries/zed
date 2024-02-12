@@ -103,6 +103,7 @@ pub struct OpenAiResponseStreamEvent {
 }
 
 pub async fn stream_completion(
+    api_url: String,
     credential: ProviderCredential,
     executor: BackgroundExecutor,
     request: Box<dyn CompletionRequest>,
@@ -117,7 +118,7 @@ pub async fn stream_completion(
     let (tx, rx) = futures::channel::mpsc::unbounded::<Result<OpenAiResponseStreamEvent>>();
 
     let json_data = request.data()?;
-    let mut response = Request::post(format!("{OPEN_AI_API_URL}/chat/completions"))
+    let mut response = Request::post(format!("{api_url}/chat/completions"))
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .body(json_data)?
@@ -195,18 +196,20 @@ pub async fn stream_completion(
 
 #[derive(Clone)]
 pub struct OpenAiCompletionProvider {
+    api_url: String,
     model: OpenAiLanguageModel,
     credential: Arc<RwLock<ProviderCredential>>,
     executor: BackgroundExecutor,
 }
 
 impl OpenAiCompletionProvider {
-    pub async fn new(model_name: String, executor: BackgroundExecutor) -> Self {
+    pub async fn new(api_url: String, model_name: String, executor: BackgroundExecutor) -> Self {
         let model = executor
             .spawn(async move { OpenAiLanguageModel::load(&model_name) })
             .await;
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
         Self {
+            api_url,
             model,
             credential,
             executor,
@@ -303,7 +306,8 @@ impl CompletionProvider for OpenAiCompletionProvider {
         // which is currently model based, due to the language model.
         // At some point in the future we should rectify this.
         let credential = self.credential.read().clone();
-        let request = stream_completion(credential, self.executor.clone(), prompt);
+        let api_url = self.api_url.clone();
+        let request = stream_completion(api_url, credential, self.executor.clone(), prompt);
         async move {
             let response = request.await?;
             let stream = response

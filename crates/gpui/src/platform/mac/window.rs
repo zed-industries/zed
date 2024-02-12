@@ -348,6 +348,12 @@ struct MacWindowState {
 impl MacWindowState {
     fn move_traffic_light(&self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
+            if self.is_fullscreen() {
+                // Moving traffic lights while fullscreen doesn't work,
+                // see https://github.com/zed-industries/zed/issues/4712
+                return;
+            }
+
             let titlebar_height = self.titlebar_height();
 
             unsafe {

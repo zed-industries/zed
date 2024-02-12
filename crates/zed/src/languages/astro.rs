@@ -1,12 +1,10 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use collections::HashMap;
 use futures::StreamExt;
-use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use serde_json::{json, Value};
+use serde_json::json;
 use smol::fs;
 use std::{
     any::Any,
@@ -14,32 +12,32 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{async_maybe, ResultExt};
+use util::ResultExt;
 
-const SERVER_PATH: &'static str = "node_modules/.bin/tailwindcss-language-server";
+const SERVER_PATH: &'static str = "node_modules/@astrojs/language-server/bin/nodeServer.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
-pub struct TailwindLspAdapter {
+pub struct AstroLspAdapter {
     node: Arc<dyn NodeRuntime>,
 }
 
-impl TailwindLspAdapter {
+impl AstroLspAdapter {
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
-        TailwindLspAdapter { node }
+        AstroLspAdapter { node }
     }
 }
 
 #[async_trait]
-impl LspAdapter for TailwindLspAdapter {
+impl LspAdapter for AstroLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("tailwindcss-language-server".into())
+        LanguageServerName("astro-language-server".into())
     }
 
     fn short_name(&self) -> &'static str {
-        "tailwind"
+        "astro"
     }
 
     async fn fetch_latest_server_version(
@@ -48,7 +46,7 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(
             self.node
-                .npm_package_latest_version("@tailwindcss/language-server")
+                .npm_package_latest_version("@astrojs/language-server")
                 .await?,
         ) as Box<_>)
     }
@@ -66,7 +64,7 @@ impl LspAdapter for TailwindLspAdapter {
             self.node
                 .npm_install_packages(
                     &container_dir,
-                    &[("@tailwindcss/language-server", version.as_str())],
+                    &[("@astrojs/language-server", version.as_str())],
                 )
                 .await?;
         }
@@ -95,40 +93,14 @@ impl LspAdapter for TailwindLspAdapter {
     fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true,
-            "userLanguages": {
-                "html": "html",
-                "css": "css",
-                "javascript": "javascript",
-                "typescriptreact": "typescriptreact",
-            },
+            "typescript": {
+                "tsdk": "node_modules/typescript/lib",
+            }
         }))
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, _: &mut AppContext) -> Value {
-        json!({
-            "tailwindCSS": {
-                "emmetCompletions": true,
-            }
-        })
-    }
-
-    fn language_ids(&self) -> HashMap<String, String> {
-        HashMap::from_iter([
-            ("Astro".to_string(), "astro".to_string()),
-            ("HTML".to_string(), "html".to_string()),
-            ("CSS".to_string(), "css".to_string()),
-            ("JavaScript".to_string(), "javascript".to_string()),
-            ("TSX".to_string(), "typescriptreact".to_string()),
-            ("Svelte".to_string(), "svelte".to_string()),
-            ("Elixir".to_string(), "phoenix-heex".to_string()),
-            ("HEEX".to_string(), "phoenix-heex".to_string()),
-            ("ERB".to_string(), "erb".to_string()),
-            ("PHP".to_string(), "php".to_string()),
-        ])
-    }
-
     fn prettier_plugins(&self) -> &[&'static str] {
-        &["prettier-plugin-tailwindcss"]
+        &["prettier-plugin-astro"]
     }
 }
 
@@ -136,7 +108,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    (|| async move {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -158,7 +130,7 @@ async fn get_cached_server_binary(
                 last_version_dir
             ))
         }
-    })
+    })()
     .await
     .log_err()
 }
