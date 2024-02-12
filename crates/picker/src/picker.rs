@@ -105,7 +105,7 @@ impl<D: PickerDelegate> Picker<D> {
             ElementContainer::List(ListState::new(
                 0,
                 gpui::ListAlignment::Top,
-                px(0.),
+                px(1000.),
                 move |ix, cx| {
                     view.upgrade()
                         .map(|view| {
