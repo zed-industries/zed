@@ -1,14 +1,6 @@
 //todo!(linux): remove
 #![allow(unused)]
 
-use super::BladeRenderer;
-use crate::{
-    Bounds, GlobalPixels, LinuxDisplay, Pixels, PlatformDisplay, PlatformInputHandler,
-    PlatformWindow, Point, Size, WindowAppearance, WindowBounds, WindowOptions, XcbAtoms,
-};
-use blade_graphics as gpu;
-use parking_lot::Mutex;
-use raw_window_handle as rwh;
 use std::{
     ffi::c_void,
     mem,
@@ -17,9 +9,19 @@ use std::{
     rc::Rc,
     sync::{self, Arc},
 };
+
+use blade_graphics as gpu;
+use parking_lot::Mutex;
+use raw_window_handle as rwh;
 use xcb::{
     x::{self, StackMode},
     Xid as _,
+};
+
+use crate::platform::linux::blade_renderer::BladeRenderer;
+use crate::{
+    Bounds, GlobalPixels, Pixels, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    Size, WindowAppearance, WindowBounds, WindowOptions, X11Display,
 };
 
 #[derive(Default)]
@@ -33,6 +35,17 @@ struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+}
+
+xcb::atoms_struct! {
+    #[derive(Debug)]
+    pub(crate) struct XcbAtoms {
+        pub wm_protocols    => b"WM_PROTOCOLS",
+        pub wm_del_window   => b"WM_DELETE_WINDOW",
+        wm_state        => b"_NET_WM_STATE",
+        wm_state_maxv   => b"_NET_WM_STATE_MAXIMIZED_VERT",
+        wm_state_maxh   => b"_NET_WM_STATE_MAXIMIZED_HORZ",
+    }
 }
 
 struct LinuxWindowInner {
@@ -70,7 +83,7 @@ struct RawWindow {
     visual_id: u32,
 }
 
-pub(crate) struct LinuxWindowState {
+pub(crate) struct X11WindowState {
     xcb_connection: Arc<xcb::Connection>,
     display: Rc<dyn PlatformDisplay>,
     raw: RawWindow,
@@ -80,7 +93,7 @@ pub(crate) struct LinuxWindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct LinuxWindow(pub(crate) Rc<LinuxWindowState>);
+pub(crate) struct X11Window(pub(crate) Rc<X11WindowState>);
 
 //todo!(linux): Remove other RawWindowHandle implementation
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
@@ -100,7 +113,7 @@ unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
     }
 }
 
-impl rwh::HasWindowHandle for LinuxWindow {
+impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
         Ok(unsafe {
             let non_zero = NonZeroU32::new(self.0.raw.window_id).unwrap();
@@ -109,7 +122,7 @@ impl rwh::HasWindowHandle for LinuxWindow {
         })
     }
 }
-impl rwh::HasDisplayHandle for LinuxWindow {
+impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
         Ok(unsafe {
             let non_zero = NonNull::new(self.0.raw.connection).unwrap();
@@ -119,7 +132,7 @@ impl rwh::HasDisplayHandle for LinuxWindow {
     }
 }
 
-impl LinuxWindowState {
+impl X11WindowState {
     pub fn new(
         options: WindowOptions,
         xcb_connection: &Arc<xcb::Connection>,
@@ -219,7 +232,7 @@ impl LinuxWindowState {
 
         Self {
             xcb_connection: Arc::clone(xcb_connection),
-            display: Rc::new(LinuxDisplay::new(xcb_connection, x_screen_index)),
+            display: Rc::new(X11Display::new(xcb_connection, x_screen_index)),
             raw,
             x_window,
             callbacks: Mutex::new(Callbacks::default()),
@@ -280,7 +293,7 @@ impl LinuxWindowState {
     }
 }
 
-impl PlatformWindow for LinuxWindow {
+impl PlatformWindow for X11Window {
     fn bounds(&self) -> WindowBounds {
         WindowBounds::Fixed(self.0.inner.lock().bounds.map(|v| GlobalPixels(v as f32)))
     }
