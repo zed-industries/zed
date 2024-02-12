@@ -96,6 +96,23 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                                 (offset_range.start - '\n'.len_utf8()).to_display_point(map);
                         }
                     }
+
+                    // Does post-processing for the trailing newline and EOF
+                    // when not cancelled.
+                    let cancelled = around && selection.start == selection.end;
+                    if object == Object::Paragraph && !cancelled {
+                        if end_at_newline {
+                            selection.end =
+                                (offset_range.end + '\n'.len_utf8()).to_display_point(map);
+                        }
+
+                        let end_at_eof = map.chars_at(selection.end).next().is_none();
+                        if end_at_eof && selection.start.row() > 0 {
+                            should_move_to_start.insert(selection.id);
+                            selection.start =
+                                (offset_range.start - '\n'.len_utf8()).to_display_point(map);
+                        }
+                    }
                 });
             });
             copy_selections_content(editor, false, cx);

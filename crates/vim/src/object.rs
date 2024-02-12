@@ -19,6 +19,7 @@ use crate::{
 pub enum Object {
     Word { ignore_punctuation: bool },
     Sentence,
+    Paragraph,
     Quotes,
     BackQuotes,
     DoubleQuotes,
@@ -42,6 +43,7 @@ actions!(
     vim,
     [
         Sentence,
+        Paragraph,
         Quotes,
         BackQuotes,
         DoubleQuotes,
@@ -61,6 +63,8 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     );
     workspace
         .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
+    workspace
+        .register_action(|_: &mut Workspace, _: &Paragraph, cx: _| object(Object::Paragraph, cx));
     workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &BackQuotes, cx: _| object(Object::BackQuotes, cx));
@@ -103,6 +107,7 @@ impl Object {
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
+            | Object::Paragraph
             | Object::Parentheses
             | Object::AngleBrackets
             | Object::CurlyBrackets
@@ -112,7 +117,7 @@ impl Object {
 
     pub fn always_expands_both_ways(self) -> bool {
         match self {
-            Object::Word { .. } | Object::Sentence => false,
+            Object::Word { .. } | Object::Sentence | Object::Paragraph => false,
             Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
@@ -129,6 +134,7 @@ impl Object {
             Object::Word { .. } if current_mode == Mode::VisualLine => Mode::Visual,
             Object::Word { .. } => current_mode,
             Object::Sentence
+            | Object::Paragraph
             | Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
@@ -155,6 +161,7 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
+            Object::Paragraph => paragraph(map, relative_to, around),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
             }
@@ -447,6 +454,141 @@ fn expand_to_include_whitespace(
     }
 
     range
+}
+
+#[derive(Debug)]
+enum LineEnd {
+    Break(DisplayPoint),
+    EndOfFile(DisplayPoint),
+}
+
+fn paragraph(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    around: bool,
+) -> Option<Range<DisplayPoint>> {
+    let mut backward_iter = map.reverse_chars_at(relative_to);
+    let (is_empty_backward, previous_line_end) = is_empty_to_line_break(&mut backward_iter);
+
+    let mut forward_iter = map.chars_at(relative_to);
+    let (is_empty_forward, line_end) = is_empty_to_line_end(&mut forward_iter);
+    let line_end = line_end.unwrap_or(LineEnd::EndOfFile(relative_to));
+    let is_current_line_empty = is_empty_forward && is_empty_backward;
+
+    let mut previous_paragraph_end = previous_line_end;
+    let mut paragraph_end = line_end;
+
+    while previous_paragraph_end.is_some() {
+        let (is_empty_backward, previous_line_end) = is_empty_to_line_break(&mut backward_iter);
+        if is_empty_backward != is_current_line_empty {
+            break;
+        }
+        previous_paragraph_end = previous_line_end;
+    }
+    let paragraph_start = previous_paragraph_end
+        .map(|point| DisplayPoint::new(point.row() + 1, 0))
+        .unwrap_or(DisplayPoint::zero());
+
+    let mut following_line_end = None;
+    while let LineEnd::Break(point) = paragraph_end {
+        let (is_empty_forward, line_end) = is_empty_to_line_end(&mut forward_iter);
+        if is_empty_forward != is_current_line_empty {
+            following_line_end = line_end;
+            break;
+        }
+        paragraph_end = line_end.unwrap_or(
+            // EOF after line break
+            LineEnd::EndOfFile(DisplayPoint::new(point.row() + 1, 0)),
+        );
+    }
+
+    if around {
+        // When selection only contains trailing newline paragraph,
+        // regard it as an error and cancel the operation.
+        if let LineEnd::EndOfFile(_) = paragraph_end {
+            if is_current_line_empty {
+                return None;
+            }
+        }
+
+        if let LineEnd::Break(point) = paragraph_end {
+            paragraph_end = following_line_end.unwrap_or(
+                // EOF after line break
+                LineEnd::EndOfFile(DisplayPoint::new(point.row() + 1, 0)),
+            );
+        }
+
+        while let LineEnd::Break(point) = paragraph_end {
+            let (is_empty_forward, line_end) = is_empty_to_line_end(&mut forward_iter);
+            if is_empty_forward == is_current_line_empty {
+                break;
+            }
+            paragraph_end = line_end.unwrap_or(
+                // EOF after line break
+                LineEnd::EndOfFile(DisplayPoint::new(point.row() + 1, 0)),
+            );
+        }
+    }
+
+    let paragraph_end = match paragraph_end {
+        LineEnd::Break(point) => point,
+        LineEnd::EndOfFile(point) => point,
+    };
+    let range = paragraph_start..paragraph_end;
+    return Some(range);
+}
+
+const EMPTY_LINE_WHITESPACE: &[char] = &[' ', '\t'];
+
+/// Return whether the line is empty and the position of the line break.
+fn is_empty_to_line_break(
+    iter: &mut impl Iterator<Item = (char, DisplayPoint)>,
+) -> (bool, Option<DisplayPoint>) {
+    let mut is_empty = true;
+
+    loop {
+        let next = iter.next();
+        match next {
+            Some((char, _)) if char != '\n' => {
+                if !EMPTY_LINE_WHITESPACE.contains(&char) {
+                    is_empty = false;
+                }
+            }
+            _ => {
+                let end = next.map(|(_, point)| point);
+                return (is_empty, end);
+            }
+        }
+    }
+}
+
+/// Return whether a line is a empty line and the position of the line break.
+/// If `iter` is already at EOF, return `None`.
+/// If line break is not found, return the position of EOF.
+fn is_empty_to_line_end(
+    iter: &mut impl Iterator<Item = (char, DisplayPoint)>,
+) -> (bool, Option<LineEnd>) {
+    let mut is_empty = true;
+    let mut end = None;
+
+    for (char, point) in iter {
+        end = Some((char, point));
+        if char == '\n' {
+            return (is_empty, Some(LineEnd::Break(point)));
+        }
+
+        if !EMPTY_LINE_WHITESPACE.contains(&char) {
+            is_empty = false;
+        }
+    }
+
+    let end = end.map(|(char, mut end)| {
+        // Set end to the character position after the current display_point.
+        // Since char must not be \n, considering cases where row number changes is unnecessary.
+        *end.column_mut() += char.len_utf8() as u32;
+        LineEnd::EndOfFile(end)
+    });
+    (is_empty, end)
 }
 
 fn surrounding_markers(
@@ -807,6 +949,190 @@ mod test {
             cx.assert_all_exempted(
                 sentence_example,
                 ExemptionFeatures::AroundSentenceStartingBetweenIncludesWrongWhitespace,
+            )
+            .await;
+        }
+    }
+
+    const PARAGRAPH_EXAMPLES: &[&'static str] = &[
+        // Single line
+        "ˇThe quick brown fox jumpˇs over the lazy dogˇ.ˇ",
+        // Multiple lines without empty lines
+        indoc! {"
+            ˇThe quick brownˇ
+            ˇfox jumps overˇ
+            the lazy dog.ˇ
+        "},
+        // Heading newline paragraph
+        indoc! {"
+            ˇ
+            ˇ
+            ˇThe quick brown fox jumps
+            ˇover the lazy dog.
+
+
+            The quick brown fox jumps
+            over the lazy dog.
+        "},
+        // Newline paragraph and trailing newline paragraph
+        indoc! {"
+            ˇThe quick brown fox jumps
+            ˇover the lazy dog.
+            ˇ
+            ˇ
+            ˇ
+            ˇThe quick brown fox jumpsˇ
+            ˇover the lazy dog.ˇ
+            ˇ
+            ˇ
+            ˇ
+        "},
+        // "Empty" line paragraph with whitespace characters
+        indoc! {"
+            ˇThe quick brown fox jumps
+            ˇover the lazy dog.
+            ˇ
+            ˇ \t
+
+            ˇThe quick brown fox jumps
+            ˇover the lazy dog.ˇ
+            ˇ
+            ˇ \t
+            \t \t
+        "},
+        // Single line "paragraphs", where selection size might be zero.
+        indoc! {"
+            ˇThe quick brown fox jumps over the lazy dog.
+            ˇ
+            ˇThe quick brown fox jumpˇs over the lazy dog.ˇ
+            ˇ
+        "},
+    ];
+
+    #[gpui::test]
+    async fn test_change_paragraph_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for paragraph_example in PARAGRAPH_EXAMPLES {
+            cx.assert_binding_matches_all(["c", "i", "p"], paragraph_example)
+                .await;
+            cx.assert_binding_matches_all(["c", "a", "p"], paragraph_example)
+                .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_delete_paragraph_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for paragraph_example in PARAGRAPH_EXAMPLES {
+            cx.assert_binding_matches_all(["d", "i", "p"], paragraph_example)
+                .await;
+            cx.assert_binding_matches_all(["d", "a", "p"], paragraph_example)
+                .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_paragraph_object_with_trailing_normal_paragraph(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Trailing normal paragraph
+        const TRAILING_NORMAL_PARAGRAPH_EXAMPLE: &'static str = indoc! {"
+
+
+            The quick brown fox jumps
+            over the lazy dog.
+            ˇ
+            ˇ
+            ˇThe quick brown fox jumpsˇ
+            ˇover the lazy dog.ˇ
+        "};
+
+        for keystrokes in [["c", "i", "p"], ["c", "a", "p"]] {
+            cx.assert_binding_matches_all(keystrokes, TRAILING_NORMAL_PARAGRAPH_EXAMPLE)
+                .await;
+        }
+        // Nvim in the test suite seems to be returning strange landing position.
+        cx.assert_binding_matches_all_exempted(
+            ["d", "i", "p"],
+            TRAILING_NORMAL_PARAGRAPH_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["d", "a", "p"],
+            TRAILING_NORMAL_PARAGRAPH_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_paragraph_object_with_landing_positions_not_at_beginning_of_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // Landing position not at the beginning of the line
+        const PARAGRAPH_LANDING_POSITION_EXAMPLE: &'static str = indoc! {"
+            The quick brown fox jumpsˇ
+            over the lazy dog.ˇ
+            ˇ ˇ\tˇ
+            ˇ ˇ
+            ˇ\tˇ ˇ\tˇ
+            ˇThe quick brown fox jumpsˇ
+            ˇover the lazy dog.ˇ
+            ˇ ˇ\tˇ
+            ˇ
+            ˇ ˇ\tˇ
+            ˇ\tˇ ˇ\tˇ
+        "};
+
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.assert_binding_matches_all_exempted(
+            ["c", "i", "p"],
+            PARAGRAPH_LANDING_POSITION_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["c", "a", "p"],
+            PARAGRAPH_LANDING_POSITION_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["d", "i", "p"],
+            PARAGRAPH_LANDING_POSITION_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["d", "a", "p"],
+            PARAGRAPH_LANDING_POSITION_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_paragraph_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Nvim in the test suite seems to be returning strange landing position.
+        // Also, our landing position should be changed from the end of the last line
+        // to the beginning of the last line.
+        for paragraph_example in PARAGRAPH_EXAMPLES {
+            cx.assert_binding_matches_all_exempted(
+                ["v", "i", "p"],
+                paragraph_example,
+                ExemptionFeatures::IncorrectLandingPosition,
+            )
+            .await;
+            cx.assert_binding_matches_all_exempted(
+                ["v", "a", "p"],
+                paragraph_example,
+                ExemptionFeatures::IncorrectLandingPosition,
             )
             .await;
         }
