@@ -4,6 +4,7 @@
 //todo!(linux): remove
 #![allow(unused_variables)]
 
+use crate::platform::linux::client_dispatcher::ClientDispatcher;
 use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use parking::{Parker, Unparker};
@@ -14,7 +15,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use crate::platform::linux::client_dispatcher::ClientDispatcher;
 
 pub(crate) struct LinuxDispatcher {
     client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync>,
@@ -29,7 +29,7 @@ pub(crate) struct LinuxDispatcher {
 impl LinuxDispatcher {
     pub fn new(
         main_sender: flume::Sender<Runnable>,
-        client_dispatcher: &Arc<dyn ClientDispatcher + Send + Sync>
+        client_dispatcher: &Arc<dyn ClientDispatcher + Send + Sync>,
     ) -> Self {
         let (background_sender, background_receiver) = flume::unbounded::<Runnable>();
         let background_thread = thread::spawn(move || {

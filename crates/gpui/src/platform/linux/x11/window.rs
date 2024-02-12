@@ -13,13 +13,16 @@ use std::{
 use blade_graphics as gpu;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
-use xcb::{x::{self, StackMode}, Xid as _};
-
-use crate::{
-    Bounds, GlobalPixels, X11Display, Pixels, PlatformDisplay, PlatformInputHandler,
-    PlatformWindow, Point, Size, WindowAppearance, WindowBounds, WindowOptions
+use xcb::{
+    x::{self, StackMode},
+    Xid as _,
 };
+
 use crate::platform::linux::blade_renderer::BladeRenderer;
+use crate::{
+    Bounds, GlobalPixels, Pixels, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    Size, WindowAppearance, WindowBounds, WindowOptions, X11Display,
+};
 
 #[derive(Default)]
 struct Callbacks {

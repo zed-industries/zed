@@ -14,10 +14,16 @@ use time::UtcOffset;
 
 use collections::{HashMap, HashSet};
 
-use crate::{Action, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, X11Display, LinuxTextSystem, X11Window, X11WindowState, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Point, Result, SemanticVersion, Size, Task, WindowAppearance, WindowOptions};
-use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
 use crate::platform::linux::client::Client;
 use crate::platform::linux::client_dispatcher::ClientDispatcher;
+use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
+use crate::{
+    Action, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Point, Result,
+    SemanticVersion, Size, Task, WindowAppearance, WindowOptions, X11Display, X11Window,
+    X11WindowState,
+};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -43,7 +49,7 @@ pub(crate) struct LinuxPlatformInner {
 
 pub(crate) struct LinuxPlatform {
     client: Arc<dyn Client>,
-    inner: Arc<LinuxPlatformInner>
+    inner: Arc<LinuxPlatformInner>,
 }
 
 pub(crate) struct LinuxPlatformState {
@@ -63,11 +69,9 @@ impl LinuxPlatform {
 
         let xcb_connection = Arc::new(xcb_connection);
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
-        let dispatcher = LinuxDispatcher::new(
-            main_sender,
-            &client_dispatcher
-        );
+        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
+            Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
+        let dispatcher = LinuxDispatcher::new(main_sender, &client_dispatcher);
         let dispatcher = Arc::new(dispatcher);
 
         let inner = LinuxPlatformInner {
@@ -82,17 +86,12 @@ impl LinuxPlatform {
         };
         let inner = Arc::new(inner);
 
-        let x11client = X11Client::new(
-            Arc::clone(&inner),
-            xcb_connection,
-            x_root_index,
-            atoms
-        );
+        let x11client = X11Client::new(Arc::clone(&inner), xcb_connection, x_root_index, atoms);
         let x11client = Arc::new(x11client);
 
         Self {
             client: x11client,
-            inner: Arc::clone(&inner)
+            inner: Arc::clone(&inner),
         }
     }
 }
