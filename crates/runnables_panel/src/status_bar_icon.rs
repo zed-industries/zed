@@ -1,7 +1,7 @@
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
-use gpui::{AppContext, Context as _, Model, Subscription, Task};
-use runnable::{ExecutionResult, TaskHandle};
+use gpui::{AppContext, Context as _, Model, Task};
+use runnable::TaskHandle;
 use ui::Color;
 
 type Succeeded = bool;
@@ -14,16 +14,20 @@ pub(super) struct RunnablesStatusBarIcon {
     /// Some(true) -> all of the tasks have succeeded.
     /// Some(false) -> at least one of the tasks has failed.
     current_status: Option<Succeeded>,
-    _task_pooler: Task<()>,
+    /// We keep around a handle to the status updater in case the user reopens the panel - in that case, we want to stop polling previous set of the tasks.
+    /// That is achieved by creating new `RunnablesStatusBarIcon`, thus we want to stop polling in the old one (once it's dropped).
+    _task_poller: Task<()>,
 }
 
 impl RunnablesStatusBarIcon {
     pub(crate) fn new<'a>(tasks: Vec<TaskHandle>, cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|cx| {
             let mut futures: FuturesUnordered<TaskHandle> = tasks.into_iter().collect();
-            let _task_pooler = cx.spawn(|this, mut cx| async move {
+            let _task_poller = cx.spawn(|this, mut cx| async move {
                 while let Some(Ok(i)) = futures.next().await {
                     if i.status.is_err() {
+                        // At least one task has failed, move to failure state; note though that regardless of us bailing there,
+                        // the remaining runnables are still gonna run to completion (as we're not the only party polling these futures).
                         this.update(&mut cx, |this: &mut Self, cx| {
                             this.current_status = Some(false);
                             cx.notify()
@@ -32,6 +36,7 @@ impl RunnablesStatusBarIcon {
                         return;
                     }
                 }
+                // All tasks were either cancelled or succeeded, move to success state.
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this: &mut Self, cx| {
                         this.current_status = Some(true);
@@ -42,7 +47,7 @@ impl RunnablesStatusBarIcon {
             });
             Self {
                 current_status: None,
-                _task_pooler,
+                _task_poller,
             }
         })
     }
