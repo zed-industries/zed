@@ -1911,8 +1911,16 @@ impl BufferSnapshot {
             } else {
                 insertion_cursor.prev(&());
             }
-            let insertion = insertion_cursor.item().expect("invalid insertion");
-            assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+
+            let Some(insertion) = insertion_cursor
+                .item()
+                .filter(|insertion| insertion.timestamp == anchor.timestamp)
+            else {
+                panic!(
+                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
+                    anchor, self.remote_id, self.version
+                );
+            };
 
             let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
             fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left, &None);
@@ -1949,8 +1957,20 @@ impl BufferSnapshot {
             } else {
                 insertion_cursor.prev(&());
             }
-            let insertion = insertion_cursor.item().expect("invalid insertion");
-            debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+
+            let Some(insertion) = insertion_cursor.item().filter(|insertion| {
+                if cfg!(debug_assertions) {
+                    insertion.timestamp == anchor.timestamp
+                } else {
+                    true
+                }
+            }) else {
+                panic!(
+                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
+                    anchor, self.remote_id, self.version
+                );
+            };
+
             &insertion.fragment_id
         }
     }
