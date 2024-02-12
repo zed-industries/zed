@@ -28,7 +28,7 @@ use futures::{
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter,
-    Model, ModelContext, Task, WeakModel,
+    Model, ModelContext, PromptLevel, Task, WeakModel,
 };
 use itertools::Itertools;
 use language::{
@@ -47,7 +47,8 @@ use language::{
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId, OneOf,
+    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
+    MessageActionItem, OneOf,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -213,12 +214,37 @@ enum ProjectClientState {
     },
 }
 
+/// A prompt requested by LSP server.
+#[derive(Clone, Debug)]
+pub struct LanguageServerPromptRequest {
+    pub level: PromptLevel,
+    pub message: String,
+    pub actions: Vec<MessageActionItem>,
+    response_channel: Sender<MessageActionItem>,
+}
+
+impl LanguageServerPromptRequest {
+    pub async fn respond(self, index: usize) -> Option<()> {
+        if let Some(response) = self.actions.into_iter().nth(index) {
+            self.response_channel.send(response).await.ok()
+        } else {
+            None
+        }
+    }
+}
+impl PartialEq for LanguageServerPromptRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message && self.actions == other.actions
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, String),
     Notification(String),
+    LanguageServerPrompt(LanguageServerPromptRequest),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
@@ -3100,6 +3126,42 @@ impl Project {
                         })?
                         .transpose()?;
                         Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::ShowMessageRequest, _, _>({
+                let this = this.clone();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    async move {
+                        if let Some(actions) = params.actions {
+                            let (tx, mut rx) = smol::channel::bounded(1);
+                            let request = LanguageServerPromptRequest {
+                                level: match params.typ {
+                                    lsp::MessageType::ERROR => PromptLevel::Critical,
+                                    lsp::MessageType::WARNING => PromptLevel::Warning,
+                                    _ => PromptLevel::Info,
+                                },
+                                message: params.message,
+                                actions,
+                                response_channel: tx,
+                            };
+
+                            if let Ok(_) = this.update(&mut cx, |_, cx| {
+                                cx.emit(Event::LanguageServerPrompt(request));
+                            }) {
+                                let response = rx.next().await;
+
+                                Ok(response)
+                            } else {
+                                Ok(None)
+                            }
+                        } else {
+                            Ok(None)
+                        }
                     }
                 }
             })

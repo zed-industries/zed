@@ -571,6 +571,27 @@ impl Workspace {
                     cx.new_view(|_| MessageNotification::new(message.clone()))
                 }),
 
+                project::Event::LanguageServerPrompt(request) => {
+                    let request = request.clone();
+
+                    cx.spawn(|_, mut cx| async move {
+                        let messages = request
+                            .actions
+                            .iter()
+                            .map(|action| action.title.as_str())
+                            .collect::<Vec<_>>();
+                        let index = cx
+                            .update(|cx| {
+                                cx.prompt(request.level, "", Some(&request.message), &messages)
+                            })?
+                            .await?;
+                        request.respond(index).await;
+
+                        Result::<(), anyhow::Error>::Ok(())
+                    })
+                    .detach()
+                }
+
                 _ => {}
             }
             cx.notify()

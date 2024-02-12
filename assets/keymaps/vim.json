@@ -498,7 +498,7 @@
     }
   },
   {
-    "context": "BufferSearchBar && !in_replace > VimEnabled",
+    "context": "BufferSearchBar && !in_replace",
     "bindings": {
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
