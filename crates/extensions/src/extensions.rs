@@ -1,44 +1,35 @@
-mod base_keymap_picker;
-mod base_keymap_setting;
-
-use client::{telemetry::Telemetry, TelemetrySettings};
+use client::telemetry::Telemetry;
 use gpui::{
-    svg, uniform_list, AnyElement, AppContext, EventEmitter, Fill, FocusHandle, FocusableView,
+    svg, uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{prelude::*, Checkbox};
-use vim::VimModeSetting;
+
 use workspace::{
     dock::DockPosition,
     item::{Item, ItemEvent},
     open_new, AppState, Extensions, Workspace, WorkspaceId,
 };
 
-pub use base_keymap_setting::BaseKeymap;
-
 pub fn init(cx: &mut AppContext) {
-    BaseKeymap::register(cx);
-
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &Extensions, cx| {
-            let welcome_page = ExtensionsPage::new(workspace, cx);
-            workspace.add_item(Box::new(welcome_page), cx)
+            let extensions_page = ExtensionsPage::new(workspace, cx);
+            workspace.add_item(Box::new(extensions_page), cx)
         });
     })
     .detach();
-
-    base_keymap_picker::init(cx);
 }
 
 pub fn show_extensions_view(app_state: &Arc<AppState>, cx: &mut AppContext) {
     open_new(&app_state, cx, |workspace, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
-        let welcome_page = ExtensionsPage::new(workspace, cx);
-        workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
-        cx.focus_view(&welcome_page);
+        let extensions_page = ExtensionsPage::new(workspace, cx);
+        workspace.add_item_to_center(Box::new(extensions_page.clone()), cx);
+        cx.focus_view(&extensions_page);
         cx.notify();
     })
     .detach();
@@ -166,6 +157,12 @@ impl ExtensionsPage {
         }
     }
 
+    fn search_extension(&self, query: String) {
+        println!("SEARCH EXTENSION {}", query.to_string());
+        // search extension from server
+        // &self.get_extensions_from_server()
+    }
+
     fn get_extension(&self, name: String) -> Option<&Extension> {
         self.extensions_entries.iter().find(|e| e.name == name)
     }
@@ -186,17 +183,26 @@ impl ExtensionsPage {
             let description = extension.description.to_string();
             let repository = extension.repository.to_string();
             let name_cloned = name.clone();
-            let mut button = Button::new("install", "Install")
-                .color(Color::Accent)
-                .on_click(cx.listener(move |this, _, cx| {
-                    this.telemetry
-                        .report_app_event("extensions page: install extension".to_string());
-                    this.install_extension(name_cloned.to_string());
-                }))
-                .disabled(installed);
 
+            let button;
             if installed {
-                button = Button::new("install", "Install").disabled(true);
+                button = Button::new("uninstall", "Uninstall")
+                    .color(Color::Accent)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.telemetry
+                            .report_app_event("extensions page: uninstall extension".to_string());
+                        this.uninstall_extension(name_cloned.to_string());
+                    }))
+                    .disabled(installed);
+            } else {
+                button = Button::new("install", "Install")
+                    .color(Color::Accent)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.telemetry
+                            .report_app_event("extensions page: install extension".to_string());
+                        this.install_extension(name_cloned.to_string());
+                    }))
+                    .disabled(installed);
             }
 
             div().w_full().child(
