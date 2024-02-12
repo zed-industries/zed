@@ -181,12 +181,6 @@
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true
   },
-  "extensions_panel": {
-    // Default width of the project panel.
-    "default_width": 480,
-    // Where to dock project panel. Can be 'left' or 'right'.
-    "dock": "left"
-  },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
