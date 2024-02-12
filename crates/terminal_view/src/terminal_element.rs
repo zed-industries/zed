@@ -447,7 +447,7 @@ impl TerminalElement {
         };
 
         let text_system = cx.text_system();
-        let selection_color = theme.players().local();
+        let player_color = theme.players().local();
         let match_color = theme.colors().search_match_background;
         let gutter;
         let dimensions = {
@@ -526,7 +526,7 @@ impl TerminalElement {
         }
         if let Some(selection) = selection {
             relative_highlighted_ranges
-                .push((selection.start..=selection.end, selection_color.cursor));
+                .push((selection.start..=selection.end, player_color.selection));
         }
 
         // then have that representation be converted to the appropriate highlight data structure
