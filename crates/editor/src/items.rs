@@ -1,7 +1,7 @@
 use crate::{
-    editor_settings::SeedQuerySetting, link_go_to_definition::hide_link_definition,
-    persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor, EditorEvent, EditorSettings,
-    ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
+    editor_settings::SeedQuerySetting, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll,
+    Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
+    NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
@@ -30,7 +30,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::Selection;
+use text::{BufferId, Selection};
 use theme::Theme;
 use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
@@ -76,13 +76,13 @@ impl FollowableItem for Editor {
         let buffers = project.update(cx, |project, cx| {
             buffer_ids
                 .iter()
-                .map(|id| project.open_buffer_by_id(*id, cx))
-                .collect::<Vec<_>>()
+                .map(|id| BufferId::new(*id).map(|id| project.open_buffer_by_id(id, cx)))
+                .collect::<Result<Vec<_>>>()
         });
 
         let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
-            let mut buffers = futures::future::try_join_all(buffers)
+            let mut buffers = futures::future::try_join_all(buffers?)
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
             let editor = pane.update(&mut cx, |pane, cx| {
@@ -109,10 +109,12 @@ impl FollowableItem for Editor {
                                 MultiBuffer::new(replica_id, project.read(cx).capability());
                             let mut excerpts = state.excerpts.into_iter().peekable();
                             while let Some(excerpt) = excerpts.peek() {
-                                let buffer_id = excerpt.buffer_id;
+                                let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
+                                    continue;
+                                };
                                 let buffer_excerpts = iter::from_fn(|| {
                                     let excerpt = excerpts.peek()?;
-                                    (excerpt.buffer_id == buffer_id)
+                                    (excerpt.buffer_id == u64::from(buffer_id))
                                         .then(|| excerpts.next().unwrap())
                                 });
                                 let buffer =
@@ -183,13 +185,21 @@ impl FollowableItem for Editor {
 
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
+        if buffer
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+            .map_or(false, |file| file.is_private())
+        {
+            return None;
+        }
+
         let scroll_anchor = self.scroll_manager.anchor();
         let excerpts = buffer
             .read(cx)
             .excerpts()
             .map(|(id, buffer, range)| proto::Excerpt {
                 id: id.to_proto(),
-                buffer_id: buffer.remote_id(),
+                buffer_id: buffer.remote_id().into(),
                 context_start: Some(serialize_text_anchor(&range.context.start)),
                 context_end: Some(serialize_text_anchor(&range.context.end)),
                 primary_start: range
@@ -336,9 +346,9 @@ async fn update_editor_from_message(
     let inserted_excerpt_buffers = project.update(cx, |project, cx| {
         inserted_excerpt_buffer_ids
             .into_iter()
-            .map(|id| project.open_buffer_by_id(id, cx))
-            .collect::<Vec<_>>()
-    })?;
+            .map(|id| BufferId::new(id).map(|id| project.open_buffer_by_id(id, cx)))
+            .collect::<Result<Vec<_>>>()
+    })??;
     let _inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
 
     // Update the editor's excerpts.
@@ -362,7 +372,7 @@ async fn update_editor_from_message(
                 let Some(previous_excerpt_id) = insertion.previous_excerpt_id else {
                     continue;
                 };
-                let buffer_id = excerpt.buffer_id;
+                let buffer_id = BufferId::new(excerpt.buffer_id)?;
                 let Some(buffer) = project.read(cx).buffer_for_id(buffer_id) else {
                     continue;
                 };
@@ -370,7 +380,7 @@ async fn update_editor_from_message(
                 let adjacent_excerpts = iter::from_fn(|| {
                     let insertion = insertions.peek()?;
                     if insertion.previous_excerpt_id.is_none()
-                        && insertion.excerpt.as_ref()?.buffer_id == buffer_id
+                        && insertion.excerpt.as_ref()?.buffer_id == u64::from(buffer_id)
                     {
                         insertions.next()?.excerpt
                     } else {
@@ -395,8 +405,9 @@ async fn update_editor_from_message(
             }
 
             multibuffer.remove_excerpts(removed_excerpt_ids, cx);
-        });
-    })?;
+            Result::<(), anyhow::Error>::Ok(())
+        })
+    })??;
 
     // Deserialize the editor state.
     let (selections, pending_selection, scroll_top_anchor) = this.update(cx, |editor, cx| {
@@ -450,13 +461,13 @@ async fn update_editor_from_message(
 }
 
 fn serialize_excerpt(
-    buffer_id: u64,
+    buffer_id: BufferId,
     id: &ExcerptId,
     range: &ExcerptRange<language::Anchor>,
 ) -> Option<proto::Excerpt> {
     Some(proto::Excerpt {
         id: id.to_proto(),
-        buffer_id,
+        buffer_id: buffer_id.into(),
         context_start: Some(serialize_text_anchor(&range.context.start)),
         context_end: Some(serialize_text_anchor(&range.context.end)),
         primary_start: range
@@ -671,8 +682,7 @@ impl Item for Editor {
     }
 
     fn workspace_deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        hide_link_definition(self, cx);
-        self.link_go_to_definition_state.last_trigger_point = None;
+        self.hide_hovered_link(cx);
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -790,7 +800,11 @@ impl Item for Editor {
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+        if self.show_breadcrumbs {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 
     fn breadcrumbs(&self, variant: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
@@ -1360,6 +1374,10 @@ mod tests {
 
         fn to_proto(&self) -> rpc::proto::File {
             unimplemented!()
+        }
+
+        fn is_private(&self) -> bool {
+            false
         }
     }
 }

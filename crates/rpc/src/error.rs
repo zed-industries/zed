@@ -80,6 +80,8 @@ pub trait ErrorExt {
     fn error_tag(&self, k: &str) -> Option<&str>;
     /// to_proto() converts the error into a proto::Error
     fn to_proto(&self) -> proto::Error;
+    ///
+    fn cloned(&self) -> anyhow::Error;
 }
 
 impl ErrorExt for anyhow::Error {
@@ -104,6 +106,14 @@ impl ErrorExt for anyhow::Error {
             rpc_error.to_proto()
         } else {
             ErrorCode::Internal.message(format!("{}", self)).to_proto()
+        }
+    }
+
+    fn cloned(&self) -> anyhow::Error {
+        if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
+            rpc_error.cloned()
+        } else {
+            anyhow::anyhow!("{}", self)
         }
     }
 }
@@ -188,6 +198,10 @@ impl ErrorExt for RpcError {
             message: self.msg.clone(),
             tags: self.tags.clone(),
         }
+    }
+
+    fn cloned(&self) -> anyhow::Error {
+        self.clone().into()
     }
 }
 

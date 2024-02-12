@@ -260,7 +260,7 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use gpui::{TestAppContext, VisualContext};
-    use language::{FakeLspAdapter, Language, LanguageConfig};
+    use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -273,7 +273,10 @@ mod tests {
         let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             None,
@@ -392,6 +395,7 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init("0.0.0", cx);
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);

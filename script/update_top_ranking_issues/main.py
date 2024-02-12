@@ -21,7 +21,7 @@ CORE_LABELS: set[str] = set(
         "documentation",
         "enhancement",
         "panic / crash",
-        "platform support"
+        "platform support",
     ]
 )
 # A set of labels for adding in labels that we want present in the final
@@ -46,8 +46,20 @@ class IssueData:
 
 
 @app.command()
-def main(github_token: Optional[str] = None, prod: bool = False) -> None:
+def main(
+    issue_reference_number: int,
+    github_token: Optional[str] = None,
+    prod: bool = False,
+    query_day_interval: Optional[int] = None,
+) -> None:
     start_time: datetime = datetime.now()
+
+    start_date: datetime | None = None
+
+    if query_day_interval:
+        tz = timezone("america/new_york")
+        current_time = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date = current_time - timedelta(days=query_day_interval)
 
     # GitHub Workflow will pass in the token as an environment variable,
     # but we can place it in our env when running the script locally, for convenience
@@ -66,7 +78,7 @@ def main(github_token: Optional[str] = None, prod: bool = False) -> None:
     (
         label_to_issue_data,
         error_message_to_erroneous_issue_data,
-    ) = get_issue_maps(github, repository)
+    ) = get_issue_maps(github, repository, start_date)
 
     issue_text: str = get_issue_text(
         label_to_issue_data,
@@ -74,7 +86,7 @@ def main(github_token: Optional[str] = None, prod: bool = False) -> None:
     )
 
     if prod:
-        top_ranking_issues_issue: Issue = repository.get_issue(5393)
+        top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
         top_ranking_issues_issue.edit(body=issue_text)
     else:
         print(issue_text)
@@ -88,10 +100,14 @@ def main(github_token: Optional[str] = None, prod: bool = False) -> None:
 
 
 def get_issue_maps(
-    github: Github, repository: Repository
+    github: Github,
+    repository: Repository,
+    start_date: datetime | None = None,
 ) -> tuple[dict[str, list[IssueData]], dict[str, list[IssueData]]]:
     label_to_issues: defaultdict[str, list[Issue]] = get_label_to_issues(
-        github, repository
+        github,
+        repository,
+        start_date,
     )
     label_to_issue_data: dict[str, list[IssueData]] = get_label_to_issue_data(
         label_to_issues
@@ -123,7 +139,9 @@ def get_issue_maps(
 
 
 def get_label_to_issues(
-    github: Github, repository: Repository
+    github: Github,
+    repository: Repository,
+    start_date: datetime | None = None,
 ) -> defaultdict[str, list[Issue]]:
     label_to_issues: defaultdict[str, list[Issue]] = defaultdict(list)
 
@@ -132,11 +150,18 @@ def get_label_to_issues(
         [f'-label:"{label}"' for label in IGNORED_LABELS]
     )
 
-    for label in labels:
-        query: str = f'repo:{repository.full_name} is:open is:issue label:"{label}" {ignored_labels_text} sort:reactions-+1-desc'
+    date_query: str = (
+        f"created:>={start_date.strftime('%Y-%m-%d')}" if start_date else ""
+    )
 
-        for issue in github.search_issues(query)[0:ISSUES_PER_LABEL]:
-            label_to_issues[label].append(issue)
+    for label in labels:
+        query: str = f'repo:{repository.full_name} is:open is:issue {date_query} label:"{label}" {ignored_labels_text} sort:reactions-+1-desc'
+
+        issues = github.search_issues(query)
+
+        if issues.totalCount > 0:
+            for issue in issues[0:ISSUES_PER_LABEL]:
+                label_to_issues[label].append(issue)
 
     return label_to_issues
 

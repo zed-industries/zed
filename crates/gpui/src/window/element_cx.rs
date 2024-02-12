@@ -23,6 +23,7 @@ use std::{
 use anyhow::Result;
 use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
+#[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 use util::post_inc;
@@ -31,10 +32,10 @@ use crate::{
     prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
     Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
     EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyContext, KeyEvent, KeymatchMode, LayoutId, MonochromeSprite,
-    MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
-    StackingContext, StackingOrder, Style, Surface, TextStyleRefinement, Underline, UnderlineStyle,
+    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
+    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
+    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
     Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
@@ -59,7 +60,7 @@ pub(crate) struct Frame {
     pub(crate) scene: Scene,
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
-    pub(crate) next_stacking_order_id: u16,
+    pub(crate) next_stacking_order_ids: Vec<u16>,
     pub(crate) next_root_z_index: u16,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -71,7 +72,7 @@ pub(crate) struct Frame {
     pub(crate) reused_views: FxHashSet<EntityId>,
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: collections::FxHashMap<String, Bounds<Pixels>>,
+    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
 }
 
 impl Frame {
@@ -85,7 +86,7 @@ impl Frame {
             scene: Scene::default(),
             depth_map: Vec::new(),
             z_index_stack: StackingOrder::default(),
-            next_stacking_order_id: 0,
+            next_stacking_order_ids: vec![0],
             next_root_z_index: 0,
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -106,7 +107,7 @@ impl Frame {
         self.mouse_listeners.values_mut().for_each(Vec::clear);
         self.dispatch_tree.clear();
         self.depth_map.clear();
-        self.next_stacking_order_id = 0;
+        self.next_stacking_order_ids = vec![0];
         self.next_root_z_index = 0;
         self.reused_views.clear();
         self.scene.clear();
@@ -351,8 +352,22 @@ impl<'a> ElementContext<'a> {
             }
         }
 
-        debug_assert!(next_stacking_order_id >= self.window.next_frame.next_stacking_order_id);
-        self.window.next_frame.next_stacking_order_id = next_stacking_order_id;
+        debug_assert!(
+            next_stacking_order_id
+                >= self
+                    .window
+                    .next_frame
+                    .next_stacking_order_ids
+                    .last()
+                    .copied()
+                    .unwrap()
+        );
+        *self
+            .window
+            .next_frame
+            .next_stacking_order_ids
+            .last_mut()
+            .unwrap() = next_stacking_order_id;
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -434,8 +449,13 @@ impl<'a> ElementContext<'a> {
         };
 
         let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
-        let new_stacking_order_id =
-            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let new_stacking_order_id = post_inc(
+            self.window_mut()
+                .next_frame
+                .next_stacking_order_ids
+                .last_mut()
+                .unwrap(),
+        );
         let new_context = StackingContext {
             z_index: new_root_z_index,
             id: new_stacking_order_id,
@@ -455,8 +475,14 @@ impl<'a> ElementContext<'a> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn with_z_index<R>(&mut self, z_index: u16, f: impl FnOnce(&mut Self) -> R) -> R {
-        let new_stacking_order_id =
-            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let new_stacking_order_id = post_inc(
+            self.window_mut()
+                .next_frame
+                .next_stacking_order_ids
+                .last_mut()
+                .unwrap(),
+        );
+        self.window_mut().next_frame.next_stacking_order_ids.push(0);
         let new_context = StackingContext {
             z_index,
             id: new_stacking_order_id,
@@ -465,6 +491,8 @@ impl<'a> ElementContext<'a> {
         self.window_mut().next_frame.z_index_stack.push(new_context);
         let result = f(self);
         self.window_mut().next_frame.z_index_stack.pop();
+
+        self.window_mut().next_frame.next_stacking_order_ids.pop();
 
         result
     }
@@ -649,6 +677,7 @@ impl<'a> ElementContext<'a> {
                     corner_radii: corner_radii.scale(scale_factor),
                     color: shadow.color,
                     blur_radius: shadow.blur_radius.scale(scale_factor),
+                    pad: 0,
                 },
             );
         }
@@ -724,9 +753,41 @@ impl<'a> ElementContext<'a> {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
+                color: style.color.unwrap_or_default(),
+                thickness: style.thickness.scale(scale_factor),
+                wavy: style.wavy,
+            },
+        );
+    }
+
+    /// Paint a strikethrough into the scene for the next frame at the current z-index.
+    pub fn paint_strikethrough(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &StrikethroughStyle,
+    ) {
+        let scale_factor = self.scale_factor();
+        let height = style.thickness;
+        let bounds = Bounds {
+            origin,
+            size: size(width, height),
+        };
+        let content_mask = self.content_mask();
+        let view_id = self.parent_view_id();
+
+        let window = &mut *self.window;
+        window.next_frame.scene.insert(
+            &window.next_frame.z_index_stack,
+            Underline {
+                view_id: view_id.into(),
+                layer_id: 0,
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
                 thickness: style.thickness.scale(scale_factor),
                 color: style.color.unwrap_or_default(),
-                wavy: style.wavy,
+                wavy: false,
             },
         );
     }
@@ -845,6 +906,7 @@ impl<'a> ElementContext<'a> {
                     content_mask,
                     tile,
                     grayscale: false,
+                    pad: 0,
                 },
             );
         }
@@ -929,12 +991,14 @@ impl<'a> ElementContext<'a> {
                 corner_radii,
                 tile,
                 grayscale,
+                pad: 0,
             },
         );
         Ok(())
     }
 
     /// Paint a surface into the scene for the next frame at the current z-index.
+    #[cfg(target_os = "macos")]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
@@ -943,7 +1007,7 @@ impl<'a> ElementContext<'a> {
         let window = &mut *self.window;
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
-            Surface {
+            crate::Surface {
                 view_id: view_id.into(),
                 layer_id: 0,
                 order: 0,
@@ -1114,15 +1178,6 @@ impl<'a> ElementContext<'a> {
                 )),
             })
         }
-    }
-
-    /// keymatch mode immediate instructs GPUI to prefer shorter action bindings.
-    /// In the case that you have a keybinding of `"cmd-k": "terminal::Clear"` and
-    /// `"cmd-k left": "workspace::MoveLeft"`, GPUI will by default wait for 1s after
-    /// you type cmd-k to see if you're going to type left.
-    /// This is problematic in the terminal
-    pub fn keymatch_mode_immediate(&mut self) {
-        self.window.next_frame.dispatch_tree.keymatch_mode = KeymatchMode::Immediate;
     }
 
     /// Register a mouse event listener on the window for the next frame. The type of event

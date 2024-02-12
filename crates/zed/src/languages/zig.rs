@@ -28,15 +28,16 @@ impl LspAdapter for ZlsAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("zigtools/zls", false, delegate.http_client()).await?;
-        let asset_name = format!("zls-{}-macos.tar.gz", ARCH);
+        let release =
+            latest_github_release("zigtools/zls", true, false, delegate.http_client()).await?;
+        let asset_name = format!("zls-{ARCH}-macos.tar.gz");
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         let version = GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         };
 

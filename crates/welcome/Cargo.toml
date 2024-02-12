@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/welcome.rs"
 
@@ -13,27 +12,26 @@ path = "src/welcome.rs"
 test-support = []
 
 [dependencies]
-client = { path = "../client" }
-editor = { path = "../editor" }
-fs = { path = "../fs" }
-fuzzy = {  path = "../fuzzy" }
-gpui = { path = "../gpui" }
-ui = { path = "../ui" }
-db = { path = "../db" }
-install_cli = { path = "../install_cli" }
-project = { path = "../project" }
-settings = { path = "../settings" }
-theme = { path = "../theme" }
-theme_selector = { path = "../theme_selector" }
-util = { path = "../util" }
-picker = { path = "../picker" }
-workspace = { path = "../workspace" }
-vim = { path = "../vim" }
-
 anyhow.workspace = true
+client.workspace = true
+db.workspace = true
+editor.workspace = true
+fs.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+install_cli.workspace = true
 log.workspace = true
+picker.workspace = true
+project.workspace = true
 schemars.workspace = true
 serde.workspace = true
+settings.workspace = true
+theme.workspace = true
+theme_selector.workspace = true
+ui.workspace = true
+util.workspace = true
+vim.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }

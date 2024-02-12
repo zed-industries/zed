@@ -5,38 +5,37 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/search.rs"
 doctest = false
 
 [dependencies]
-bitflags = "1"
-collections = { path = "../collections" }
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-menu = { path = "../menu" }
-project = { path = "../project" }
-settings = { path = "../settings" }
-theme = { path = "../theme" }
-util = { path = "../util" }
-ui = {path = "../ui"}
-workspace = { path = "../workspace" }
-semantic_index = { path = "../semantic_index" }
 anyhow.workspace = true
+bitflags = "1"
+collections.workspace = true
+editor.workspace = true
 futures.workspace = true
+gpui.workspace = true
+language.workspace = true
 log.workspace = true
+menu.workspace = true
 postage.workspace = true
+project.workspace = true
+semantic_index.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
+serde_json.workspace = true
+settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
-serde_json.workspace = true
-[dev-dependencies]
-client = { path = "../client", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
 
-workspace = { path = "../workspace", features = ["test-support"] }
+[dev-dependencies]
+client = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

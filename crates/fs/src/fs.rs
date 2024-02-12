@@ -1,7 +1,16 @@
 pub mod repository;
 
 use anyhow::{anyhow, Result};
+pub use fsevent::Event;
+#[cfg(target_os = "macos")]
 use fsevent::EventStream;
+
+#[cfg(not(target_os = "macos"))]
+use fsevent::StreamFlags;
+
+#[cfg(not(target_os = "macos"))]
+use notify::{Config, EventKind, Watcher};
+
 use futures::{future::BoxFuture, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
@@ -48,11 +57,13 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>>;
+
     async fn watch(
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>>;
+
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>>;
     fn is_fake(&self) -> bool;
     #[cfg(any(test, feature = "test-support"))]
@@ -251,11 +262,12 @@ impl Fs for RealFs {
         Ok(Box::pin(result))
     }
 
+    #[cfg(target_os = "macos")]
     async fn watch(
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
         let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
         std::thread::spawn(move || {
@@ -265,6 +277,55 @@ impl Fs for RealFs {
             drop(handle);
             vec![]
         })))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    async fn watch(
+        &self,
+        path: &Path,
+        latency: Duration,
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
+        let (tx, rx) = smol::channel::unbounded();
+
+        if !path.exists() {
+            log::error!("watch path does not exist: {}", path.display());
+            return Box::pin(rx);
+        }
+
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
+                Ok(event) => {
+                    let flags = match event.kind {
+                        // ITEM_REMOVED is currently the only flag we care about
+                        EventKind::Remove(_) => StreamFlags::ITEM_REMOVED,
+                        _ => StreamFlags::NONE,
+                    };
+                    let events = event
+                        .paths
+                        .into_iter()
+                        .map(|path| Event {
+                            event_id: 0,
+                            flags,
+                            path,
+                        })
+                        .collect::<Vec<_>>();
+                    let _ = tx.try_send(events);
+                }
+                Err(err) => {
+                    log::error!("watch error: {}", err);
+                }
+            })
+            .unwrap();
+
+        watcher
+            .configure(Config::default().with_poll_interval(latency))
+            .unwrap();
+
+        watcher
+            .watch(path, notify::RecursiveMode::Recursive)
+            .unwrap();
+
+        Box::pin(rx)
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
@@ -282,6 +343,10 @@ impl Fs for RealFs {
     fn as_fake(&self) -> &FakeFs {
         panic!("called `RealFs::as_fake`")
     }
+}
+
+pub fn fs_events_paths(events: Vec<Event>) -> Vec<PathBuf> {
+    events.into_iter().map(|event| event.path).collect()
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1183,7 +1248,7 @@ pub fn copy_recursive<'a>(
             .await?
             .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
         if metadata.is_dir {
-            if !options.overwrite && fs.metadata(target).await.is_ok() {
+            if !options.overwrite && fs.metadata(target).await.is_ok_and(|m| m.is_some()) {
                 if options.ignore_if_exists {
                     return Ok(());
                 } else {

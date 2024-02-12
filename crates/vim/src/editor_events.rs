@@ -1,6 +1,7 @@
-use crate::{insert::NormalBefore, Vim};
+use crate::{insert::NormalBefore, Vim, VimModeSetting};
 use editor::{Editor, EditorEvent};
 use gpui::{Action, AppContext, Entity, EntityId, View, ViewContext, WindowContext};
+use settings::{Settings, SettingsStore};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|_, cx: &mut ViewContext<Editor>| {
@@ -12,6 +13,17 @@ pub fn init(cx: &mut AppContext) {
         })
         .detach();
 
+        let mut enabled = VimModeSetting::get_global(cx).0;
+        cx.observe_global::<SettingsStore>(move |editor, cx| {
+            if VimModeSetting::get_global(cx).0 != enabled {
+                enabled = VimModeSetting::get_global(cx).0;
+                if !enabled {
+                    Vim::unhook_vim_settings(editor, cx);
+                }
+            }
+        })
+        .detach();
+
         let id = cx.view().entity_id();
         cx.on_release(move |_, _, cx| released(id, cx)).detach();
     })
@@ -19,34 +31,25 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn focused(editor: View<Editor>, cx: &mut WindowContext) {
-    if Vim::read(cx).active_editor.clone().is_some() {
-        Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |previously_active_editor, cx| {
-                vim.unhook_vim_settings(previously_active_editor, cx)
-            });
-        });
-    }
-
     Vim::update(cx, |vim, cx| {
-        vim.set_active_editor(editor.clone(), cx);
+        if !vim.enabled {
+            return;
+        }
+        vim.activate_editor(editor.clone(), cx);
     });
 }
 
 fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        vim.stop_recording_immediately(NormalBefore.boxed_clone());
         if let Some(previous_editor) = vim.active_editor.clone() {
+            vim.stop_recording_immediately(NormalBefore.boxed_clone());
             if previous_editor
                 .upgrade()
                 .is_some_and(|previous| previous == editor.clone())
             {
                 vim.clear_operator(cx);
-                vim.active_editor = None;
-                vim.editor_subscription = None;
             }
         }
-
-        editor.update(cx, |editor, cx| vim.unhook_vim_settings(editor, cx))
     });
 }
 
@@ -69,14 +72,14 @@ mod test {
     use crate::{test::VimTestContext, Vim};
     use editor::Editor;
     use gpui::{Context, Entity, VisualTestContext};
-    use language::Buffer;
+    use language::{Buffer, BufferId};
 
     // regression test for blur called with a different active editor
     #[gpui::test]
     async fn test_blur_focus(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        let buffer = cx.new_model(|_| Buffer::new(0, 0, "a = 1\nb = 2\n"));
+        let buffer = cx.new_model(|_| Buffer::new(0, BufferId::new(1).unwrap(), "a = 1\nb = 2\n"));
         let window2 = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
         let editor2 = cx
             .update(|cx| {
@@ -111,7 +114,7 @@ mod test {
         let mut cx1 = VisualTestContext::from_window(cx.window, &cx);
         let editor1 = cx.editor.clone();
 
-        let buffer = cx.new_model(|_| Buffer::new(0, 0, "a = 1\nb = 2\n"));
+        let buffer = cx.new_model(|_| Buffer::new(0, BufferId::new(1).unwrap(), "a = 1\nb = 2\n"));
         let (editor2, cx2) = cx.add_window_view(|cx| Editor::for_buffer(buffer, None, cx));
 
         editor2.update(cx2, |_, cx| {

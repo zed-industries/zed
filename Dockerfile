@@ -1,11 +1,14 @@
 # syntax = docker/dockerfile:1.2
 
-FROM rust:1.75-bullseye as builder
+FROM rust:1.76-bullseye as builder
 WORKDIR app
 COPY . .
 
 # Compile collab server
 ARG CARGO_PROFILE_RELEASE_PANIC=abort
+ARG GITHUB_SHA
+
+ENV GITHUB_SHA=$GITHUB_SHA
 RUN --mount=type=cache,target=./script/node_modules \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=./target \

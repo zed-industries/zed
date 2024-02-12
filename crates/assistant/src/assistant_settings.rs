@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub enum OpenAIModel {
+pub enum OpenAiModel {
     #[serde(rename = "gpt-3.5-turbo-0613")]
     ThreePointFiveTurbo,
     #[serde(rename = "gpt-4-0613")]
@@ -14,28 +14,28 @@ pub enum OpenAIModel {
     FourTurbo,
 }
 
-impl OpenAIModel {
+impl OpenAiModel {
     pub fn full_name(&self) -> &'static str {
         match self {
-            OpenAIModel::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
-            OpenAIModel::Four => "gpt-4-0613",
-            OpenAIModel::FourTurbo => "gpt-4-1106-preview",
+            OpenAiModel::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
+            OpenAiModel::Four => "gpt-4-0613",
+            OpenAiModel::FourTurbo => "gpt-4-1106-preview",
         }
     }
 
     pub fn short_name(&self) -> &'static str {
         match self {
-            OpenAIModel::ThreePointFiveTurbo => "gpt-3.5-turbo",
-            OpenAIModel::Four => "gpt-4",
-            OpenAIModel::FourTurbo => "gpt-4-turbo",
+            OpenAiModel::ThreePointFiveTurbo => "gpt-3.5-turbo",
+            OpenAiModel::Four => "gpt-4",
+            OpenAiModel::FourTurbo => "gpt-4-turbo",
         }
     }
 
     pub fn cycle(&self) -> Self {
         match self {
-            OpenAIModel::ThreePointFiveTurbo => OpenAIModel::Four,
-            OpenAIModel::Four => OpenAIModel::FourTurbo,
-            OpenAIModel::FourTurbo => OpenAIModel::ThreePointFiveTurbo,
+            OpenAiModel::ThreePointFiveTurbo => OpenAiModel::Four,
+            OpenAiModel::Four => OpenAiModel::FourTurbo,
+            OpenAiModel::FourTurbo => OpenAiModel::ThreePointFiveTurbo,
         }
     }
 }
@@ -54,7 +54,7 @@ pub struct AssistantSettings {
     pub dock: AssistantDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub default_open_ai_model: OpenAIModel,
+    pub default_open_ai_model: OpenAiModel,
 }
 
 /// Assistant panel settings
@@ -79,7 +79,7 @@ pub struct AssistantSettingsContent {
     /// The default OpenAI model to use when starting new conversations.
     ///
     /// Default: gpt-4-1106-preview
-    pub default_open_ai_model: Option<OpenAIModel>,
+    pub default_open_ai_model: Option<OpenAiModel>,
 }
 
 impl Settings for AssistantSettings {

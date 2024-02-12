@@ -23,6 +23,7 @@ impl VimTestContext {
             search::init(cx);
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            release_channel::init("0.0.0", cx);
             command_palette::init(cx);
             crate::init(cx);
         });
@@ -48,7 +49,9 @@ impl VimTestContext {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
             settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
-            settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+            if enabled {
+                settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+            }
         });
 
         // Setup search toolbars and keypress hook

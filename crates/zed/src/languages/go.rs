@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Task};
@@ -45,12 +45,13 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("golang/tools", false, delegate.http_client()).await?;
-        let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
+        let release =
+            latest_github_release("golang/tools", false, false, delegate.http_client()).await?;
+        let version: Option<String> = release.tag_name.strip_prefix("gopls/v").map(str::to_string);
         if version.is_none() {
             log::warn!(
-                "couldn't infer gopls version from github release name '{}'",
-                release.name
+                "couldn't infer gopls version from GitHub release tag name '{}'",
+                release.tag_name
             );
         }
         Ok(Box::new(version) as Box<_>)
@@ -123,21 +124,22 @@ impl super::LspAdapter for GoLspAdapter {
             .args(["install", "golang.org/x/tools/gopls@latest"])
             .output()
             .await?;
-        if !install_output.status.success() {
-            Err(anyhow!("failed to install gopls. Is go installed?"))?;
-        }
+        anyhow::ensure!(
+            install_output.status.success(),
+            "failed to install gopls. Is `go` installed and in the PATH?"
+        );
 
         let installed_binary_path = gobin_dir.join("gopls");
         let version_output = process::Command::new(&installed_binary_path)
             .arg("version")
             .output()
             .await
-            .map_err(|e| anyhow!("failed to run installed gopls binary {:?}", e))?;
+            .context("failed to run installed gopls binary")?;
         let version_stdout = str::from_utf8(&version_output.stdout)
-            .map_err(|_| anyhow!("gopls version produced invalid utf8"))?;
+            .context("gopls version produced invalid utf8 output")?;
         let version = GOPLS_VERSION_REGEX
             .find(version_stdout)
-            .ok_or_else(|| anyhow!("failed to parse gopls version output"))?
+            .with_context(|| format!("failed to parse golps version output '{version_stdout}'"))?
             .as_str();
         let binary_path = container_dir.join(&format!("gopls_{version}"));
         fs::rename(&installed_binary_path, &binary_path).await?;
@@ -398,7 +400,6 @@ mod tests {
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
         let highlight_number = grammar.highlight_id_for_name("number").unwrap();
-        let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
         assert_eq!(
             language
@@ -454,7 +455,7 @@ mod tests {
             Some(CodeLabel {
                 text: "two.Three a.Bcd".to_string(),
                 filter_range: 0..9,
-                runs: vec![(4..9, highlight_field), (12..15, highlight_type)],
+                runs: vec![(12..15, highlight_type)],
             })
         );
     }

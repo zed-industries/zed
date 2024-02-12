@@ -1,8 +1,8 @@
 use super::*;
-use crate::LanguageConfig;
+use crate::{LanguageConfig, LanguageMatcher};
 use rand::rngs::StdRng;
 use std::{env, ops::Range, sync::Arc};
-use text::Buffer;
+use text::{Buffer, BufferId};
 use tree_sitter::Node;
 use unindent::Unindent as _;
 use util::test::marked_text_ranges;
@@ -86,7 +86,7 @@ fn test_syntax_map_layers_for_range() {
 
     let mut buffer = Buffer::new(
         0,
-        0,
+        BufferId::new(1).unwrap(),
         r#"
             fn a() {
                 assert_eq!(
@@ -185,7 +185,7 @@ fn test_dynamic_language_injection() {
 
     let mut buffer = Buffer::new(
         0,
-        0,
+        BufferId::new(1).unwrap(),
         r#"
             This is a code block:
 
@@ -860,7 +860,7 @@ fn test_random_edits(
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut buffer = Buffer::new(0, 0, text);
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new();
     syntax_map.set_language_registry(registry.clone());
@@ -1040,7 +1040,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str]) -> (Buffer, SyntaxMap
         .now_or_never()
         .unwrap()
         .unwrap();
-    let mut buffer = Buffer::new(0, 0, Default::default());
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), Default::default());
 
     let mut mutated_syntax_map = SyntaxMap::new();
     mutated_syntax_map.set_language_registry(registry.clone());
@@ -1092,7 +1092,10 @@ fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            path_suffixes: vec!["html".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["html".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_html::language()),
@@ -1111,7 +1114,10 @@ fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Ruby".into(),
-            path_suffixes: vec!["rb".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rb".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_ruby::language()),
@@ -1130,7 +1136,10 @@ fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "ERB".into(),
-            path_suffixes: vec!["erb".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["erb".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_embedded_template::language()),
@@ -1163,7 +1172,10 @@ fn rust_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -1189,7 +1201,10 @@ fn markdown_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Markdown".into(),
-            path_suffixes: vec!["md".into()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_markdown::language()),
@@ -1209,7 +1224,10 @@ fn elixir_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Elixir".into(),
-            path_suffixes: vec!["ex".into()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ex".into()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_elixir::language()),
@@ -1226,7 +1244,10 @@ fn heex_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HEEx".into(),
-            path_suffixes: vec!["heex".into()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["heex".into()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_heex::language()),

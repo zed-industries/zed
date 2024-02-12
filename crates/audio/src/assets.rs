@@ -2,7 +2,7 @@ use std::{io::Cursor, sync::Arc};
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, AssetSource};
+use gpui::{AppContext, AssetSource, Global};
 use rodio::{
     source::{Buffered, SamplesConverter},
     Decoder, Source,
@@ -15,6 +15,10 @@ pub struct SoundRegistry {
     assets: Box<dyn AssetSource>,
 }
 
+struct GlobalSoundRegistry(Arc<SoundRegistry>);
+
+impl Global for GlobalSoundRegistry {}
+
 impl SoundRegistry {
     pub fn new(source: impl AssetSource) -> Arc<Self> {
         Arc::new(Self {
@@ -24,7 +28,11 @@ impl SoundRegistry {
     }
 
     pub fn global(cx: &AppContext) -> Arc<Self> {
-        cx.global::<Arc<Self>>().clone()
+        cx.global::<GlobalSoundRegistry>().0.clone()
+    }
+
+    pub(crate) fn set_global(source: impl AssetSource, cx: &mut AppContext) {
+        cx.set_global(GlobalSoundRegistry(SoundRegistry::new(source)));
     }
 
     pub fn get(&self, name: &str) -> Result<impl Source<Item = f32>> {

@@ -666,6 +666,7 @@ pub trait ProjectItem: Item {
         Self: Sized;
 }
 
+#[derive(Debug)]
 pub enum FollowEvent {
     Unfollow,
 }

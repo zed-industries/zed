@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/prettier.rs"
 doctest = false
@@ -14,24 +13,23 @@ doctest = false
 test-support = []
 
 [dependencies]
-client = { path = "../client" }
-collections = { path = "../collections"}
-language = { path = "../language" }
-gpui = { path = "../gpui" }
-fs = { path = "../fs" }
-lsp = { path = "../lsp" }
-node_runtime = { path = "../node_runtime"}
-util = { path = "../util" }
-
+anyhow.workspace = true
+client.workspace = true
+collections.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
 log.workspace = true
+lsp.workspace = true
+node_runtime.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true
-futures.workspace = true
-parking_lot.workspace = true
+util.workspace = true
 
 [dev-dependencies]
-language = { path = "../language", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-fs = { path = "../fs",  features = ["test-support"] }
+fs = { workspace = true,  features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }

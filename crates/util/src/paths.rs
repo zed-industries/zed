@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use globset::{Glob, GlobMatcher};
 use serde::{Deserialize, Serialize};
@@ -6,17 +9,34 @@ use serde::{Deserialize, Serialize};
 lazy_static::lazy_static! {
     pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
     pub static ref CONFIG_DIR: PathBuf = HOME.join(".config").join("zed");
-    pub static ref CONVERSATIONS_DIR: PathBuf = HOME.join(".config/zed/conversations");
-    pub static ref EMBEDDINGS_DIR: PathBuf = HOME.join(".config/zed/embeddings");
-    pub static ref LOGS_DIR: PathBuf = HOME.join("Library/Logs/Zed");
-    pub static ref SUPPORT_DIR: PathBuf = HOME.join("Library/Application Support/Zed");
-    pub static ref PLUGINS_DIR: PathBuf = HOME.join("Library/Application Support/Zed/plugins");
-    pub static ref LANGUAGES_DIR: PathBuf = HOME.join("Library/Application Support/Zed/languages");
-    pub static ref COPILOT_DIR: PathBuf = HOME.join("Library/Application Support/Zed/copilot");
-    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = HOME.join("Library/Application Support/Zed/prettier");
-    pub static ref DB_DIR: PathBuf = HOME.join("Library/Application Support/Zed/db");
-    pub static ref CRASHES_DIR: PathBuf = HOME.join("Library/Logs/DiagnosticReports");
-    pub static ref CRASHES_RETIRED_DIR: PathBuf = HOME.join("Library/Logs/DiagnosticReports/Retired");
+    pub static ref CONVERSATIONS_DIR: PathBuf = CONFIG_DIR.join("conversations");
+    pub static ref EMBEDDINGS_DIR: PathBuf = CONFIG_DIR.join("embeddings");
+    pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
+    pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
+        HOME.join("Library/Logs/Zed")
+    } else {
+        CONFIG_DIR.join("logs")
+    };
+    pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
+        HOME.join("Library/Application Support/Zed")
+    } else {
+        CONFIG_DIR.clone()
+    };
+    pub static ref EXTENSIONS_DIR: PathBuf = SUPPORT_DIR.join("extensions");
+    pub static ref LANGUAGES_DIR: PathBuf = SUPPORT_DIR.join("languages");
+    pub static ref COPILOT_DIR: PathBuf = SUPPORT_DIR.join("copilot");
+    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = SUPPORT_DIR.join("prettier");
+    pub static ref DB_DIR: PathBuf = SUPPORT_DIR.join("db");
+    pub static ref CRASHES_DIR: PathBuf = if cfg!(target_os = "macos") {
+        HOME.join("Library/Logs/DiagnosticReports")
+    } else {
+        CONFIG_DIR.join("crashes")
+    };
+    pub static ref CRASHES_RETIRED_DIR: PathBuf = if cfg!(target_os = "macos") {
+        HOME.join("Library/Logs/DiagnosticReports/Retired")
+    } else {
+        CRASHES_DIR.join("retired")
+    };
     pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
     pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
     pub static ref LAST_USERNAME: PathBuf = CONFIG_DIR.join("last-username.txt");
@@ -25,20 +45,33 @@ lazy_static::lazy_static! {
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
 }
 
-pub mod legacy {
-    use std::path::PathBuf;
-
-    lazy_static::lazy_static! {
-        static ref CONFIG_DIR: PathBuf = super::HOME.join(".zed");
-        pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
-        pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
-    }
-}
-
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn icon_suffix(&self) -> Option<&str>;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
+    fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
+    where
+        Self: From<&'a Path>,
+    {
+        #[cfg(unix)]
+        {
+            use std::os::unix::prelude::OsStrExt;
+            Ok(Self::from(Path::new(OsStr::from_bytes(bytes))))
+        }
+        #[cfg(windows)]
+        {
+            use anyhow::anyhow;
+            use tendril::fmt::{Format, WTF8};
+            WTF8::validate(bytes)
+                .then(|| {
+                    // Safety: bytes are valid WTF-8 sequence.
+                    Self::from(Path::new(unsafe {
+                        OsStr::from_encoded_bytes_unchecked(bytes)
+                    }))
+                })
+                .ok_or_else(|| anyhow!("Invalid WTF-8 sequence: {bytes:?}"))
+        }
+    }
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -94,7 +127,7 @@ pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
 /// A representation of a path-like string with optional row and column numbers.
 /// Matching values example: `te`, `test.rs:22`, `te:22:5`, etc.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct PathLikeWithPosition<P> {
     pub path_like: P,
     pub row: Option<u32>,

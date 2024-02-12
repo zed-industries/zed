@@ -1,24 +1,23 @@
 use anyhow::{anyhow, Context, Result};
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
+use collections::HashMap;
 use editor::scroll::Autoscroll;
 use editor::Editor;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
-use gpui::AsyncAppContext;
+use gpui::{AppContext, AsyncAppContext, Global};
+use itertools::Itertools;
 use language::{Bias, Point};
-use std::collections::HashMap;
-use std::ffi::OsStr;
-use std::os::unix::prelude::OsStrExt;
+use release_channel::parse_zed_link;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::{path::PathBuf, sync::atomic::AtomicBool};
-use util::channel::parse_zed_link;
-use util::paths::PathLikeWithPosition;
+use util::paths::{PathExt, PathLikeWithPosition};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -34,6 +33,7 @@ pub enum OpenRequest {
     },
     OpenChannelNotes {
         channel_id: u64,
+        heading: Option<String>,
     },
 }
 
@@ -42,7 +42,19 @@ pub struct OpenListener {
     pub triggered: AtomicBool,
 }
 
+struct GlobalOpenListener(Arc<OpenListener>);
+
+impl Global for GlobalOpenListener {}
+
 impl OpenListener {
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        cx.global::<GlobalOpenListener>().0.clone()
+    }
+
+    pub fn set_global(listener: Arc<OpenListener>, cx: &mut AppContext) {
+        cx.set_global(GlobalOpenListener(listener))
+    }
+
     pub fn new() -> (Self, UnboundedReceiver<OpenRequest>) {
         let (tx, rx) = mpsc::unbounded();
         (
@@ -88,10 +100,20 @@ impl OpenListener {
             if let Some(slug) = parts.next() {
                 if let Some(id_str) = slug.split("-").last() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
-                        if Some("notes") == parts.next() {
-                            return Some(OpenRequest::OpenChannelNotes { channel_id });
-                        } else {
+                        let Some(next) = parts.next() else {
                             return Some(OpenRequest::JoinChannel { channel_id });
+                        };
+
+                        if let Some(heading) = next.strip_prefix("notes#") {
+                            return Some(OpenRequest::OpenChannelNotes {
+                                channel_id,
+                                heading: Some([heading].into_iter().chain(parts).join("/")),
+                            });
+                        } else if next == "notes" {
+                            return Some(OpenRequest::OpenChannelNotes {
+                                channel_id,
+                                heading: None,
+                            });
                         }
                     }
                 }
@@ -105,9 +127,9 @@ impl OpenListener {
         let paths: Vec<_> = urls
             .iter()
             .flat_map(|url| url.strip_prefix("file://"))
-            .map(|url| {
+            .flat_map(|url| {
                 let decoded = urlencoding::decode_binary(url.as_bytes());
-                PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
+                PathBuf::try_from_bytes(decoded.as_ref()).log_err()
             })
             .collect();
 
@@ -152,7 +174,7 @@ pub async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
-                let mut caret_positions = HashMap::new();
+                let mut caret_positions = HashMap::default();
 
                 let paths = if paths.is_empty() {
                     workspace::last_opened_workspace_paths()

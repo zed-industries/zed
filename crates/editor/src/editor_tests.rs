@@ -15,7 +15,8 @@ use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry, Override, Point,
+    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageRegistry,
+    Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -39,7 +40,8 @@ fn test_edit_events(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let buffer = cx.new_model(|cx| {
-        let mut buffer = language::Buffer::new(0, cx.entity_id().as_u64(), "123456");
+        let mut buffer =
+            language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "123456");
         buffer.set_group_interval(Duration::from_secs(1));
         buffer
     });
@@ -154,7 +156,9 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut now = Instant::now();
-    let buffer = cx.new_model(|cx| language::Buffer::new(0, cx.entity_id().as_u64(), "123456"));
+    let buffer = cx.new_model(|cx| {
+        language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "123456")
+    });
     let group_interval = buffer.update(cx, |buffer, _| buffer.transaction_group_interval());
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let editor = cx.add_window(|cx| build_editor(buffer.clone(), cx));
@@ -225,7 +229,8 @@ fn test_ime_composition(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let buffer = cx.new_model(|cx| {
-        let mut buffer = language::Buffer::new(0, cx.entity_id().as_u64(), "abcde");
+        let mut buffer =
+            language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "abcde");
         // Ensure automatic grouping doesn't occur.
         buffer.set_group_interval(Duration::ZERO);
         buffer
@@ -629,7 +634,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
             let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
-            invalid_anchor.text_anchor.buffer_id = Some(999);
+            invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
             let invalid_point = Point::new(9999, 0);
             editor.navigate(
                 Box::new(NavigationData {
@@ -2342,11 +2347,20 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
     ));
 
     let toml_buffer = cx.new_model(|cx| {
-        Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n").with_language(toml_language, cx)
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            "a = 1\nb = 2\n",
+        )
+        .with_language(toml_language, cx)
     });
     let rust_buffer = cx.new_model(|cx| {
-        Buffer::new(0, cx.entity_id().as_u64(), "const c: usize = 3;\n")
-            .with_language(rust_language, cx)
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            "const c: usize = 3;\n",
+        )
+        .with_language(rust_language, cx)
     });
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
@@ -2772,6 +2786,126 @@ async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
         dddˇ»
 
     "});
+
+    // Adding new line
+    cx.set_state(indoc! {"
+        aa«a
+        bbˇ»b
+    "});
+    cx.update_editor(|e, cx| e.manipulate_lines(cx, |lines| lines.push("added_line")));
+    cx.assert_editor_state(indoc! {"
+        «aaa
+        bbb
+        added_lineˇ»
+    "});
+
+    // Removing line
+    cx.set_state(indoc! {"
+        aa«a
+        bbbˇ»
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.pop();
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        «aaaˇ»
+    "});
+
+    // Removing all lines
+    cx.set_state(indoc! {"
+        aa«a
+        bbbˇ»
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.drain(..);
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_unique_lines_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Consider continuous selection as single selection
+    cx.set_state(indoc! {"
+        Aaa«aa
+        cˇ»c«c
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaaa
+        ccc
+        bb
+        aaaaaˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        Aaa«aa
+        cˇ»c«c
+        bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaaa
+        ccc
+        bbˇ»
+    "});
+
+    // Consider non continuous selection as distinct dedup operations
+    cx.set_state(indoc! {"
+        «aaaaa
+        bb
+        aaaaa
+        aaaaaˇ»
+
+        aaa«aaˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «aaaaa
+        bbˇ»
+
+        «aaaaaˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_unique_lines_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «Aaa
+        aAa
+        Aaaˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaa
+        aAaˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «Aaa
+        aAa
+        aaAˇ»
+    "});
+    cx.update_editor(|e, cx| e.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, cx));
+    cx.assert_editor_state(indoc! {"
+        «Aaaˇ»
+    "});
 }
 
 #[gpui::test]
@@ -2820,6 +2954,44 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         bb
         ccc
         ddddˇ»
+    "});
+
+    // Adding lines on each selection
+    cx.set_state(indoc! {"
+        2«
+        1ˇ»
+
+        bb«bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| e.manipulate_lines(cx, |lines| lines.push("added line")));
+    cx.assert_editor_state(indoc! {"
+        «2
+        1
+        added lineˇ»
+
+        «bbbb
+        aaaaa
+        added lineˇ»
+    "});
+
+    // Removing lines on each selection
+    cx.set_state(indoc! {"
+        2«
+        1ˇ»
+
+        bb«bb
+        aaaˇ»aa
+    "});
+    cx.update_editor(|e, cx| {
+        e.manipulate_lines(cx, |lines| {
+            lines.pop();
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        «2ˇ»
+
+        «bbbbˇ»
     "});
 }
 
@@ -3984,8 +4156,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx
-        .new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+            .with_language(language, cx)
+    });
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
@@ -4149,8 +4323,10 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
 
     let text = "fn a() {}";
 
-    let buffer = cx
-        .new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+            .with_language(language, cx)
+    });
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor
@@ -4713,8 +4889,10 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx
-        .new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+            .with_language(language, cx)
+    });
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     view.condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
@@ -4862,8 +5040,10 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx
-        .new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+            .with_language(language, cx)
+    });
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor
@@ -5056,7 +5236,10 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5175,7 +5358,10 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5297,7 +5483,10 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             // Enable Prettier formatting for the same buffer, and ensure
             // LSP is called instead of Prettier.
             prettier_parser_name: Some("test_parser".to_string()),
@@ -6095,7 +6284,13 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
 fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(3, 4, 'a')));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            sample_text(3, 4, 'a'),
+        )
+    });
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(
@@ -6179,7 +6374,13 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
             primary: None,
         }
     });
-    let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), initial_text));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            initial_text,
+        )
+    });
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(buffer, excerpt_ranges, cx);
@@ -6237,7 +6438,13 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
 fn test_refresh_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(3, 4, 'a')));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            sample_text(3, 4, 'a'),
+        )
+    });
     let mut excerpt1_id = None;
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
@@ -6322,7 +6529,13 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
 fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(3, 4, 'a')));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            sample_text(3, 4, 'a'),
+        )
+    });
     let mut excerpt1_id = None;
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
@@ -6417,8 +6630,10 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
         "{{} }\n",     //
     );
 
-    let buffer = cx
-        .new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx));
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+            .with_language(language, cx)
+    });
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     view.condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
@@ -7179,7 +7394,7 @@ async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContex
     init_test(cx, |_| {});
 
     let (copilot, copilot_lsp) = Copilot::fake(cx);
-    _ = cx.update(|cx| cx.set_global(copilot));
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
@@ -7432,7 +7647,7 @@ async fn test_copilot_completion_invalidation(
     init_test(cx, |_| {});
 
     let (copilot, copilot_lsp) = Copilot::fake(cx);
-    _ = cx.update(|cx| cx.set_global(copilot));
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
@@ -7496,10 +7711,22 @@ async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::T
     init_test(cx, |_| {});
 
     let (copilot, copilot_lsp) = Copilot::fake(cx);
-    _ = cx.update(|cx| cx.set_global(copilot));
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
 
-    let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n"));
-    let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "c = 3\nd = 4\n"));
+    let buffer_1 = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            "a = 1\nb = 2\n",
+        )
+    });
+    let buffer_2 = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            "c = 3\nd = 4\n",
+        )
+    });
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(
@@ -7601,7 +7828,7 @@ async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut gpui
     });
 
     let (copilot, copilot_lsp) = Copilot::fake(cx);
-    _ = cx.update(|cx| cx.set_global(copilot));
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -7688,7 +7915,10 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "{".to_string(),
@@ -7800,7 +8030,10 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let mut language = Language::new(
         LanguageConfig {
             name: Arc::clone(&language_name),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -8027,7 +8260,10 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     let mut cx = EditorLspTestContext::new(
         Language::new(
             LanguageConfig {
-                path_suffixes: vec!["jsx".into()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["jsx".into()],
+                    ..Default::default()
+                },
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
@@ -8128,7 +8364,10 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
@@ -8333,6 +8572,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
+        release_channel::init("0.0.0", cx);
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);

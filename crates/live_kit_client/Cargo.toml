@@ -6,7 +6,6 @@ description = "Bindings to LiveKit Swift client SDK"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/live_kit_client.rs"
 doctest = false
@@ -24,45 +23,56 @@ test-support = [
 ]
 
 [dependencies]
-collections = { path = "../collections", optional = true }
-gpui = { path = "../gpui", optional = true }
-live_kit_server = { path = "../live_kit_server", optional = true }
-media = { path = "../media" }
-
 anyhow.workspace = true
 async-broadcast = "0.4"
+async-trait = { workspace = true, optional = true }
+collections = { workspace = true, optional = true }
 futures.workspace = true
+gpui = { workspace = true, optional = true }
+live_kit_server = { workspace = true, optional = true }
 log.workspace = true
+media.workspace = true
+nanoid = { version ="0.4", optional = true}
 parking_lot.workspace = true
 postage.workspace = true
-
-async-trait = { workspace = true, optional = true }
-nanoid = { version ="0.4", optional = true}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9.3"
 
-[dev-dependencies]
-collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-live_kit_server = { path = "../live_kit_server" }
-media = { path = "../media" }
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+async-trait = { workspace = true }
+collections = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+live_kit_server.workspace = true
 nanoid = "0.4"
 
+[dev-dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 block = "0.1"
-bytes = "1.2"
 byteorder = "1.4"
+bytes = "1.2"
+collections = { workspace = true, features = ["test-support"] }
 foreign-types = "0.3"
 futures.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
 hmac = "0.12"
 jwt = "0.16"
+live_kit_server.workspace = true
+media.workspace = true
+nanoid = "0.4"
 parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 sha2 = "0.10"
 simplelog = "0.9"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+cocoa = "0.25"
+core-foundation = "0.9.3"
+core-graphics = "0.22.3"
+foreign-types = "0.3"
+objc = "0.2"
 
 [build-dependencies]
 serde.workspace = true

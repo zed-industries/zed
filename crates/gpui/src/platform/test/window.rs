@@ -5,6 +5,7 @@ use crate::{
 };
 use collections::HashMap;
 use parking_lot::Mutex;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
     rc::{Rc, Weak},
     sync::{self, Arc},
@@ -28,6 +29,22 @@ pub(crate) struct TestWindowState {
 
 #[derive(Clone)]
 pub(crate) struct TestWindow(pub(crate) Arc<Mutex<TestWindowState>>);
+
+impl HasWindowHandle for TestWindow {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        unimplemented!("Test Windows are not backed by a real platform window")
+    }
+}
+
+impl HasDisplayHandle for TestWindow {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        unimplemented!("Test Windows are not backed by a real platform window")
+    }
+}
 
 impl TestWindow {
     pub fn new(
@@ -154,7 +171,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        unimplemented!()
+        WindowAppearance::Light
     }
 
     fn display(&self) -> std::rc::Rc<dyn crate::PlatformDisplay> {
@@ -259,21 +276,19 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
         unimplemented!()
     }
-
-    fn invalidate(&self) {}
 
     fn draw(&self, _scene: &crate::Scene) {}
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
     }
+
+    fn set_graphics_profiler_enabled(&self, _enabled: bool) {}
 
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         Some(self)
@@ -327,6 +342,7 @@ impl PlatformAtlas for TestAtlas {
                     kind: crate::AtlasTextureKind::Path,
                 },
                 tile_id: TileId(tile_id),
+                padding: 0,
                 bounds: crate::Bounds {
                     origin: Point::default(),
                     size,

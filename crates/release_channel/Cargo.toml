@@ -1,0 +1,10 @@
+[package]
+name = "release_channel"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[dependencies]
+gpui.workspace = true
+once_cell = "1.19.0"

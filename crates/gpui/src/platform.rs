@@ -1,5 +1,10 @@
+// todo!(linux): remove
+#![cfg_attr(target_os = "linux", allow(dead_code))]
+
 mod app_menu;
 mod keystroke;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(any(test, feature = "test-support"))]
@@ -8,13 +13,14 @@ mod test;
 use crate::{
     Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout,
-    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result,
-    Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
+    SharedString, Size, Task, TaskLabel, WindowContext,
 };
-use anyhow::anyhow;
+use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use parking::Unparker;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -22,26 +28,32 @@ use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use std::{
     any::Any,
-    fmt::{self, Debug, Display},
+    fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
-    str::FromStr,
     sync::Arc,
 };
 use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keystroke::*;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 use time::UtcOffset;
+pub use util::SemanticVersion;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new())
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn current_platform() -> Rc<dyn Platform> {
+    Rc::new(LinuxPlatform::new())
 }
 
 pub(crate) trait Platform: 'static {
@@ -66,13 +78,8 @@ pub(crate) trait Platform: 'static {
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
 
-    fn set_display_link_output_callback(
-        &self,
-        display_id: DisplayId,
-        callback: Box<dyn FnMut() + Send>,
-    );
-    fn start_display_link(&self, display_id: DisplayId);
-    fn stop_display_link(&self, display_id: DisplayId);
+    /// Returns the appearance of the application's windows.
+    fn window_appearance(&self) -> WindowAppearance;
 
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
@@ -138,7 +145,7 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
-pub(crate) trait PlatformWindow {
+pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
@@ -174,10 +181,9 @@ pub(crate) trait PlatformWindow {
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
-    fn invalidate(&self);
     fn draw(&self, scene: &Scene);
-
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn set_graphics_profiler_enabled(&self, enabled: bool);
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -204,7 +210,7 @@ pub trait PlatformDispatcher: Send + Sync {
 }
 
 pub(crate) trait PlatformTextSystem: Send + Sync {
-    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
     fn all_font_names(&self) -> Vec<String>;
     fn all_font_families(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
@@ -295,6 +301,7 @@ pub(crate) trait PlatformAtlas: Send + Sync {
 pub(crate) struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
     pub(crate) tile_id: TileId,
+    pub(crate) padding: u32,
     pub(crate) bounds: Bounds<DevicePixels>,
 }
 
@@ -559,29 +566,30 @@ pub enum WindowBounds {
     Fixed(Bounds<GlobalPixels>),
 }
 
-/// The appearance of the window, as defined by the operating system
-/// On macOS, this corresponds to named [NSAppearance](https://developer.apple.com/documentation/appkit/nsappearance)
-/// values
+/// The appearance of the window, as defined by the operating system.
+///
+/// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
+/// values.
 #[derive(Copy, Clone, Debug)]
 pub enum WindowAppearance {
-    /// A light appearance
+    /// A light appearance.
     ///
-    /// on macOS, this corresponds to the `aqua` appearance
+    /// On macOS, this corresponds to the `aqua` appearance.
     Light,
 
-    /// A light appearance with vibrant colors
+    /// A light appearance with vibrant colors.
     ///
-    /// on macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance
+    /// On macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance.
     VibrantLight,
 
-    /// A dark appearance
+    /// A dark appearance.
     ///
-    /// on macOS, this corresponds to the `darkAqua` appearance
+    /// On macOS, this corresponds to the `darkAqua` appearance.
     Dark,
 
-    /// A dark appearance with vibrant colors
+    /// A dark appearance with vibrant colors.
     ///
-    /// on macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance
+    /// On macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance.
     VibrantDark,
 }
 
@@ -693,45 +701,6 @@ pub enum CursorStyle {
 impl Default for CursorStyle {
     fn default() -> Self {
         Self::Arrow
-    }
-}
-
-/// A datastructure representing a semantic version number
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct SemanticVersion {
-    major: usize,
-    minor: usize,
-    patch: usize,
-}
-
-impl FromStr for SemanticVersion {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        let mut components = s.trim().split('.');
-        let major = components
-            .next()
-            .ok_or_else(|| anyhow!("missing major version number"))?
-            .parse()?;
-        let minor = components
-            .next()
-            .ok_or_else(|| anyhow!("missing minor version number"))?
-            .parse()?;
-        let patch = components
-            .next()
-            .ok_or_else(|| anyhow!("missing patch version number"))?
-            .parse()?;
-        Ok(Self {
-            major,
-            minor,
-            patch,
-        })
-    }
-}
-
-impl Display for SemanticVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
     }
 }
 

@@ -5,7 +5,7 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
-use gpui::{AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -31,6 +31,7 @@ use std::{
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
 
+const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
@@ -322,12 +323,16 @@ impl LanguageServer {
         let mut buffer = Vec::new();
         loop {
             buffer.clear();
-            stdout.read_until(b'\n', &mut buffer).await?;
-            stdout.read_until(b'\n', &mut buffer).await?;
-            let header = std::str::from_utf8(&buffer)?;
-            let message_len: usize = header
-                .strip_prefix(CONTENT_LEN_HEADER)
-                .ok_or_else(|| anyhow!("invalid LSP message header {header:?}"))?
+
+            read_headers(&mut stdout, &mut buffer).await?;
+
+            let headers = std::str::from_utf8(&buffer)?;
+
+            let message_len = headers
+                .split("\n")
+                .find(|line| line.starts_with(CONTENT_LEN_HEADER))
+                .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
+                .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
                 .trim_end()
                 .parse()?;
 
@@ -335,7 +340,7 @@ impl LanguageServer {
             stdout.read_exact(&mut buffer).await?;
 
             if let Ok(message) = str::from_utf8(&buffer) {
-                log::trace!("incoming message: {}", message);
+                log::trace!("incoming message: {message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdOut, message);
                 }
@@ -393,7 +398,12 @@ impl LanguageServer {
 
         loop {
             buffer.clear();
-            stderr.read_until(b'\n', &mut buffer).await?;
+
+            let bytes_read = stderr.read_until(b'\n', &mut buffer).await?;
+            if bytes_read == 0 {
+                return Ok(());
+            }
+
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming stderr message:{message}");
                 for handler in io_handlers.lock().values_mut() {
@@ -450,7 +460,11 @@ impl LanguageServer {
     /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
-    pub async fn initialize(mut self, options: Option<Value>) -> Result<Arc<Self>> {
+    pub fn initialize(
+        mut self,
+        options: Option<Value>,
+        cx: &AppContext,
+    ) -> Task<Result<Arc<Self>>> {
         let root_uri = Url::from_file_path(&self.root_path).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
@@ -479,6 +493,15 @@ impl LanguageServer {
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
                         refresh_support: None,
                     }),
+                    workspace_edit: Some(WorkspaceEditClientCapabilities {
+                        resource_operations: Some(vec![
+                            ResourceOperationKind::Create,
+                            ResourceOperationKind::Rename,
+                            ResourceOperationKind::Delete,
+                        ]),
+                        document_changes: Some(true),
+                        ..WorkspaceEditClientCapabilities::default()
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -506,7 +529,10 @@ impl LanguageServer {
                         completion_item: Some(CompletionItemCapability {
                             snippet_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                                properties: vec!["additionalTextEdits".to_string()],
+                                properties: vec![
+                                    "documentation".to_string(),
+                                    "additionalTextEdits".to_string(),
+                                ],
                             }),
                             ..Default::default()
                         }),
@@ -570,18 +596,25 @@ impl LanguageServer {
                 uri: root_uri,
                 name: Default::default(),
             }]),
-            client_info: None,
+            client_info: Some(ClientInfo {
+                name: release_channel::ReleaseChannel::global(cx)
+                    .display_name()
+                    .to_string(),
+                version: Some(release_channel::AppVersion::global(cx).to_string()),
+            }),
             locale: None,
         };
 
-        let response = self.request::<request::Initialize>(params).await?;
-        if let Some(info) = response.server_info {
-            self.name = info.name;
-        }
-        self.capabilities = response.capabilities;
+        cx.spawn(|_| async move {
+            let response = self.request::<request::Initialize>(params).await?;
+            if let Some(info) = response.server_info {
+                self.name = info.name;
+            }
+            self.capabilities = response.capabilities;
 
-        self.notify::<notification::Initialized>(InitializedParams {})?;
-        Ok(Arc::new(self))
+            self.notify::<notification::Initialized>(InitializedParams {})?;
+            Ok(Arc::new(self))
+        })
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
@@ -1190,6 +1223,26 @@ impl FakeLanguageServer {
     }
 }
 
+pub(self) async fn read_headers<Stdout>(
+    reader: &mut BufReader<Stdout>,
+    buffer: &mut Vec<u8>,
+) -> Result<()>
+where
+    Stdout: AsyncRead + Unpin + Send + 'static,
+{
+    loop {
+        if buffer.len() >= HEADER_DELIMITER.len()
+            && buffer[(buffer.len() - HEADER_DELIMITER.len())..] == HEADER_DELIMITER[..]
+        {
+            return Ok(());
+        }
+
+        if reader.read_until(b'\n', buffer).await? == 0 {
+            return Err(anyhow!("cannot read LSP message headers"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1204,6 +1257,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init("0.0.0", cx);
+        });
         let (server, mut fake) =
             FakeLanguageServer::new("the-lsp".to_string(), Default::default(), cx.to_async());
 
@@ -1220,7 +1276,7 @@ mod tests {
             })
             .detach();
 
-        let server = server.initialize(None).await.unwrap();
+        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
@@ -1259,5 +1315,29 @@ mod tests {
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_read_headers() {
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Length: 123\r\n\r\n" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(buf, b"Content-Length: 123\r\n\r\n");
+
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n{\"somecontent\":123}" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(
+            buf,
+            b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n"
+        );
+
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n{\"somecontent\":true}" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(
+            buf,
+            b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n"
+        );
     }
 }

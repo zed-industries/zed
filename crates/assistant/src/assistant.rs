@@ -7,7 +7,7 @@ mod streaming_diff;
 use ai::providers::open_ai::Role;
 use anyhow::Result;
 pub use assistant_panel::AssistantPanel;
-use assistant_settings::OpenAIModel;
+use assistant_settings::OpenAiModel;
 use chrono::{DateTime, Local};
 use collections::HashMap;
 use fs::Fs;
@@ -68,7 +68,7 @@ struct SavedConversation {
     messages: Vec<SavedMessage>,
     message_metadata: HashMap<MessageId, MessageMetadata>,
     summary: String,
-    model: OpenAIModel,
+    model: OpenAiModel,
 }
 
 impl SavedConversation {

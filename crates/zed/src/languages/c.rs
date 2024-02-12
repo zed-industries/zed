@@ -28,15 +28,16 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("clangd/clangd", false, delegate.http_client()).await?;
-        let asset_name = format!("clangd-mac-{}.zip", release.name);
+        let release =
+            latest_github_release("clangd/clangd", true, false, delegate.http_client()).await?;
+        let asset_name = format!("clangd-mac-{}.zip", release.tag_name);
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         let version = GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
@@ -278,6 +279,7 @@ mod tests {
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
+    use text::BufferId;
 
     #[gpui::test]
     async fn test_c_autoindent(cx: &mut TestAppContext) {
@@ -295,8 +297,8 @@ mod tests {
         let language = crate::languages::language("c", tree_sitter_c::language(), None).await;
 
         cx.new_model(|cx| {
-            let mut buffer =
-                Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
+            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
+                .with_language(language, cx);
 
             // empty function
             buffer.edit([(0..0, "int main() {}")], None, cx);

@@ -174,6 +174,7 @@ impl MetalAtlasTexture {
                 origin: allocation.rectangle.min.into(),
                 size,
             },
+            padding: 0,
         };
         Some(tile)
     }

@@ -11,7 +11,7 @@ mod tests;
 mod undo_map;
 
 pub use anchor::*;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
@@ -26,8 +26,10 @@ pub use selection::*;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
+    fmt::Display,
     future::Future,
     iter::Iterator,
+    num::NonZeroU64,
     ops::{self, Deref, Range, Sub},
     str,
     sync::Arc,
@@ -59,10 +61,40 @@ pub struct Buffer {
     wait_for_version_txs: Vec<(clock::Global, oneshot::Sender<()>)>,
 }
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
+pub struct BufferId(NonZeroU64);
+
+impl Display for BufferId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl BufferId {
+    /// Returns Err if `id` is outside of BufferId domain.
+    pub fn new(id: u64) -> anyhow::Result<Self> {
+        let id = NonZeroU64::new(id).context("Buffer id cannot be 0.")?;
+        Ok(Self(id))
+    }
+    /// Increments this buffer id, returning the old value.
+    /// So that's a post-increment operator in disguise.
+    pub fn next(&mut self) -> Self {
+        let old = *self;
+        self.0 = self.0.saturating_add(1);
+        old
+    }
+}
+impl From<BufferId> for u64 {
+    fn from(id: BufferId) -> Self {
+        id.0.get()
+    }
+}
+
 #[derive(Clone)]
 pub struct BufferSnapshot {
     replica_id: ReplicaId,
-    remote_id: u64,
+    remote_id: BufferId,
     visible_text: Rope,
     deleted_text: Rope,
     line_ending: LineEnding,
@@ -369,7 +401,7 @@ struct Edits<'a, D: TextDimension, F: FnMut(&FragmentSummary) -> bool> {
     old_end: D,
     new_end: D,
     range: Range<(&'a Locator, usize)>,
-    buffer_id: u64,
+    buffer_id: BufferId,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -478,7 +510,7 @@ pub struct UndoOperation {
 }
 
 impl Buffer {
-    pub fn new(replica_id: u16, remote_id: u64, mut base_text: String) -> Buffer {
+    pub fn new(replica_id: u16, remote_id: BufferId, mut base_text: String) -> Buffer {
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
 
@@ -545,7 +577,7 @@ impl Buffer {
         self.lamport_clock.replica_id
     }
 
-    pub fn remote_id(&self) -> u64 {
+    pub fn remote_id(&self) -> BufferId {
         self.remote_id
     }
 
@@ -1590,7 +1622,7 @@ impl BufferSnapshot {
         &self.visible_text
     }
 
-    pub fn remote_id(&self) -> u64 {
+    pub fn remote_id(&self) -> BufferId {
         self.remote_id
     }
 

@@ -3,7 +3,9 @@ use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task};
+use gpui::{
+    AppContext, AsyncAppContext, Context as _, EventEmitter, Global, Model, ModelContext, Task,
+};
 use rpc::{proto, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
@@ -12,8 +14,12 @@ use util::ResultExt;
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let notification_store = cx.new_model(|cx| NotificationStore::new(client, user_store, cx));
-    cx.set_global(notification_store);
+    cx.set_global(GlobalNotificationStore(notification_store));
 }
+
+struct GlobalNotificationStore(Model<NotificationStore>);
+
+impl Global for GlobalNotificationStore {}
 
 pub struct NotificationStore {
     client: Arc<Client>,
@@ -70,7 +76,7 @@ struct NotificationId(u64);
 
 impl NotificationStore {
     pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<Model<Self>>().clone()
+        cx.global::<GlobalNotificationStore>().0.clone()
     }
 
     pub fn new(

@@ -1,3 +1,4 @@
+use collections::HashMap;
 use gpui::{px, AbsoluteLength, AppContext, FontFeatures, Pixels};
 use schemars::{
     gen::SchemaGenerator,
@@ -7,7 +8,7 @@ use schemars::{
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::SettingsJsonSchemaParams;
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -259,7 +260,7 @@ pub enum WorkingDirectory {
     FirstProjectDirectory,
     /// Always use this platform's home directory (if it can be found).
     AlwaysHome,
-    /// Slways use a specific directory. This value will be shell expanded.
+    /// Always use a specific directory. This value will be shell expanded.
     /// If this path is not a valid directory the terminal will default to
     /// this platform's home directory  (if it can be found).
     Always { directory: String },

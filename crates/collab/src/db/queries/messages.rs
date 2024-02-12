@@ -161,6 +161,7 @@ impl Database {
                         upper_half: nonce.0,
                         lower_half: nonce.1,
                     }),
+                    reply_to_message_id: row.reply_to_message_id.map(|id| id.to_proto()),
                 }
             })
             .collect::<Vec<_>>();
@@ -207,6 +208,7 @@ impl Database {
         mentions: &[proto::ChatMention],
         timestamp: OffsetDateTime,
         nonce: u128,
+        reply_to_message_id: Option<MessageId>,
     ) -> Result<CreatedChannelMessage> {
         self.transaction(|tx| async move {
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
@@ -245,6 +247,7 @@ impl Database {
                 sent_at: ActiveValue::Set(timestamp),
                 nonce: ActiveValue::Set(Uuid::from_u128(nonce)),
                 id: ActiveValue::NotSet,
+                reply_to_message_id: ActiveValue::Set(reply_to_message_id),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -383,6 +386,30 @@ impl Database {
         .exec_without_returning(&*tx)
         .await?;
         Ok(())
+    }
+
+    pub async fn observed_channel_messages(
+        &self,
+        channel_ids: &[ChannelId],
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<proto::ChannelMessageId>> {
+        let rows = observed_channel_messages::Entity::find()
+            .filter(observed_channel_messages::Column::UserId.eq(user_id))
+            .filter(
+                observed_channel_messages::Column::ChannelId
+                    .is_in(channel_ids.iter().map(|id| id.0)),
+            )
+            .all(&*tx)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|message| proto::ChannelMessageId {
+                channel_id: message.channel_id.to_proto(),
+                message_id: message.channel_message_id.to_proto(),
+            })
+            .collect())
     }
 
     pub async fn latest_channel_messages(

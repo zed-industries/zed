@@ -246,10 +246,15 @@ impl LspAdapter for EsLintLspAdapter {
         // At the time of writing the latest vscode-eslint release was released in 2020 and requires
         // special custom LSP protocol extensions be handled to fully initialize. Download the latest
         // prerelease instead to sidestep this issue
-        let release =
-            latest_github_release("microsoft/vscode-eslint", true, delegate.http_client()).await?;
+        let release = latest_github_release(
+            "microsoft/vscode-eslint",
+            false,
+            false,
+            delegate.http_client(),
+        )
+        .await?;
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: release.tarball_url,
         }))
     }
@@ -349,6 +354,7 @@ async fn get_cached_eslint_server_binary(
 #[cfg(test)]
 mod tests {
     use gpui::{Context, TestAppContext};
+    use text::BufferId;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -376,7 +382,8 @@ mod tests {
         .unindent();
 
         let buffer = cx.new_model(|cx| {
-            language::Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+            language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+                .with_language(language, cx)
         });
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(

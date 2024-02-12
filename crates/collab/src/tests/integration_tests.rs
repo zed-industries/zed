@@ -14,7 +14,7 @@ use gpui::{
 use language::{
     language_settings::{AllLanguageSettings, Formatter},
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
-    LineEnding, OffsetRangeExt, Point, Rope,
+    LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
@@ -1881,7 +1881,7 @@ fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> 
 }
 
 #[gpui::test]
-async fn test_mute_deafen(
+async fn test_mute(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -1920,7 +1920,7 @@ async fn test_mute_deafen(
     room_a.read_with(cx_a, |room, _| assert!(!room.is_muted()));
     room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
 
-    // Users A and B are both muted.
+    // Users A and B are both unmuted.
     assert_eq!(
         participant_audio_state(&room_a, cx_a),
         &[ParticipantAudioState {
@@ -1962,30 +1962,6 @@ async fn test_mute_deafen(
         }]
     );
 
-    // User A deafens
-    room_a.update(cx_a, |room, cx| room.toggle_deafen(cx));
-    executor.run_until_parked();
-
-    // User A does not hear user B.
-    room_a.read_with(cx_a, |room, _| assert!(room.is_muted()));
-    room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
-    assert_eq!(
-        participant_audio_state(&room_a, cx_a),
-        &[ParticipantAudioState {
-            user_id: client_b.user_id().unwrap(),
-            is_muted: false,
-            audio_tracks_playing: vec![false],
-        }]
-    );
-    assert_eq!(
-        participant_audio_state(&room_b, cx_b),
-        &[ParticipantAudioState {
-            user_id: client_a.user_id().unwrap(),
-            is_muted: true,
-            audio_tracks_playing: vec![true],
-        }]
-    );
-
     // User B calls user C, C joins.
     active_call_b
         .update(cx_b, |call, cx| {
@@ -2000,22 +1976,6 @@ async fn test_mute_deafen(
         .unwrap();
     executor.run_until_parked();
 
-    // User A does not hear users B or C.
-    assert_eq!(
-        participant_audio_state(&room_a, cx_a),
-        &[
-            ParticipantAudioState {
-                user_id: client_b.user_id().unwrap(),
-                is_muted: false,
-                audio_tracks_playing: vec![false],
-            },
-            ParticipantAudioState {
-                user_id: client_c.user_id().unwrap(),
-                is_muted: false,
-                audio_tracks_playing: vec![false],
-            }
-        ]
-    );
     assert_eq!(
         participant_audio_state(&room_b, cx_b),
         &[
@@ -2246,7 +2206,10 @@ async fn test_propagate_saves_and_fs_changes(
     let rust = Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -2254,7 +2217,10 @@ async fn test_propagate_saves_and_fs_changes(
     let javascript = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            path_suffixes: vec!["js".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -3783,7 +3749,10 @@ async fn test_collaborating_with_diagnostics(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4061,7 +4030,10 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4290,7 +4262,10 @@ async fn test_formatting_buffer(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4395,7 +4370,10 @@ async fn test_prettier_formatting_buffer(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             prettier_parser_name: Some("test_parser".to_string()),
             ..Default::default()
         },
@@ -4511,7 +4489,10 @@ async fn test_definition(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4655,7 +4636,10 @@ async fn test_references(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4852,7 +4836,10 @@ async fn test_document_highlights(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -4955,7 +4942,10 @@ async fn test_lsp_hover(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5051,7 +5041,10 @@ async fn test_project_symbols(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5160,7 +5153,10 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5967,6 +5963,6 @@ async fn test_cmd_k_left(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.simulate_keystrokes("left");
     workspace.update(cx, |workspace, cx| {
-        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 3);
+        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
     });
 }

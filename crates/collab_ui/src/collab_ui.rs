@@ -14,18 +14,15 @@ pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
     actions, point, AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, Task, WindowBounds,
-    WindowKind, WindowOptions,
+    WindowContext, WindowKind, WindowOptions,
 };
 pub use panel_settings::{
     ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
 use settings::Settings;
-use workspace::AppState;
+use workspace::{notifications::DetachAndPromptErr, AppState};
 
-actions!(
-    collab,
-    [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
-);
+actions!(collab, [ToggleScreenSharing, ToggleMute, LeaveCall]);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     CollaborationPanelSettings::register(cx);
@@ -41,7 +38,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     notifications::init(&app_state, cx);
 }
 
-pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
+pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut WindowContext) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let client = call.client();
@@ -64,7 +61,7 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
                 room.share_screen(cx)
             }
         });
-        toggle_screen_sharing.detach_and_log_err(cx);
+        toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", cx, |e, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
     }
 }
 
@@ -82,12 +79,6 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
 
             room.toggle_mute(cx)
         });
-    }
-}
-
-pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
-    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        room.update(cx, |room, cx| room.toggle_deafen(cx));
     }
 }
 

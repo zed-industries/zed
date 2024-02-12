@@ -1,8 +1,10 @@
 use crate::one_themes::one_dark;
-use crate::{SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
+use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
+use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
+    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
+    ViewContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -26,12 +28,121 @@ pub struct ThemeSettings {
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
+    pub theme_selection: Option<ThemeSelection>,
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
 }
 
+impl ThemeSettings {
+    /// Reloads the current theme.
+    ///
+    /// Reads the [`ThemeSettings`] to know which theme should be loaded,
+    /// taking into account the current [`SystemAppearance`].
+    pub fn reload_current_theme(cx: &mut AppContext) {
+        let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+        if let Some(theme_selection) = theme_settings.theme_selection.clone() {
+            let theme_name = theme_selection.theme(*SystemAppearance::global(cx));
+
+            if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
+                ThemeSettings::override_global(theme_settings, cx);
+            }
+        }
+    }
+}
+
+/// The appearance of the system.
+#[derive(Debug, Clone, Copy, Deref)]
+pub struct SystemAppearance(pub Appearance);
+
+impl Default for SystemAppearance {
+    fn default() -> Self {
+        Self(Appearance::Dark)
+    }
+}
+
+#[derive(Deref, DerefMut, Default)]
+struct GlobalSystemAppearance(SystemAppearance);
+
+impl Global for GlobalSystemAppearance {}
+
+impl SystemAppearance {
+    /// Initializes the [`SystemAppearance`] for the application.
+    pub fn init(cx: &mut AppContext) {
+        *cx.default_global::<GlobalSystemAppearance>() =
+            GlobalSystemAppearance(SystemAppearance(cx.window_appearance().into()));
+    }
+
+    /// Returns the global [`SystemAppearance`].
+    ///
+    /// Inserts a default [`SystemAppearance`] if one does not yet exist.
+    pub(crate) fn default_global(cx: &mut AppContext) -> Self {
+        cx.default_global::<GlobalSystemAppearance>().0
+    }
+
+    /// Returns the global [`SystemAppearance`].
+    pub fn global(cx: &AppContext) -> Self {
+        cx.global::<GlobalSystemAppearance>().0
+    }
+
+    /// Returns a mutable reference to the global [`SystemAppearance`].
+    pub fn global_mut(cx: &mut AppContext) -> &mut Self {
+        cx.global_mut::<GlobalSystemAppearance>()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct AdjustedBufferFontSize(Pixels);
+
+impl Global for AdjustedBufferFontSize {}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ThemeSelection {
+    Static(#[schemars(schema_with = "theme_name_ref")] String),
+    Dynamic {
+        #[serde(default)]
+        mode: ThemeMode,
+        #[schemars(schema_with = "theme_name_ref")]
+        light: String,
+        #[schemars(schema_with = "theme_name_ref")]
+        dark: String,
+    },
+}
+
+fn theme_name_ref(_: &mut SchemaGenerator) -> Schema {
+    Schema::new_ref("#/definitions/ThemeName".into())
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    /// Use the specified `light` theme.
+    Light,
+
+    /// Use the specified `dark` theme.
+    Dark,
+
+    /// Use the theme based on the system's appearance.
+    #[default]
+    System,
+}
+
+impl ThemeSelection {
+    pub fn theme(&self, system_appearance: Appearance) -> &str {
+        match self {
+            Self::Static(theme) => theme,
+            Self::Dynamic { mode, light, dark } => match mode {
+                ThemeMode::Light => light,
+                ThemeMode::Dark => dark,
+                ThemeMode::System => match system_appearance {
+                    Appearance::Light => light,
+                    Appearance::Dark => dark,
+                },
+            },
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
@@ -50,7 +161,7 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub buffer_font_features: Option<FontFeatures>,
     #[serde(default)]
-    pub theme: Option<String>,
+    pub theme: Option<ThemeSelection>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
@@ -87,6 +198,25 @@ impl ThemeSettings {
 
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
+    }
+
+    /// Switches to the theme with the given name, if it exists.
+    ///
+    /// Returns a `Some` containing the new theme if it was successful.
+    /// Returns `None` otherwise.
+    pub fn switch_theme(&mut self, theme: &str, cx: &mut AppContext) -> Option<Arc<Theme>> {
+        let themes = ThemeRegistry::default_global(cx);
+
+        let mut new_theme = None;
+
+        if let Some(theme) = themes.get(&theme).log_err() {
+            self.active_theme = theme.clone();
+            new_theme = Some(theme);
+        }
+
+        self.apply_theme_overrides();
+
+        new_theme
     }
 
     /// Applies the theme overrides, if there are any, to the current theme.
@@ -164,7 +294,8 @@ impl settings::Settings for ThemeSettings {
         user_values: &[&Self::FileContent],
         cx: &mut AppContext,
     ) -> Result<Self> {
-        let themes = cx.default_global::<ThemeRegistry>();
+        let themes = ThemeRegistry::default_global(cx);
+        let system_appearance = SystemAppearance::default_global(cx);
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
@@ -182,8 +313,9 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
+            theme_selection: defaults.theme.clone(),
             active_theme: themes
-                .get(defaults.theme.as_ref().unwrap())
+                .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
@@ -205,7 +337,11 @@ impl settings::Settings for ThemeSettings {
             }
 
             if let Some(value) = &value.theme {
-                if let Some(theme) = themes.get(value).log_err() {
+                this.theme_selection = Some(value.clone());
+
+                let theme_name = value.theme(*system_appearance);
+
+                if let Some(theme) = themes.get(theme_name).log_err() {
                     this.active_theme = theme;
                 }
             }
@@ -230,9 +366,9 @@ impl settings::Settings for ThemeSettings {
         cx: &AppContext,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
-        let theme_names = cx
-            .global::<ThemeRegistry>()
+        let theme_names = ThemeRegistry::global(cx)
             .list_names(params.staff_mode)
+            .into_iter()
             .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();
 
@@ -265,10 +401,6 @@ impl settings::Settings for ThemeSettings {
             .unwrap()
             .properties
             .extend([
-                (
-                    "theme".to_owned(),
-                    Schema::new_ref("#/definitions/ThemeName".into()),
-                ),
                 (
                     "buffer_font_family".to_owned(),
                     Schema::new_ref("#/definitions/FontFamilies".into()),

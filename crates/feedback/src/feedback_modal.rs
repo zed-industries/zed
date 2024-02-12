@@ -2,7 +2,7 @@ use std::{ops::RangeInclusive, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail};
 use bitflags::bitflags;
-use client::{Client, ZED_SERVER_URL};
+use client::Client;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
@@ -16,8 +16,8 @@ use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
-use util::ResultExt;
-use workspace::{ModalView, Toast, Workspace};
+use util::{http::HttpClient, ResultExt};
+use workspace::{DismissDecision, ModalView, Toast, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedRepo};
 
@@ -85,16 +85,16 @@ impl FocusableView for FeedbackModal {
 impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
-    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> DismissDecision {
         self.update_email_in_store(cx);
 
         if self.dismiss_modal {
-            return true;
+            return DismissDecision::Dismiss(true);
         }
 
         let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
         if !has_feedback {
-            return true;
+            return DismissDecision::Dismiss(true);
         }
 
         let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", None, &["Yes", "No"]);
@@ -110,7 +110,7 @@ impl ModalView for FeedbackModal {
         })
         .detach();
 
-        false
+        DismissDecision::Pending
     }
 }
 
@@ -225,7 +225,7 @@ impl FeedbackModal {
             None,
             &["Yes, Submit!", "No"],
         );
-        let client = cx.global::<Arc<Client>>().clone();
+        let client = Client::global(cx).clone();
         let specs = self.system_specs.clone();
         cx.spawn(|this, mut cx| async move {
             let answer = answer.await.ok();
@@ -293,12 +293,12 @@ impl FeedbackModal {
             }
         }
 
-        let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
         let telemetry = zed_client.telemetry();
         let metrics_id = telemetry.metrics_id();
         let installation_id = telemetry.installation_id();
         let is_staff = telemetry.is_staff();
         let http_client = zed_client.http_client();
+        let feedback_endpoint = http_client.zed_url("/api/feedback");
         let request = FeedbackRequestBody {
             feedback_text: &feedback_text,
             email,

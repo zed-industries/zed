@@ -1,10 +1,11 @@
 use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
-    Bounds, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
+    Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
+    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
+    WindowOptions,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -12,7 +13,7 @@ use cocoa::{
         CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowStyleMask, NSWindowTitleVisibility,
+        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -20,7 +21,7 @@ use cocoa::{
         NSSize, NSString, NSUInteger,
     },
 };
-use core_graphics::display::CGRect;
+use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
 use foreign_types::ForeignTypeRef;
 use futures::channel::oneshot;
@@ -32,6 +33,10 @@ use objc::{
     sel, sel_impl,
 };
 use parking_lot::Mutex;
+use raw_window_handle::{
+    AppKitDisplayHandle, AppKitWindowHandle, DisplayHandle, HasDisplayHandle, HasWindowHandle,
+    RawWindowHandle, WindowHandle,
+};
 use smallvec::SmallVec;
 use std::{
     any::Any,
@@ -41,11 +46,12 @@ use std::{
     ops::Range,
     os::raw::c_char,
     path::PathBuf,
-    ptr,
+    ptr::{self, NonNull},
     rc::Rc,
     sync::{Arc, Weak},
     time::Duration,
 };
+use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -245,6 +251,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_did_resize as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
+        sel!(windowDidChangeOcclusionState:),
+        window_did_change_occlusion_state as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
         sel!(windowWillEnterFullScreen:),
         window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
     );
@@ -255,6 +265,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.add_method(
         sel!(windowDidMove:),
         window_did_move as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidChangeScreen:),
+        window_did_change_screen as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
         sel!(windowDidBecomeKey:),
@@ -295,27 +309,19 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.register()
 }
 
-///Used to track what the IME does when we send it a keystroke.
-///This is only used to handle the case where the IME mysteriously
-///swallows certain keys.
-///
-///Basically a direct copy of the approach that WezTerm uses in:
-///github.com/wez/wezterm : d5755f3e : window/src/os/macos/window.rs
-enum ImeState {
-    Continue,
-    Acted,
-    None,
-}
-
-struct InsertText {
-    replacement_range: Option<Range<usize>>,
-    text: String,
+#[allow(clippy::enum_variant_names)]
+enum ImeInput {
+    InsertText(String, Option<Range<usize>>),
+    SetMarkedText(String, Option<Range<usize>>, Option<Range<usize>>),
+    UnmarkText,
 }
 
 struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
     native_window: id,
+    native_view: NonNull<Object>,
+    display_link: Option<DisplayLink>,
     renderer: MetalRenderer,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
@@ -328,16 +334,14 @@ struct MacWindowState {
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
-    pending_key_down: Option<(KeyDownEvent, Option<InsertText>)>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     last_fresh_keydown: Option<Keystroke>,
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     // State tracking what the IME did after the last request
-    ime_state: ImeState,
-    // Retains the last IME Text
-    ime_text: Option<String>,
+    input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
+    previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
 }
 
@@ -385,6 +389,21 @@ impl MacWindowState {
                 origin.x += button_spacing;
             }
         }
+    }
+
+    fn start_display_link(&mut self) {
+        self.stop_display_link();
+        let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
+        if let Some(mut display_link) =
+            DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()
+        {
+            display_link.start().log_err();
+            self.display_link = Some(display_link);
+        }
+    }
+
+    fn stop_display_link(&mut self) {
+        self.display_link = None;
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -453,6 +472,7 @@ impl MacWindow {
         handle: AnyWindowHandle,
         options: WindowOptions,
         executor: ForegroundExecutor,
+        instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -490,11 +510,8 @@ impl MacWindow {
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
-                let device_description = NSScreen::deviceDescription(screen);
-                let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
-                let screen_number = device_description.objectForKey_(screen_number_key);
-                let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
-                if screen_number as u32 == display.id().0 {
+                let display_id = display_id_for_screen(screen);
+                if display_id == display.id().0 {
                     target_screen = screen;
                     break;
                 }
@@ -516,14 +533,15 @@ impl MacWindow {
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
-
             assert!(!native_view.is_null());
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
                 native_window,
-                renderer: MetalRenderer::new(true),
+                native_view: NonNull::new_unchecked(native_view),
+                display_link: None,
+                renderer: MetalRenderer::new(instance_buffer_pool),
                 kind: options.kind,
                 request_frame_callback: None,
                 event_callback: None,
@@ -535,7 +553,6 @@ impl MacWindow {
                 close_callback: None,
                 appearance_changed_callback: None,
                 input_handler: None,
-                pending_key_down: None,
                 last_key_equivalent: None,
                 synthetic_drag_counter: 0,
                 last_fresh_keydown: None,
@@ -544,8 +561,8 @@ impl MacWindow {
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
-                ime_state: ImeState::None,
-                ime_text: None,
+                input_during_keydown: None,
+                previous_keydown_inserted_text: None,
                 external_files_dragged: false,
             })));
 
@@ -657,6 +674,7 @@ impl MacWindow {
             }
 
             window.0.lock().move_traffic_light();
+
             pool.drain();
 
             window
@@ -679,8 +697,9 @@ impl MacWindow {
 
 impl Drop for MacWindow {
     fn drop(&mut self) {
-        let this = self.0.lock();
+        let mut this = self.0.lock();
         let window = this.native_window;
+        this.display_link.take();
         this.executor
             .spawn(async move {
                 unsafe {
@@ -994,13 +1013,6 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn invalidate(&self) {
-        let this = self.0.lock();
-        unsafe {
-            let _: () = msg_send![this.native_window.contentView(), setNeedsDisplay: YES];
-        }
-    }
-
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
         this.renderer.draw(scene);
@@ -1008,6 +1020,34 @@ impl PlatformWindow for MacWindow {
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
+    }
+
+    /// Enables or disables the Metal HUD for debugging purposes. Note that this only works
+    /// when the app is bundled and it has the `MetalHudEnabled` key set to true in Info.plist.
+    fn set_graphics_profiler_enabled(&self, enabled: bool) {
+        self.0.lock().renderer.set_hud_enabled(enabled);
+    }
+}
+
+impl HasWindowHandle for MacWindow {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        // SAFETY: The AppKitWindowHandle is a wrapper around a pointer to an NSView
+        unsafe {
+            Ok(WindowHandle::borrow_raw(RawWindowHandle::AppKit(
+                AppKitWindowHandle::new(self.0.lock().native_view.cast()),
+            )))
+        }
+    }
+}
+
+impl HasDisplayHandle for MacWindow {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        // SAFETY: This is a no-op on macOS
+        unsafe { Ok(DisplayHandle::borrow_raw(AppKitDisplayHandle::new().into())) }
     }
 }
 
@@ -1069,6 +1109,15 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
     handle_key_event(this, native_event, false);
 }
 
+// Things to test if you're modifying this method:
+//  Brazilian layout:
+//   - `" space` should type a quote
+//   - `" backspace` should delete the marked quote
+//   - `" up` should type the quote, unmark it, and move up one line
+//   - `" cmd-down` should not leave a marked quote behind (it maybe should dispatch the key though?)
+//   - `cmd-ctrl-space` and clicking on an emoji should type it
+//  Czech (QWERTY) layout:
+//   - in vim mode `option-4`  should go to end of line (same as $)
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -1076,7 +1125,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let window_height = lock.content_size().height;
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
-    if let Some(PlatformInput::KeyDown(event)) = event {
+    if let Some(PlatformInput::KeyDown(mut event)) = event {
         // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
         // If that event isn't handled, it will then dispatch a "key down" event. GPUI
         // makes no distinction between these two types of events, so we need to ignore
@@ -1096,13 +1145,14 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 return YES;
             }
         } else {
-            lock.last_fresh_keydown = Some(keydown);
+            lock.last_fresh_keydown = Some(keydown.clone());
         }
-        lock.pending_key_down = Some((event, None));
+        lock.input_during_keydown = Some(SmallVec::new());
         drop(lock);
 
         // Send the event to the input context for IME handling, unless the `fn` modifier is
         // being pressed.
+        // this will call back into `insert_text`, etc.
         if !fn_modifier {
             unsafe {
                 let input_context: id = msg_send![this, inputContext];
@@ -1112,47 +1162,62 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         let mut handled = false;
         let mut lock = window_state.lock();
-        let ime_text = lock.ime_text.clone();
-        if let Some((event, insert_text)) = lock.pending_key_down.take() {
-            let is_held = event.is_held;
-            if let Some(mut callback) = lock.event_callback.take() {
-                drop(lock);
+        let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
+        let mut input_during_keydown = lock.input_during_keydown.take().unwrap();
+        let mut callback = lock.event_callback.take();
+        drop(lock);
 
-                let is_composing =
-                    with_input_handler(this, |input_handler| input_handler.marked_text_range())
-                        .flatten()
-                        .is_some();
+        let last_ime = input_during_keydown.pop();
+        // on a brazilian keyboard typing `"` and then hitting `up` will cause two IME
+        // events, one to unmark the quote, and one to send the up arrow.
+        for ime in input_during_keydown {
+            send_to_input_handler(this, ime);
+        }
+
+        let is_composing =
+            with_input_handler(this, |input_handler| input_handler.marked_text_range())
+                .flatten()
+                .is_some();
+
+        if let Some(ime) = last_ime {
+            if let ImeInput::InsertText(text, _) = &ime {
                 if !is_composing {
-                    handled = callback(PlatformInput::KeyDown(event));
-                }
-
-                if !handled {
-                    if let Some(insert) = insert_text {
-                        handled = true;
-                        with_input_handler(this, |input_handler| {
-                            input_handler
-                                .replace_text_in_range(insert.replacement_range, &insert.text)
-                        });
-                    } else if !is_composing && is_held {
-                        if let Some(last_insert_text) = ime_text {
-                            //MacOS IME is a bit funky, and even when you've told it there's nothing to
-                            //inter it will still swallow certain keys (e.g. 'f', 'j') and not others
-                            //(e.g. 'n'). This is a problem for certain kinds of views, like the terminal
-                            with_input_handler(this, |input_handler| {
-                                if input_handler.selected_text_range().is_none() {
-                                    handled = true;
-                                    input_handler.replace_text_in_range(None, &last_insert_text)
-                                }
-                            });
-                        }
+                    window_state.lock().previous_keydown_inserted_text = Some(text.clone());
+                    if let Some(callback) = callback.as_mut() {
+                        event.keystroke.ime_key = Some(text.clone());
+                        handled = callback(PlatformInput::KeyDown(event));
                     }
                 }
-
-                window_state.lock().event_callback = Some(callback);
             }
-        } else {
-            handled = true;
+
+            if !handled {
+                handled = true;
+                send_to_input_handler(this, ime);
+            }
+        } else if !is_composing {
+            let is_held = event.is_held;
+
+            if let Some(callback) = callback.as_mut() {
+                handled = callback(PlatformInput::KeyDown(event));
+            }
+
+            if !handled && is_held {
+                if let Some(text) = previous_keydown_inserted_text {
+                    // MacOS IME is a bit funky, and even when you've told it there's nothing to
+                    // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
+                    // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
+                    with_input_handler(this, |input_handler| {
+                        if input_handler.selected_text_range().is_none() {
+                            handled = true;
+                            input_handler.replace_text_in_range(None, &text)
+                        }
+                    });
+                    window_state.lock().previous_keydown_inserted_text = Some(text);
+                }
+            }
         }
+
+        window_state.lock().event_callback = callback;
 
         handled as BOOL
     } else {
@@ -1292,6 +1357,22 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     }
 }
 
+extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let lock = &mut *window_state.lock();
+    unsafe {
+        if lock
+            .native_window
+            .occlusionState()
+            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+        {
+            lock.start_display_link();
+        } else {
+            lock.stop_display_link();
+        }
+    }
+}
+
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     window_state.as_ref().lock().move_traffic_light();
@@ -1323,6 +1404,12 @@ extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
         callback();
         window_state.lock().moved_callback = Some(callback);
     }
+}
+
+extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    lock.start_display_link();
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
@@ -1468,6 +1555,24 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     if let Some(mut callback) = lock.request_frame_callback.take() {
+        lock.renderer.set_presents_with_transaction(true);
+        lock.stop_display_link();
+        drop(lock);
+        callback();
+
+        let mut lock = window_state.lock();
+        lock.request_frame_callback = Some(callback);
+        lock.renderer.set_presents_with_transaction(false);
+        lock.start_display_link();
+    }
+}
+
+unsafe extern "C" fn step(view: *mut c_void) {
+    let view = view as id;
+    let window_state = unsafe { get_window_state(&*view) };
+    let mut lock = window_state.lock();
+
+    if let Some(mut callback) = lock.request_frame_callback.take() {
         drop(lock);
         callback();
         window_state.lock().request_frame_callback = Some(callback);
@@ -1528,11 +1633,6 @@ extern "C" fn first_rect_for_character_range(
 
 extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NSRange) {
     unsafe {
-        let window_state = get_window_state(this);
-        let mut lock = window_state.lock();
-        let pending_key_down = lock.pending_key_down.take();
-        drop(lock);
-
         let is_attributed_string: BOOL =
             msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
         let text: id = if is_attributed_string == YES {
@@ -1544,28 +1644,10 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
             .to_str()
             .unwrap();
         let replacement_range = replacement_range.to_range();
-
-        window_state.lock().ime_text = Some(text.to_string());
-        window_state.lock().ime_state = ImeState::Acted;
-
-        let is_composing =
-            with_input_handler(this, |input_handler| input_handler.marked_text_range())
-                .flatten()
-                .is_some();
-
-        if is_composing || text.chars().count() > 1 || pending_key_down.is_none() {
-            with_input_handler(this, |input_handler| {
-                input_handler.replace_text_in_range(replacement_range, text)
-            });
-        } else {
-            let mut pending_key_down = pending_key_down.unwrap();
-            pending_key_down.1 = Some(InsertText {
-                replacement_range,
-                text: text.to_string(),
-            });
-            pending_key_down.0.keystroke.ime_key = Some(text.to_string());
-            window_state.lock().pending_key_down = Some(pending_key_down);
-        }
+        send_to_input_handler(
+            this,
+            ImeInput::InsertText(text.to_string(), replacement_range),
+        );
     }
 }
 
@@ -1577,9 +1659,6 @@ extern "C" fn set_marked_text(
     replacement_range: NSRange,
 ) {
     unsafe {
-        let window_state = get_window_state(this);
-        window_state.lock().pending_key_down.take();
-
         let is_attributed_string: BOOL =
             msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
         let text: id = if is_attributed_string == YES {
@@ -1593,24 +1672,14 @@ extern "C" fn set_marked_text(
             .to_str()
             .unwrap();
 
-        window_state.lock().ime_state = ImeState::Acted;
-        window_state.lock().ime_text = Some(text.to_string());
-
-        with_input_handler(this, |input_handler| {
-            input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range);
-        });
+        send_to_input_handler(
+            this,
+            ImeInput::SetMarkedText(text.to_string(), replacement_range, selected_range),
+        );
     }
 }
-
 extern "C" fn unmark_text(this: &Object, _: Sel) {
-    unsafe {
-        let state = get_window_state(this);
-        let mut borrow = state.lock();
-        borrow.ime_state = ImeState::Acted;
-        borrow.ime_text.take();
-    }
-
-    with_input_handler(this, |input_handler| input_handler.unmark_text());
+    send_to_input_handler(this, ImeInput::UnmarkText);
 }
 
 extern "C" fn attributed_substring_for_proposed_range(
@@ -1636,14 +1705,7 @@ extern "C" fn attributed_substring_for_proposed_range(
     .unwrap_or(nil)
 }
 
-extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
-    unsafe {
-        let state = get_window_state(this);
-        let mut borrow = state.lock();
-        borrow.ime_state = ImeState::Continue;
-        borrow.ime_text.take();
-    }
-}
+extern "C" fn do_command_by_selector(_: &Object, _: Sel, _: Sel) {}
 
 extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     unsafe {
@@ -1792,4 +1854,36 @@ where
     } else {
         None
     }
+}
+
+fn send_to_input_handler(window: &Object, ime: ImeInput) {
+    unsafe {
+        let window_state = get_window_state(window);
+        let mut lock = window_state.lock();
+        if let Some(ime_input) = lock.input_during_keydown.as_mut() {
+            ime_input.push(ime);
+            return;
+        }
+        if let Some(mut input_handler) = lock.input_handler.take() {
+            drop(lock);
+            match ime {
+                ImeInput::InsertText(text, range) => {
+                    input_handler.replace_text_in_range(range, &text)
+                }
+                ImeInput::SetMarkedText(text, range, marked_range) => {
+                    input_handler.replace_and_mark_text_in_range(range, &text, marked_range)
+                }
+                ImeInput::UnmarkText => input_handler.unmark_text(),
+            }
+            window_state.lock().input_handler = Some(input_handler);
+        }
+    }
+}
+
+unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
+    let device_description = NSScreen::deviceDescription(screen);
+    let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+    let screen_number = device_description.objectForKey_(screen_number_key);
+    let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
+    screen_number as CGDirectDisplayID
 }

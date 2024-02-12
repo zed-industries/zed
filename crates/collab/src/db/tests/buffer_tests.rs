@@ -67,7 +67,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let mut buffer_a = Buffer::new(0, 0, "".to_string());
+    let mut buffer_a = Buffer::new(0, text::BufferId::new(1).unwrap(), "".to_string());
     let mut operations = Vec::new();
     operations.push(buffer_a.edit([(0..0, "hello world")]));
     operations.push(buffer_a.edit([(5..5, ", cruel")]));
@@ -90,7 +90,11 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let mut buffer_b = Buffer::new(0, 0, buffer_response_b.base_text);
+    let mut buffer_b = Buffer::new(
+        0,
+        text::BufferId::new(1).unwrap(),
+        buffer_response_b.base_text,
+    );
     buffer_b
         .apply_ops(buffer_response_b.operations.into_iter().map(|operation| {
             let operation = proto::deserialize_operation(operation).unwrap();
@@ -223,7 +227,11 @@ async fn test_channel_buffers_last_operations(db: &Database) {
                 .unwrap(),
         );
 
-        text_buffers.push(Buffer::new(0, 0, "".to_string()));
+        text_buffers.push(Buffer::new(
+            0,
+            text::BufferId::new(1).unwrap(),
+            "".to_string(),
+        ));
     }
 
     let operations = db
@@ -270,7 +278,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     db.join_channel_buffer(buffers[1].channel_id, user_id, connection_id)
         .await
         .unwrap();
-    text_buffers[1] = Buffer::new(1, 0, "def".to_string());
+    text_buffers[1] = Buffer::new(1, text::BufferId::new(1).unwrap(), "def".to_string());
     update_buffer(
         buffers[1].channel_id,
         user_id,
@@ -329,17 +337,12 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     let buffer_changes = db
         .transaction(|tx| {
             let buffers = &buffers;
-            async move {
-                db.latest_channel_buffer_changes(
-                    &[
-                        buffers[0].channel_id,
-                        buffers[1].channel_id,
-                        buffers[2].channel_id,
-                    ],
-                    &*tx,
-                )
-                .await
-            }
+            let mut hash = HashMap::default();
+            hash.insert(buffers[0].id, buffers[0].channel_id);
+            hash.insert(buffers[1].id, buffers[1].channel_id);
+            hash.insert(buffers[2].id, buffers[2].channel_id);
+
+            async move { db.latest_channel_buffer_changes(&hash, &*tx).await }
         })
         .await
         .unwrap();

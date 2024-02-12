@@ -4,7 +4,7 @@ use ai::prompts::file_context::FileContext;
 use ai::prompts::generate::GenerateInlineContent;
 use ai::prompts::preamble::EngineerPreamble;
 use ai::prompts::repository_context::{PromptCodeSnippet, RepositoryContext};
-use ai::providers::open_ai::OpenAILanguageModel;
+use ai::providers::open_ai::OpenAiLanguageModel;
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp::{self, Reverse};
 use std::ops::Range;
@@ -131,7 +131,7 @@ pub fn generate_content_prompt(
     project_name: Option<String>,
 ) -> anyhow::Result<String> {
     // Using new Prompt Templates
-    let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAILanguageModel::load(model));
+    let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAiLanguageModel::load(model));
     let lang_name = if let Some(language_name) = language_name {
         Some(language_name.to_string())
     } else {
@@ -172,20 +172,24 @@ pub fn generate_content_prompt(
 
 #[cfg(test)]
 pub(crate) mod tests {
-
     use super::*;
-    use std::sync::Arc;
-
     use gpui::{AppContext, Context};
     use indoc::indoc;
-    use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
+    use language::{
+        language_settings, tree_sitter_rust, Buffer, BufferId, Language, LanguageConfig,
+        LanguageMatcher, Point,
+    };
     use settings::SettingsStore;
+    use std::sync::Arc;
 
     pub(crate) fn rust_lang() -> Language {
         Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -253,8 +257,9 @@ pub(crate) mod tests {
                 }
             }
         "};
-        let buffer =
-            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(0, BufferId::new(1).unwrap(), text).with_language(Arc::new(rust_lang()), cx)
+        });
         let snapshot = buffer.read(cx).snapshot();
 
         assert_eq!(

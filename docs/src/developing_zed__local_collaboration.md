@@ -12,7 +12,7 @@ script/bootstrap
 
 This script will set up the `zed` Postgres database, and populate it with some users. It requires internet access, because it fetches some users from the GitHub API.
 
-The script will create several *admin* users, who you'll sign in as by default when developing locally. The GitHub logins for these default admin users are specified in this file:
+The script will create several _admin_ users, who you'll sign in as by default when developing locally. The GitHub logins for these default admin users are specified in this file:
 
 ```
 cat crates/collab/.admins.default.json

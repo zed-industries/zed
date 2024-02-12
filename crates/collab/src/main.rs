@@ -14,6 +14,7 @@ use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,51 +27,16 @@ async fn main() -> Result<()> {
 
     match args().skip(1).next().as_deref() {
         Some("version") => {
-            println!("collab v{VERSION}");
+            println!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"));
         }
         Some("migrate") => {
-            let config = envy::from_env::<MigrateConfig>().expect("error loading config");
-            let mut db_options = db::ConnectOptions::new(config.database_url.clone());
-            db_options.max_connections(5);
-            let db = Database::new(db_options, Executor::Production).await?;
-
-            let migrations_path = config
-                .migrations_path
-                .as_deref()
-                .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")));
-
-            let migrations = db.migrate(&migrations_path, false).await?;
-            for (migration, duration) in migrations {
-                println!(
-                    "Ran {} {} {:?}",
-                    migration.version, migration.description, duration
-                );
-            }
-
-            return Ok(());
+            run_migrations().await?;
         }
         Some("serve") => {
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
 
-            if config.is_development() {
-                // sanity check database url so even if we deploy a busted ZED_ENVIRONMENT to production
-                // we do not run
-                if config.database_url != "postgres://postgres@localhost/zed" {
-                    panic!("about to run development migrations on a non-development database?")
-                }
-                let migrations_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
-                let db_options = db::ConnectOptions::new(config.database_url.clone());
-                let db = Database::new(db_options, Executor::Production).await?;
-
-                let migrations = db.migrate(&migrations_path, false).await?;
-                for (migration, duration) in migrations {
-                    println!(
-                        "Ran {} {} {:?}",
-                        migration.version, migration.description, duration
-                    );
-                }
-            }
+            run_migrations().await?;
 
             let state = AppState::new(config).await?;
 
@@ -116,8 +82,31 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn run_migrations() -> Result<()> {
+    let config = envy::from_env::<MigrateConfig>().expect("error loading config");
+    let db_options = db::ConnectOptions::new(config.database_url.clone());
+    let db = Database::new(db_options, Executor::Production).await?;
+
+    let migrations_path = config
+        .migrations_path
+        .as_deref()
+        .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")));
+
+    let migrations = db.migrate(&migrations_path, false).await?;
+    for (migration, duration) in migrations {
+        log::info!(
+            "Migrated {} {} {:?}",
+            migration.version,
+            migration.description,
+            duration
+        );
+    }
+
+    return Ok(());
+}
+
 async fn handle_root() -> String {
-    format!("collab v{VERSION}")
+    format!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"))
 }
 
 async fn handle_liveness_probe(Extension(state): Extension<Arc<AppState>>) -> Result<String> {

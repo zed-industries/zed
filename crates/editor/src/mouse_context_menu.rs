@@ -25,31 +25,40 @@ pub fn deploy_context_menu(
         return;
     }
 
-    // Don't show the context menu if there isn't a project associated with this editor
-    if editor.project.is_none() {
-        return;
-    }
+    let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
+        let menu = custom(editor, point, cx);
+        editor.custom_context_menu = Some(custom);
+        if menu.is_none() {
+            return;
+        }
+        menu.unwrap()
+    } else {
+        // Don't show the context menu if there isn't a project associated with this editor
+        if editor.project.is_none() {
+            return;
+        }
 
-    // Move the cursor to the clicked location so that dispatched actions make sense
-    editor.change_selections(None, cx, |s| {
-        s.clear_disjoint();
-        s.set_pending_display_range(point..point, SelectMode::Character);
-    });
+        // Move the cursor to the clicked location so that dispatched actions make sense
+        editor.change_selections(None, cx, |s| {
+            s.clear_disjoint();
+            s.set_pending_display_range(point..point, SelectMode::Character);
+        });
 
-    let context_menu = ui::ContextMenu::build(cx, |menu, _cx| {
-        menu.action("Rename Symbol", Box::new(Rename))
-            .action("Go to Definition", Box::new(GoToDefinition))
-            .action("Go to Type Definition", Box::new(GoToTypeDefinition))
-            .action("Find All References", Box::new(FindAllReferences))
-            .action(
-                "Code Actions",
-                Box::new(ToggleCodeActions {
-                    deployed_from_indicator: false,
-                }),
-            )
-            .separator()
-            .action("Reveal in Finder", Box::new(RevealInFinder))
-    });
+        ui::ContextMenu::build(cx, |menu, _cx| {
+            menu.action("Rename Symbol", Box::new(Rename))
+                .action("Go to Definition", Box::new(GoToDefinition))
+                .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+                .action("Find All References", Box::new(FindAllReferences))
+                .action(
+                    "Code Actions",
+                    Box::new(ToggleCodeActions {
+                        deployed_from_indicator: false,
+                    }),
+                )
+                .separator()
+                .action("Reveal in Finder", Box::new(RevealInFinder))
+        })
+    };
     let context_menu_focus = context_menu.focus_handle(cx);
     cx.focus(&context_menu_focus);
 

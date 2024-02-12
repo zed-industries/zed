@@ -9,7 +9,9 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
-use theme::{Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
+use theme::{
+    Appearance, Theme, ThemeMeta, ThemeMode, ThemeRegistry, ThemeSelection, ThemeSettings,
+};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
@@ -34,24 +36,6 @@ pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Worksp
             cx,
         )
     });
-}
-
-#[cfg(debug_assertions)]
-pub fn reload(cx: &mut AppContext) {
-    let current_theme_name = cx.theme().name.clone();
-    let current_theme = cx.update_global(|registry: &mut ThemeRegistry, _cx| {
-        registry.clear();
-        registry.get(&current_theme_name)
-    });
-    match current_theme {
-        Ok(theme) => {
-            ThemeSelectorDelegate::set_theme(theme, cx);
-            log::info!("reloaded theme {}", current_theme_name);
-        }
-        Err(error) => {
-            log::error!("failed to load theme {}: {:?}", current_theme_name, error)
-        }
-    }
 }
 
 impl ModalView for ThemeSelector {}
@@ -102,8 +86,8 @@ impl ThemeSelectorDelegate {
         let original_theme = cx.theme().clone();
 
         let staff_mode = cx.is_staff();
-        let registry = cx.global::<ThemeRegistry>();
-        let mut themes = registry.list(staff_mode).collect::<Vec<_>>();
+        let registry = ThemeRegistry::global(cx);
+        let mut themes = registry.list(staff_mode);
         themes.sort_unstable_by(|a, b| {
             a.appearance
                 .is_light()
@@ -135,7 +119,7 @@ impl ThemeSelectorDelegate {
 
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let registry = cx.global::<ThemeRegistry>();
+            let registry = ThemeRegistry::global(cx);
             match registry.get(&mat.string) {
                 Ok(theme) => {
                     Self::set_theme(theme, cx);
@@ -185,8 +169,26 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.telemetry
             .report_setting_event("theme", theme_name.to_string());
 
+        let appearance = Appearance::from(cx.appearance());
+
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings| {
-            settings.theme = Some(theme_name.to_string());
+            if let Some(selection) = settings.theme.as_mut() {
+                let theme_to_update = match selection {
+                    ThemeSelection::Static(theme) => theme,
+                    ThemeSelection::Dynamic { mode, light, dark } => match mode {
+                        ThemeMode::Light => light,
+                        ThemeMode::Dark => dark,
+                        ThemeMode::System => match appearance {
+                            Appearance::Light => light,
+                            Appearance::Dark => dark,
+                        },
+                    },
+                };
+
+                *theme_to_update = theme_name.to_string();
+            } else {
+                settings.theme = Some(ThemeSelection::Static(theme_name.to_string()));
+            }
         });
 
         self.view

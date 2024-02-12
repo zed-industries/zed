@@ -170,4 +170,34 @@ impl Modifiers {
     pub fn modified(&self) -> bool {
         self.control || self.alt || self.shift || self.command || self.function
     }
+
+    /// helper method for Modifiers with no modifiers
+    pub fn none() -> Modifiers {
+        Default::default()
+    }
+
+    /// helper method for Modifiers with just command
+    pub fn command() -> Modifiers {
+        Modifiers {
+            command: true,
+            ..Default::default()
+        }
+    }
+
+    /// helper method for Modifiers with just shift
+    pub fn shift() -> Modifiers {
+        Modifiers {
+            shift: true,
+            ..Default::default()
+        }
+    }
+
+    /// helper method for Modifiers with command + shift
+    pub fn command_shift() -> Modifiers {
+        Modifiers {
+            shift: true,
+            command: true,
+            ..Default::default()
+        }
+    }
 }

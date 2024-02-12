@@ -1,14 +1,22 @@
+#![cfg_attr(not(target_os = "macos"), allow(unused))]
+
 use std::{
     env,
     path::{Path, PathBuf},
-    process::{self, Command},
 };
 
 use cbindgen::Config;
 
 fn main() {
+    #[cfg(target_os = "macos")]
     generate_dispatch_bindings();
+    #[cfg(target_os = "macos")]
     let header_path = generate_shader_bindings();
+    #[cfg(target_os = "macos")]
+    #[cfg(feature = "runtime_shaders")]
+    emit_stitched_shaders(&header_path);
+    #[cfg(target_os = "macos")]
+    #[cfg(not(feature = "runtime_shaders"))]
     compile_metal_shaders(&header_path);
 }
 
@@ -19,12 +27,21 @@ fn generate_dispatch_bindings() {
     let bindings = bindgen::Builder::default()
         .header("src/platform/mac/dispatch.h")
         .allowlist_var("_dispatch_main_q")
+        .allowlist_var("_dispatch_source_type_data_add")
         .allowlist_var("DISPATCH_QUEUE_PRIORITY_DEFAULT")
+        .allowlist_var("DISPATCH_QUEUE_PRIORITY_HIGH")
         .allowlist_var("DISPATCH_TIME_NOW")
         .allowlist_function("dispatch_get_global_queue")
         .allowlist_function("dispatch_async_f")
         .allowlist_function("dispatch_after_f")
         .allowlist_function("dispatch_time")
+        .allowlist_function("dispatch_source_merge_data")
+        .allowlist_function("dispatch_source_create")
+        .allowlist_function("dispatch_source_set_event_handler_f")
+        .allowlist_function("dispatch_resume")
+        .allowlist_function("dispatch_suspend")
+        .allowlist_function("dispatch_source_cancel")
+        .allowlist_function("dispatch_set_context")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .layout_tests(false)
         .generate()
@@ -95,12 +112,30 @@ fn generate_shader_bindings() -> PathBuf {
     output_path
 }
 
+/// To enable runtime compilation, we need to "stitch" the shaders file with the generated header
+/// so that it is self-contained.
+#[cfg(feature = "runtime_shaders")]
+fn emit_stitched_shaders(header_path: &Path) {
+    use std::str::FromStr;
+    fn stitch_header(header: &Path, shader_path: &Path) -> std::io::Result<PathBuf> {
+        let header_contents = std::fs::read_to_string(header)?;
+        let shader_contents = std::fs::read_to_string(shader_path)?;
+        let stitched_contents = format!("{header_contents}\n{shader_contents}");
+        let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("stitched_shaders.metal");
+        let _ = std::fs::write(&out_path, stitched_contents)?;
+        Ok(out_path)
+    }
+    let shader_source_path = "./src/platform/mac/shaders.metal";
+    let shader_path = PathBuf::from_str(shader_source_path).unwrap();
+    stitch_header(header_path, &shader_path).unwrap();
+    println!("cargo:rerun-if-changed={}", &shader_source_path);
+}
+#[cfg(not(feature = "runtime_shaders"))]
 fn compile_metal_shaders(header_path: &Path) {
+    use std::process::{self, Command};
     let shader_path = "./src/platform/mac/shaders.metal";
     let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
     let metallib_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
-
-    println!("cargo:rerun-if-changed={}", header_path.display());
     println!("cargo:rerun-if-changed={}", shader_path);
 
     let output = Command::new("xcrun")

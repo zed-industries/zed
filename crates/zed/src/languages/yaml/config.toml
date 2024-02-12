@@ -1,4 +1,5 @@
 name = "YAML"
+grammar = "yaml"
 path_suffixes = ["yml", "yaml"]
 line_comments = ["# "]
 autoclose_before = ",]}"

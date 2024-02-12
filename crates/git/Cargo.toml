@@ -5,24 +5,23 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [lib]
 path = "src/git.rs"
 
 [dependencies]
 anyhow.workspace = true
-clock = { path = "../clock" }
-lazy_static.workspace = true
-sum_tree = { path = "../sum_tree" }
-text = { path = "../text" }
-collections = { path = "../collections" }
-util = { path = "../util" }
-log.workspace = true
-smol.workspace = true
-parking_lot.workspace = true
 async-trait.workspace = true
+clock.workspace = true
+collections.workspace = true
 futures.workspace = true
 git2.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+smol.workspace = true
+sum_tree.workspace = true
+text.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 unindent.workspace = true

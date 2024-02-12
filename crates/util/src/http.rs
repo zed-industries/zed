@@ -1,3 +1,4 @@
+use crate::http_proxy_from_env;
 pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
 use isahc::config::{Configurable, RedirectPolicy};
@@ -6,11 +7,49 @@ pub use isahc::{
     Error,
 };
 pub use isahc::{AsyncBody, Request, Response};
+use parking_lot::Mutex;
 use smol::future::FutureExt;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{sync::Arc, time::Duration};
 pub use url::Url;
+
+pub struct ZedHttpClient {
+    pub zed_host: Mutex<String>,
+    client: Box<dyn HttpClient>,
+}
+
+impl ZedHttpClient {
+    pub fn zed_url(&self, path: &str) -> String {
+        format!("{}{}", self.zed_host.lock(), path)
+    }
+}
+
+impl HttpClient for Arc<ZedHttpClient> {
+    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>> {
+        self.client.send(req)
+    }
+}
+
+impl HttpClient for ZedHttpClient {
+    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>> {
+        self.client.send(req)
+    }
+}
+
+pub fn zed_client(zed_host: &str) -> Arc<ZedHttpClient> {
+    Arc::new(ZedHttpClient {
+        zed_host: Mutex::new(zed_host.to_string()),
+        client: Box::new(
+            isahc::HttpClient::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .low_speed_timeout(100, Duration::from_secs(5))
+                .proxy(http_proxy_from_env())
+                .build()
+                .unwrap(),
+        ),
+    })
+}
 
 pub trait HttpClient: Send + Sync {
     fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>>;
@@ -58,6 +97,7 @@ pub fn client() -> Arc<dyn HttpClient> {
         isahc::HttpClient::builder()
             .connect_timeout(Duration::from_secs(5))
             .low_speed_timeout(100, Duration::from_secs(5))
+            .proxy(http_proxy_from_env())
             .build()
             .unwrap(),
     )
@@ -81,17 +121,20 @@ pub struct FakeHttpClient {
 
 #[cfg(feature = "test-support")]
 impl FakeHttpClient {
-    pub fn create<Fut, F>(handler: F) -> Arc<dyn HttpClient>
+    pub fn create<Fut, F>(handler: F) -> Arc<ZedHttpClient>
     where
         Fut: 'static + Send + futures::Future<Output = Result<Response<AsyncBody>, Error>>,
         F: 'static + Send + Sync + Fn(Request<AsyncBody>) -> Fut,
     {
-        Arc::new(Self {
-            handler: Box::new(move |req| Box::pin(handler(req))),
+        Arc::new(ZedHttpClient {
+            zed_host: Mutex::new("http://test.example".into()),
+            client: Box::new(Self {
+                handler: Box::new(move |req| Box::pin(handler(req))),
+            }),
         })
     }
 
-    pub fn with_404_response() -> Arc<dyn HttpClient> {
+    pub fn with_404_response() -> Arc<ZedHttpClient> {
         Self::create(|_| async move {
             Ok(Response::builder()
                 .status(404)
@@ -100,7 +143,7 @@ impl FakeHttpClient {
         })
     }
 
-    pub fn with_200_response() -> Arc<dyn HttpClient> {
+    pub fn with_200_response() -> Arc<ZedHttpClient> {
         Self::create(|_| async move {
             Ok(Response::builder()
                 .status(200)

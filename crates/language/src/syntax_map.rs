@@ -1059,7 +1059,7 @@ impl<'a> SyntaxMapMatches<'a> {
                 .position(|later_layer| key < later_layer.sort_key())
                 .unwrap_or(self.active_layer_count - 1);
             self.layers[0..i].rotate_left(1);
-        } else {
+        } else if self.active_layer_count != 0 {
             self.layers[0..self.active_layer_count].rotate_left(1);
             self.active_layer_count -= 1;
         }
