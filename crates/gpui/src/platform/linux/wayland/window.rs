@@ -6,7 +6,7 @@ use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWi
 use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
-use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow, TestWindow};
+use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::{px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WindowAppearance, WindowBounds, WindowOptions};
 use crate::platform::linux::blade_renderer::BladeRenderer;
 use crate::platform::linux::wayland::display::WaylandDisplay;
@@ -93,8 +93,8 @@ impl WaylandWindowInner {
 pub(crate) struct WaylandWindowState {
     conn: Arc<wayland_client::Connection>,
     inner: Mutex<WaylandWindowInner>,
-    callbacks: Mutex<Callbacks>,
-    surface: Arc<wl_surface::WlSurface>,
+    pub(crate)callbacks: Mutex<Callbacks>,
+    pub(crate) surface: Arc<wl_surface::WlSurface>,
     pub(crate) toplevel: Arc<xdg_toplevel::XdgToplevel>
 }
 
@@ -234,14 +234,13 @@ impl PlatformWindow for WaylandWindow {
         unimplemented!()
     }
 
-    //todo!(linux)
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        unimplemented!()
+        //todo!(linux)
     }
 
     //todo!(linux)
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        unimplemented!()
+        None
     }
 
     //todo!(linux)
@@ -249,9 +248,8 @@ impl PlatformWindow for WaylandWindow {
         unimplemented!()
     }
 
-    //todo!(linux)
     fn activate(&self) {
-        unimplemented!()
+        //todo!(linux)
     }
 
     fn set_title(&mut self, title: &str) {
@@ -274,14 +272,14 @@ impl PlatformWindow for WaylandWindow {
         //todo!(linux)
     }
 
-    // todo!(linux)
     fn toggle_full_screen(&self) {
-        unimplemented!()
+        //todo!(linux)
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.lock().request_frame = Some(callback);
-        self.0.surface.commit();
+        // callback.;
+        // self.0.surface.commit();
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {

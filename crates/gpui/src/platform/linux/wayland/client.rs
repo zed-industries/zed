@@ -1,13 +1,12 @@
-use std::any::Any;
 use std::rc::Rc;
 use std::sync::Arc;
 use parking_lot::Mutex;
-use wayland_client::{
-    delegate_noop, protocol::{
-        wl_buffer, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-        wl_surface,
-    }, Connection, Dispatch, EventQueue, Proxy, QueueHandle
-};
+use wayland_client::{delegate_noop, protocol::{
+    wl_buffer, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+    wl_surface, wl_callback
+}, Connection, Dispatch, EventQueue, Proxy, QueueHandle};
+use wayland_client::protocol::wl_callback::WlCallback;
+use wayland_protocols::wp;
 
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
@@ -62,7 +61,15 @@ impl Client for WaylandClient {
 
         on_finish_launching();
         while !self.platform_inner.state.lock().quit_requested {
-            eq.blocking_dispatch(&mut self.state.lock()).unwrap();
+            eq.flush().unwrap();
+            eq.dispatch_pending(&mut self.state.lock()).unwrap();
+            if let Some(guard) = self.conn.prepare_read() {
+                guard.read().unwrap();
+                eq.dispatch_pending(&mut self.state.lock()).unwrap();
+            }
+            if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
+                runnable.run();
+            }
         }
     }
 
@@ -84,12 +91,17 @@ impl Client for WaylandClient {
         let toplevel = xdg_surface.get_toplevel(&self.qh, ());
         let wl_surface = Arc::new(wl_surface);
 
+        wl_surface.frame(&self.qh, ());
+        wl_surface.commit();
+
         let window_state: Arc<WaylandWindowState> = Arc::new(WaylandWindowState::new(
             &self.conn,
-            wl_surface, 
+            wl_surface,
             Arc::new(toplevel),
             options
         ));
+        window_state.update();
+
         state.windows.push((xdg_surface, Arc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
     }
@@ -128,6 +140,26 @@ delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
 delegate_noop!(WaylandClientState: ignore wl_seat::WlSeat);
 delegate_noop!(WaylandClientState: ignore wl_keyboard::WlKeyboard);
 
+impl Dispatch<WlCallback, ()> for WaylandClientState {
+    fn event(state: &mut Self,
+             _: &WlCallback,
+             event: wl_callback::Event,
+             _: &(),
+             _: &Connection,
+             qh: &QueueHandle<Self>
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            for window in &state.windows {
+                let window = &state.windows[0]; // todo!(linux)
+                window.1.surface.frame(qh, ());
+                window.1.update();
+                window.1.surface.commit();
+            }
+        }
+    }
+}
+
+
 impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
     fn event(
         state: &mut Self,
@@ -142,6 +174,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
             for window in &state.windows {
                 if &window.0 == xdg_surface {
                     window.1.update();
+                    window.1.surface.commit();
                     return;
                 }
             }
@@ -165,6 +198,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
             for window in &state.windows {
                 if window.1.toplevel.id() == xdg_toplevel.id() {
                     window.1.resize(width, height);
+                    window.1.surface.commit();
                     return;
                 }
             }
