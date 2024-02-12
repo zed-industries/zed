@@ -264,11 +264,7 @@ impl Render for RunnablesPanel {
                             let runnable = runnable.clone();
                             let workspace = workspace.clone();
                             move |_, cx| {
-                                if let Some(handle) = runnable
-                                    .schedule(cx)
-                                    .context("failed to schedule the task")
-                                    .log_err()
-                                {
+                                if let Some(handle) = runnable.handle(cx) {
                                     if let Some(output) = handle.output {
                                         workspace
                                             .update(cx, |_workspace, cx| {
