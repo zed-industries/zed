@@ -1015,13 +1015,13 @@ impl EditorElement {
                 let corner_radius = 0.15 * layout.position_map.line_height;
                 let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
-                for (participant_ix, (selection_style, selections)) in
+                for (participant_ix, (player_color, selections)) in
                     layout.selections.iter().enumerate()
                 {
                     for selection in selections.into_iter() {
                         self.paint_highlighted_range(
                             selection.range.clone(),
-                            selection_style.selection,
+                            player_color.selection,
                             corner_radius,
                             corner_radius * 2.,
                             layout,
@@ -1102,7 +1102,7 @@ impl EditorElement {
                                 }
 
                                 cursors.push(Cursor {
-                                    color: selection_style.cursor,
+                                    color: player_color.cursor,
                                     block_width,
                                     origin: point(x, y),
                                     line_height: layout.position_map.line_height,
