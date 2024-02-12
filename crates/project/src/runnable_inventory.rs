@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use runnable::{RunnablePebble, Source};
+use runnable::{Runnable, RunnableToken, Source};
 
 struct SourceInInventory {
     source: Model<Box<dyn Source>>,
@@ -32,7 +32,7 @@ impl Inventory {
         &'a self,
         path: &'a Path,
         cx: &'a AppContext,
-    ) -> impl Iterator<Item = RunnablePebble> + 'a {
+    ) -> impl Iterator<Item = RunnableToken> + 'a {
         self.sources
             .iter()
             .flat_map(|source| source.source.read(cx).runnables_for_path(path, cx).unwrap())

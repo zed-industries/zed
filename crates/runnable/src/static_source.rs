@@ -6,8 +6,7 @@ use serde::Deserialize;
 use util::ResultExt;
 
 use crate::{
-    static_runnable_file::RunnableProvider, RunState, Runnable, RunnablePebble, Source,
-    StaticRunner,
+    static_runnable_file::RunnableProvider, RunState, Runnable, RunnableToken, Source, StaticRunner,
 };
 use futures::channel::mpsc::UnboundedReceiver;
 
@@ -15,7 +14,7 @@ pub struct StaticSource {
     // This is gonna come into play later once we tackle handling multiple instances of a single runnable (spawning multiple runnables from a single static runnable definition).
     #[allow(unused)]
     definitions: Model<TrackedFile<RunnableProvider>>,
-    runnables: Vec<RunnablePebble>,
+    runnables: Vec<RunnableToken>,
     _subscription: Subscription,
 }
 
@@ -74,8 +73,8 @@ impl StaticSource {
                         let display_name = runner.name();
                         let source = cx.weak_model();
                         let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
-                        crate::RunnablePebble {
-                            metadata: Arc::new(crate::RunnableLens {
+                        crate::RunnableToken {
+                            metadata: Arc::new(crate::RunnableMetadata {
                                 source,
                                 display_name,
                             }),
@@ -104,7 +103,7 @@ impl Source for StaticSource {
         &'a self,
         _: &std::path::Path,
         _cx: &'a AppContext,
-    ) -> anyhow::Result<Box<dyn Iterator<Item = crate::RunnablePebble> + 'a>> {
+    ) -> anyhow::Result<Box<dyn Iterator<Item = crate::RunnableToken> + 'a>> {
         Ok(Box::new(self.runnables.iter().cloned()))
     }
 

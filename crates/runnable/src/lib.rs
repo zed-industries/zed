@@ -19,6 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 use util::ResultExt as _;
 
+/// Represents a task that's already underway. That task can be cancelled at any time.
 #[derive(Clone)]
 pub struct TaskHandle {
     fut: Shared<Task<Result<ExecutionResult, TaskTerminated>>>,
@@ -63,8 +64,8 @@ pub struct ExecutionResult {
     pub details: String,
 }
 
-/// Represents a short lived handle to a runnable, whose main purpose
-/// is to get spawned
+/// Represents a short lived recipe of a runnable, whose main purpose
+/// is to get spawned.
 pub trait Runnable {
     fn name(&self) -> String;
     fn exec(&self, cx: gpui::AsyncAppContext) -> Result<TaskHandle>;
@@ -77,36 +78,34 @@ pub trait Source: Any {
         &'a self,
         path: &Path,
         cx: &'a AppContext,
-    ) -> anyhow::Result<Box<dyn Iterator<Item = RunnablePebble> + 'a>>;
+    ) -> anyhow::Result<Box<dyn Iterator<Item = RunnableToken> + 'a>>;
 }
 
-/// Uniquely represents a runnable in an inventory.
-/// Two different instances of a runnable (e.g. two different runs of the same static task)
-/// must have a different RunnableLens
-pub struct RunnableLens {
+pub struct RunnableMetadata {
     source: WeakModel<Box<dyn Source>>,
     display_name: String,
 }
 
-impl RunnableLens {
+impl RunnableMetadata {
     pub fn display_name(&self) -> &str {
         &self.display_name
     }
 }
 
+/// Represents a runnable that might or might not be already running.
 #[derive(Clone)]
-pub struct RunnablePebble {
-    metadata: Arc<RunnableLens>,
+pub struct RunnableToken {
+    metadata: Arc<RunnableMetadata>,
     state: Model<RunState>,
 }
 
 #[derive(Clone)]
-pub enum RunState {
+pub(crate) enum RunState {
     NotScheduled(Arc<dyn Runnable>),
     Scheduled(TaskHandle),
 }
 
-impl RunnablePebble {
+impl RunnableToken {
     /// Schedules a task or returns a handle to it if it's already running.
     pub fn schedule(&self, cx: &mut AppContext) -> Result<TaskHandle> {
         let mut spawned_first_time = false;
@@ -167,7 +166,7 @@ impl RunnablePebble {
             None
         }
     }
-    pub fn metadata(&self) -> &RunnableLens {
+    pub fn metadata(&self) -> &RunnableMetadata {
         &self.metadata
     }
     pub fn id(&self) -> EntityId {
