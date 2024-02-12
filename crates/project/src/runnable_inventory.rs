@@ -26,6 +26,7 @@ impl Inventory {
             _subscription,
         };
         self.sources.push(source);
+        cx.notify();
     }
 
     pub fn list_runnables<'a>(
