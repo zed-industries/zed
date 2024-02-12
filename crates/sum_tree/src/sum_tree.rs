@@ -192,6 +192,7 @@ impl<T: Item> SumTree<T> {
         if nodes.is_empty() {
             Self::new()
         } else {
+            debug_assert_eq!(nodes.len(), 1);
             Self(Arc::new(nodes.pop().unwrap()))
         }
     }
