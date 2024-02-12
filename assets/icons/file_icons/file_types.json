@@ -1,5 +1,6 @@
 {
     "suffixes": {
+        "astro": "astro",
         "Emakefile": "erlang",
         "aac": "audio",
         "accdb": "storage",
@@ -148,6 +149,9 @@
         "zshrc": "terminal"
     },
     "types": {
+        "astro": {
+            "icon": "icons/file_icons/astro.svg"
+        },
         "audio": {
             "icon": "icons/file_icons/audio.svg"
         },
