@@ -152,13 +152,24 @@ impl ExtensionsPage {
     }
 
     fn install_extension(&self, extension_name: String) {
-        // let download_url = &extension.download_url;
-        println!("INSTALL EXTENSION {}", extension_name.to_string())
+        println!("INSTALL EXTENSION {}", extension_name.to_string());
+        if let Some(extension) = self.get_extension(extension_name.to_string()) {
+            let download_url = &extension.download_url;
+            // download extension from blob
+            // copy to extensions folder
+        }
+    }
+    fn uninstall_extension(&self, extension_name: String) {
+        println!("UNINSTALL EXTENSION {}", extension_name.to_string());
+        if let Some(extension) = self.get_extension(extension_name.to_string()) {
+            // remove extension from extensions folder
+        }
     }
 
     fn get_extension(&self, name: String) -> Option<&Extension> {
         self.extensions_entries.iter().find(|e| e.name == name)
     }
+
     fn render_extensions(&self, cx: &mut ViewContext<Self>) -> Div {
         let mut items = div().flex_col().full().justify_start().gap_4();
         for extension in &self.extensions_entries {
@@ -174,15 +185,13 @@ impl ExtensionsPage {
             let author = extension.author.to_string();
             let description = extension.description.to_string();
             let repository = extension.repository.to_string();
-
+            let name_cloned = name.clone();
             let mut button = Button::new("install", "Install")
                 .color(Color::Accent)
-                .on_click(cx.listener(|this, _, cx| {
-                    // let name = name.clone();
-                    println!("INSTALL EXTENSION {}", name);
+                .on_click(cx.listener(move |this, _, cx| {
                     this.telemetry
                         .report_app_event("extensions page: install extension".to_string());
-                    // this.install_extension(entry.name.to_string());
+                    this.install_extension(name_cloned.to_string());
                 }))
                 .disabled(installed);
 
