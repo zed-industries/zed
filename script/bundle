@@ -12,7 +12,7 @@ bundle_name=""
 zed_crate="zed"
 binary_name="Zed"
 
-# This must match the team in the provsiioning profile.
+# This must match the team in the provisioning profile.
 APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
 
 # Function for displaying help info

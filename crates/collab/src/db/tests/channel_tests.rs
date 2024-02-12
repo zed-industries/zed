@@ -138,6 +138,7 @@ async fn test_joining_channels(db: &Arc<Database>) {
         .join_channel(
             channel_1,
             user_1,
+            false,
             ConnectionId { owner_id, id: 1 },
             TEST_RELEASE_CHANNEL,
         )
@@ -732,9 +733,15 @@ async fn test_guest_access(db: &Arc<Database>) {
         .await
         .is_err());
 
-    db.join_channel(zed_channel, guest, guest_connection, TEST_RELEASE_CHANNEL)
-        .await
-        .unwrap();
+    db.join_channel(
+        zed_channel,
+        guest,
+        false,
+        guest_connection,
+        TEST_RELEASE_CHANNEL,
+    )
+    .await
+    .unwrap();
 
     assert!(db
         .join_channel_chat(zed_channel, guest_connection, guest)

@@ -329,8 +329,13 @@ impl TerminalElement {
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
     ) -> TextRun {
         let flags = indexed.cell.flags;
-        let fg = convert_color(&fg, &colors);
-        // let bg = convert_color(&bg, &colors);
+        let mut fg = convert_color(&fg, &colors);
+
+        // Ghostty uses (175/255) as the multiplier (~0.69), Alacritty uses 0.66, Kitty
+        // uses 0.75. We're using 0.7 because it's pretty well in the middle of that.
+        if flags.intersects(Flags::DIM) {
+            fg.a *= 0.7;
+        }
 
         let underline = (flags.intersects(Flags::ALL_UNDERLINES)
             || indexed.cell.hyperlink().is_some())
@@ -442,7 +447,7 @@ impl TerminalElement {
         };
 
         let text_system = cx.text_system();
-        let selection_color = theme.players().local();
+        let player_color = theme.players().local();
         let match_color = theme.colors().search_match_background;
         let gutter;
         let dimensions = {
@@ -521,7 +526,7 @@ impl TerminalElement {
         }
         if let Some(selection) = selection {
             relative_highlighted_ranges
-                .push((selection.start..=selection.end, selection_color.cursor));
+                .push((selection.start..=selection.end, player_color.selection));
         }
 
         // then have that representation be converted to the appropriate highlight data structure

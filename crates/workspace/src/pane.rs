@@ -762,6 +762,7 @@ impl Pane {
         save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
+        println!("{}", std::backtrace::Backtrace::force_capture());
         self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
     }
 

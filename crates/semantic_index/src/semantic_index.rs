@@ -8,7 +8,7 @@ mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
 use ai::embedding::{Embedding, EmbeddingProvider};
-use ai::providers::open_ai::OpenAiEmbeddingProvider;
+use ai::providers::open_ai::{OpenAiEmbeddingProvider, OPEN_AI_API_URL};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
@@ -91,8 +91,13 @@ pub fn init(
     .detach();
 
     cx.spawn(move |cx| async move {
-        let embedding_provider =
-            OpenAiEmbeddingProvider::new(http_client, cx.background_executor().clone()).await;
+        let embedding_provider = OpenAiEmbeddingProvider::new(
+            // TODO: We should read it from config, but I'm not sure whether to reuse `openai_api_url` in assistant settings or not
+            OPEN_AI_API_URL.to_string(),
+            http_client,
+            cx.background_executor().clone(),
+        )
+        .await;
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,

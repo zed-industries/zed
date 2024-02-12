@@ -54,7 +54,7 @@ impl TestServer {
         Ok(SERVERS
             .lock()
             .get(url)
-            .ok_or_else(|| anyhow!("no server found for url"))?
+            .ok_or_else(|| anyhow!("no server found for url: {}", url))?
             .clone())
     }
 
@@ -160,7 +160,6 @@ impl TestServer {
 
     async fn remove_participant(&self, room_name: String, identity: String) -> Result<()> {
         // TODO: clear state associated with the `Room`.
-
         self.executor.simulate_random_delay().await;
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
@@ -412,6 +411,15 @@ struct TestServerRoom {
     video_tracks: Vec<Arc<TestServerVideoTrack>>,
     audio_tracks: Vec<Arc<TestServerAudioTrack>>,
     participant_permissions: HashMap<Sid, proto::ParticipantPermission>,
+}
+
+impl Drop for TestServerRoom {
+    fn drop(&mut self) {
+        for room in self.client_rooms.values() {
+            let mut state = room.0.lock();
+            *state.connection.0.borrow_mut() = ConnectionState::Disconnected;
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -694,11 +702,15 @@ impl LocalTrackPublication {
 
     pub fn is_muted(&self) -> bool {
         if let Some(room) = self.room.upgrade() {
-            room.test_server()
-                .is_track_muted(&room.token(), &self.sid)
-                .unwrap_or(false)
+            if room.is_connected() {
+                room.test_server()
+                    .is_track_muted(&room.token(), &self.sid)
+                    .unwrap_or(true)
+            } else {
+                true
+            }
         } else {
-            false
+            true
         }
     }
 

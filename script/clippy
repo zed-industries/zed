@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+set -euxo pipefail
 
 # clippy.toml is not currently supporting specifying allowed lints
 # so specify those here, and disable the rest until Zed's workspace

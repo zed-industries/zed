@@ -1017,7 +1017,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=26bc5e8b9ef67b4f2970eb95888db733eace98f3#26bc5e8b9ef67b4f2970eb95888db733eace98f3"
+source = "git+https://github.com/kvark/blade?rev=c4f951a88b345724cb952e920ad30e39851f7760#c4f951a88b345724cb952e920ad30e39851f7760"
 dependencies = [
  "ash",
  "ash-window",
@@ -1047,7 +1047,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=26bc5e8b9ef67b4f2970eb95888db733eace98f3#26bc5e8b9ef67b4f2970eb95888db733eace98f3"
+source = "git+https://github.com/kvark/blade?rev=c4f951a88b345724cb952e920ad30e39851f7760#c4f951a88b345724cb952e920ad30e39851f7760"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2803,6 +2803,7 @@ dependencies = [
  "gpui",
  "language",
  "parking_lot 0.11.2",
+ "schemars",
  "serde",
  "serde_json",
  "theme",
@@ -9292,6 +9293,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-astro"
+version = "0.0.1"
+source = "git+https://github.com/virchau13/tree-sitter-astro.git?rev=e924787e12e8a03194f36a113290ac11d6dc10f3#e924787e12e8a03194f36a113290ac11d6dc10f3"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-bash"
 version = "0.20.4"
 source = "git+https://github.com/tree-sitter/tree-sitter-bash?rev=7331995b19b8f8aba2d5e26deb51d2195c18bc94#7331995b19b8f8aba2d5e26deb51d2195c18bc94"
@@ -9323,6 +9333,15 @@ dependencies = [
 name = "tree-sitter-c-sharp"
 version = "0.20.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-c-sharp?rev=dd5e59721a5f8dae34604060833902b882023aaf#dd5e59721a5f8dae34604060833902b882023aaf"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-clojure"
+version = "0.0.9"
+source = "git+https://github.com/prcastro/tree-sitter-clojure?branch=update-ts#38b4f8d264248b2fd09575fbce66f7c22e8929d5"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -9545,6 +9564,15 @@ name = "tree-sitter-php"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0db3788e709a5adfb583683a4b686a084e41a0f9e5a2fcb9a8e358f11481036a"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-prisma-io"
+version = "1.4.0"
+source = "git+https://github.com/victorhqc/tree-sitter-prisma#eca2596a355b1a9952b4f80f8f9caed300a272b5"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -11009,10 +11037,12 @@ dependencies = [
  "tiny_http",
  "toml",
  "tree-sitter",
+ "tree-sitter-astro",
  "tree-sitter-bash",
  "tree-sitter-beancount",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
+ "tree-sitter-clojure",
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-elixir",
@@ -11036,6 +11066,7 @@ dependencies = [
  "tree-sitter-nu",
  "tree-sitter-ocaml",
  "tree-sitter-php",
+ "tree-sitter-prisma-io",
  "tree-sitter-proto",
  "tree-sitter-purescript",
  "tree-sitter-python",
