@@ -458,6 +458,27 @@ impl MacWindowState {
         get_scale_factor(self.native_window)
     }
 
+    fn update_drawable_size(&mut self, drawable_size: NSSize) {
+        #[cfg(not(feature = "macos-blade"))]
+        unsafe {
+            let _: () = msg_send![
+                self.renderer.layer(),
+                setDrawableSize: drawable_size
+            ];
+        }
+        #[cfg(feature = "macos-blade")]
+        {
+            let gpu_size = gpu::Extent {
+                width: drawable_size.width as u32,
+                height: drawable_size.height as u32,
+                depth: 1,
+            };
+            if gpu_size != self.renderer.viewport_size() {
+                self.renderer.resize(gpu_size);
+            }
+        }
+    }
+
     fn titlebar_height(&self) -> Pixels {
         unsafe {
             let frame = NSWindow::frame(self.native_window);
@@ -644,6 +665,23 @@ impl MacWindow {
                 WINDOW_STATE_IVAR,
                 Arc::into_raw(window.0.clone()) as *const c_void,
             );
+
+            #[cfg(feature = "macos-blade")]
+            if false {
+                //TODO
+                // Hook up resize notification
+                let notification_center: id =
+                    msg_send![class!(NSNotificationCenter), defaultCenter];
+                let frame_did_change_notification_name =
+                    NSString::alloc(nil).init_str("NSViewFrameDidChangeNotification");
+                let _: () = msg_send![
+                    notification_center,
+                    addObserver: native_view
+                    selector: sel!(frameDidChange:)
+                    name: &*frame_did_change_notification_name
+                    object: native_view
+                ];
+            }
 
             if let Some(title) = options
                 .titlebar
@@ -1567,23 +1605,20 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
+    let scale_factor = lock.scale_factor() as f64;
+    let size = lock.content_size();
+    let drawable_size: NSSize = NSSize {
+        width: f64::from(size.width) * scale_factor,
+        height: f64::from(size.height) * scale_factor,
+    };
     unsafe {
-        let scale_factor = lock.scale_factor() as f64;
-        let size = lock.content_size();
-        let drawable_size: NSSize = NSSize {
-            width: f64::from(size.width) * scale_factor,
-            height: f64::from(size.height) * scale_factor,
-        };
-
         let _: () = msg_send![
             lock.renderer.layer(),
             setContentsScale: scale_factor
         ];
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setDrawableSize: drawable_size
-        ];
     }
+
+    lock.update_drawable_size(drawable_size);
 
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
@@ -1596,7 +1631,7 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
+    let mut lock = window_state.as_ref().lock();
 
     if lock.content_size() == size.into() {
         return;
@@ -1612,12 +1647,7 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         height: size.height * scale_factor,
     };
 
-    unsafe {
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setDrawableSize: drawable_size
-        ];
-    }
+    lock.update_drawable_size(drawable_size);
 
     drop(lock);
     let mut lock = window_state.lock();
