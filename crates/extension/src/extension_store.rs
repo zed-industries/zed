@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
@@ -36,6 +36,7 @@ impl Global for GlobalExtensionStore {}
 
 #[derive(Deserialize, Serialize, Default)]
 pub struct Manifest {
+    pub extensions: HashSet<Arc<str>>,
     pub grammars: HashMap<Arc<str>, GrammarManifestEntry>,
     pub languages: HashMap<Arc<str>, LanguageManifestEntry>,
     pub themes: HashMap<String, ThemeManifestEntry>,
@@ -90,6 +91,10 @@ pub fn init(
 }
 
 impl ExtensionStore {
+    pub fn global(cx: &AppContext) -> Model<Self> {
+        cx.global::<GlobalExtensionStore>().0.clone()
+    }
+
     pub fn new(
         extensions_dir: PathBuf,
         fs: Arc<dyn Fs>,
@@ -138,6 +143,10 @@ impl ExtensionStore {
         if should_reload {
             self.reload(cx).detach_and_log_err(cx);
         }
+    }
+
+    pub fn is_extension_installed(&self, extension_id: &str) -> bool {
+        self.manifest.read().extensions.contains(extension_id)
     }
 
     fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) {
