@@ -1,7 +1,7 @@
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
 use gpui::{AppContext, Context as _, Model, Task};
-use runnable::TaskHandle;
+use runnable::RunnableHandle;
 use ui::Color;
 
 type Succeeded = bool;
@@ -20,9 +20,9 @@ pub(super) struct StatusIconTracker {
 }
 
 impl StatusIconTracker {
-    pub(crate) fn new<'a>(tasks: Vec<TaskHandle>, cx: &mut AppContext) -> Model<Self> {
+    pub(crate) fn new<'a>(tasks: Vec<RunnableHandle>, cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|cx| {
-            let mut futures: FuturesUnordered<TaskHandle> = tasks.into_iter().collect();
+            let mut futures: FuturesUnordered<RunnableHandle> = tasks.into_iter().collect();
             let _task_poller = cx.spawn(|this, mut cx| async move {
                 while let Some(Ok(i)) = futures.next().await {
                     if i.status.is_err() {

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use runnable::{Runnable, RunnableToken, Source};
+use runnable::{RunnableToken, Source};
 
 struct SourceInInventory {
     source: Model<Box<dyn Source>>,

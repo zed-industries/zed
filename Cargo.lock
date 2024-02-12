@@ -7091,10 +7091,12 @@ dependencies = [
  "async-process 2.0.1",
  "futures 0.3.28",
  "gpui",
+ "parking_lot 0.11.2",
  "postage",
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "util",
 ]
 

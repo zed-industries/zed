@@ -90,8 +90,8 @@ impl StaticSource {
                 }
             });
             Box::new(Self {
-                definitions, // TODO kb use Option instead?
-                runnables: vec![],
+                definitions,
+                runnables: Vec::new(),
                 _subscription,
             })
         })

@@ -1,11 +1,12 @@
 //! This module is responsible for executing static runnables, that is runnables defined by the user
 //! in the config file.
-use std::{error::Error, sync::Arc};
+use std::sync::Arc;
 
-use crate::{ExecutionResult, Runnable, TaskHandle};
+use crate::{PendingOutput, Runnable, RunnableHandle};
 use anyhow::Context;
 use async_process::{Command, Stdio};
 use futures::FutureExt;
+use gpui::AsyncAppContext;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StaticRunner {
@@ -23,7 +24,7 @@ impl Runnable for StaticRunner {
         Box::new(self.clone())
     }
 
-    fn exec(&self, cx: gpui::AsyncAppContext) -> anyhow::Result<crate::TaskHandle> {
+    fn exec(&self, mut cx: AsyncAppContext) -> anyhow::Result<RunnableHandle> {
         let mut command = Command::new(self.runnable.command.clone());
         let mut command = command.args(self.runnable.args.clone());
         if let Some(env_path) = std::env::var_os("PATH") {
@@ -33,29 +34,32 @@ impl Runnable for StaticRunner {
             .stderr(Stdio::piped())
             .stdout(Stdio::piped())
             .kill_on_drop(true);
-        let command_handle = command
+        let mut command_handle = command
             .spawn()
             .with_context(|| format!("Failed to spawn command `{command:?}`"))?;
 
-        TaskHandle::new(
+        let output = Some(PendingOutput::new(
             command_handle
-                .output()
-                .map(|output| {
-                    let (status, details): (Result<_, Arc<dyn Error>>, _) = match output {
-                        Ok(output) => {
-                            let details = String::from_utf8_lossy(&output.stdout).into_owned();
-                            let sterr_details =
-                                String::from_utf8_lossy(&output.stderr).into_owned();
-                            // TODO kb remove this and send the handle into new terminal tab to print its output
-                            dbg!(output.status, sterr_details, &details);
-                            (Ok(()), details)
-                        }
-                        Err(e) => (Err(Arc::new(e) as Arc<dyn Error>), String::new()),
-                    };
+                .stdout
+                .take()
+                .expect("stdout should be present due to `Stdio::piped` usage above"),
+            command_handle
+                .stderr
+                .take()
+                .expect("stdout should be present due to `Stdio::piped` usage above"),
+            &mut cx,
+        ));
 
-                    ExecutionResult { status, details }
+        RunnableHandle::new(
+            command_handle
+                .status()
+                .map(|task_result| {
+                    task_result
+                        .context("waiting for task to finish")
+                        .map_err(Arc::new)
                 })
                 .boxed(),
+            output,
             cx.clone(),
         )
     }
@@ -86,21 +90,21 @@ mod tests {
     #[gpui::test]
     async fn test_echo(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
-        let mut runner = StaticRunner::new(Definition {
+        let runner = StaticRunner::new(Definition {
             command: "echo".into(),
             args: vec!["-n".into(), "Hello!".into()],
             ..definition_fill_in()
         });
         let ex = cx.executor().clone();
         ex.spawn(async_process::driver()).detach();
-        let runnable_result = cx
-            .update(|cx| runner.exec(cx.to_async()))
-            .unwrap()
-            .await
-            .unwrap();
-
-        assert!(runnable_result.status.is_ok());
-        assert_eq!(runnable_result.details, "Hello!");
+        let task_handle = cx.update(|cx| runner.exec(cx.to_async())).unwrap();
+        let runnable_result = task_handle.await.unwrap();
+        assert!(runnable_result.status.unwrap().success());
+        assert_eq!(
+            cx.update(|cx| runnable_result.output.unwrap().full_output(cx))
+                .await,
+            "Hello!"
+        );
     }
 
     #[gpui::test]
@@ -113,14 +117,13 @@ mod tests {
         });
         let ex = cx.executor().clone();
         ex.spawn(async_process::driver()).detach();
-        let runnable = cx.update(|cx| runner.exec(cx.to_async())).unwrap();
-        let cancel_token = runnable.termination_handle();
+        let task_handle = cx.update(|cx| runner.exec(cx.to_async())).unwrap();
+        let cancel_token = task_handle.termination_handle();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(3));
             cancel_token.abort();
         });
-        let runnable_result = runnable.await;
-
+        let runnable_result = task_handle.await;
         assert!(runnable_result.is_err());
     }
 }

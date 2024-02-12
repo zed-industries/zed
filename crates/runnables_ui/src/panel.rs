@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use crate::runnables_settings::{RunnablesDockPosition, RunnablesSettings};
 use crate::status_bar_icon::StatusIconTracker;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
@@ -37,6 +37,7 @@ pub struct RunnablesPanel {
     fs: Arc<dyn Fs>,
     pending_serialization: Task<Option<()>>,
     status_bar_tracker: Option<Model<StatusIconTracker>>,
+    workspace: WeakView<Workspace>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,7 +46,12 @@ struct SerializedRunnablesPanel {
 }
 
 impl RunnablesPanel {
-    fn new(inventory: Model<Inventory>, fs: Arc<dyn Fs>, cx: &mut WindowContext<'_>) -> View<Self> {
+    fn new(
+        inventory: Model<Inventory>,
+        workspace: WeakView<Workspace>,
+        fs: Arc<dyn Fs>,
+        cx: &mut WindowContext<'_>,
+    ) -> View<Self> {
         cx.new_view(|cx| {
             let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -60,6 +66,7 @@ impl RunnablesPanel {
                 fs,
                 pending_serialization: Task::ready(None),
                 status_bar_tracker: None,
+                workspace,
             }
         })
     }
@@ -113,11 +120,12 @@ impl RunnablesPanel {
             .transpose()
             .log_err()
             .flatten();
+        let workspace_view = workspace.clone();
 
         workspace.update(&mut cx, |workspace, cx| {
             let inventory = workspace.project().read(cx).runnable_inventory().clone();
             let fs = workspace.app_state().fs.clone();
-            let panel = RunnablesPanel::new(inventory, fs, cx);
+            let panel = RunnablesPanel::new(inventory, workspace_view, fs, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
@@ -240,10 +248,8 @@ impl Render for RunnablesPanel {
             .list_runnables(&PathBuf::new(), cx)
             .collect();
         //let list = List::new().empty_message("There are no runnables");
-        let state = ListState::new(
-            runnables.len(),
-            ListAlignment::Top,
-            px(2.),
+        let state = ListState::new(runnables.len(), ListAlignment::Top, px(2.), {
+            let workspace = self.workspace.clone();
             move |index, cx| {
                 let runnable = runnables[index].clone();
                 let result = runnable.result(cx);
@@ -256,8 +262,29 @@ impl Render for RunnablesPanel {
                         )
                         .on_click({
                             let runnable = runnable.clone();
+                            let workspace = workspace.clone();
                             move |_, cx| {
-                                runnable.schedule(cx).ok();
+                                if let Some(handle) = runnable
+                                    .schedule(cx)
+                                    .context("failed to schedule the task")
+                                    .log_err()
+                                {
+                                    if let Some(output) = handle.output {
+                                        workspace
+                                            .update(cx, |_workspace, cx| {
+                                                let full_output = output.full_output(cx);
+                                                cx.spawn(|_, _| async move {
+                                                    // TODO kb open the output in terminal
+                                                    dbg!(
+                                                        "Opening this in the terminal later!",
+                                                        full_output.await,
+                                                    );
+                                                })
+                                                .detach();
+                                            })
+                                            .log_err();
+                                    }
+                                }
                             }
                         }),
                     )
@@ -282,8 +309,8 @@ impl Render for RunnablesPanel {
                         )
                     })
                     .into_any_element()
-            },
-        );
+            }
+        });
         v_flex()
             .track_focus(&self.focus_handle)
             .p_1()
