@@ -1,11 +1,13 @@
 use client::telemetry::Telemetry;
+use editor::{actions::Tab, Editor, EditorElement, EditorStyle};
 use gpui::{
-    svg, uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    svg, uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle,
+    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, TextStyle, View,
+    ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
+use theme::ThemeSettings;
 use ui::{prelude::*, Checkbox};
 
 use workspace::{
@@ -49,6 +51,8 @@ pub struct ExtensionsPage {
     focus_handle: FocusHandle,
     telemetry: Arc<Telemetry>,
     extensions_entries: Vec<Extension>,
+    query_editor: View<Editor>,
+    query_contains_error: bool,
 }
 
 impl Render for ExtensionsPage {
@@ -66,6 +70,7 @@ impl Render for ExtensionsPage {
                             .w_full()
                             .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
                     )
+                    .child(h_flex().w_56().my_4().child(self.render_search(cx)))
                     .child(
                         h_flex()
                             .flex_col()
@@ -89,11 +94,17 @@ impl ExtensionsPage {
                     .report_app_event("extensions page: close".to_string());
             })
             .detach();
+
+            let query_editor = cx.new_view(|cx| Editor::single_line(cx));
+            cx.subscribe(&query_editor, Self::on_query_change).detach();
+
             let mut this = Self {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
                 telemetry: workspace.client().telemetry().clone(),
                 extensions_entries: Vec::new(),
+                query_contains_error: false,
+                query_editor,
             };
             this.get_extensions_from_server();
 
@@ -157,9 +168,14 @@ impl ExtensionsPage {
         }
     }
 
-    fn search_extension(&self, query: String) {
-        println!("SEARCH EXTENSION {}", query.to_string());
-        // search extension from server
+    fn search_extension(&self, cx: &mut ViewContext<Self>) {
+        println!("SEARCH EXTENSION {}", self.search_query(cx));
+        let query = self.search_query(cx);
+        if query.contains('.') {
+            // search by file extension ex: .rs
+        } else {
+            // search by extension name
+        }
         // &self.get_extensions_from_server()
     }
 
@@ -255,6 +271,82 @@ impl ExtensionsPage {
             div().child(Label::new("Extension not found").color(Color::Error))
         }
     }
+
+    fn render_search(&self, cx: &mut ViewContext<Self>) -> Div {
+        let mut key_context = KeyContext::default();
+        key_context.add("BufferSearchBar");
+
+        let editor_border = if self.query_contains_error {
+            Color::Error.color(cx)
+        } else {
+            cx.theme().colors().border
+        };
+
+        h_flex()
+            .w_full()
+            .gap_2()
+            .key_context(key_context)
+            // .capture_action(cx.listener(Self::tab))
+            // .on_action(cx.listener(Self::dismiss))
+            .child(
+                h_flex()
+                    .flex_1()
+                    .px_2()
+                    .py_1()
+                    .gap_2()
+                    .border_1()
+                    .border_color(editor_border)
+                    .min_w(rems(384. / 16.))
+                    .rounded_lg()
+                    .child(Icon::new(IconName::MagnifyingGlass))
+                    .child(self.render_text_input(&self.query_editor, cx)),
+            )
+    }
+
+    fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if editor.read(cx).read_only(cx) {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        EditorElement::new(
+            &editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+    fn on_query_change(
+        &mut self,
+        _: View<Editor>,
+        event: &editor::EditorEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let editor::EditorEvent::Edited = event {
+            self.query_contains_error = false;
+            self.search_extension(cx);
+        }
+    }
+    pub fn search_query(&self, cx: &WindowContext) -> String {
+        self.query_editor.read(cx).text(cx)
+    }
 }
 
 impl EventEmitter<ItemEvent> for ExtensionsPage {}
@@ -296,6 +388,8 @@ impl Item for ExtensionsPage {
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),
             extensions_entries: Default::default(),
+            query_editor: self.query_editor.clone(),
+            query_contains_error: false,
         }))
     }
 
