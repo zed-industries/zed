@@ -2164,11 +2164,7 @@ mod tests {
                 "    > dir_2",
             ]
         );
-        toggle_expand_dir(
-            &panel,
-            "root2/dir_2",
-            cx,
-        );
+        toggle_expand_dir(&panel, "root2/dir_2", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -2800,7 +2796,6 @@ mod tests {
         );
 
         toggle_expand_dir(&panel, "root/b", cx);
-        toggle_expand_dir(&panel, "root/b/a", cx);
         toggle_expand_dir(&panel, "root/b/a/inner_dir", cx);
 
         assert_eq!(
@@ -2809,13 +2804,12 @@ mod tests {
                 //
                 "v root",
                 "    > a",
-                "    v b",
-                "        v a",
-                "            v inner_dir  <== selected",
-                "                  four.txt",
-                "                  three.txt",
-                "              one.txt",
-                "              two.txt",
+                "    v b/a",
+                "        v inner_dir  <== selected",
+                "              four.txt",
+                "              three.txt",
+                "          one.txt",
+                "          two.txt",
             ]
         );
 
@@ -2832,13 +2826,12 @@ mod tests {
                 "    > a",
                 "    > a copy",
                 "    > a copy 1",
-                "    v b",
-                "        v a",
-                "            v inner_dir",
-                "                  four.txt",
-                "                  three.txt",
-                "              one.txt",
-                "              two.txt"
+                "    v b/a",
+                "        v inner_dir",
+                "              four.txt",
+                "              three.txt",
+                "          one.txt",
+                "          two.txt"
             ]
         );
     }
@@ -3132,16 +3125,13 @@ mod tests {
         cx.executor().run_until_parked();
         select_path(&panel, "project_root/dir_1", cx);
         panel.update(cx, |panel, cx| panel.open(&Open, cx));
-        select_path(&panel, "project_root/dir_1/nested_dir", cx);
-        panel.update(cx, |panel, cx| panel.open(&Open, cx));
-        panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v project_root",
-                "    v dir_1",
-                "        > nested_dir  <== selected",
+                "    v dir_1/nested_dir  <== selected",
+                "          file_a.py",
                 "      file_1.py",
             ]
         );
