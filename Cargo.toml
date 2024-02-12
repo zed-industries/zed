@@ -63,7 +63,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/runnable",
-    "crates/runnables_panel",
+    "crates/runnables_ui",
     "crates/search",
     "crates/semantic_index",
     "crates/settings",
@@ -154,7 +154,7 @@ rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 runnable = { path = "crates/runnable" }
-runnables_panel = { path = "crates/runnables_panel" }
+runnables_ui = { path = "crates/runnables_ui" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 settings = { path = "crates/settings" }

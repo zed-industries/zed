@@ -1,5 +1,5 @@
 [package]
-name = "runnables_panel"
+name = "runnables_ui"
 version = "0.1.0"
 edition = "2021"
 

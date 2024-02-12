@@ -23,7 +23,7 @@ use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use runnable::static_runnable_file::RunnableProvider;
-use runnables_panel::RunnablesPanel;
+use runnables_ui::RunnablesPanel;
 use search::project_search::ProjectSearchBar;
 use serde_derive::{Deserialize, Serialize};
 use settings::{
