@@ -39,6 +39,10 @@ impl TaskHandle {
     pub fn termination_handle(&self) -> AbortHandle {
         self.cancel_token.clone()
     }
+
+    pub fn result(&self) -> Option<&Result<ExecutionResult, TaskTerminated>> {
+        self.fut.peek()
+    }
 }
 
 impl Future for TaskHandle {
@@ -149,6 +153,14 @@ impl RunnableToken {
         ret
     }
 
+    pub fn handle(&self, cx: &AppContext) -> Option<TaskHandle> {
+        let state = self.state.read(cx);
+        if let RunState::Scheduled(state) = state {
+            Some(state.clone())
+        } else {
+            None
+        }
+    }
     pub fn result<'a>(
         &self,
         cx: &'a AppContext,
@@ -165,6 +177,9 @@ impl RunnableToken {
         } else {
             None
         }
+    }
+    pub fn was_scheduled(&self, cx: &AppContext) -> bool {
+        self.handle(cx).is_some()
     }
     pub fn metadata(&self) -> &RunnableMetadata {
         &self.metadata

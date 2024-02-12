@@ -8,7 +8,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
 use gpui::{
-    actions, div, list, px, relative, rems, AppContext, AsyncWindowContext, EventEmitter,
+    actions, div, list, px, relative, rems, AppContext, AsyncWindowContext, Context, EventEmitter,
     FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement,
     ListAlignment, ListState, Model, ParentElement as _, Render, SharedString, Styled as _, Task,
     TextStyle, View, ViewContext, VisualContext as _, WeakView, WhiteSpace, WindowContext,
@@ -18,6 +18,7 @@ use runnable::TaskHandle;
 use runnables_settings::{RunnablesDockPosition, RunnablesSettings};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use status_bar_icon::RunnablesStatusBarIcon;
 use theme::ThemeSettings;
 use ui::{
     prelude::Pixels, v_flex, ActiveTheme, Button, Clickable, Color, FluentBuilder, Icon,
@@ -44,7 +45,6 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct RunnablesPanel {
-    is_active: bool,
     filter_editor: View<Editor>,
     focus_handle: FocusHandle,
     // todo: po: should this be weak?
@@ -52,7 +52,7 @@ pub struct RunnablesPanel {
     width: Option<Pixels>,
     fs: Arc<dyn Fs>,
     pending_serialization: Task<Option<()>>,
-    scheduled_in_current_open: Vec<TaskHandle>,
+    status_bar_tracker: Option<Model<RunnablesStatusBarIcon>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -75,8 +75,7 @@ impl RunnablesPanel {
                 width: None,
                 fs,
                 pending_serialization: Task::ready(None),
-                scheduled_in_current_open: vec![],
-                is_active: false,
+                status_bar_tracker: None,
             }
         })
     }
@@ -217,18 +216,35 @@ impl Panel for RunnablesPanel {
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }
-    fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
-        self.is_active = active;
+    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
-            self.scheduled_in_current_open.clear();
+            self.status_bar_tracker.take();
+            cx.notify();
+        } else {
+            let path = PathBuf::new();
+            let tasks: Vec<_> = self
+                .inventory
+                .read(cx)
+                .list_runnables(&path, cx)
+                .filter_map(|runnable| {
+                    runnable
+                        .handle(cx)
+                        .filter(|handle| handle.result().is_none())
+                })
+                .collect();
+            if !tasks.is_empty() {
+                self.status_bar_tracker = Some(RunnablesStatusBarIcon::new(tasks, cx));
+                cx.notify();
+            }
         }
     }
-    fn collapsed_icon_color(&self, _: &WindowContext) -> Option<Color> {
-        if self.is_active {
+    fn collapsed_icon_color(&self, cx: &WindowContext) -> Option<Color> {
+        if let Some(tracker) = &self.status_bar_tracker.as_ref() {
+            Some(tracker.read(cx).color())
+        } else {
             // We don't care about the color if we're active.
-            return None;
+            None
         }
-        Some(Color::Modified)
     }
 }
 
@@ -239,7 +255,6 @@ impl Render for RunnablesPanel {
             .read(cx)
             .list_runnables(&PathBuf::new(), cx)
             .collect();
-
         //let list = List::new().empty_message("There are no runnables");
         let state = ListState::new(
             runnables.len(),
