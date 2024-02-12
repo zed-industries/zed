@@ -11,6 +11,7 @@ db.workspace = true
 editor.workspace = true
 fs.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
 picker.workspace = true
