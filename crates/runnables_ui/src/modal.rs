@@ -44,21 +44,35 @@ impl RunnablesModalDelegate {
     ) -> anyhow::Result<Option<PathBuf>> {
         let cwd = self.workspace.update(cx, |workspace, cx| {
             let project = workspace.project().read(cx);
-            let cwd = match project
-                .active_entry()
-                .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
-            {
-                Some(worktree) => Some(worktree.read(cx).abs_path()),
-                None => {
-                    let mut all_worktrees = project.worktrees().fuse();
-                    let single_worktree = all_worktrees.next();
-                    let another_worktree = all_worktrees.next();
+            let available_worktrees = project
+                .worktrees()
+                .filter(|worktree| {
+                    let worktree = worktree.read(cx);
+                    worktree.is_visible()
+                        && worktree.is_local()
+                        && worktree.root_entry().map_or(false, |e| e.is_dir())
+                })
+                .collect::<Vec<_>>();
+
+            let cwd = match available_worktrees.len() {
+                0 => None,
+                1 => Some(available_worktrees[0].read(cx).abs_path()),
+                _ => {
+                    let cwd_for_active_entry = project.active_entry().and_then(|entry_id| {
+                        available_worktrees.into_iter().find_map(|worktree| {
+                            let worktree = worktree.read(cx);
+                            if worktree.contains_entry(entry_id) {
+                                Some(worktree.abs_path())
+                            } else {
+                                None
+                            }
+                        })
+                    });
                     anyhow::ensure!(
-                        another_worktree.is_none(),
+                        cwd_for_active_entry.is_some(),
                         "Cannot determine runnable cwd for multiple worktrees"
                     );
-
-                    single_worktree.map(|worktree| worktree.read(cx).abs_path())
+                    cwd_for_active_entry
                 }
             };
             Ok(cwd)
