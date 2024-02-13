@@ -22,7 +22,7 @@ members = [
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
-    "crates/extensions",
+    "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
     "crates/file_finder",
@@ -114,7 +114,7 @@ db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
-extensions = { path = "crates/extensions" }
+extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
