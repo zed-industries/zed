@@ -10,10 +10,7 @@ pub(crate) struct X11ClientDispatcher {
 }
 
 impl X11ClientDispatcher {
-    pub fn new(
-        xcb_connection: &Arc<xcb::Connection>,
-        x_root_index: i32,
-    ) -> Self {
+    pub fn new(xcb_connection: &Arc<xcb::Connection>, x_root_index: i32) -> Self {
         let x_listener_window = xcb_connection.generate_id();
         let screen = xcb_connection
             .get_setup()
@@ -36,7 +33,7 @@ impl X11ClientDispatcher {
 
         Self {
             xcb_connection: Arc::clone(xcb_connection),
-            x_listener_window
+            x_listener_window,
         }
     }
 }

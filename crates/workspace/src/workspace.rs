@@ -1217,7 +1217,9 @@ impl Workspace {
             if let Some(active_call) = active_call {
                 if !quitting
                     && workspace_count == 1
-                    && active_call.read_with(&cx, |call, _| call.room().is_some())?
+                    && active_call.read_with(&cx, |call, cx| {
+                        call.room().is_some_and(|room| room.read(cx).in_call())
+                    })?
                 {
                     let answer = window.update(&mut cx, |_, cx| {
                         cx.prompt(
@@ -1230,12 +1232,11 @@ impl Workspace {
 
                     if answer.await.log_err() == Some(1) {
                         return anyhow::Ok(false);
-                    } else {
-                        active_call
-                            .update(&mut cx, |call, cx| call.hang_up(cx))?
-                            .await
-                            .log_err();
                     }
+                    active_call
+                        .update(&mut cx, |call, cx| call.hang_up(cx))?
+                        .await
+                        .log_err();
                 }
             }
 

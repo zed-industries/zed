@@ -223,6 +223,7 @@ impl MacTextSystemState {
             .or_else(|_| self.system_source.select_family_by_name(name.as_ref()))?;
         for font in family.fonts() {
             let mut font = font.load()?;
+
             open_type::apply_features(&mut font, features);
             let Some(_) = font.glyph_for_char('m') else {
                 continue;

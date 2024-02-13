@@ -6,9 +6,11 @@ use xcb::{x, Xid};
 
 use collections::HashMap;
 
-use crate::{AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, Point, Size, WindowOptions};
-use crate::platform::{X11Display, LinuxPlatformInner, X11Window, X11WindowState, PlatformWindow, XcbAtoms};
 use crate::platform::linux::client::Client;
+use crate::platform::{
+    LinuxPlatformInner, PlatformWindow, X11Display, X11Window, X11WindowState, XcbAtoms,
+};
+use crate::{AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, Point, Size, WindowOptions};
 
 pub(crate) struct X11ClientState {
     pub(crate) windows: HashMap<x::Window, Rc<X11WindowState>>,
@@ -23,14 +25,19 @@ pub(crate) struct X11Client {
 }
 
 impl X11Client {
-    pub(crate) fn new(inner: Arc<LinuxPlatformInner>, xcb_connection: Arc<xcb::Connection>, x_root_index: i32, atoms: XcbAtoms) -> Self {
+    pub(crate) fn new(
+        inner: Arc<LinuxPlatformInner>,
+        xcb_connection: Arc<xcb::Connection>,
+        x_root_index: i32,
+        atoms: XcbAtoms,
+    ) -> Self {
         Self {
             platform_inner: inner,
             xcb_connection,
             x_root_index,
             atoms,
             state: Mutex::new(X11ClientState {
-                windows: HashMap::default()
+                windows: HashMap::default(),
             }),
         }
     }
@@ -52,7 +59,8 @@ impl Client for X11Client {
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
                             let mut state = self.state.lock();
-                            self.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
+                            self.platform_inner.state.lock().quit_requested |=
+                                state.windows.is_empty();
                         }
                     }
                 }
@@ -104,10 +112,7 @@ impl Client for X11Client {
             .collect()
     }
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(Rc::new(X11Display::new(
-            &self.xcb_connection,
-            id.0 as i32,
-        )))
+        Some(Rc::new(X11Display::new(&self.xcb_connection, id.0 as i32)))
     }
 
     fn open_window(

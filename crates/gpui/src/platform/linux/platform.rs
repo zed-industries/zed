@@ -1,15 +1,27 @@
 #![allow(unused)]
 
-use std::{env, path::{Path, PathBuf}, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
+use std::env;
 
 use async_task::Runnable;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
-use parking_lot::{Mutex, RawMutex};
+use parking_lot::Mutex;
 use time::UtcOffset;
 use wayland_client::Connection;
 
-use crate::{Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowOptions};
+use crate::{
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, Task, WindowOptions
+    ,
+};
 use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
 use crate::platform::linux::client::Client;
 use crate::platform::linux::client_dispatcher::ClientDispatcher;
