@@ -37,26 +37,27 @@ fn main() {
 
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    let args = Args::parse();
+    // let args = Args::parse();
 
-    let story_selector = args.story.clone().unwrap_or_else(|| {
-        let stories = ComponentStory::iter().collect::<Vec<_>>();
+    // let story_selector = args.story.clone().unwrap_or_else(|| {
+    //     let stories = ComponentStory::iter().collect::<Vec<_>>();
 
-        ctrlc::set_handler(move || {}).unwrap();
+    //     ctrlc::set_handler(move || {}).unwrap();
 
-        let result = FuzzySelect::new()
-            .with_prompt("Choose a story to run:")
-            .items(&stories)
-            .interact();
+    //     let result = FuzzySelect::new()
+    //         .with_prompt("Choose a story to run:")
+    //         .items(&stories)
+    //         .interact();
 
-        let Ok(selection) = result else {
-            dialoguer::console::Term::stderr().show_cursor().unwrap();
-            std::process::exit(0);
-        };
+    //     let Ok(selection) = result else {
+    //         dialoguer::console::Term::stderr().show_cursor().unwrap();
+    //         std::process::exit(0);
+    //     };
 
-        StorySelector::Component(stories[selection])
-    });
-    let theme_name = args.theme.unwrap_or("One Dark".to_string());
+    //     StorySelector::Component(stories[selection])
+    // });
+    // let theme_name = args.theme.unwrap_or("One Dark".to_string());
+    let theme_name = "One Dark".to_string();
 
     gpui::App::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
@@ -69,7 +70,7 @@ fn main() {
 
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
 
-        let selector = story_selector;
+        // let selector = story_selector;
 
         let theme_registry = ThemeRegistry::global(cx);
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
@@ -91,7 +92,8 @@ fn main() {
                 let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
                 cx.set_rem_size(ui_font_size);
 
-                cx.new_view(|cx| StoryWrapper::new(selector.story(cx)))
+                // cx.new_view(|cx| StoryWrapper::new(selector.story(cx)))
+                cx.new_view(|cx| stories::ZIndexStory)
             },
         );
 

@@ -520,7 +520,7 @@ impl Element for List {
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
                 && bounds.contains(&event.position)
-                && cx.was_top_layer(&event.position, cx.stacking_order())
+                && cx.is_top_layer(&event.position, cx.stacking_order())
             {
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,

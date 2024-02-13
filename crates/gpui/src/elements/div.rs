@@ -88,7 +88,7 @@ impl Interactivity {
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && bounds.visibly_contains(&event.position, cx)
+                    && bounds.did_visibly_contains(&event.position, cx)
                 {
                     (listener)(event, cx)
                 }
@@ -105,7 +105,9 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture && bounds.visibly_contains(&event.position, cx) {
+                if phase == DispatchPhase::Capture
+                    && bounds.did_visibly_contains(&event.position, cx)
+                {
                     (listener)(event, cx)
                 }
             }));
@@ -121,7 +123,9 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
+                if phase == DispatchPhase::Bubble
+                    && bounds.did_visibly_contains(&event.position, cx)
+                {
                     (listener)(event, cx)
                 }
             }));
@@ -140,7 +144,7 @@ impl Interactivity {
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && bounds.visibly_contains(&event.position, cx)
+                    && bounds.did_visibly_contains(&event.position, cx)
                 {
                     (listener)(event, cx)
                 }
@@ -157,7 +161,9 @@ impl Interactivity {
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture && bounds.visibly_contains(&event.position, cx) {
+                if phase == DispatchPhase::Capture
+                    && bounds.did_visibly_contains(&event.position, cx)
+                {
                     (listener)(event, cx)
                 }
             }));
@@ -173,7 +179,9 @@ impl Interactivity {
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
+                if phase == DispatchPhase::Bubble
+                    && bounds.did_visibly_contains(&event.position, cx)
+                {
                     (listener)(event, cx)
                 }
             }));
@@ -190,7 +198,8 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture && !bounds.visibly_contains(&event.position, cx)
+                if phase == DispatchPhase::Capture
+                    && !bounds.did_visibly_contains(&event.position, cx)
                 {
                     (listener)(event, cx)
                 }
@@ -211,7 +220,7 @@ impl Interactivity {
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
-                    && !bounds.visibly_contains(&event.position, cx)
+                    && !bounds.did_visibly_contains(&event.position, cx)
                 {
                     (listener)(event, cx);
                 }
@@ -228,7 +237,9 @@ impl Interactivity {
     ) {
         self.mouse_move_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
+                if phase == DispatchPhase::Bubble
+                    && bounds.did_visibly_contains(&event.position, cx)
+                {
                     (listener)(event, cx);
                 }
             }));
@@ -277,7 +288,9 @@ impl Interactivity {
     ) {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
+                if phase == DispatchPhase::Bubble
+                    && bounds.did_visibly_contains(&event.position, cx)
+                {
                     (listener)(event, cx);
                 }
             }));
@@ -564,7 +577,7 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    // #[cfg(any(test, feature = "test-support"))]
     /// Set a key that can be used to look up this element's bounds
     /// in the [`VisualTestContext::debug_bounds`] map
     /// This is a noop in release builds
@@ -573,14 +586,14 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    #[cfg(not(any(test, feature = "test-support")))]
-    /// Set a key that can be used to look up this element's bounds
-    /// in the [`VisualTestContext::debug_bounds`] map
-    /// This is a noop in release builds
-    #[inline]
-    fn debug_selector(self, _: impl FnOnce() -> String) -> Self {
-        self
-    }
+    // #[cfg(not(any(test, feature = "test-support")))]
+    // /// Set a key that can be used to look up this element's bounds
+    // /// in the [`VisualTestContext::debug_bounds`] map
+    // /// This is a noop in release builds
+    // #[inline]
+    // fn debug_selector(self, _: impl FnOnce() -> String) -> Self {
+    //     self
+    // }
 
     /// Bind the given callback to the mouse down event for any button, during the capture phase
     /// the fluent API equivalent to [`Interactivity::capture_any_mouse_down`]
@@ -1072,6 +1085,7 @@ impl Element for Div {
                 })
             },
         );
+
         (
             layout_id,
             DivState {
@@ -1079,6 +1093,30 @@ impl Element for Div {
                 child_layout_ids,
             },
         )
+    }
+
+    fn post_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        element_state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        dbg!(self.children.len());
+        self.interactivity.post_layout(
+            bounds,
+            &mut element_state.interactive_state,
+            cx,
+            |_, scroll_offset, cx| {
+                println!("in continuation");
+                cx.with_element_offset(scroll_offset, |cx| {
+                    println!("in with_element_offset");
+                    for child in &mut self.children {
+                        println!("child");
+                        child.post_layout(cx);
+                    }
+                })
+            },
+        );
     }
 
     fn paint(
@@ -1207,7 +1245,7 @@ pub struct Interactivity {
     #[cfg(debug_assertions)]
     pub(crate) location: Option<core::panic::Location<'static>>,
 
-    #[cfg(any(test, feature = "test-support"))]
+    // #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_selector: Option<String>,
 }
 
@@ -1222,7 +1260,7 @@ pub struct InteractiveBounds {
 
 impl InteractiveBounds {
     /// Checks whether this point was inside these bounds, and that these bounds where the topmost layer
-    pub fn visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
+    pub fn did_visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
         self.bounds.contains(point) && cx.was_top_layer(point, &self.stacking_order)
     }
 
@@ -1230,7 +1268,7 @@ impl InteractiveBounds {
     /// under an active drag
     pub fn drag_target_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
         self.bounds.contains(point)
-            && cx.was_top_layer_under_active_drag(point, &self.stacking_order)
+            && cx.is_top_layer_under_active_drag(point, &self.stacking_order)
     }
 }
 
@@ -1274,6 +1312,29 @@ impl Interactivity {
         (layout_id, element_state)
     }
 
+    /// TODO
+    pub fn post_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        element_state: &mut InteractiveElementState,
+        cx: &mut ElementContext,
+        continuation: impl FnOnce(Bounds<Pixels>, Point<Pixels>, &mut ElementContext),
+    ) {
+        let z_index = self.base_style.z_index.unwrap_or(0);
+
+        cx.with_z_index(z_index, |cx| {
+            println!("interactivity post_layout is adding an opaque layer");
+            cx.add_opaque_layer(bounds.intersect(&cx.content_mask().bounds));
+
+            let scroll_offset = element_state
+                .scroll_offset
+                .as_ref()
+                .map(|scroll_offset| *scroll_offset.borrow())
+                .unwrap_or_default();
+            continuation(bounds, scroll_offset, cx);
+        });
+    }
+
     /// Paint this element according to this interactivity state's configured styles
     /// and bind the element's mouse and keyboard events.
     ///
@@ -1288,11 +1349,8 @@ impl Interactivity {
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
         cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
+        continuation: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
     ) {
-        let style = self.compute_style(Some(bounds), element_state, cx);
-        let z_index = style.z_index.unwrap_or(0);
-
         #[cfg(any(feature = "test-support", test))]
         if let Some(debug_selector) = &self.debug_selector {
             cx.window
@@ -1301,8 +1359,8 @@ impl Interactivity {
                 .insert(debug_selector.clone(), bounds);
         }
 
-        let paint_hover_group_handler = |cx: &mut ElementContext| {
-            let hover_group_bounds = self
+        let paint_hover_group_handler = |this: &Self, cx: &mut ElementContext| {
+            let hover_group_bounds = this
                 .group_hover_style
                 .as_ref()
                 .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
@@ -1319,12 +1377,15 @@ impl Interactivity {
             }
         };
 
-        if style.visibility == Visibility::Hidden {
-            cx.with_z_index(z_index, |cx| paint_hover_group_handler(cx));
-            return;
-        }
-
+        let z_index = self.base_style.z_index.unwrap_or(0);
         cx.with_z_index(z_index, |cx| {
+            let style = self.compute_style(Some(bounds), element_state, cx);
+
+            if style.visibility == Visibility::Hidden {
+                paint_hover_group_handler(self, cx);
+                return;
+            }
+
             style.paint(bounds, cx, |cx: &mut ElementContext| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
@@ -1439,19 +1500,19 @@ impl Interactivity {
                             stacking_order: cx.stacking_order().clone(),
                         };
 
-                        if self.block_mouse
-                            || style.background.as_ref().is_some_and(|fill| {
-                                fill.color().is_some_and(|color| !color.is_transparent())
-                            })
-                        {
-                            cx.add_opaque_layer(interactive_bounds.bounds);
-                        }
+                        // if self.block_mouse
+                        //     || style.background.as_ref().is_some_and(|fill| {
+                        //         fill.color().is_some_and(|color| !color.is_transparent())
+                        //     })
+                        // {
+                        //     cx.add_opaque_layer(interactive_bounds.bounds);
+                        // }
 
                         if !cx.has_active_drag() {
                             if let Some(mouse_cursor) = style.mouse_cursor {
                                 let mouse_position = &cx.mouse_position();
                                 let hovered =
-                                    interactive_bounds.visibly_contains(mouse_position, cx);
+                                    interactive_bounds.did_visibly_contains(mouse_position, cx);
                                 if hovered {
                                     cx.set_cursor_style(mouse_cursor);
                                 }
@@ -1467,7 +1528,8 @@ impl Interactivity {
                                 move |event: &MouseDownEvent, phase, cx| {
                                     if phase == DispatchPhase::Bubble
                                         && !cx.default_prevented()
-                                        && interactive_bounds.visibly_contains(&event.position, cx)
+                                        && interactive_bounds
+                                            .did_visibly_contains(&event.position, cx)
                                     {
                                         cx.focus(&focus_handle);
                                         // If there is a parent that is also focusable, prevent it
@@ -1506,7 +1568,7 @@ impl Interactivity {
                             })
                         }
 
-                        paint_hover_group_handler(cx);
+                        paint_hover_group_handler(self, cx);
 
                         if self.hover_style.is_some()
                             || self.base_style.mouse_cursor.is_some()
@@ -1585,7 +1647,8 @@ impl Interactivity {
                                 move |event: &MouseDownEvent, phase, cx| {
                                     if phase == DispatchPhase::Bubble
                                         && event.button == MouseButton::Left
-                                        && interactive_bounds.visibly_contains(&event.position, cx)
+                                        && interactive_bounds
+                                            .did_visibly_contains(&event.position, cx)
                                     {
                                         *pending_mouse_down.borrow_mut() = Some(event.clone());
                                         cx.refresh();
@@ -1646,7 +1709,7 @@ impl Interactivity {
                                     DispatchPhase::Bubble => {
                                         if let Some(mouse_down) = captured_mouse_down.take() {
                                             if interactive_bounds
-                                                .visibly_contains(&event.position, cx)
+                                                .did_visibly_contains(&event.position, cx)
                                             {
                                                 let mouse_click = ClickEvent {
                                                     down: mouse_down,
@@ -1678,7 +1741,7 @@ impl Interactivity {
                                     return;
                                 }
                                 let is_hovered = interactive_bounds
-                                    .visibly_contains(&event.position, cx)
+                                    .did_visibly_contains(&event.position, cx)
                                     && has_mouse_down.borrow().is_none()
                                     && !cx.has_active_drag();
                                 let mut was_hovered = was_hovered.borrow_mut();
@@ -1705,7 +1768,7 @@ impl Interactivity {
 
                             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                                 let is_hovered = interactive_bounds
-                                    .visibly_contains(&event.position, cx)
+                                    .did_visibly_contains(&event.position, cx)
                                     && pending_mouse_down.borrow().is_none();
                                 if !is_hovered {
                                     active_tooltip.borrow_mut().take();
@@ -1787,7 +1850,7 @@ impl Interactivity {
                                     let group = active_group_bounds
                                         .map_or(false, |bounds| bounds.contains(&down.position));
                                     let element =
-                                        interactive_bounds.visibly_contains(&down.position, cx);
+                                        interactive_bounds.did_visibly_contains(&down.position, cx);
                                     if group || element {
                                         *active_state.borrow_mut() =
                                             ElementClickedState { group, element };
@@ -1840,7 +1903,7 @@ impl Interactivity {
                             let interactive_bounds = interactive_bounds.clone();
                             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
                                 if phase == DispatchPhase::Bubble
-                                    && interactive_bounds.visibly_contains(&event.position, cx)
+                                    && interactive_bounds.did_visibly_contains(&event.position, cx)
                                 {
                                     let mut scroll_offset = scroll_offset.borrow_mut();
                                     let old_scroll_offset = *scroll_offset;
@@ -1910,7 +1973,7 @@ impl Interactivity {
                                     cx.on_action(action_type, listener)
                                 }
 
-                                f(&style, scroll_offset.unwrap_or_default(), cx)
+                                continuation(&style, scroll_offset.unwrap_or_default(), cx)
                             },
                         );
 
@@ -1933,101 +1996,107 @@ impl Interactivity {
         let mut style = Style::default();
         style.refine(&self.base_style);
 
-        cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-            if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-                if let Some(in_focus_style) = self.in_focus_style.as_ref() {
-                    if focus_handle.within_focused(cx) {
-                        style.refine(in_focus_style);
+        // cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
+        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
+            if let Some(in_focus_style) = self.in_focus_style.as_ref() {
+                if focus_handle.within_focused(cx) {
+                    style.refine(in_focus_style);
+                }
+            }
+
+            if let Some(focus_style) = self.focus_style.as_ref() {
+                if focus_handle.is_focused(cx) {
+                    style.refine(focus_style);
+                }
+            }
+        }
+
+        if let Some(bounds) = bounds {
+            let mouse_position = cx.mouse_position();
+            if !cx.has_active_drag() {
+                if let Some(group_hover) = self.group_hover_style.as_ref() {
+                    if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx.deref_mut())
+                    {
+                        if group_bounds.contains(&mouse_position)
+                            && cx.is_top_layer(&mouse_position, cx.stacking_order())
+                        {
+                            style.refine(&group_hover.style);
+                        }
                     }
                 }
 
-                if let Some(focus_style) = self.focus_style.as_ref() {
-                    if focus_handle.is_focused(cx) {
-                        style.refine(focus_style);
+                if let Some(hover_style) = self.hover_style.as_ref() {
+                    let outer_button = self.debug_selector.as_deref() == Some("outer_button");
+                    let inner_button = self.debug_selector.as_deref() == Some("inner_button");
+                    if outer_button {
+                        cx.is_top_layer_debug(&mouse_position, cx.stacking_order());
+                    }
+                    println!("\n\n\n");
+
+                    if bounds
+                        .intersect(&cx.content_mask().bounds)
+                        .contains(&mouse_position)
+                        && cx.is_top_layer(&mouse_position, cx.stacking_order())
+                    {
+                        style.refine(hover_style);
                     }
                 }
             }
 
-            if let Some(bounds) = bounds {
-                let mouse_position = cx.mouse_position();
-                if !cx.has_active_drag() {
-                    if let Some(group_hover) = self.group_hover_style.as_ref() {
+            if let Some(drag) = cx.active_drag.take() {
+                let mut can_drop = true;
+                if let Some(can_drop_predicate) = &self.can_drop_predicate {
+                    can_drop = can_drop_predicate(drag.value.as_ref(), cx.deref_mut());
+                }
+
+                if can_drop {
+                    for (state_type, group_drag_style) in &self.group_drag_over_styles {
                         if let Some(group_bounds) =
-                            GroupBounds::get(&group_hover.group, cx.deref_mut())
+                            GroupBounds::get(&group_drag_style.group, cx.deref_mut())
                         {
-                            if group_bounds.contains(&mouse_position)
-                                && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                            {
-                                style.refine(&group_hover.style);
-                            }
-                        }
-                    }
-
-                    if let Some(hover_style) = self.hover_style.as_ref() {
-                        if bounds
-                            .intersect(&cx.content_mask().bounds)
-                            .contains(&mouse_position)
-                            && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                        {
-                            style.refine(hover_style);
-                        }
-                    }
-                }
-
-                if let Some(drag) = cx.active_drag.take() {
-                    let mut can_drop = true;
-                    if let Some(can_drop_predicate) = &self.can_drop_predicate {
-                        can_drop = can_drop_predicate(drag.value.as_ref(), cx.deref_mut());
-                    }
-
-                    if can_drop {
-                        for (state_type, group_drag_style) in &self.group_drag_over_styles {
-                            if let Some(group_bounds) =
-                                GroupBounds::get(&group_drag_style.group, cx.deref_mut())
-                            {
-                                if *state_type == drag.value.as_ref().type_id()
-                                    && group_bounds.contains(&mouse_position)
-                                {
-                                    style.refine(&group_drag_style.style);
-                                }
-                            }
-                        }
-
-                        for (state_type, build_drag_over_style) in &self.drag_over_styles {
                             if *state_type == drag.value.as_ref().type_id()
-                                && bounds
-                                    .intersect(&cx.content_mask().bounds)
-                                    .contains(&mouse_position)
-                                && cx.was_top_layer_under_active_drag(
-                                    &mouse_position,
-                                    cx.stacking_order(),
-                                )
+                                && group_bounds.contains(&mouse_position)
                             {
-                                style.refine(&build_drag_over_style(drag.value.as_ref(), cx));
+                                style.refine(&group_drag_style.style);
                             }
                         }
                     }
 
-                    cx.active_drag = Some(drag);
+                    for (state_type, build_drag_over_style) in &self.drag_over_styles {
+                        if *state_type == drag.value.as_ref().type_id()
+                            && bounds
+                                .intersect(&cx.content_mask().bounds)
+                                .contains(&mouse_position)
+                            && cx.is_top_layer_under_active_drag(
+                                &mouse_position,
+                                cx.stacking_order(),
+                            )
+                        {
+                            style.refine(&build_drag_over_style(drag.value.as_ref(), cx));
+                        }
+                    }
                 }
-            }
 
-            let clicked_state = element_state
-                .clicked_state
-                .get_or_insert_with(Default::default)
-                .borrow();
-            if clicked_state.group {
-                if let Some(group) = self.group_active_style.as_ref() {
-                    style.refine(&group.style)
-                }
+                cx.active_drag = Some(drag);
             }
+        }
 
-            if let Some(active_style) = self.active_style.as_ref() {
-                if clicked_state.element {
-                    style.refine(active_style)
-                }
+        let clicked_state = element_state
+            .clicked_state
+            .get_or_insert_with(Default::default)
+            .borrow();
+        if clicked_state.group {
+            if let Some(group) = self.group_active_style.as_ref() {
+                style.refine(&group.style)
             }
-        });
+        }
+
+        if let Some(active_style) = self.active_style.as_ref() {
+            if clicked_state.element {
+                style.refine(active_style)
+            }
+        }
+        // });
 
         style
     }
@@ -2209,6 +2278,15 @@ where
         cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.element.request_layout(state, cx)
+    }
+
+    fn post_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        self.element.post_layout(bounds, state, cx);
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {

@@ -212,7 +212,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 // want a click on the toggle to re-open it.
                 cx.on_mouse_event(move |e: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble
-                        && interactive_bounds.visibly_contains(&e.position, cx)
+                        && interactive_bounds.did_visibly_contains(&e.position, cx)
                     {
                         cx.stop_propagation()
                     }

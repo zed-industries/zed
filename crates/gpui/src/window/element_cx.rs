@@ -59,9 +59,6 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
-    pub(crate) z_index_stack: StackingOrder,
-    pub(crate) next_stacking_order_ids: Vec<u16>,
-    pub(crate) next_root_z_index: u16,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
@@ -85,9 +82,6 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             depth_map: Vec::new(),
-            z_index_stack: StackingOrder::default(),
-            next_stacking_order_ids: vec![0],
-            next_root_z_index: 0,
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
@@ -107,8 +101,6 @@ impl Frame {
         self.mouse_listeners.values_mut().for_each(Vec::clear);
         self.dispatch_tree.clear();
         self.depth_map.clear();
-        self.next_stacking_order_ids = vec![0];
-        self.next_root_z_index = 0;
         self.reused_views.clear();
         self.scene.clear();
         self.requested_input_handler.take();
@@ -318,6 +310,7 @@ impl<'a> ElementContext<'a> {
             .next_frame
             .dispatch_tree
             .reuse_view(view_id, &mut self.cx.window.rendered_frame.dispatch_tree);
+
         for view_id in grafted_view_ids {
             assert!(self.window.next_frame.reused_views.insert(view_id));
 
@@ -353,21 +346,9 @@ impl<'a> ElementContext<'a> {
         }
 
         debug_assert!(
-            next_stacking_order_id
-                >= self
-                    .window
-                    .next_frame
-                    .next_stacking_order_ids
-                    .last()
-                    .copied()
-                    .unwrap()
+            next_stacking_order_id >= self.window.next_stacking_order_ids.last().copied().unwrap()
         );
-        *self
-            .window
-            .next_frame
-            .next_stacking_order_ids
-            .last_mut()
-            .unwrap() = next_stacking_order_id;
+        *self.window.next_stacking_order_ids.last_mut().unwrap() = next_stacking_order_id;
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -440,6 +421,7 @@ impl<'a> ElementContext<'a> {
 
     /// Invoke the given function with the content mask reset to that
     /// of the window.
+    /// TODO: Don't call this during paint, that is very bad and broken
     pub fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let mask = ContentMask {
             bounds: Bounds {
@@ -448,10 +430,9 @@ impl<'a> ElementContext<'a> {
             },
         };
 
-        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
+        let new_root_z_index = post_inc(&mut self.window_mut().next_root_z_index);
         let new_stacking_order_id = post_inc(
             self.window_mut()
-                .next_frame
                 .next_stacking_order_ids
                 .last_mut()
                 .unwrap(),
@@ -461,13 +442,13 @@ impl<'a> ElementContext<'a> {
             id: new_stacking_order_id,
         };
 
-        let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
+        let old_stacking_order = mem::take(&mut self.window_mut().z_index_stack);
 
-        self.window_mut().next_frame.z_index_stack.push(new_context);
+        self.window_mut().z_index_stack.push(new_context);
         self.window_mut().next_frame.content_mask_stack.push(mask);
         let result = f(self);
         self.window_mut().next_frame.content_mask_stack.pop();
-        self.window_mut().next_frame.z_index_stack = old_stacking_order;
+        self.window_mut().z_index_stack = old_stacking_order;
 
         result
     }
@@ -477,22 +458,29 @@ impl<'a> ElementContext<'a> {
     pub fn with_z_index<R>(&mut self, z_index: u16, f: impl FnOnce(&mut Self) -> R) -> R {
         let new_stacking_order_id = post_inc(
             self.window_mut()
-                .next_frame
                 .next_stacking_order_ids
                 .last_mut()
                 .unwrap(),
         );
-        self.window_mut().next_frame.next_stacking_order_ids.push(0);
+        self.window_mut().next_stacking_order_ids.push(0);
         let new_context = StackingContext {
             z_index,
             id: new_stacking_order_id,
         };
 
-        self.window_mut().next_frame.z_index_stack.push(new_context);
-        let result = f(self);
-        self.window_mut().next_frame.z_index_stack.pop();
+        self.window_mut().z_index_stack.push(new_context);
+        
+        if self.window.z_index_stack.len() == 2 {
+            let last = self.window.z_index_stack.last().unwrap();
+            if last.z_index == 0 && last.id == 5 {
+                panic!();
+            }
+        }
 
-        self.window_mut().next_frame.next_stacking_order_ids.pop();
+        let result = f(self);
+        self.window_mut().z_index_stack.pop();
+
+        self.window_mut().next_stacking_order_ids.pop();
 
         result
     }
@@ -667,7 +655,7 @@ impl<'a> ElementContext<'a> {
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
             window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
+                &window.z_index_stack,
                 Shadow {
                     view_id: view_id.into(),
                     layer_id: 0,
@@ -693,7 +681,7 @@ impl<'a> ElementContext<'a> {
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
+            &window.z_index_stack,
             Quad {
                 view_id: view_id.into(),
                 layer_id: 0,
@@ -721,7 +709,7 @@ impl<'a> ElementContext<'a> {
         window
             .next_frame
             .scene
-            .insert(&window.next_frame.z_index_stack, path.scale(scale_factor));
+            .insert(&window.z_index_stack, path.scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -746,7 +734,7 @@ impl<'a> ElementContext<'a> {
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
+            &window.z_index_stack,
             Underline {
                 view_id: view_id.into(),
                 layer_id: 0,
@@ -778,7 +766,7 @@ impl<'a> ElementContext<'a> {
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
+            &window.z_index_stack,
             Underline {
                 view_id: view_id.into(),
                 layer_id: 0,
@@ -838,7 +826,7 @@ impl<'a> ElementContext<'a> {
             let view_id = self.parent_view_id();
             let window = &mut *self.window;
             window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
+                &window.z_index_stack,
                 MonochromeSprite {
                     view_id: view_id.into(),
                     layer_id: 0,
@@ -896,7 +884,7 @@ impl<'a> ElementContext<'a> {
             let window = &mut *self.window;
 
             window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
+                &window.z_index_stack,
                 PolychromeSprite {
                     view_id: view_id.into(),
                     layer_id: 0,
@@ -942,7 +930,7 @@ impl<'a> ElementContext<'a> {
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
+            &window.z_index_stack,
             MonochromeSprite {
                 view_id: view_id.into(),
                 layer_id: 0,
@@ -981,7 +969,7 @@ impl<'a> ElementContext<'a> {
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
+            &window.z_index_stack,
             PolychromeSprite {
                 view_id: view_id.into(),
                 layer_id: 0,
@@ -1006,7 +994,7 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
         let window = &mut *self.window;
         window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
+            &window.z_index_stack,
             crate::Surface {
                 view_id: view_id.into(),
                 layer_id: 0,
@@ -1092,9 +1080,10 @@ impl<'a> ElementContext<'a> {
             .requested_style(layout_id)
     }
 
-    /// Called during painting to track which z-index is on top at each pixel position
+    /// TODO
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
-        let stacking_order = self.window.next_frame.z_index_stack.clone();
+        assert_ne!(self.window.z_index_stack.last().cloned().unwrap().id, 6);
+        let stacking_order = self.window.z_index_stack.clone();
         let view_id = self.parent_view_id();
         let depth_map = &mut self.window.next_frame.depth_map;
         match depth_map.binary_search_by(|(level, _, _)| stacking_order.cmp(level)) {
@@ -1141,8 +1130,8 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Invoke the given function with the given view id present on the view stack.
-    /// This is a fairly low-level method used to paint views.
-    pub fn paint_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
+    /// This is a fairly low-level method used to in the post-layout and paint phase of views.
+    pub fn with_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
         let text_system = self.text_system().clone();
         text_system.with_view(view_id, || {
             if self.window.next_frame.view_stack.last() == Some(&view_id) {
@@ -1188,7 +1177,7 @@ impl<'a> ElementContext<'a> {
         mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
         let view_id = self.parent_view_id();
-        let order = self.window.next_frame.z_index_stack.clone();
+        let order = self.window.z_index_stack.clone();
         self.window
             .next_frame
             .mouse_listeners

@@ -374,7 +374,7 @@ impl EditorElement {
     ) {
         let mouse_position = cx.mouse_position();
         if !text_bounds.contains(&mouse_position)
-            || !cx.was_top_layer(&mouse_position, stacking_order)
+            || !cx.is_top_layer(&mouse_position, stacking_order)
         {
             return;
         }
@@ -406,7 +406,7 @@ impl EditorElement {
         } else if !text_bounds.contains(&event.position) {
             return;
         }
-        if !cx.was_top_layer(&event.position, stacking_order) {
+        if !cx.is_top_layer(&event.position, stacking_order) {
             return;
         }
 
@@ -478,11 +478,11 @@ impl EditorElement {
             editor.select(SelectPhase::End, cx);
         }
 
-        if interactive_bounds.visibly_contains(&event.position, cx)
+        if interactive_bounds.did_visibly_contains(&event.position, cx)
             && !pending_nonempty_selections
             && event.modifiers.command
             && text_bounds.contains(&event.position)
-            && cx.was_top_layer(&event.position, stacking_order)
+            && cx.is_top_layer(&event.position, stacking_order)
         {
             let point = position_map.point_for_position(text_bounds, event.position);
             editor.handle_click_hovered_link(point, event.modifiers, cx);
@@ -550,7 +550,7 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let text_hovered = text_bounds.contains(&event.position);
         let gutter_hovered = gutter_bounds.contains(&event.position);
-        let was_top = cx.was_top_layer(&event.position, stacking_order);
+        let was_top = cx.is_top_layer(&event.position, stacking_order);
 
         editor.set_gutter_hovered(gutter_hovered, cx);
 
@@ -903,7 +903,7 @@ impl EditorElement {
                     bounds: text_bounds,
                     stacking_order: cx.stacking_order().clone(),
                 };
-                if interactive_text_bounds.visibly_contains(&cx.mouse_position(), cx) {
+                if interactive_text_bounds.did_visibly_contains(&cx.mouse_position(), cx) {
                     if self
                         .editor
                         .read(cx)
@@ -1242,7 +1242,7 @@ impl EditorElement {
                         popover_origin.x = popover_origin.x + x_out_of_bounds;
                     }
 
-                    if cx.was_top_layer(&popover_origin, cx.stacking_order()) {
+                    if cx.is_top_layer(&popover_origin, cx.stacking_order()) {
                         cx.break_content_mask(|cx| {
                             hover_popover.draw(popover_origin, available_space, cx)
                         });
@@ -1537,7 +1537,7 @@ impl EditorElement {
             stacking_order: cx.stacking_order().clone(),
         };
         let mut mouse_position = cx.mouse_position();
-        if interactive_track_bounds.visibly_contains(&mouse_position, cx) {
+        if interactive_track_bounds.did_visibly_contains(&mouse_position, cx) {
             cx.set_cursor_style(CursorStyle::Arrow);
         }
 
@@ -1567,7 +1567,7 @@ impl EditorElement {
                         cx.stop_propagation();
                     } else {
                         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
-                        if interactive_track_bounds.visibly_contains(&event.position, cx) {
+                        if interactive_track_bounds.did_visibly_contains(&event.position, cx) {
                             editor.scroll_manager.show_scrollbar(cx);
                         }
                     }
@@ -2652,14 +2652,14 @@ impl EditorElement {
 
             move |event: &ScrollWheelEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
+                    && interactive_bounds.did_visibly_contains(&event.position, cx)
                 {
                     delta = delta.coalesce(event.delta);
                     editor.update(cx, |editor, cx| {
                         let position = event.position;
                         let position_map: &PositionMap = &position_map;
                         let bounds = &interactive_bounds;
-                        if !bounds.visibly_contains(&position, cx) {
+                        if !bounds.did_visibly_contains(&position, cx) {
                             return;
                         }
 
@@ -2719,7 +2719,7 @@ impl EditorElement {
 
             move |event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
+                    && interactive_bounds.did_visibly_contains(&event.position, cx)
                 {
                     match event.button {
                         MouseButton::Left => editor.update(cx, |editor, cx| {
@@ -2786,7 +2786,7 @@ impl EditorElement {
                             )
                         }
 
-                        if interactive_bounds.visibly_contains(&event.position, cx) {
+                        if interactive_bounds.did_visibly_contains(&event.position, cx) {
                             Self::mouse_moved(
                                 editor,
                                 event,
@@ -3067,7 +3067,7 @@ impl Element for EditorElement {
     ) {
         let editor = self.editor.clone();
 
-        cx.paint_view(self.editor.entity_id(), |cx| {
+        cx.with_view(self.editor.entity_id(), |cx| {
             cx.with_text_style(
                 Some(gpui::TextStyleRefinement {
                     font_size: Some(self.style.text.font_size),

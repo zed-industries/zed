@@ -10,37 +10,49 @@ impl Render for ZIndexStory {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container().child(Story::title("z-index")).child(
             div()
-                .flex()
+                .debug_selector(|| "outer_button".into())
+                .size_20()
+                .bg(gpui::red())
+                .hover(|s| s.bg(gpui::green()))
                 .child(
                     div()
-                        .w(px(250.))
-                        .child(Story::label("z-index: auto"))
-                        .child(ZIndexExample::new(0)),
-                )
-                .child(
-                    div()
-                        .w(px(250.))
-                        .child(Story::label("z-index: 1"))
-                        .child(ZIndexExample::new(1)),
-                )
-                .child(
-                    div()
-                        .w(px(250.))
-                        .child(Story::label("z-index: 3"))
-                        .child(ZIndexExample::new(3)),
-                )
-                .child(
-                    div()
-                        .w(px(250.))
-                        .child(Story::label("z-index: 5"))
-                        .child(ZIndexExample::new(5)),
-                )
-                .child(
-                    div()
-                        .w(px(250.))
-                        .child(Story::label("z-index: 7"))
-                        .child(ZIndexExample::new(7)),
-                ),
+                        .debug_selector(|| "inner_button".into())
+                        .z_index(0)
+                        .size_8()
+                        .bg(gpui::yellow())
+                        .hover(|s| s.bg(gpui::blue())),
+                ), // div()
+                   //     .flex()
+                   //     .child(
+                   //         div()
+                   //             .w(px(250.))
+                   //             .child(Story::label("z-index: auto"))
+                   //             .child(ZIndexExample::new(0)),
+                   //     )
+                   //     .child(
+                   //         div()
+                   //             .w(px(250.))
+                   //             .child(Story::label("z-index: 1"))
+                   //             .child(ZIndexExample::new(1)),
+                   //     )
+                   //     .child(
+                   //         div()
+                   //             .w(px(250.))
+                   //             .child(Story::label("z-index: 3"))
+                   //             .child(ZIndexExample::new(3)),
+                   //     )
+                   //     .child(
+                   //         div()
+                   //             .w(px(250.))
+                   //             .child(Story::label("z-index: 5"))
+                   //             .child(ZIndexExample::new(5)),
+                   //     )
+                   //     .child(
+                   //         div()
+                   //             .w(px(250.))
+                   //             .child(Story::label("z-index: 7"))
+                   //             .child(ZIndexExample::new(7)),
+                   //     ),
         )
     }
 }

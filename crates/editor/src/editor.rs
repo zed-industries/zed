@@ -773,11 +773,11 @@ impl CompletionsMenu {
             cx,
         );
 
-        return cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             if let Some(true) = resolve_task.await.log_err() {
                 this.update(&mut cx, |_, cx| cx.notify()).ok();
             }
-        });
+        })
     }
 
     fn attempt_resolve_selected_completion_documentation(

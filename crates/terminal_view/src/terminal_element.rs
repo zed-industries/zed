@@ -493,7 +493,7 @@ impl TerminalElement {
             bounds,
             stacking_order: cx.stacking_order().clone(),
         };
-        if interactive_text_bounds.visibly_contains(&cx.mouse_position(), cx) {
+        if interactive_text_bounds.did_visibly_contains(&cx.mouse_position(), cx) {
             if self.can_navigate_to_selected_word && last_hovered_word.is_some() {
                 cx.set_cursor_style(gpui::CursorStyle::PointingHand)
             } else {
@@ -658,7 +658,7 @@ impl TerminalElement {
                 }
 
                 if e.pressed_button.is_some() && !cx.has_active_drag() {
-                    let visibly_contains = interactive_bounds.visibly_contains(&e.position, cx);
+                    let visibly_contains = interactive_bounds.did_visibly_contains(&e.position, cx);
                     terminal.update(cx, |terminal, cx| {
                         if !terminal.selection_started() {
                             if visibly_contains {
@@ -672,7 +672,7 @@ impl TerminalElement {
                     })
                 }
 
-                if interactive_bounds.visibly_contains(&e.position, cx) {
+                if interactive_bounds.did_visibly_contains(&e.position, cx) {
                     terminal.update(cx, |terminal, cx| {
                         terminal.mouse_move(&e, origin);
                         cx.notify();

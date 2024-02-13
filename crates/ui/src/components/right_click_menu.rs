@@ -143,7 +143,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
                 && event.button == MouseButton::Right
-                && interactive_bounds.visibly_contains(&event.position, cx)
+                && interactive_bounds.did_visibly_contains(&event.position, cx)
             {
                 cx.stop_propagation();
                 cx.prevent_default();

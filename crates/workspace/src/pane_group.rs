@@ -758,7 +758,7 @@ mod element {
                     bounds: handle_bounds,
                     stacking_order: cx.stacking_order().clone(),
                 };
-                if interactive_handle_bounds.visibly_contains(&cx.mouse_position(), cx) {
+                if interactive_handle_bounds.did_visibly_contains(&cx.mouse_position(), cx) {
                     cx.set_cursor_style(match axis {
                         Axis::Vertical => CursorStyle::ResizeUpDown,
                         Axis::Horizontal => CursorStyle::ResizeLeftRight,

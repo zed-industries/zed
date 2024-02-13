@@ -105,7 +105,7 @@ impl<V: Render> Element for View<V> {
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
-        cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
+        cx.with_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
     }
 }
 
@@ -204,6 +204,7 @@ impl<V> Eq for WeakView<V> {}
 pub struct AnyView {
     model: AnyModel,
     request_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
+    post_layout: fn(&mut AnyElement, &mut ElementContext),
     cache: bool,
 }
 
@@ -220,7 +221,8 @@ impl AnyView {
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
             model: self.model.downgrade(),
-            layout: self.request_layout,
+            request_layout: self.request_layout,
+            post_layout: self.post_layout,
         }
     }
 
@@ -232,6 +234,7 @@ impl AnyView {
             Err(model) => Err(Self {
                 model,
                 request_layout: self.request_layout,
+                post_layout: self.post_layout,
                 cache: self.cache,
             }),
         }
@@ -247,19 +250,33 @@ impl AnyView {
         self.model.entity_id()
     }
 
-    pub(crate) fn draw(
+    pub(crate) fn layout_and_post_layout(
         &self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) {
-        cx.paint_view(self.entity_id(), |cx| {
+    ) -> AnyElement {
+        cx.with_view(self.entity_id(), |cx| {
             cx.with_absolute_element_offset(origin, |cx| {
                 let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
                 cx.compute_layout(layout_id, available_space);
-                rendered_element.paint(cx)
-            });
+                (self.post_layout)(&mut rendered_element, cx);
+                rendered_element
+            })
         })
+    }
+
+    pub(crate) fn paint(
+        &self,
+        origin: Point<Pixels>,
+        mut rendered_element: AnyElement,
+        cx: &mut ElementContext,
+    ) {
+        cx.with_view(self.entity_id(), |cx| {
+            cx.with_absolute_element_offset(origin, |cx| {
+                rendered_element.paint(cx);
+            });
+        });
     }
 }
 
@@ -268,6 +285,7 @@ impl<V: Render> From<View<V>> for AnyView {
         AnyView {
             model: value.model.into_any(),
             request_layout: any_view::request_layout::<V>,
+            post_layout: any_view::post_layout,
             cache: false,
         }
     }
@@ -300,9 +318,19 @@ impl Element for AnyView {
             (layout_id, state)
         })
     }
+    
+    fn post_layout(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        // todo!("move parts of caching")
+        state.element.as_mut().unwrap().post_layout(cx);
+    }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
-        cx.paint_view(self.entity_id(), |cx| {
+        cx.with_view(self.entity_id(), |cx| {
             if !self.cache {
                 state.element.take().unwrap().paint(cx);
                 return;
@@ -328,13 +356,8 @@ impl Element for AnyView {
                 element.draw(bounds.origin, bounds.size.into(), cx);
             }
 
-            state.next_stacking_order_id = cx
-                .window
-                .next_frame
-                .next_stacking_order_ids
-                .last()
-                .copied()
-                .unwrap();
+            state.next_stacking_order_id =
+                cx.window.next_stacking_order_ids.last().copied().unwrap();
             state.cache_key = Some(ViewCacheKey {
                 bounds,
                 stacking_order: cx.stacking_order().clone(),
@@ -372,7 +395,8 @@ impl IntoElement for AnyView {
 /// A weak, dynamically-typed view handle that does not prevent the view from being released.
 pub struct AnyWeakView {
     model: AnyWeakModel,
-    layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
+    request_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
+    post_layout: fn(&mut AnyElement, &mut ElementContext),
 }
 
 impl AnyWeakView {
@@ -381,7 +405,8 @@ impl AnyWeakView {
         let model = self.model.upgrade()?;
         Some(AnyView {
             model,
-            request_layout: self.layout,
+            request_layout: self.request_layout,
+            post_layout: self.post_layout,
             cache: false,
         })
     }
@@ -391,7 +416,8 @@ impl<V: 'static + Render> From<WeakView<V>> for AnyWeakView {
     fn from(view: WeakView<V>) -> Self {
         Self {
             model: view.model.into(),
-            layout: any_view::request_layout::<V>,
+            request_layout: any_view::request_layout::<V>,
+            post_layout: any_view::post_layout,
         }
     }
 }
@@ -421,5 +447,9 @@ mod any_view {
         let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());
         let layout_id = element.request_layout(cx);
         (layout_id, element)
+    }
+
+    pub(crate) fn post_layout(element: &mut AnyElement, cx: &mut ElementContext) {
+        element.post_layout(cx);
     }
 }

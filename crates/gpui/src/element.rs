@@ -40,7 +40,7 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, ops::DerefMut};
+use std::{any::{type_name_of_val, Any}, fmt::Debug, ops::DerefMut};
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -58,6 +58,19 @@ pub trait Element: 'static + IntoElement {
         state: Option<Self::State>,
         cx: &mut ElementContext,
     ) -> (LayoutId, Self::State);
+
+    /// After layout is performed, we assign each element its bounds. Some elements may
+    /// need to use these bounds to render and layout the appropriate children. This is
+    /// also each element's opportunity to add opaque layers before painting [`crate::window::element_cx::add_opaque_layer`].
+    fn post_layout(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _state: &mut Self::State,
+        _cx: &mut ElementContext,
+    ) {
+        dbg!(type_name_of_val(self));
+        // TODO: Delete this default implementation once we've implemented it everywhere.
+    }
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
@@ -229,6 +242,8 @@ trait ElementObject {
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
 
+    fn post_layout(&mut self, cx: &mut ElementContext);
+
     fn paint(&mut self, cx: &mut ElementContext);
 
     fn measure(
@@ -299,6 +314,44 @@ impl<E: Element> DrawableElement<E> {
             frame_state,
         };
         layout_id
+    }
+
+    fn post_layout(&mut self, cx: &mut ElementContext) {
+        println!("DrawableElement post_layout");
+        match &mut self.phase {
+            ElementDrawPhase::LayoutRequested {
+                layout_id,
+                frame_state,
+                ..
+            }
+            | ElementDrawPhase::LayoutComputed {
+                layout_id,
+                frame_state,
+                ..
+            } => {
+                let bounds = cx.layout_bounds(*layout_id);
+                let element = self.element.as_mut().unwrap();
+
+                if let Some(frame_state) = frame_state.as_mut() {
+                    println!("Some");
+                    element.post_layout(bounds, frame_state, cx);
+                } else {
+                    println!("Else");
+                    let element_id = element
+                        .element_id()
+                        .expect("if we don't have frame state, we should have element state");
+
+                    cx.with_element_state(element_id, |element_state, cx| {
+                        println!("with_element_state");
+                        let mut element_state = element_state.unwrap();
+                        element.post_layout(bounds, &mut element_state, cx);
+                        ((), element_state)
+                    });
+                }
+            }
+
+            _ => panic!("must call layout before post_layout"),
+        }
     }
 
     fn paint(mut self, cx: &mut ElementContext) -> Option<E::State> {
@@ -407,6 +460,11 @@ where
         DrawableElement::request_layout(self.as_mut().unwrap(), cx)
     }
 
+    fn post_layout(&mut self, cx: &mut ElementContext) {
+        println!("ElementObject post_layout");
+        DrawableElement::post_layout(self.as_mut().unwrap(), cx)
+    }
+
     fn paint(&mut self, cx: &mut ElementContext) {
         DrawableElement::paint(self.take().unwrap(), cx);
     }
@@ -450,6 +508,12 @@ impl AnyElement {
         self.0.request_layout(cx)
     }
 
+    /// TODO
+    pub fn post_layout(&mut self, cx: &mut ElementContext) {
+        println!("AnyElement post_layout");
+        self.0.post_layout(cx)
+    }
+
     /// Paints the element stored in this `AnyElement`.
     pub fn paint(&mut self, cx: &mut ElementContext) {
         self.0.paint(cx)
@@ -491,6 +555,16 @@ impl Element for AnyElement {
         let layout_id = self.request_layout(cx);
         (layout_id, ())
     }
+    
+    fn post_layout(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _state: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
+        self.0.post_layout(cx);
+    } 
+    
 
     fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut ElementContext) {
         self.paint(cx)

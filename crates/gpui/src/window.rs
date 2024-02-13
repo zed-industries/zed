@@ -257,6 +257,9 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    pub(crate) z_index_stack: StackingOrder,
+    pub(crate) next_stacking_order_ids: Vec<u16>,
+    pub(crate) next_root_z_index: u16,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
@@ -441,6 +444,9 @@ impl Window {
             element_id_stack: GlobalElementId::default(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            z_index_stack: StackingOrder::default(),
+            next_stacking_order_ids: vec![0],
+            next_root_z_index: 0,
             next_frame_callbacks,
             dirty_views: FxHashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
@@ -466,6 +472,7 @@ impl Window {
             graphics_profiler_enabled: false,
         }
     }
+
     fn new_focus_listener(
         &mut self,
         value: AnyWindowFocusListener,
@@ -851,6 +858,49 @@ impl<'a> WindowContext<'a> {
     /// Returns true if there is no opaque layer containing the given point
     /// on top of the given level. Layers who are extensions of the queried layer
     /// are not considered to be on top of queried layer.
+    pub fn is_top_layer_debug(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
+        dbg!(point, layer);
+        dbg!(&self.window.next_frame.depth_map);
+        // Precondition: the depth map is ordered from topmost to bottomost.
+
+        for (opaque_layer, _, bounds) in self.window.next_frame.depth_map.iter() {
+            dbg!(opaque_layer);
+            if layer >= opaque_layer {
+                // The queried layer is either above or is the same as the this opaque layer.
+                // Anything after this point is guaranteed to be below the queried layer.
+                println!("is above or equal");
+                return true;
+            }
+
+            if !bounds.contains(point) {
+                // This opaque layer is above the queried layer but it doesn't contain
+                // the given position, so we can ignore it even if it's above.
+                println!("does not contain point");
+                continue;
+            }
+
+            // At this point, we've established that this opaque layer is on top of the queried layer
+            // and contains the position:
+            // If neither the opaque layer or the queried layer is an extension of the other then
+            // we know they are on different stacking orders, and return false.
+            // let is_on_same_layer = opaque_layer
+            //     .iter()
+            //     .zip(layer.iter())
+            //     .all(|(a, b)| a.z_index == b.z_index);
+
+            // if !is_on_same_layer {
+            //     return false;
+            // }
+            println!("returning false");
+            return false;
+        }
+
+        true
+    }
+
+    /// Returns true if there is no opaque layer containing the given point
+    /// on top of the given level. Layers who are extensions of the queried layer
+    /// are not considered to be on top of queried layer.
     pub fn was_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
         // Precondition: the depth map is ordered from topmost to bottomost.
 
@@ -871,27 +921,65 @@ impl<'a> WindowContext<'a> {
             // and contains the position:
             // If neither the opaque layer or the queried layer is an extension of the other then
             // we know they are on different stacking orders, and return false.
-            let is_on_same_layer = opaque_layer
-                .iter()
-                .zip(layer.iter())
-                .all(|(a, b)| a.z_index == b.z_index);
+            // let is_on_same_layer = opaque_layer
+            //     .iter()
+            //     .zip(layer.iter())
+            //     .all(|(a, b)| a.z_index == b.z_index);
 
-            if !is_on_same_layer {
-                return false;
-            }
+            // if !is_on_same_layer {
+            //     return false;
+            // }
+            return false;
         }
 
         true
     }
 
-    pub(crate) fn was_top_layer_under_active_drag(
+    /// Returns true if there is no opaque layer containing the given point
+    /// on top of the given level. Layers who are extensions of the queried layer
+    /// are not considered to be on top of queried layer.
+    pub fn is_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
+        // Precondition: the depth map is ordered from topmost to bottomost.
+
+        for (opaque_layer, _, bounds) in self.window.next_frame.depth_map.iter() {
+            if layer >= opaque_layer {
+                // The queried layer is either above or is the same as the this opaque layer.
+                // Anything after this point is guaranteed to be below the queried layer.
+                return true;
+            }
+
+            if !bounds.contains(point) {
+                // This opaque layer is above the queried layer but it doesn't contain
+                // the given position, so we can ignore it even if it's above.
+                continue;
+            }
+
+            // At this point, we've established that this opaque layer is on top of the queried layer
+            // and contains the position:
+            // If neither the opaque layer or the queried layer is an extension of the other then
+            // we know they are on different stacking orders, and return false.
+            // let is_on_same_layer = opaque_layer
+            //     .iter()
+            //     .zip(layer.iter())
+            //     .all(|(a, b)| a.z_index == b.z_index);
+
+            // if !is_on_same_layer {
+            //     return false;
+            // }
+            return false;
+        }
+
+        true
+    }
+
+    pub(crate) fn is_top_layer_under_active_drag(
         &self,
         point: &Point<Pixels>,
         layer: &StackingOrder,
     ) -> bool {
         // Precondition: the depth map is ordered from topmost to bottomost.
 
-        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
+        for (opaque_layer, _, bounds) in self.window.next_frame.depth_map.iter() {
             if layer >= opaque_layer {
                 // The queried layer is either above or is the same as the this opaque layer.
                 // Anything after this point is guaranteed to be below the queried layer.
@@ -919,14 +1007,15 @@ impl<'a> WindowContext<'a> {
             // and contains the position:
             // If neither the opaque layer or the queried layer is an extension of the other then
             // we know they are on different stacking orders, and return false.
-            let is_on_same_layer = opaque_layer
-                .iter()
-                .zip(layer.iter())
-                .all(|(a, b)| a.z_index == b.z_index);
+            // let is_on_same_layer = opaque_layer
+            //     .iter()
+            //     .zip(layer.iter())
+            //     .all(|(a, b)| a.z_index == b.z_index);
 
-            if !is_on_same_layer {
-                return false;
-            }
+            // if !is_on_same_layer {
+            //     return false;
+            // }
+            return false;
         }
 
         true
@@ -934,7 +1023,7 @@ impl<'a> WindowContext<'a> {
 
     /// Called during painting to get the current stacking order.
     pub fn stacking_order(&self) -> &StackingOrder {
-        &self.window.next_frame.z_index_stack
+        &self.window.z_index_stack
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -950,6 +1039,48 @@ impl<'a> WindowContext<'a> {
         }
 
         let root_view = self.window.root_view.take().unwrap();
+        let root_element = self.with_element_context(|cx| {
+            cx.with_z_index(0, |cx| {
+                let available_space = cx.window.viewport_size.map(Into::into);
+                root_view.layout_and_post_layout(Point::default(), available_space, cx)
+            })
+        });
+
+        let active_drag = self.app.active_drag.take();
+        let tooltip_request = self.window.next_frame.tooltip_request.take();
+
+        let drag_or_tooltip_element = if let Some(active_drag) = &active_drag {
+            self.with_element_context(|cx| {
+                cx.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
+                    let offset = cx.mouse_position() - active_drag.cursor_offset;
+                    let available_space =
+                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                    Some(
+                        active_drag
+                            .view
+                            .layout_and_post_layout(offset, available_space, cx),
+                    )
+                })
+            })
+        } else if let Some(tooltip_request) = &tooltip_request {
+            self.with_element_context(|cx| {
+                cx.with_z_index(1, |cx| {
+                    let available_space =
+                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                    Some(tooltip_request.tooltip.view.layout_and_post_layout(
+                        tooltip_request.tooltip.cursor_offset,
+                        available_space,
+                        cx,
+                    ))
+                })
+            })
+        } else {
+            None
+        };
+        
+        assert_eq!(self.window.z_index_stack.len(), 0);
+        self.window.next_stacking_order_ids = vec![0];
+
         self.with_element_context(|cx| {
             cx.with_z_index(0, |cx| {
                 cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
@@ -967,36 +1098,35 @@ impl<'a> WindowContext<'a> {
                         }
                     }
 
-                    let available_space = cx.window.viewport_size.map(Into::into);
-                    root_view.draw(Point::default(), available_space, cx);
+                    root_view.paint(Point::default(), root_element, cx);
                 })
             })
         });
 
-        if let Some(active_drag) = self.app.active_drag.take() {
+        if let Some(active_drag) = &active_drag {
             self.with_element_context(|cx| {
                 cx.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
                     let offset = cx.mouse_position() - active_drag.cursor_offset;
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(offset, available_space, cx);
-                })
+                    active_drag
+                        .view
+                        .paint(offset, drag_or_tooltip_element.unwrap(), cx);
+                });
             });
-            self.active_drag = Some(active_drag);
-        } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
+        } else if let Some(tooltip_request) = &tooltip_request {
             self.with_element_context(|cx| {
                 cx.with_z_index(1, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    tooltip_request.tooltip.view.draw(
+                    tooltip_request.tooltip.view.paint(
                         tooltip_request.tooltip.cursor_offset,
-                        available_space,
+                        drag_or_tooltip_element.unwrap(),
                         cx,
                     );
                 })
             });
-            self.window.next_frame.tooltip_request = Some(tooltip_request);
         }
+
+        self.active_drag = active_drag;
+        self.window.next_frame.tooltip_request = tooltip_request;
+
         self.window.dirty_views.clear();
 
         self.window
@@ -1046,6 +1176,9 @@ impl<'a> WindowContext<'a> {
         let previous_window_active = self.window.rendered_frame.window_active;
         mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
         self.window.next_frame.clear();
+        self.window.next_stacking_order_ids = vec![0];
+        self.window.next_root_z_index = 0;
+        self.window.z_index_stack.clear();
         let current_focus_path = self.window.rendered_frame.focus_path();
         let current_window_active = self.window.rendered_frame.window_active;
 
@@ -1078,6 +1211,8 @@ impl<'a> WindowContext<'a> {
         }
         self.window.refreshing = false;
         self.window.drawing = false;
+        
+        println!("\n\n\n\n");
     }
 
     fn present(&self) {
