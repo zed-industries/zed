@@ -4,9 +4,10 @@ use async_tar::Archive;
 use client::ClientSettings;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RemoveOptions};
+use futures::channel::mpsc::unbounded;
 use futures::StreamExt as _;
 use futures::{io::BufReader, AsyncReadExt as _};
-use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
+use gpui::{actions, AppContext, Context, Global, Model, ModelContext, SharedString, Task};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
@@ -314,9 +315,16 @@ impl ExtensionStore {
         let old_manifest = self.manifest.read();
         let language_names = old_manifest.languages.keys().cloned().collect::<Vec<_>>();
         let grammar_names = old_manifest.grammars.keys().cloned().collect::<Vec<_>>();
+        let theme_names = old_manifest
+            .themes
+            .keys()
+            .cloned()
+            .map(SharedString::from)
+            .collect::<Vec<_>>();
         drop(old_manifest);
         self.language_registry
             .remove_languages(&language_names, &grammar_names);
+        self.theme_registry.remove_user_themes(&theme_names);
 
         self.language_registry
             .register_wasm_grammars(manifest.grammars.iter().map(|(grammar_name, grammar)| {
@@ -341,6 +349,8 @@ impl ExtensionStore {
                 },
             );
         }
+
+        let (reload_theme_tx, mut reload_theme_rx) = unbounded();
         let fs = self.fs.clone();
         let root_dir = self.extensions_dir.clone();
         let theme_registry = self.theme_registry.clone();
@@ -356,8 +366,23 @@ impl ExtensionStore {
                         .await
                         .log_err();
                 }
+
+                reload_theme_tx.unbounded_send(()).ok();
             })
             .detach();
+
+        cx.spawn(|_, cx| async move {
+            while let Some(_) = reload_theme_rx.next().await {
+                if cx
+                    .update(|cx| ThemeSettings::reload_current_theme(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+
         *self.manifest.write() = manifest;
     }
 
@@ -368,7 +393,7 @@ impl ExtensionStore {
         let theme_registry = self.theme_registry.clone();
         let extensions_dir = self.extensions_dir.clone();
 
-        let (reload_theme_tx, mut reload_theme_rx) = futures::channel::mpsc::unbounded();
+        let (reload_theme_tx, mut reload_theme_rx) = unbounded();
 
         let events_task = cx.background_executor().spawn(async move {
             let mut events = fs.watch(&extensions_dir, Duration::from_millis(250)).await;
