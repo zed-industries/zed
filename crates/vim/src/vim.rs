@@ -198,7 +198,7 @@ impl Vim {
     }
 
     fn activate_editor(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
-        if editor.read(cx).mode() != EditorMode::Full {
+        if !editor.read(cx).use_modal_editing() {
             return;
         }
 
