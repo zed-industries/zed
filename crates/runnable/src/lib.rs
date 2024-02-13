@@ -11,7 +11,7 @@ use futures::future::{join_all, BoxFuture, Shared};
 pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, Abortable};
 use futures::{AsyncBufReadExt, AsyncRead, Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext, EntityId, Model, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, EntityId, Model, ModelContext, Task, WeakModel};
 use parking_lot::Mutex;
 use smol::io::BufReader;
 pub use static_runner::StaticRunner;
@@ -155,11 +155,11 @@ pub trait Runnable {
 
 pub trait Source: Any {
     fn as_any(&mut self) -> &mut dyn Any;
-    fn runnables_for_path<'a>(
-        &'a self,
+    fn runnables_for_path(
+        &mut self,
         path: &Path,
-        cx: &'a AppContext,
-    ) -> anyhow::Result<Box<dyn Iterator<Item = RunnableToken> + 'a>>;
+        cx: &mut ModelContext<Box<dyn Source>>,
+    ) -> anyhow::Result<Vec<RunnableToken>>;
 }
 
 pub struct RunnableMetadata {

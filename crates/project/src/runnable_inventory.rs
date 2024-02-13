@@ -29,13 +29,16 @@ impl Inventory {
         cx.notify();
     }
 
-    pub fn list_runnables<'a>(
-        &'a self,
-        path: &'a Path,
-        cx: &'a AppContext,
-    ) -> impl Iterator<Item = RunnableToken> + 'a {
-        self.sources
-            .iter()
-            .flat_map(|source| source.source.read(cx).runnables_for_path(path, cx).unwrap())
+    pub fn list_runnables(&self, path: &Path, cx: &mut AppContext) -> Vec<RunnableToken> {
+        let mut runnables = vec![];
+        for source in &self.sources {
+            runnables.extend(
+                source
+                    .source
+                    .update(cx, |this, cx| this.runnables_for_path(path, cx).unwrap()),
+            );
+        }
+
+        runnables
     }
 }

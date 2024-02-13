@@ -382,12 +382,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             })
             .register_action(move |this, action: &RunActionWithName, cx| {
                 this.project().update(cx, |this, cx| {
-                    let Some(runnable) = this
-                        .runnable_inventory()
-                        .read(cx)
-                        .list_runnables(&std::path::PathBuf::from(""), cx)
-                        .find(|runnable| runnable.metadata().display_name() == action.name)
-                    else {
+                    let Some(runnable) = this.runnable_inventory().update(cx, |this, cx| {
+                        this.list_runnables(&std::path::PathBuf::from(""), cx)
+                            .into_iter()
+                            .find(|runnable| runnable.metadata().display_name() == action.name)
+                    }) else {
                         dbg!("Could not find a runnable with name", &action.name);
                         return;
                     };

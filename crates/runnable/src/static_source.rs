@@ -1,12 +1,16 @@
-use std::sync::Arc;
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    sync::Arc,
+};
 
 use futures::StreamExt;
-use gpui::{AppContext, Context, Model, Subscription};
+use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use serde::Deserialize;
 use util::ResultExt;
 
 use crate::{
-    static_runnable_file::RunnableProvider, RunState, Runnable, RunnableToken, Source, StaticRunner,
+    static_runnable_file::{Definition, RunnableProvider},
+    RunState, Runnable, RunnableToken, Source, StaticRunner,
 };
 use futures::channel::mpsc::UnboundedReceiver;
 
@@ -68,19 +72,7 @@ impl StaticSource {
                 let tasks = new_definitions.read(cx).get().tasks.clone();
                 let runnables = tasks
                     .into_iter()
-                    .map(|task| {
-                        let runner = StaticRunner::new(task.clone());
-                        let display_name = runner.name();
-                        let source = cx.weak_model();
-                        let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
-                        crate::RunnableToken {
-                            metadata: Arc::new(crate::RunnableMetadata {
-                                source,
-                                display_name,
-                            }),
-                            state,
-                        }
-                    })
+                    .map(|task| Self::token_from_definition(task, cx))
                     .collect();
                 let this: Option<&mut Self> = this.as_any().downcast_mut();
 
@@ -96,15 +88,50 @@ impl StaticSource {
             })
         })
     }
+    fn token_from_definition(
+        task: Definition,
+        cx: &mut ModelContext<Box<dyn Source>>,
+    ) -> crate::RunnableToken {
+        let runner = StaticRunner::new(task.clone());
+        let display_name = runner.name();
+        let source = cx.weak_model();
+        let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
+        crate::RunnableToken {
+            metadata: Arc::new(crate::RunnableMetadata {
+                source,
+                display_name,
+            }),
+            state,
+        }
+    }
 }
 
 impl Source for StaticSource {
-    fn runnables_for_path<'a>(
-        &'a self,
+    fn runnables_for_path(
+        &mut self,
         _: &std::path::Path,
-        _cx: &'a AppContext,
-    ) -> anyhow::Result<Box<dyn Iterator<Item = crate::RunnableToken> + 'a>> {
-        Ok(Box::new(self.runnables.iter().cloned()))
+        cx: &mut ModelContext<Box<dyn Source>>,
+    ) -> anyhow::Result<Vec<RunnableToken>> {
+        let mut known_definitions: HashMap<String, _> = self
+            .definitions
+            .read(cx)
+            .parsed_contents
+            .tasks
+            .iter()
+            .cloned()
+            .map(|meta| (meta.label.clone(), meta))
+            .collect();
+
+        // Refill runnables.
+        for runnable in &self.runnables {
+            if !runnable.was_scheduled(cx) {
+                known_definitions.remove(runnable.metadata.display_name());
+            }
+        }
+        for (_, meta) in known_definitions {
+            self.runnables.push(Self::token_from_definition(meta, cx));
+        }
+        Ok(self.runnables.clone())
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {

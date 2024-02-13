@@ -119,10 +119,10 @@ impl PickerDelegate for RunnablesModalDelegate {
                     this.delegate.candidates = this
                         .delegate
                         .inventory
-                        .read(cx)
-                        .list_runnables(path, cx)
-                        .filter(|runnable| !runnable.was_scheduled(cx))
-                        .collect();
+                        .update(cx, |this, cx| this.list_runnables(path, cx));
+                    this.delegate
+                        .candidates
+                        .retain(|runnable| !runnable.was_scheduled(cx));
 
                     this.delegate
                         .candidates

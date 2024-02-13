@@ -217,16 +217,16 @@ impl Panel for RunnablesPanel {
             cx.notify();
         } else {
             let path = PathBuf::new();
-            let tasks: Vec<_> = self
-                .inventory
-                .read(cx)
-                .list_runnables(&path, cx)
-                .filter_map(|runnable| {
-                    runnable
-                        .handle(cx)
-                        .filter(|handle| handle.result().is_none())
-                })
-                .collect();
+            let tasks: Vec<_> = self.inventory.update(cx, |this, cx| {
+                this.list_runnables(&path, cx)
+                    .into_iter()
+                    .filter_map(|runnable| {
+                        runnable
+                            .handle(cx)
+                            .filter(|handle| handle.result().is_none())
+                    })
+                    .collect()
+            });
 
             self.status_bar_tracker = Some(StatusIconTracker::new(tasks, cx));
             cx.notify();
@@ -244,12 +244,11 @@ impl Panel for RunnablesPanel {
 
 impl Render for RunnablesPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let runnables: Vec<_> = self
+        let mut runnables: Vec<_> = self
             .inventory
-            .read(cx)
-            .list_runnables(&PathBuf::new(), cx)
-            .filter(|runnable| runnable.was_scheduled(cx))
-            .collect();
+            .update(cx, |this, cx| this.list_runnables(&PathBuf::new(), cx));
+
+        runnables.retain(|runnable| runnable.was_scheduled(cx));
         //let list = List::new().empty_message("There are no runnables");
         let state = ListState::new(runnables.len(), ListAlignment::Top, px(2.), {
             move |index, cx| {
