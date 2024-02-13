@@ -13,11 +13,14 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+async-compression.workspace = true
+async-tar.workspace = true
 client.workspace = true
 db.workspace = true
 editor.workspace = true
 extension.workspace = true
 fs.workspace = true
+futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true

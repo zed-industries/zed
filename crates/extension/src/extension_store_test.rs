@@ -7,10 +7,12 @@ use language::{LanguageMatcher, LanguageRegistry};
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
+use util::http::FakeHttpClient;
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
     let fs = FakeFs::new(cx.executor());
+    let http_client = FakeHttpClient::with_200_response();
 
     fs.insert_tree(
         "/the-extension-dir",
@@ -172,6 +174,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             fs.clone(),
+            http_client.clone(),
             language_registry.clone(),
             theme_registry.clone(),
             cx,
@@ -263,6 +266,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             fs.clone(),
+            http_client.clone(),
             language_registry.clone(),
             theme_registry.clone(),
             cx,

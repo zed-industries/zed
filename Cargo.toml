@@ -179,6 +179,7 @@ zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-tar = "0.4.2"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ctor = "0.2.6"

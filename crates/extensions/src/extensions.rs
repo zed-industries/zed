@@ -1,51 +1,35 @@
-use anyhow::{bail, Context};
-use client::{telemetry::Telemetry, ClientSettings};
-use db::smol::io::AsyncReadExt as _;
+use client::telemetry::Telemetry;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::ExtensionStore;
+use extension::{Extension, ExtensionStatus, ExtensionStore};
+use fs::Fs;
 use gpui::{
     uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle,
     FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
-use serde::Deserialize;
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
-use util::http::{AsyncBody, HttpClient};
-
-const EXTENSIONS_PATH: &str = "/api/extensions";
 
 use workspace::{
     item::{Item, ItemEvent},
     Extensions, Workspace, WorkspaceId,
 };
 
-pub fn init(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
-        let http_client = http_client.clone();
         workspace.register_action(move |workspace, _: &Extensions, cx| {
-            let extensions_page = ExtensionsPage::new(workspace, http_client.clone(), cx);
+            let extensions_page = ExtensionsPage::new(workspace, cx);
             workspace.add_item(Box::new(extensions_page), cx)
         });
     })
     .detach();
 }
 
-#[derive(Deserialize)]
-pub struct Extension {
-    pub id: Arc<str>,
-    pub version: Arc<str>,
-    pub name: String,
-    pub description: Option<String>,
-    pub authors: Vec<String>,
-    pub repository: String,
-}
-
 pub struct ExtensionsPage {
     workspace: WeakView<Workspace>,
-    http_client: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
@@ -87,11 +71,7 @@ impl Render for ExtensionsPage {
 }
 
 impl ExtensionsPage {
-    pub fn new(
-        workspace: &Workspace,
-        http_client: Arc<dyn HttpClient>,
-        cx: &mut ViewContext<Workspace>,
-    ) -> View<Self> {
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
 
@@ -107,10 +87,10 @@ impl ExtensionsPage {
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let mut this = Self {
+                fs: workspace.project().read(cx).fs().clone(),
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
                 list: UniformListScrollHandle::new(),
-                http_client,
                 telemetry: workspace.client().telemetry().clone(),
                 extensions_entries: Vec::new(),
                 query_contains_error: false,
@@ -127,52 +107,46 @@ impl ExtensionsPage {
         self.get_extensions_from_server(cx);
     }
 
-    fn get_extensions_from_server(&mut self, cx: &mut ViewContext<Self>) {
-        let url = format!(
-            "{}/{}",
-            ClientSettings::get_global(cx).server_url,
-            EXTENSIONS_PATH
-        );
-        let http_client = self.http_client.clone();
+    fn install_extension(
+        &self,
+        extension_id: Arc<str>,
+        version: Arc<str>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let install = ExtensionStore::global(cx).update(cx, |store, cx| {
+            store.install_extension(extension_id, version, cx)
+        });
         cx.spawn(move |this, mut cx| async move {
-            let mut response = http_client.get(&url, AsyncBody::empty(), true).await?;
+            install.await?;
+            this.update(&mut cx, |_, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
+        cx.notify();
+    }
 
-            let mut body = Vec::new();
-            response
-                .body_mut()
-                .read_to_end(&mut body)
-                .await
-                .context("error reading extensions")?;
+    fn uninstall_extension(&self, extension_id: Arc<str>, cx: &mut ViewContext<Self>) {
+        let install = ExtensionStore::global(cx)
+            .update(cx, |store, cx| store.uninstall_extension(extension_id, cx));
+        cx.spawn(move |this, mut cx| async move {
+            install.await?;
+            this.update(&mut cx, |_, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
+        cx.notify();
+    }
 
-            if response.status().is_client_error() {
-                let text = String::from_utf8_lossy(body.as_slice());
-                bail!(
-                    "status error {}, response: {text:?}",
-                    response.status().as_u16()
-                );
-            }
+    fn get_extensions_from_server(&mut self, cx: &mut ViewContext<Self>) {
+        let extensions =
+            ExtensionStore::global(cx).update(cx, |store, cx| store.fetch_extensions(cx));
 
-            let extensions = serde_json::from_slice(&body)?;
-
+        cx.spawn(move |this, mut cx| async move {
+            let extensions = extensions.await?;
             this.update(&mut cx, |this, cx| {
                 this.extensions_entries = extensions;
                 cx.notify();
             })
         })
         .detach_and_log_err(cx);
-    }
-
-    fn install_extension(
-        &self,
-        extension_id: Arc<str>,
-        version: Arc<str>,
-        _cx: &mut ViewContext<Self>,
-    ) {
-        println!("INSTALL EXTENSION {} {}", extension_id, version);
-    }
-
-    fn uninstall_extension(&self, extension_id: Arc<str>, _cx: &mut ViewContext<Self>) {
-        println!("UNINSTALL EXTENSION {}", extension_id);
     }
 
     fn search_extension(&self, cx: &mut ViewContext<Self>) {
@@ -194,43 +168,39 @@ impl ExtensionsPage {
     }
 
     fn render_entry(&self, extension: &Extension, cx: &mut ViewContext<Self>) -> Div {
-        let installed = ExtensionStore::global(cx)
+        let status = ExtensionStore::global(cx)
             .read(cx)
-            .is_extension_installed(&extension.id);
+            .extension_status(&extension.id);
 
-        let button;
-        if installed {
-            button = Button::new(
-                SharedString::from(format!("uninstall-{}", extension.id)),
-                "Uninstall",
-            )
-            .color(Color::Accent)
-            .on_click(cx.listener({
-                let extension_id = extension.id.clone();
-                move |this, _, cx| {
-                    this.telemetry
-                        .report_app_event("extensions page: uninstall extension".to_string());
-                    this.uninstall_extension(extension_id.clone(), cx);
-                }
-            }))
-            .disabled(installed);
-        } else {
-            button = Button::new(
-                SharedString::from(format!("install-{}", extension.id)),
-                "Install",
-            )
-            .color(Color::Accent)
-            .on_click(cx.listener({
-                let extension_id = extension.id.clone();
-                let version = extension.version.clone();
-                move |this, _, cx| {
-                    this.telemetry
-                        .report_app_event("extensions page: install extension".to_string());
-                    this.install_extension(extension_id.clone(), version.clone(), cx);
-                }
-            }))
-            .disabled(installed);
+        let button = match status {
+            ExtensionStatus::NotInstalled | ExtensionStatus::Installing => {
+                Button::new(SharedString::from(extension.id.clone()), "Install")
+                    .on_click(cx.listener({
+                        let extension_id = extension.id.clone();
+                        let version = extension.version.clone();
+                        move |this, _, cx| {
+                            this.telemetry
+                                .report_app_event("extensions page: install extension".to_string());
+                            this.install_extension(extension_id.clone(), version.clone(), cx);
+                        }
+                    }))
+                    .disabled(matches!(status, ExtensionStatus::Installing))
+            }
+            ExtensionStatus::Installed | ExtensionStatus::Removing => {
+                Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                    .on_click(cx.listener({
+                        let extension_id = extension.id.clone();
+                        move |this, _, cx| {
+                            this.telemetry.report_app_event(
+                                "extensions page: uninstall extension".to_string(),
+                            );
+                            this.uninstall_extension(extension_id.clone(), cx);
+                        }
+                    }))
+                    .disabled(matches!(status, ExtensionStatus::Removing))
+            }
         }
+        .color(Color::Accent);
 
         div().w_full().child(
             v_flex()
@@ -392,9 +362,9 @@ impl Item for ExtensionsPage {
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
         Some(cx.new_view(|cx| ExtensionsPage {
+            fs: self.fs.clone(),
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
-            http_client: self.http_client.clone(),
             list: UniformListScrollHandle::new(),
             telemetry: self.telemetry.clone(),
             extensions_entries: Default::default(),

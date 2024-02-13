@@ -1,13 +1,18 @@
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
+use client::ClientSettings;
 use collections::{HashMap, HashSet};
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::StreamExt as _;
+use futures::{io::BufReader, AsyncReadExt as _};
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -15,15 +20,35 @@ use std::{
     time::Duration,
 };
 use theme::{ThemeRegistry, ThemeSettings};
-use util::{paths::EXTENSIONS_DIR, ResultExt};
+use util::http::AsyncBody;
+use util::{http::HttpClient, paths::EXTENSIONS_DIR, ResultExt};
 
 #[cfg(test)]
 mod extension_store_test;
 
+#[derive(Deserialize)]
+pub struct Extension {
+    pub id: Arc<str>,
+    pub version: Arc<str>,
+    pub name: String,
+    pub description: Option<String>,
+    pub authors: Vec<String>,
+    pub repository: String,
+}
+
+pub enum ExtensionStatus {
+    NotInstalled,
+    Installing,
+    Installed,
+    Removing,
+}
+
 pub struct ExtensionStore {
     manifest: Arc<RwLock<Manifest>>,
     fs: Arc<dyn Fs>,
+    http_client: Arc<dyn HttpClient>,
     extensions_dir: PathBuf,
+    extensions_being_installed_or_installed: HashSet<Arc<str>>,
     manifest_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
@@ -66,6 +91,7 @@ actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
+    http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
@@ -74,6 +100,7 @@ pub fn init(
         ExtensionStore::new(
             EXTENSIONS_DIR.clone(),
             fs.clone(),
+            http_client.clone(),
             language_registry.clone(),
             theme_registry,
             cx,
@@ -98,6 +125,7 @@ impl ExtensionStore {
     pub fn new(
         extensions_dir: PathBuf,
         fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         cx: &mut ModelContext<Self>,
@@ -106,7 +134,9 @@ impl ExtensionStore {
             manifest: Default::default(),
             extensions_dir: extensions_dir.join("installed"),
             manifest_path: extensions_dir.join("manifest.json"),
+            extensions_being_installed_or_installed: Default::default(),
             fs,
+            http_client,
             language_registry,
             theme_registry,
             _watch_extensions_dir: [Task::ready(()), Task::ready(())],
@@ -145,8 +175,121 @@ impl ExtensionStore {
         }
     }
 
-    pub fn is_extension_installed(&self, extension_id: &str) -> bool {
-        self.manifest.read().extensions.contains(extension_id)
+    pub fn extensions_dir(&self) -> PathBuf {
+        self.extensions_dir.clone()
+    }
+
+    pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
+        let is_installed = self.manifest.read().extensions.contains(extension_id);
+        let is_processing = self
+            .extensions_being_installed_or_installed
+            .contains(extension_id);
+        match (is_installed, is_processing) {
+            (true, true) => ExtensionStatus::Removing,
+            (true, false) => ExtensionStatus::Installed,
+            (false, true) => ExtensionStatus::Installing,
+            (false, false) => ExtensionStatus::NotInstalled,
+        }
+    }
+
+    pub fn fetch_extensions(&self, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Extension>>> {
+        let url = format!(
+            "{}/{}",
+            ClientSettings::get_global(cx).server_url,
+            "api/extensions"
+        );
+        let http_client = self.http_client.clone();
+        cx.spawn(move |_, _| async move {
+            let mut response = http_client.get(&url, AsyncBody::empty(), true).await?;
+
+            let mut body = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut body)
+                .await
+                .context("error reading extensions")?;
+
+            if response.status().is_client_error() {
+                let text = String::from_utf8_lossy(body.as_slice());
+                bail!(
+                    "status error {}, response: {text:?}",
+                    response.status().as_u16()
+                );
+            }
+
+            let extensions = serde_json::from_slice(&body)?;
+
+            Ok(extensions)
+        })
+    }
+
+    pub fn install_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        version: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        log::info!("installing extension {extension_id} {version}");
+        let url = format!(
+            "{}/api/extensions/{extension_id}/{version}/download",
+            ClientSettings::get_global(cx).server_url
+        );
+
+        let extensions_dir = self.extensions_dir();
+        let http_client = self.http_client.clone();
+
+        self.extensions_being_installed_or_installed
+            .insert(extension_id.clone());
+
+        cx.spawn(move |this, mut cx| async move {
+            let mut response = http_client
+                .get(&url, Default::default(), true)
+                .await
+                .map_err(|err| anyhow!("error downloading extension: {}", err))?;
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let archive = Archive::new(decompressed_bytes);
+            archive
+                .unpack(extensions_dir.join(extension_id.as_ref()))
+                .await?;
+
+            this.update(&mut cx, |store, cx| {
+                store
+                    .extensions_being_installed_or_installed
+                    .remove(extension_id.as_ref());
+                store.reload(cx)
+            })?
+            .await
+        })
+    }
+
+    pub fn uninstall_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let extensions_dir = self.extensions_dir();
+        let fs = self.fs.clone();
+
+        self.extensions_being_installed_or_installed
+            .insert(extension_id.clone());
+
+        cx.spawn(move |this, mut cx| async move {
+            fs.remove_dir(
+                &extensions_dir.join(extension_id.as_ref()),
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.extensions_being_installed_or_installed
+                    .remove(extension_id.as_ref());
+                this.reload(cx)
+            })?
+            .await
+        })
     }
 
     fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) {
@@ -244,11 +387,13 @@ impl ExtensionStore {
                 language_registry.reload_languages(&changed_languages, &changed_grammars);
 
                 for theme_path in &changed_themes {
-                    theme_registry
-                        .load_user_theme(&theme_path, fs.clone())
-                        .await
-                        .context("failed to load user theme")
-                        .log_err();
+                    if fs.is_file(&theme_path).await {
+                        theme_registry
+                            .load_user_theme(&theme_path, fs.clone())
+                            .await
+                            .context("failed to load user theme")
+                            .log_err();
+                    }
                 }
 
                 if !changed_themes.is_empty() {
@@ -292,6 +437,8 @@ impl ExtensionStore {
                         else {
                             continue;
                         };
+
+                        manifest.extensions.insert(extension_name.into());
 
                         if let Ok(mut grammar_paths) =
                             fs.read_dir(&extension_dir.join("grammars")).await
