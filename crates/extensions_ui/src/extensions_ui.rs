@@ -180,7 +180,7 @@ impl ExtensionsPage {
                     }))
                     .disabled(matches!(status, ExtensionStatus::Installing))
             }
-            ExtensionStatus::Installed | ExtensionStatus::Removing => {
+            ExtensionStatus::Installed(_) | ExtensionStatus::Removing => {
                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
                     .on_click(cx.listener({
                         let extension_id = extension.id.clone();

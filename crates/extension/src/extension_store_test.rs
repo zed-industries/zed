@@ -84,9 +84,12 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     .await;
 
     let mut expected_manifest = Manifest {
-        extensions: ["zed-ruby".into(), "zed-monokai".into()]
-            .into_iter()
-            .collect(),
+        extensions: [
+            ("zed-ruby".into(), "1.0.0".into()),
+            ("zed-monokai".into(), "1.0.0".into()),
+        ]
+        .into_iter()
+        .collect(),
         grammars: [
             (
                 "embedded_template".into(),

@@ -44,7 +44,7 @@ pub struct Extension {
 pub enum ExtensionStatus {
     NotInstalled,
     Installing,
-    Installed,
+    Installed(Arc<str>),
     Removing,
 }
 
@@ -66,7 +66,7 @@ impl Global for GlobalExtensionStore {}
 
 #[derive(Deserialize, Serialize, Default)]
 pub struct Manifest {
-    pub extensions: HashSet<Arc<str>>,
+    pub extensions: HashMap<Arc<str>, Arc<str>>,
     pub grammars: HashMap<Arc<str>, GrammarManifestEntry>,
     pub languages: HashMap<Arc<str>, LanguageManifestEntry>,
     pub themes: HashMap<String, ThemeManifestEntry>,
@@ -185,15 +185,15 @@ impl ExtensionStore {
     }
 
     pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
-        let is_installed = self.manifest.read().extensions.contains(extension_id);
+        let installed_version = self.manifest.read().extensions.get(extension_id).cloned();
         let is_processing = self
             .extensions_being_installed_or_installed
             .contains(extension_id);
-        match (is_installed, is_processing) {
-            (true, true) => ExtensionStatus::Removing,
-            (true, false) => ExtensionStatus::Installed,
-            (false, true) => ExtensionStatus::Installing,
-            (false, false) => ExtensionStatus::NotInstalled,
+        match (installed_version, is_processing) {
+            (Some(_), true) => ExtensionStatus::Removing,
+            (Some(version), false) => ExtensionStatus::Installed(version.clone()),
+            (None, true) => ExtensionStatus::Installing,
+            (None, false) => ExtensionStatus::NotInstalled,
         }
     }
 
@@ -450,7 +450,18 @@ impl ExtensionStore {
                             continue;
                         };
 
-                        manifest.extensions.insert(extension_name.into());
+                        #[derive(Deserialize)]
+                        struct ExtensionJson {
+                            pub version: String,
+                        }
+
+                        let extension_json_path = extension_dir.join("extension.json");
+                        let extension_json: ExtensionJson =
+                            serde_json::from_str(&fs.load(&extension_json_path).await?)?;
+
+                        manifest
+                            .extensions
+                            .insert(extension_name.into(), extension_json.version.into());
 
                         if let Ok(mut grammar_paths) =
                             fs.read_dir(&extension_dir.join("grammars")).await
