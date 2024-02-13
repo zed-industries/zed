@@ -49,7 +49,6 @@ impl StatusIconTracker {
     }
 
     fn start_poller(&mut self, cx: &mut ModelContext<Self>) {
-        debug_assert!(self._task_poller.is_none());
         if let Some(mut rx) = self.rx.take() {
             self._task_poller = Some(cx.spawn(|this, mut cx| async move {
                 let mut futures = FuturesUnordered::new();
@@ -59,6 +58,9 @@ impl StatusIconTracker {
                         new_task = rx.next() => {
 
                             if let Some(new_task) = new_task {
+                                this.update(&mut cx, |this: &mut Self, cx| {
+                                    this.current_status.take();
+                                }).ok();
                                 futures.push(new_task);
                             }
 
