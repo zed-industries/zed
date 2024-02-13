@@ -163,7 +163,8 @@ CREATE TABLE "room_participants" (
     "calling_connection_id" INTEGER NOT NULL,
     "calling_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE SET NULL,
     "participant_index" INTEGER,
-    "role" TEXT
+    "role" TEXT,
+    "in_call" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");
 CREATE INDEX "index_room_participants_on_room_id" ON "room_participants" ("room_id");
