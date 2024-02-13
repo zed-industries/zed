@@ -202,7 +202,7 @@ impl ExtensionsPage {
             ),
         };
 
-        let button = match status {
+        let install_or_uninstall_button = match status {
             ExtensionStatus::NotInstalled | ExtensionStatus::Installing => {
                 Button::new(SharedString::from(extension.id.clone()), "Install")
                     .on_click(cx.listener({
@@ -267,7 +267,7 @@ impl ExtensionsPage {
                                 .gap_2()
                                 .justify_between()
                                 .children(upgrade_button)
-                                .child(button),
+                                .child(install_or_uninstall_button),
                         ),
                 )
                 .child(
