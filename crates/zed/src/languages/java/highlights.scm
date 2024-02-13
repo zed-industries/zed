@@ -55,9 +55,10 @@
 ((identifier) @constant
  (#match? @constant "^_*[A-Z][A-Z\\d_]+$"))
 
-(identifier) @variable
+(field_access
+  field: (identifier) @property)
 
-(this) @variable.builtin
+(this) @variable.special
 
 ; Literals
 
