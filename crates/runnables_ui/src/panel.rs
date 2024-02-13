@@ -248,6 +248,7 @@ impl Render for RunnablesPanel {
             .inventory
             .read(cx)
             .list_runnables(&PathBuf::new(), cx)
+            .filter(|runnable| runnable.was_scheduled(cx))
             .collect();
         //let list = List::new().empty_message("There are no runnables");
         let state = ListState::new(runnables.len(), ListAlignment::Top, px(2.), {
