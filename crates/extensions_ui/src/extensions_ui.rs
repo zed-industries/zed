@@ -227,11 +227,14 @@ impl ExtensionsPage {
                         .w_full()
                         .items_center()
                         .justify_between()
-                        .children(extension.description.as_ref().map(|description| {
-                            Label::new(description.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Default)
-                        }))
+                        .map(|this| match extension.description.as_ref() {
+                            Some(description) => this.child(
+                                Label::new(description.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Default),
+                            ),
+                            None => this.child(div()),
+                        })
                         .child(button),
                 )
                 .child(
