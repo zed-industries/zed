@@ -7836,7 +7836,6 @@ impl Editor {
         Some(rename)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
     }
