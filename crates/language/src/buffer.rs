@@ -3441,8 +3441,9 @@ impl Completion {
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
         let kind_key = match self.lsp_completion.kind {
-            Some(lsp::CompletionItemKind::VARIABLE) => 0,
-            _ => 1,
+            Some(lsp::CompletionItemKind::KEYWORD) => 0,
+            Some(lsp::CompletionItemKind::VARIABLE) => 1,
+            _ => 2,
         };
         (kind_key, &self.label.text[self.label.filter_range.clone()])
     }
