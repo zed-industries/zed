@@ -1,33 +1,3 @@
-mod async_context;
-mod entity_map;
-mod model_context;
-#[cfg(any(test, feature = "test-support"))]
-mod test_context;
-
-pub use async_context::*;
-use derive_more::{Deref, DerefMut};
-pub use entity_map::*;
-pub use model_context::*;
-use refineable::Refineable;
-use smol::future::FutureExt;
-#[cfg(any(test, feature = "test-support"))]
-pub use test_context::*;
-use time::UtcOffset;
-
-use crate::WindowAppearance;
-use crate::{
-    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
-    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
-};
-use anyhow::{anyhow, Result};
-use collections::{FxHashMap, FxHashSet, VecDeque};
-use futures::{channel::oneshot, future::LocalBoxFuture, Future};
-
-use slotmap::SlotMap;
 use std::{
     any::{type_name, TypeId},
     cell::{Ref, RefCell, RefMut},
@@ -35,13 +5,44 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{atomic::Ordering::SeqCst, Arc},
+    sync::{Arc, atomic::Ordering::SeqCst},
     time::Duration,
 };
+
+use anyhow::{anyhow, Result};
+use derive_more::{Deref, DerefMut};
+use futures::{channel::oneshot, Future, future::LocalBoxFuture};
+use slotmap::SlotMap;
+use smol::future::FutureExt;
+use time::UtcOffset;
+
+pub use async_context::*;
+use collections::{FxHashMap, FxHashSet, VecDeque};
+pub use entity_map::*;
+pub use model_context::*;
+use refineable::Refineable;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_context::*;
 use util::{
     http::{self, HttpClient},
     ResultExt,
 };
+
+use crate::{
+    Action, ActionRegistry, Any, AnyView, AnyWindowHandle, AppMetadata,
+    AssetSource, BackgroundExecutor, ClipboardItem, Context, current_platform, DispatchPhase, Entity,
+    EventEmitter, ForegroundExecutor, Global, image_cache::ImageCache, init_app_menus, KeyBinding, Keymap, Keystroke,
+    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
+    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
+};
+use crate::WindowAppearance;
+
+mod async_context;
+mod entity_map;
+mod model_context;
+#[cfg(any(test, feature = "test-support"))]
+mod test_context;
 
 /// The duration for which futures returned from [AppContext::on_app_context] or [ModelContext::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
@@ -673,7 +674,7 @@ impl AppContext {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, cx| {}).unwrap();
+                    self.update_window(window, |_, _| {}).unwrap();
                 }
 
                 #[allow(clippy::collapsible_else_if)]

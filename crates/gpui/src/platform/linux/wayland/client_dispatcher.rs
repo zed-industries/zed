@@ -1,5 +1,7 @@
 use std::sync::Arc;
+
 use wayland_client::{Connection, EventQueue};
+
 use crate::platform::linux::client_dispatcher::ClientDispatcher;
 
 pub(crate) struct WaylandClientDispatcher {
@@ -12,7 +14,7 @@ impl WaylandClientDispatcher {
         let event_queue = conn.new_event_queue();
         Self {
             conn: Arc::clone(conn),
-            event_queue: Arc::new(event_queue)
+            event_queue: Arc::new(event_queue),
         }
     }
 }

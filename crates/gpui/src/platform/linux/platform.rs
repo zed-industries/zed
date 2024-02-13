@@ -51,7 +51,7 @@ pub(crate) struct LinuxPlatformInner {
 
 pub(crate) struct LinuxPlatform {
     client: Arc<dyn Client>,
-    inner: Arc<LinuxPlatformInner>
+    inner: Arc<LinuxPlatformInner>,
 }
 
 pub(crate) struct LinuxPlatformState {
@@ -88,27 +88,27 @@ impl LinuxPlatform {
         main_receiver: Receiver<Runnable>,
         text_system: Arc<LinuxTextSystem>,
         callbacks: Mutex<Callbacks>,
-        state: Mutex<LinuxPlatformState>
+        state: Mutex<LinuxPlatformState>,
     ) -> Self {
-            let conn = Arc::new(Connection::connect_to_env().unwrap());
-            let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = Arc::new(WaylandClientDispatcher::new(&conn));
-            let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
-            let inner = Arc::new(LinuxPlatformInner {
-                background_executor: BackgroundExecutor::new(dispatcher.clone()),
-                foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
-                main_receiver,
-                text_system,
-                callbacks,
-                state,
-            });
-            let client = Arc::new(WaylandClient::new(
-                Arc::clone(&inner),
-                Arc::clone(&conn)
-            ));
-            Self {
-                client,
-                inner: Arc::clone(&inner)
-            }
+        let conn = Arc::new(Connection::connect_to_env().unwrap());
+        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = Arc::new(WaylandClientDispatcher::new(&conn));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
+        let inner = Arc::new(LinuxPlatformInner {
+            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
+            main_receiver,
+            text_system,
+            callbacks,
+            state,
+        });
+        let client = Arc::new(WaylandClient::new(
+            Arc::clone(&inner),
+            Arc::clone(&conn),
+        ));
+        Self {
+            client,
+            inner: Arc::clone(&inner),
+        }
     }
 
     fn new_x11(
@@ -116,7 +116,7 @@ impl LinuxPlatform {
         main_receiver: Receiver<Runnable>,
         text_system: Arc<LinuxTextSystem>,
         callbacks: Mutex<Callbacks>,
-        state: Mutex<LinuxPlatformState>
+        state: Mutex<LinuxPlatformState>,
     ) -> Self {
         let (xcb_connection, x_root_index) = xcb::Connection::connect(None).unwrap();
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
@@ -135,11 +135,11 @@ impl LinuxPlatform {
             Arc::clone(&inner),
             xcb_connection,
             x_root_index,
-            atoms
+            atoms,
         ));
         Self {
             client,
-            inner: Arc::clone(&inner)
+            inner: Arc::clone(&inner),
         }
     }
 }

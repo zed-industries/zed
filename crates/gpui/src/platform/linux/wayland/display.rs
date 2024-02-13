@@ -1,5 +1,7 @@
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
+
 use uuid::Uuid;
+
 use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
 
 #[derive(Debug)]

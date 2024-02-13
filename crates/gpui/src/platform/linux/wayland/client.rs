@@ -1,26 +1,26 @@
-use parking_lot::Mutex;
 use std::rc::Rc;
 use std::sync::Arc;
-use wayland_client::protocol::wl_callback::WlCallback;
+
+use parking_lot::Mutex;
 use wayland_client::{
+    Connection,
     delegate_noop,
-    protocol::{
+    Dispatch, EventQueue, protocol::{
         wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm,
         wl_shm_pool,
         wl_surface::{self, WlSurface},
-    },
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+    }, Proxy, QueueHandle,
 };
-
+use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-use crate::platform::linux::client::Client;
-use crate::platform::linux::wayland::window::WaylandWindow;
-use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId,
+    AnyWindowHandle, DisplayId, platform::linux::wayland::window::WaylandWindowState,
     PlatformDisplay, WindowOptions,
 };
+use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::platform::linux::client::Client;
+use crate::platform::linux::wayland::window::WaylandWindow;
 
 pub(crate) struct WaylandClientState {
     compositor: Option<wl_compositor::WlCompositor>,
@@ -115,7 +115,6 @@ impl Client for WaylandClient {
             Arc::new(toplevel),
             options,
         ));
-        // window_state.update();
 
         state.windows.push((xdg_surface, Arc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
@@ -206,7 +205,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
     fn event(
         state: &mut Self,
         xdg_toplevel: &xdg_toplevel::XdgToplevel,
-        event: <xdg_toplevel::XdgToplevel as wayland_client::Proxy>::Event,
+        event: <xdg_toplevel::XdgToplevel as Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -214,7 +213,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         if let xdg_toplevel::Event::Configure {
             width,
             height,
-            states,
+            states: _states,
         } = event
         {
             if width == 0 || height == 0 {
@@ -243,12 +242,12 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientState {
     fn event(
-        state: &mut Self,
+        _: &mut Self,
         wm_base: &xdg_wm_base::XdgWmBase,
-        event: <xdg_wm_base::XdgWmBase as wayland_client::Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &QueueHandle<Self>,
+        event: <xdg_wm_base::XdgWmBase as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
             wm_base.pong(serial);
