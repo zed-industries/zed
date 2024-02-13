@@ -64,7 +64,10 @@ impl Default for LinuxPlatform {
 
 impl LinuxPlatform {
     pub(crate) fn new() -> Self {
-        let (xcb_connection, x_root_index) = xcb::Connection::connect(None).unwrap();
+        let (xcb_connection, x_root_index) =
+            xcb::Connection::connect_with_extensions(None, &[xcb::Extension::Present], &[])
+                .unwrap();
+
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
 
         let xcb_connection = Arc::new(xcb_connection);

@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use xcb::{
     x::{self, StackMode},
-    Xid as _,
+    GeEvent as _, Xid as _,
 };
 
 use crate::platform::linux::blade_renderer::BladeRenderer;
@@ -202,6 +202,16 @@ impl X11WindowState {
             })
             .unwrap();
 
+        // Is this ID used anywhere?
+        let idle_notify_event_id = xcb_connection.generate_id();
+        xcb_connection
+            .send_and_check_request(&xcb::present::SelectInput {
+                eid: idle_notify_event_id,
+                window: x_window,
+                event_mask: xcb::present::EventMask::IDLE_NOTIFY,
+            })
+            .unwrap();
+
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
 
@@ -258,7 +268,7 @@ impl X11WindowState {
         self.xcb_connection.flush().unwrap();
     }
 
-    pub fn expose(&self) {
+    pub fn refresh(&self) {
         let mut cb = self.callbacks.lock();
         if let Some(ref mut fun) = cb.request_frame {
             fun();

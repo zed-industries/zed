@@ -275,6 +275,7 @@ wasmtime = "16"
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1d8975319c2d5de1bf710e7e21db25b0eee4bc66" }
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
+xcb = { git = "https://github.com/kvark/rust-xcb", branch = "zed" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
