@@ -18,7 +18,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(|workspace, _: &panel::ToggleFocus, cx| {
                     workspace.toggle_panel_focus::<RunnablesPanel>(cx);
                 })
-                .register_action(|workspace, _: &modal::New, cx| {
+                .register_action(|workspace, _: &modal::Spawn, cx| {
                     let inventory = workspace.project().read(cx).runnable_inventory().clone();
                     let workspace_handle = workspace.weak_handle();
                     workspace.toggle_modal(cx, |cx| {

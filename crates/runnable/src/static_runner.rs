@@ -60,9 +60,9 @@ impl Runnable for StaticRunner {
         RunnableHandle::new(
             command_handle
                 .status()
-                .map(|task_result| {
-                    task_result
-                        .context("waiting for task to finish")
+                .map(|runnable_result| {
+                    runnable_result
+                        .context("waiting for runnable to finish")
                         .map_err(Arc::new)
                 })
                 .boxed(),
@@ -104,8 +104,8 @@ mod tests {
         });
         let ex = cx.executor().clone();
         ex.spawn(async_process::driver()).detach();
-        let task_handle = cx.update(|cx| runner.exec(None, cx.to_async())).unwrap();
-        let runnable_result = task_handle.await.unwrap();
+        let runnable_handle = cx.update(|cx| runner.exec(None, cx.to_async())).unwrap();
+        let runnable_result = runnable_handle.await.unwrap();
         assert!(runnable_result.status.unwrap().success());
         assert_eq!(
             cx.update(|cx| runnable_result.output.unwrap().full_output(cx))
@@ -124,13 +124,13 @@ mod tests {
         });
         let ex = cx.executor().clone();
         ex.spawn(async_process::driver()).detach();
-        let task_handle = cx.update(|cx| runner.exec(None, cx.to_async())).unwrap();
-        let cancel_token = task_handle.termination_handle();
+        let runnable_handle = cx.update(|cx| runner.exec(None, cx.to_async())).unwrap();
+        let cancel_token = runnable_handle.termination_handle();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(3));
             cancel_token.abort();
         });
-        let runnable_result = task_handle.await;
+        let runnable_result = runnable_handle.await;
         assert!(runnable_result.is_err());
     }
 }

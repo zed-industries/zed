@@ -69,10 +69,10 @@ impl StaticSource {
     ) -> Model<Box<dyn Source>> {
         cx.new_model(|cx| {
             let _subscription = cx.observe(&definitions, |this, new_definitions, cx| {
-                let tasks = new_definitions.read(cx).get().tasks.clone();
-                let runnables = tasks
+                let runnables = new_definitions.read(cx).get().runnables.clone();
+                let runnables = runnables
                     .into_iter()
-                    .map(|task| Self::token_from_definition(task, cx))
+                    .map(|runnable| Self::token_from_definition(runnable, cx))
                     .collect();
                 let this: Option<&mut Self> = this.as_any().downcast_mut();
 
@@ -89,10 +89,10 @@ impl StaticSource {
         })
     }
     fn token_from_definition(
-        task: Definition,
+        runnable: Definition,
         cx: &mut ModelContext<Box<dyn Source>>,
     ) -> crate::RunnableToken {
-        let runner = StaticRunner::new(task.clone());
+        let runner = StaticRunner::new(runnable.clone());
         let display_name = runner.name();
         let source = cx.weak_model();
         let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
@@ -116,7 +116,7 @@ impl Source for StaticSource {
             .definitions
             .read(cx)
             .parsed_contents
-            .tasks
+            .runnables
             .iter()
             .cloned()
             .map(|meta| (meta.label.clone(), meta))

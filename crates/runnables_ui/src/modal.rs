@@ -15,7 +15,7 @@ use workspace::{ModalView, Workspace};
 
 use crate::RunnablesPanel;
 
-actions!(runnables, [New]);
+actions!(runnables, [Spawn]);
 /// A modal used to spawn new runnables.
 pub(crate) struct RunnablesModalDelegate {
     inventory: Model<Inventory>,
@@ -38,7 +38,7 @@ impl RunnablesModalDelegate {
         }
     }
 
-    fn task_cwd(
+    fn runnable_cwd(
         &mut self,
         cx: &mut ViewContext<'_, picker::Picker<Self>>,
     ) -> anyhow::Result<Option<PathBuf>> {
@@ -55,7 +55,7 @@ impl RunnablesModalDelegate {
                     let another_worktree = all_worktrees.next();
                     anyhow::ensure!(
                         another_worktree.is_none(),
-                        "Cannot determine task cwd for multiple worktrees"
+                        "Cannot determine runnable cwd for multiple worktrees"
                     );
 
                     single_worktree.map(|worktree| worktree.read(cx).abs_path())
@@ -193,7 +193,7 @@ impl PickerDelegate for RunnablesModalDelegate {
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        let Some(cwd) = self.task_cwd(cx).log_err() else {
+        let Some(cwd) = self.runnable_cwd(cx).log_err() else {
             return;
         };
         let ix = self.matches[current_match_index].candidate_id;

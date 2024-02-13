@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use async_process::{ChildStderr, ChildStdout, ExitStatus};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::future::{join_all, BoxFuture, Shared};
-pub use futures::stream::Aborted as TaskTerminated;
+pub use futures::stream::Aborted as RunnableTerminated;
 use futures::stream::{AbortHandle, Abortable};
 use futures::{AsyncBufReadExt, AsyncRead, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, EntityId, Model, ModelContext, Task, WeakModel};
@@ -21,10 +21,10 @@ use std::sync::Arc;
 use std::task::Poll;
 use util::ResultExt;
 
-/// Represents a task that's already underway. That task can be cancelled at any time.
+/// Represents a runnable that's already underway. That runnable can be cancelled at any time.
 #[derive(Clone)]
 pub struct RunnableHandle {
-    fut: Shared<Task<Result<Result<ExitStatus, Arc<anyhow::Error>>, TaskTerminated>>>,
+    fut: Shared<Task<Result<Result<ExitStatus, Arc<anyhow::Error>>, RunnableTerminated>>>,
     pub output: Option<PendingOutput>,
     cancel_token: AbortHandle,
 }
@@ -102,15 +102,15 @@ impl RunnableHandle {
         })
     }
 
-    /// Returns a handle that can be used to cancel this task.
+    /// Returns a handle that can be used to cancel this runnable.
     pub fn termination_handle(&self) -> AbortHandle {
         self.cancel_token.clone()
     }
 
-    pub fn result<'a>(&self) -> Option<Result<ExecutionResult, TaskTerminated>> {
+    pub fn result<'a>(&self) -> Option<Result<ExecutionResult, RunnableTerminated>> {
         self.fut.peek().cloned().map(|res| {
-            res.map(|task_result| ExecutionResult {
-                status: task_result,
+            res.map(|runnable_result| ExecutionResult {
+                status: runnable_result,
                 output: self.output.clone(),
             })
         })
@@ -118,7 +118,7 @@ impl RunnableHandle {
 }
 
 impl Future for RunnableHandle {
-    type Output = Result<ExecutionResult, TaskTerminated>;
+    type Output = Result<ExecutionResult, RunnableTerminated>;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
@@ -126,8 +126,8 @@ impl Future for RunnableHandle {
     ) -> Poll<Self::Output> {
         match self.fut.poll_unpin(cx) {
             Poll::Ready(res) => match res {
-                Ok(task_result) => Poll::Ready(Ok(ExecutionResult {
-                    status: task_result,
+                Ok(runnable_result) => Poll::Ready(Ok(ExecutionResult {
+                    status: runnable_result,
                     output: self.output.clone(),
                 })),
                 Err(aborted) => Poll::Ready(Err(aborted)),
@@ -138,9 +138,9 @@ impl Future for RunnableHandle {
 }
 
 #[derive(Clone, Debug)]
-/// Represents the result of a task.
+/// Represents the result of a runnable.
 pub struct ExecutionResult {
-    /// Status of the task. Should be `Ok` if the task launch succeeded, `Err` otherwise.
+    /// Status of the runnable. Should be `Ok` if the runnable launch succeeded, `Err` otherwise.
     pub status: Result<ExitStatus, Arc<anyhow::Error>>,
     pub output: Option<PendingOutput>,
 }
@@ -188,7 +188,7 @@ pub(crate) enum RunState {
 }
 
 impl RunnableToken {
-    /// Schedules a task or returns a handle to it if it's already running.
+    /// Schedules a runnable or returns a handle to it if it's already running.
     pub fn schedule(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Result<RunnableHandle> {
         let mut spawned_first_time = false;
         let ret = self.state.update(cx, |this, cx| match this {
@@ -242,11 +242,11 @@ impl RunnableToken {
     pub fn result<'a>(
         &self,
         cx: &'a AppContext,
-    ) -> Option<Result<ExecutionResult, TaskTerminated>> {
+    ) -> Option<Result<ExecutionResult, RunnableTerminated>> {
         if let RunState::Scheduled(state) = self.state.read(cx) {
             state.fut.peek().cloned().map(|res| {
-                res.map(|task_result| ExecutionResult {
-                    status: task_result,
+                res.map(|runnable_result| ExecutionResult {
+                    status: runnable_result,
                     output: state.output.clone(),
                 })
             })

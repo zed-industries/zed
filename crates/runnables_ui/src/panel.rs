@@ -217,7 +217,7 @@ impl Panel for RunnablesPanel {
             cx.notify();
         } else {
             let path = PathBuf::new();
-            let tasks: Vec<_> = self.inventory.update(cx, |this, cx| {
+            let runnables: Vec<_> = self.inventory.update(cx, |this, cx| {
                 this.list_runnables(&path, cx)
                     .into_iter()
                     .filter_map(|runnable| {
@@ -228,7 +228,7 @@ impl Panel for RunnablesPanel {
                     .collect()
             });
 
-            self.status_bar_tracker = Some(StatusIconTracker::new(tasks, cx));
+            self.status_bar_tracker = Some(StatusIconTracker::new(runnables, cx));
             cx.notify();
         }
     }
