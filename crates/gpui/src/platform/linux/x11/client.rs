@@ -58,7 +58,7 @@ impl Client for X11Client {
                             // window "x" button clicked by user, we gracefully exit
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
-                            let mut state = self.state.lock();
+                            let state = self.state.lock();
                             self.platform_inner.state.lock().quit_requested |=
                                 state.windows.is_empty();
                         }
@@ -117,7 +117,7 @@ impl Client for X11Client {
 
     fn open_window(
         &self,
-        handle: AnyWindowHandle,
+        _handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
         let x_window = self.xcb_connection.generate_id();
