@@ -135,7 +135,6 @@ impl Database {
                 ))),
                 participant_index: ActiveValue::set(Some(0)),
                 role: ActiveValue::set(Some(ChannelRole::Admin)),
-                in_call: ActiveValue::set(true),
 
                 id: ActiveValue::NotSet,
                 location_kind: ActiveValue::NotSet,
@@ -188,7 +187,6 @@ impl Database {
                 ))),
                 initial_project_id: ActiveValue::set(initial_project_id),
                 role: ActiveValue::set(Some(called_user_role)),
-                in_call: ActiveValue::set(true),
 
                 id: ActiveValue::NotSet,
                 answering_connection_id: ActiveValue::NotSet,
@@ -416,7 +414,6 @@ impl Database {
         &self,
         room_id: RoomId,
         user_id: UserId,
-        autojoin: bool,
         connection: ConnectionId,
         role: ChannelRole,
         tx: &DatabaseTransaction,
@@ -440,8 +437,6 @@ impl Database {
             ))),
             participant_index: ActiveValue::Set(Some(participant_index)),
             role: ActiveValue::set(Some(role)),
-            in_call: ActiveValue::set(autojoin),
-
             id: ActiveValue::NotSet,
             location_kind: ActiveValue::NotSet,
             location_project_id: ActiveValue::NotSet,
@@ -1263,7 +1258,6 @@ impl Database {
                         location: Some(proto::ParticipantLocation { variant: location }),
                         participant_index: participant_index as u32,
                         role: db_participant.role.unwrap_or(ChannelRole::Member).into(),
-                        in_call: db_participant.in_call,
                     },
                 );
             } else {
