@@ -19,6 +19,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         json!({
             "installed": {
                 "zed-monokai": {
+                    "extension.json": r#"{
+                        "id": "zed-monokai",
+                        "name": "Zed Monokai",
+                        "version": "2.0.0"
+                    }"#,
                     "themes": {
                         "monokai.json": r#"{
                             "name": "Monokai",
@@ -55,6 +60,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     }
                 },
                 "zed-ruby": {
+                    "extension.json": r#"{
+                        "id": "zed-ruby",
+                        "name": "Zed Ruby",
+                        "version": "1.0.0"
+                    }"#,
                     "grammars": {
                         "ruby.wasm": "",
                         "embedded_template.wasm": "",
@@ -86,7 +96,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let mut expected_manifest = Manifest {
         extensions: [
             ("zed-ruby".into(), "1.0.0".into()),
-            ("zed-monokai".into(), "1.0.0".into()),
+            ("zed-monokai".into(), "2.0.0".into()),
         ]
         .into_iter()
         .collect(),
@@ -210,6 +220,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     fs.insert_tree(
         "/the-extension-dir/installed/zed-gruvbox",
         json!({
+            "extension.json": r#"{
+                "id": "zed-gruvbox",
+                "name": "Zed Gruvbox",
+                "version": "1.0.0"
+            }"#,
             "themes": {
                 "gruvbox.json": r#"{
                     "name": "Gruvbox",
