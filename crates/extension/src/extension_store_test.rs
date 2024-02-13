@@ -5,12 +5,19 @@ use fs::FakeFs;
 use gpui::{Context, TestAppContext};
 use language::{LanguageMatcher, LanguageRegistry};
 use serde_json::json;
+use settings::SettingsStore;
 use std::{path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
 use util::http::FakeHttpClient;
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
     let fs = FakeFs::new(cx.executor());
     let http_client = FakeHttpClient::with_200_response();
 
