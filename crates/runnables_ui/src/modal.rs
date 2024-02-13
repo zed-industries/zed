@@ -2,16 +2,16 @@ use std::{path::PathBuf, sync::Arc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
+    actions, rems, Action, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
     ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WindowContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
 use runnable::RunnableToken;
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
-use workspace::ModalView;
+use workspace::{ModalView, Workspace};
 
 actions!(runnables, [New]);
 /// A modal used to spawn new runnables.
@@ -21,12 +21,14 @@ pub(crate) struct RunnablesModalDelegate {
     matches: Vec<StringMatch>,
     selected_index: usize,
     placeholder_text: Arc<str>,
+    workspace: WeakView<Workspace>,
 }
 
 impl RunnablesModalDelegate {
-    fn new(inventory: Model<Inventory>) -> Self {
+    fn new(inventory: Model<Inventory>, workspace: WeakView<Workspace>) -> Self {
         Self {
             inventory,
+            workspace,
             candidates: vec![],
             matches: vec![],
             selected_index: 0,
@@ -40,8 +42,13 @@ pub(crate) struct RunnablesModal {
 }
 
 impl RunnablesModal {
-    pub(crate) fn new(inventory: Model<Inventory>, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.new_view(|cx| Picker::new(RunnablesModalDelegate::new(inventory), cx));
+    pub(crate) fn new(
+        inventory: Model<Inventory>,
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let picker =
+            cx.new_view(|cx| Picker::new(RunnablesModalDelegate::new(inventory, workspace), cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
         });
@@ -157,7 +164,20 @@ impl PickerDelegate for RunnablesModalDelegate {
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
         let ix = self.matches[current_match_index].candidate_id;
-        self.candidates[ix].schedule(cx).log_err();
+        if let Some(handle) = self.candidates[ix].schedule(cx).log_err() {
+            if let Some(output) = handle.output {
+                self.workspace
+                    .update(cx, |_, cx| {
+                        cx.dispatch_action(
+                            workspace::OpenTerminalStream {
+                                source: Some(output.subscribe()),
+                            }
+                            .boxed_clone(),
+                        );
+                    })
+                    .log_err();
+            }
+        }
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {

@@ -1,4 +1,5 @@
 use gpui::{AppContext, ViewContext};
+use modal::RunnablesModal;
 pub use panel::RunnablesPanel;
 use runnables_settings::RunnablesSettings;
 use settings::Settings;
@@ -19,7 +20,10 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(|workspace, _: &modal::New, cx| {
                     let inventory = workspace.project().read(cx).runnable_inventory().clone();
-                    workspace.toggle_modal(cx, |cx| modal::RunnablesModal::new(inventory, cx))
+                    let workspace_handle = workspace.weak_handle();
+                    workspace.toggle_modal(cx, |cx| {
+                        RunnablesModal::new(inventory, workspace_handle, cx)
+                    })
                 });
         },
     )

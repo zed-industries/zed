@@ -34,6 +34,7 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
+            workspace.register_action(TerminalPanel::open_terminal_stream);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<TerminalPanel>(cx);
             });
@@ -268,6 +269,18 @@ impl TerminalPanel {
         this.update(cx, |this, cx| {
             this.add_terminal(Some(action.working_directory.clone()), cx)
         })
+    }
+
+    pub fn open_terminal_stream(
+        workspace: &mut Workspace,
+        action: &workspace::OpenTerminalStream,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(source) = action.source.as_ref() else {
+            return;
+        };
+        // TODO kb init the terminal properly before this
+        workspace.focus_panel::<Self>(cx);
     }
 
     ///Create a new Terminal in the current working directory or the user's home directory

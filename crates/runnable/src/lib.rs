@@ -6,6 +6,7 @@ pub mod static_source;
 
 use anyhow::{Context, Result};
 use async_process::{ChildStderr, ChildStdout, ExitStatus};
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::future::{join_all, BoxFuture, Shared};
 pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, Abortable};
@@ -32,17 +33,21 @@ pub struct RunnableHandle {
 pub struct PendingOutput {
     output_read_tasks: [Shared<Task<()>>; 2],
     full_output: Arc<Mutex<String>>,
+    output_lines_rx: Arc<Mutex<UnboundedReceiver<String>>>,
 }
 
 impl PendingOutput {
     fn new(stdout: ChildStdout, stderr: ChildStderr, cx: &mut AsyncAppContext) -> Self {
+        let (output_lines_tx, output_lines_rx) = futures::channel::mpsc::unbounded();
+        let output_lines_rx = Arc::new(Mutex::new(output_lines_rx));
         let full_output = Arc::new(Mutex::new(String::new()));
 
         let stdout_capture = Arc::clone(&full_output);
+        let stdout_tx = output_lines_tx.clone();
         let stdout_task = cx
             .background_executor()
             .spawn(async move {
-                handle_output(stdout, stdout_capture)
+                handle_output(stdout, stdout_tx, stdout_capture)
                     .await
                     .context("stdout capture")
                     .log_err();
@@ -50,10 +55,11 @@ impl PendingOutput {
             .shared();
 
         let stderr_capture = Arc::clone(&full_output);
+        let stderr_tx = output_lines_tx;
         let stderr_task = cx
             .background_executor()
             .spawn(async move {
-                handle_output(stderr, stderr_capture)
+                handle_output(stderr, stderr_tx, stderr_capture)
                     .await
                     .context("stderr capture")
                     .log_err();
@@ -63,7 +69,12 @@ impl PendingOutput {
         Self {
             output_read_tasks: [stdout_task, stderr_task],
             full_output,
+            output_lines_rx,
         }
+    }
+
+    pub fn subscribe(&self) -> Arc<Mutex<UnboundedReceiver<String>>> {
+        Arc::clone(&self.output_lines_rx)
     }
 
     pub fn full_output(self, cx: &mut AppContext) -> Task<String> {
@@ -264,7 +275,11 @@ impl RunnableToken {
     }
 }
 
-async fn handle_output<Output>(output: Output, capture: Arc<Mutex<String>>) -> anyhow::Result<()>
+async fn handle_output<Output>(
+    output: Output,
+    output_tx: UnboundedSender<String>,
+    capture: Arc<Mutex<String>>,
+) -> anyhow::Result<()>
 where
     Output: AsyncRead + Unpin + Send + 'static,
 {
@@ -284,6 +299,7 @@ where
 
         let output_line = String::from_utf8_lossy(&buffer);
         capture.lock().push_str(&output_line);
+        output_tx.unbounded_send(output_line.to_string()).ok();
 
         // Don't starve the main thread when receiving lots of messages at once.
         smol::future::yield_now().await;

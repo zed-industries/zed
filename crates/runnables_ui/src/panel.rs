@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use crate::runnables_settings::{RunnablesDockPosition, RunnablesSettings};
 use crate::status_bar_icon::StatusIconTracker;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
@@ -249,7 +249,6 @@ impl Render for RunnablesPanel {
             .collect();
         //let list = List::new().empty_message("There are no runnables");
         let state = ListState::new(runnables.len(), ListAlignment::Top, px(2.), {
-            let workspace = self.workspace.clone();
             move |index, cx| {
                 let runnable = runnables[index].clone();
                 let result = runnable.result(cx);
@@ -262,25 +261,9 @@ impl Render for RunnablesPanel {
                         )
                         .on_click({
                             let runnable = runnable.clone();
-                            let workspace = workspace.clone();
-                            move |_, cx| {
-                                if let Some(handle) = runnable.handle(cx) {
-                                    if let Some(output) = handle.output {
-                                        workspace
-                                            .update(cx, |_workspace, cx| {
-                                                let full_output = output.full_output(cx);
-                                                cx.spawn(|_, _| async move {
-                                                    // TODO kb open the output in terminal
-                                                    dbg!(
-                                                        "Opening this in the terminal later!",
-                                                        full_output.await,
-                                                    );
-                                                })
-                                                .detach();
-                                            })
-                                            .log_err();
-                                    }
-                                }
+                            move |_, _| {
+                                // TODO what do we do here?
+                                dbg!("Runnable clicked");
                             }
                         }),
                     )

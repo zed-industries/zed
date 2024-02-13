@@ -21,7 +21,10 @@ use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
-    channel::{mpsc, oneshot},
+    channel::{
+        mpsc::{self, UnboundedReceiver},
+        oneshot,
+    },
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
@@ -43,6 +46,7 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
+use parking_lot::Mutex;
 use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
     model::{ItemId, WorkspaceLocation},
@@ -50,7 +54,7 @@ pub use persistence::{
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use settings::Settings;
 use shared_screen::SharedScreen;
 use status_bar::StatusBar;
@@ -165,6 +169,7 @@ impl_actions!(
         CloseAllItemsAndPanes,
         NewFileInDirection,
         OpenTerminal,
+        OpenTerminalStream,
         Save,
         SaveAll,
         SwapPaneInDirection,
@@ -219,6 +224,26 @@ impl Clone for Toast {
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct OpenTerminalStream {
+    pub source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
+}
+
+impl PartialEq for OpenTerminalStream {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
+}
+
+impl<'de> Deserialize<'de> for OpenTerminalStream {
+    fn deserialize<D>(_: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self { source: None })
+    }
 }
 
 pub type WorkspaceId = i64;
