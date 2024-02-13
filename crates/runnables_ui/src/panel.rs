@@ -248,13 +248,25 @@ impl Render for RunnablesPanel {
             .inventory
             .update(cx, |this, cx| this.list_runnables(&PathBuf::new(), cx));
 
-        runnables.retain(|runnable| runnable.was_scheduled(cx));
+        let (runnables_in_flight, available_runnables) = runnables
+            .into_iter()
+            .partition::<Vec<_>, _>(|runnable| runnable.was_scheduled(cx));
         //let list = List::new().empty_message("There are no runnables");
-        let state = ListState::new(runnables.len(), ListAlignment::Top, px(2.), {
+        let state = ListState::new(runnables_in_flight.len(), ListAlignment::Top, px(2.), {
             move |index, cx| {
-                let runnable = runnables[index].clone();
+                let runnable = runnables_in_flight[index].clone();
                 let result = runnable.result(cx);
                 let cancelable = runnable.cancel_handle(cx).filter(|_| result.is_none());
+                let reschedulable_runnable = result
+                    .is_some()
+                    .then(|| {
+                        available_runnables.iter().find(|unscheduled_runnable| {
+                            unscheduled_runnable.metadata() == runnable.metadata()
+                        })
+                    })
+                    .flatten()
+                    .cloned();
+
                 ListItem::new(("Runnables", runnable.id()))
                     .child(
                         Button::new(
@@ -262,7 +274,7 @@ impl Render for RunnablesPanel {
                             SharedString::from(runnable.metadata().display_name().to_owned()),
                         )
                         .on_click({
-                            let runnable = runnable.clone();
+                            let _runnable = runnable.clone();
                             move |_, _| {
                                 // TODO what do we do here?
                                 dbg!("Runnable clicked");
@@ -279,13 +291,24 @@ impl Render for RunnablesPanel {
                         this.start_slot(Icon::new(icon))
                     })
                     .when_some(cancelable, |this, cancel_token| {
-                        this.end_slot(
+                        this.end_hover_slot(
                             IconButton::new(
                                 ("Runnable cancel button", runnable.id()),
                                 IconName::XCircle,
                             )
                             .on_click(move |_, _| {
                                 cancel_token.abort();
+                            }),
+                        )
+                    })
+                    .when_some(reschedulable_runnable, |this, runnable| {
+                        this.end_hover_slot(
+                            IconButton::new(
+                                ("Runnable reschedule button", runnable.id()),
+                                IconName::Update,
+                            )
+                            .on_click(move |_, cx| {
+                                runnable.schedule(cx);
                             }),
                         )
                     })

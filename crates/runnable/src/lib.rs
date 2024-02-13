@@ -162,6 +162,7 @@ pub trait Source: Any {
     ) -> anyhow::Result<Vec<RunnableToken>>;
 }
 
+#[derive(PartialEq)]
 pub struct RunnableMetadata {
     source: WeakModel<Box<dyn Source>>,
     display_name: String,
