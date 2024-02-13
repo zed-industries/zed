@@ -10,9 +10,9 @@ use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
 pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
 
 #[cfg(test)]
-const TREE_BASE: usize = 2;
+pub const TREE_BASE: usize = 2;
 #[cfg(not(test))]
-const TREE_BASE: usize = 6;
+pub const TREE_BASE: usize = 6;
 
 pub trait Item: Clone {
     type Summary: Summary;
@@ -835,7 +835,15 @@ mod tests {
             let rng = &mut rng;
             let mut tree = SumTree::<u8>::new();
             let count = rng.gen_range(0..10);
-            tree.extend(rng.sample_iter(distributions::Standard).take(count), &());
+            if rng.gen() {
+                tree.extend(rng.sample_iter(distributions::Standard).take(count), &());
+            } else {
+                let items = rng
+                    .sample_iter(distributions::Standard)
+                    .take(count)
+                    .collect::<Vec<_>>();
+                tree.par_extend(items, &());
+            }
 
             for _ in 0..num_operations {
                 let splice_end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
@@ -853,7 +861,11 @@ mod tests {
                 tree = {
                     let mut cursor = tree.cursor::<Count>();
                     let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
-                    new_tree.extend(new_items, &());
+                    if rng.gen() {
+                        new_tree.extend(new_items, &());
+                    } else {
+                        new_tree.par_extend(new_items, &());
+                    }
                     cursor.seek(&Count(splice_end), Bias::Right, &());
                     new_tree.append(cursor.slice(&tree_end, Bias::Right, &()), &());
                     new_tree

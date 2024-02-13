@@ -116,7 +116,12 @@ impl Rope {
             text = remainder;
         }
 
-        if new_chunks.len() >= 64 {
+        #[cfg(test)]
+        const PARALLEL_THRESHOLD: usize = 4;
+        #[cfg(not(test))]
+        const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
+
+        if new_chunks.len() >= PARALLEL_THRESHOLD {
             self.chunks.par_extend(new_chunks.into_vec(), &());
         } else {
             self.chunks.extend(new_chunks, &());
