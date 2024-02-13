@@ -1,14 +1,10 @@
-use futures::channel::mpsc::channel;
 use futures::channel::mpsc::unbounded;
-use futures::channel::mpsc::Receiver;
-use futures::channel::mpsc::Sender;
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::channel::mpsc::UnboundedSender;
 use futures::select_biased;
 use futures::stream::FusedStream;
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
-use futures::SinkExt;
 use gpui::ModelContext;
 use gpui::{AppContext, Context as _, Model, Task};
 use runnable::RunnableHandle;
@@ -29,6 +25,7 @@ pub(super) struct StatusIconTracker {
     /// We also don't start it until we have at least one task running.
     _task_poller: Option<Task<()>>,
     tx: UnboundedSender<RunnableHandle>,
+    rx: Option<UnboundedReceiver<RunnableHandle>>,
 }
 
 impl StatusIconTracker {
@@ -39,61 +36,60 @@ impl StatusIconTracker {
                 current_status: None,
                 _task_poller: None,
                 tx,
+                rx: Some(rx),
             };
             if !tasks.is_empty() {
                 for task in tasks {
                     ret.tx.unbounded_send(task).unwrap();
                 }
-                ret.start_poller(rx, cx);
+                ret.start_poller(cx);
             }
             ret
         })
     }
 
-    fn start_poller(
-        &mut self,
-        mut rx: UnboundedReceiver<RunnableHandle>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn start_poller(&mut self, cx: &mut ModelContext<Self>) {
         debug_assert!(self._task_poller.is_none());
-        self._task_poller = Some(cx.spawn(|this, mut cx| async move {
-            let mut futures = FuturesUnordered::new();
-            loop {
+        if let Some(mut rx) = self.rx.take() {
+            self._task_poller = Some(cx.spawn(|this, mut cx| async move {
+                let mut futures = FuturesUnordered::new();
+                loop {
 
-                select_biased! {
-                    new_task = rx.next() => {
+                    select_biased! {
+                        new_task = rx.next() => {
 
-                        if let Some(new_task) = new_task {
-                            futures.push(new_task);
-                        }
-
-                    },
-                    finished_task = futures.next() => {
-                        if let Some(finished_task) = finished_task {
-                            if finished_task.as_ref().map_or(false, |task| task.status.is_err()) {
-                                this.update(&mut cx, |this: &mut Self, cx| {
-                                    this.current_status = Some(false);
-                                    cx.notify()
-                                })
-                                .ok();
-                                return;
-                            } else if finished_task.map_or(false, |task| task.status.is_ok()) && futures.is_empty() {
-                                this.update(&mut cx, |this: &mut Self, cx| {
-                                    this.current_status = Some(true);
-                                    cx.notify()
-                                })
-                                .ok();
+                            if let Some(new_task) = new_task {
+                                futures.push(new_task);
                             }
-                            dbg!(futures.len());
-                        }
-                    },
-                    complete => {
-                        dbg!(futures.len(), rx.is_terminated());
-                    }
 
+                        },
+                        finished_task = futures.next() => {
+                            if let Some(finished_task) = finished_task {
+                                if finished_task.as_ref().map_or(false, |task| task.status.is_err()) {
+                                    this.update(&mut cx, |this: &mut Self, cx| {
+                                        this.current_status = Some(false);
+                                        cx.notify()
+                                    })
+                                    .ok();
+                                    return;
+                                } else if finished_task.map_or(false, |task| task.status.is_ok()) && futures.is_empty() {
+                                    this.update(&mut cx, |this: &mut Self, cx| {
+                                        this.current_status = Some(true);
+                                        cx.notify()
+                                    })
+                                    .ok();
+                                }
+                                dbg!(futures.len());
+                            }
+                        },
+                        complete => {
+                            dbg!(futures.len(), rx.is_terminated());
+                        }
+
+                    }
                 }
-            }
-        }));
+            }));
+        }
     }
 
     pub(crate) fn color(&self) -> Option<Color> {
@@ -106,5 +102,9 @@ impl StatusIconTracker {
             None => Color::Modified,
         };
         Some(color)
+    }
+    pub(crate) fn push(&mut self, handle: RunnableHandle, cx: &mut ModelContext<Self>) {
+        self.start_poller(cx);
+        let _ = self.tx.unbounded_send(handle);
     }
 }

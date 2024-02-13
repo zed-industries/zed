@@ -36,7 +36,7 @@ pub struct RunnablesPanel {
     width: Option<Pixels>,
     fs: Arc<dyn Fs>,
     pending_serialization: Task<Option<()>>,
-    status_bar_tracker: Option<Model<StatusIconTracker>>,
+    pub(crate) status_bar_tracker: Option<Model<StatusIconTracker>>,
     workspace: WeakView<Workspace>,
 }
 
@@ -65,7 +65,10 @@ impl RunnablesPanel {
                 width: None,
                 fs,
                 pending_serialization: Task::ready(None),
-                status_bar_tracker: None,
+                // We always start off as collapsed - if we were serialized as "open", then
+                // there'll be a subsequent call to `set_active`.
+                // We need to start out with Some tracker to make color tracking without having user open the panel at least once.
+                status_bar_tracker: Some(StatusIconTracker::new(vec![], cx)),
                 workspace,
             }
         })
