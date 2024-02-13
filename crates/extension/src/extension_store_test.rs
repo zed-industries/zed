@@ -258,7 +258,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     );
 
     store
-        .update(cx, |store, cx| store.reload(cx))
+        .update(cx, |store, cx| store.reload(Default::default(), cx))
         .await
         .unwrap();
 

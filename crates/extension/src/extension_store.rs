@@ -97,6 +97,13 @@ pub struct ThemeManifestEntry {
     path: PathBuf,
 }
 
+#[derive(Default)]
+struct ExtensionChanges {
+    languages: Vec<Arc<str>>,
+    grammars: Vec<Arc<str>>,
+    themes: Vec<Arc<str>>,
+}
+
 actions!(zed, [ReloadExtensions]);
 
 pub fn init(
@@ -120,7 +127,9 @@ pub fn init(
     cx.on_action(|_: &ReloadExtensions, cx| {
         let store = cx.global::<GlobalExtensionStore>().0.clone();
         store
-            .update(cx, |store, cx| store.reload(cx))
+            .update(cx, |store, cx| {
+                store.reload(ExtensionChanges::default(), cx)
+            })
             .detach_and_log_err(cx);
     });
 
@@ -169,7 +178,7 @@ impl ExtensionStore {
 
         if let Some(manifest_content) = manifest_content.log_err() {
             if let Some(manifest) = serde_json::from_str(&manifest_content).log_err() {
-                self.manifest_updated(manifest, cx);
+                self.manifest_updated(manifest, ExtensionChanges::default(), cx);
             }
         }
 
@@ -182,7 +191,8 @@ impl ExtensionStore {
         };
 
         if should_reload {
-            self.reload(cx).detach_and_log_err(cx);
+            self.reload(ExtensionChanges::default(), cx)
+                .detach_and_log_err(cx);
         }
     }
 
@@ -272,11 +282,10 @@ impl ExtensionStore {
                 .unpack(extensions_dir.join(extension_id.as_ref()))
                 .await?;
 
-            this.update(&mut cx, |store, cx| {
-                store
-                    .extensions_being_installed
+            this.update(&mut cx, |this, cx| {
+                this.extensions_being_installed
                     .remove(extension_id.as_ref());
-                store.reload(cx)
+                this.reload(ExtensionChanges::default(), cx)
             })?
             .await
         })
@@ -306,42 +315,55 @@ impl ExtensionStore {
             this.update(&mut cx, |this, cx| {
                 this.extensions_being_uninstalled
                     .remove(extension_id.as_ref());
-                this.reload(cx)
+                this.reload(ExtensionChanges::default(), cx)
             })?
             .await
         })
     }
 
-    fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) {
-        fn diff<'a, T, I1, I2>(old: I1, new: I2) -> (Vec<Arc<str>>, Vec<Arc<str>>)
+    fn manifest_updated(
+        &mut self,
+        manifest: Manifest,
+        changes: ExtensionChanges,
+        cx: &mut ModelContext<Self>,
+    ) {
+        fn diff<'a, T, I1, I2>(
+            old_keys: I1,
+            new_keys: I2,
+            modified_keys: &[Arc<str>],
+        ) -> (Vec<Arc<str>>, Vec<Arc<str>>)
         where
             T: PartialEq,
             I1: Iterator<Item = (&'a Arc<str>, T)>,
             I2: Iterator<Item = (&'a Arc<str>, T)>,
         {
-            let mut removed_keys = Vec::new();
-            let mut added_keys = Vec::new();
-            let mut old = old.peekable();
-            let mut new = new.peekable();
+            let mut removed_keys = Vec::default();
+            let mut added_keys = Vec::default();
+            let mut old_keys = old_keys.peekable();
+            let mut new_keys = new_keys.peekable();
             loop {
-                match (old.peek(), new.peek()) {
+                match (old_keys.peek(), new_keys.peek()) {
                     (None, None) => return (removed_keys, added_keys),
-                    (None, Some(_)) => added_keys.push(new.next().unwrap().0.clone()),
-                    (Some(_), None) => removed_keys.push(old.next().unwrap().0.clone()),
+                    (None, Some(_)) => {
+                        added_keys.push(new_keys.next().unwrap().0.clone());
+                    }
+                    (Some(_), None) => {
+                        removed_keys.push(old_keys.next().unwrap().0.clone());
+                    }
                     (Some((old_key, _)), Some((new_key, _))) => match old_key.cmp(&new_key) {
                         Ordering::Equal => {
-                            let (old_key, old_value) = old.next().unwrap();
-                            let (new_key, new_value) = new.next().unwrap();
-                            if old_value != new_value {
+                            let (old_key, old_value) = old_keys.next().unwrap();
+                            let (new_key, new_value) = new_keys.next().unwrap();
+                            if old_value != new_value || modified_keys.contains(old_key) {
                                 removed_keys.push(old_key.clone());
                                 added_keys.push(new_key.clone());
                             }
                         }
                         Ordering::Less => {
-                            removed_keys.push(old.next().unwrap().0.clone());
+                            removed_keys.push(old_keys.next().unwrap().0.clone());
                         }
                         Ordering::Greater => {
-                            added_keys.push(new.next().unwrap().0.clone());
+                            added_keys.push(new_keys.next().unwrap().0.clone());
                         }
                     },
                 }
@@ -349,12 +371,21 @@ impl ExtensionStore {
         }
 
         let old_manifest = self.manifest.read();
-        let (languages_to_remove, languages_to_add) =
-            diff(old_manifest.languages.iter(), manifest.languages.iter());
-        let (grammars_to_remove, grammars_to_add) =
-            diff(old_manifest.grammars.iter(), manifest.grammars.iter());
-        let (themes_to_remove, themes_to_add) =
-            diff(old_manifest.themes.iter(), manifest.themes.iter());
+        let (languages_to_remove, languages_to_add) = diff(
+            old_manifest.languages.iter(),
+            manifest.languages.iter(),
+            &changes.languages,
+        );
+        let (grammars_to_remove, grammars_to_add) = diff(
+            old_manifest.grammars.iter(),
+            manifest.grammars.iter(),
+            &changes.grammars,
+        );
+        let (themes_to_remove, themes_to_add) = diff(
+            old_manifest.themes.iter(),
+            manifest.themes.iter(),
+            &changes.themes,
+        );
         drop(old_manifest);
 
         let themes_to_remove = &themes_to_remove
@@ -433,11 +464,9 @@ impl ExtensionStore {
     fn watch_extensions_dir(&self, cx: &mut ModelContext<Self>) -> [Task<()>; 2] {
         let manifest = self.manifest.clone();
         let fs = self.fs.clone();
-        let language_registry = self.language_registry.clone();
-        let theme_registry = self.theme_registry.clone();
         let extensions_dir = self.extensions_dir.clone();
 
-        let (reload_theme_tx, mut reload_theme_rx) = unbounded();
+        let (changes_tx, mut changes_rx) = unbounded();
 
         let events_task = cx.background_executor().spawn(async move {
             let mut events = fs.watch(&extensions_dir, Duration::from_millis(250)).await;
@@ -468,49 +497,44 @@ impl ExtensionStore {
                             }
                         }
 
-                        for (_theme_name, theme) in &manifest.themes {
+                        for (theme_name, theme) in &manifest.themes {
                             let mut theme_path = extensions_dir.clone();
                             theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
                             if event.path.starts_with(&theme_path) || event.path == theme_path {
-                                changed_themes.push(theme_path.clone());
+                                changed_themes.push(theme_name.clone());
                             }
                         }
                     }
                 }
 
-                language_registry.reload_languages(&changed_languages, &changed_grammars);
-
-                for theme_path in &changed_themes {
-                    if fs.is_file(&theme_path).await {
-                        theme_registry
-                            .load_user_theme(&theme_path, fs.clone())
-                            .await
-                            .context("failed to load user theme")
-                            .log_err();
-                    }
-                }
-
-                if !changed_themes.is_empty() {
-                    reload_theme_tx.unbounded_send(()).ok();
-                }
+                changes_tx
+                    .unbounded_send(ExtensionChanges {
+                        languages: changed_languages,
+                        grammars: changed_grammars,
+                        themes: changed_themes,
+                    })
+                    .ok();
             }
         });
 
-        let reload_theme_task = cx.spawn(|_, cx| async move {
-            while let Some(_) = reload_theme_rx.next().await {
-                if cx
-                    .update(|cx| ThemeSettings::reload_current_theme(cx))
-                    .is_err()
-                {
+        let reload_task = cx.spawn(|this, mut cx| async move {
+            while let Some(changes) = changes_rx.next().await {
+                if let Ok(task) = this.update(&mut cx, |this, cx| this.reload(changes, cx)) {
+                    task.await.log_err();
+                } else {
                     break;
                 }
             }
         });
 
-        [events_task, reload_theme_task]
+        [events_task, reload_task]
     }
 
-    pub fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reload(
+        &mut self,
+        extension_changes: ExtensionChanges,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         let fs = self.fs.clone();
         let extensions_dir = self.extensions_dir.clone();
         let manifest_path = self.manifest_path.clone();
@@ -552,7 +576,9 @@ impl ExtensionStore {
                     manifest
                 })
                 .await;
-            this.update(&mut cx, |this, cx| this.manifest_updated(manifest, cx))
+            this.update(&mut cx, |this, cx| {
+                this.manifest_updated(manifest, extension_changes, cx)
+            })
         })
     }
 
