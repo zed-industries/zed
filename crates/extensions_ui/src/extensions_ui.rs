@@ -99,7 +99,7 @@ impl ExtensionsPage {
                 query_contains_error: false,
                 query_editor,
             };
-            this.get_extensions_from_server(cx);
+            this.fetch_extensions(cx);
 
             this
         });
@@ -107,7 +107,7 @@ impl ExtensionsPage {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        self.get_extensions_from_server(cx);
+        self.fetch_extensions(cx);
     }
 
     fn install_extension(
@@ -138,7 +138,7 @@ impl ExtensionsPage {
         cx.notify();
     }
 
-    fn get_extensions_from_server(&mut self, cx: &mut ViewContext<Self>) {
+    fn fetch_extensions(&mut self, cx: &mut ViewContext<Self>) {
         let extensions =
             ExtensionStore::global(cx).update(cx, |store, cx| store.fetch_extensions(cx));
 

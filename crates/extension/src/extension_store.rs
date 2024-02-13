@@ -27,6 +27,11 @@ use util::{http::HttpClient, paths::EXTENSIONS_DIR, ResultExt};
 mod extension_store_test;
 
 #[derive(Deserialize)]
+pub struct ExtensionsApiResponse {
+    pub data: Vec<Extension>,
+}
+
+#[derive(Deserialize)]
 pub struct Extension {
     pub id: Arc<str>,
     pub version: Arc<str>,
@@ -217,9 +222,9 @@ impl ExtensionStore {
                 );
             }
 
-            let extensions = serde_json::from_slice(&body)?;
+            let response: ExtensionsApiResponse = serde_json::from_slice(&body)?;
 
-            Ok(extensions)
+            Ok(response.data)
         })
     }
 
