@@ -1,5 +1,15 @@
+use futures::channel::mpsc::channel;
+use futures::channel::mpsc::unbounded;
+use futures::channel::mpsc::Receiver;
+use futures::channel::mpsc::Sender;
+use futures::channel::mpsc::UnboundedReceiver;
+use futures::channel::mpsc::UnboundedSender;
+use futures::select_biased;
+use futures::stream::FusedStream;
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
+use futures::SinkExt;
+use gpui::ModelContext;
 use gpui::{AppContext, Context as _, Model, Task};
 use runnable::RunnableHandle;
 use ui::Color;
@@ -16,46 +26,85 @@ pub(super) struct StatusIconTracker {
     current_status: Option<Succeeded>,
     /// We keep around a handle to the status updater in case the user reopens the panel - in that case, we want to stop polling previous set of the tasks.
     /// That is achieved by creating new `RunnablesStatusBarIcon`, thus we want to stop polling in the old one (once it's dropped).
-    _task_poller: Task<()>,
+    /// We also don't start it until we have at least one task running.
+    _task_poller: Option<Task<()>>,
+    tx: UnboundedSender<RunnableHandle>,
 }
 
 impl StatusIconTracker {
     pub(crate) fn new<'a>(tasks: Vec<RunnableHandle>, cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|cx| {
-            let mut futures: FuturesUnordered<RunnableHandle> = tasks.into_iter().collect();
-            let _task_poller = cx.spawn(|this, mut cx| async move {
-                while let Some(Ok(i)) = futures.next().await {
-                    if i.status.is_err() {
-                        // At least one task has failed, move to failure state; note though that regardless of us bailing there,
-                        // the remaining runnables are still gonna run to completion (as we're not the only party polling these futures).
-                        this.update(&mut cx, |this: &mut Self, cx| {
-                            this.current_status = Some(false);
-                            cx.notify()
-                        })
-                        .ok();
-                        return;
-                    }
-                }
-                // All tasks were either cancelled or succeeded, move to success state.
-                if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this: &mut Self, cx| {
-                        this.current_status = Some(true);
-                        cx.notify();
-                    })
-                    .ok();
-                }
-            });
-            Self {
+            let (tx, rx) = unbounded::<RunnableHandle>();
+            let mut ret = Self {
                 current_status: None,
-                _task_poller,
+                _task_poller: None,
+                tx,
+            };
+            if !tasks.is_empty() {
+                for task in tasks {
+                    ret.tx.unbounded_send(task).unwrap();
+                }
+                ret.start_poller(rx, cx);
             }
+            ret
         })
     }
-    pub(crate) fn color(&self) -> Color {
-        match self.current_status {
+
+    fn start_poller(
+        &mut self,
+        mut rx: UnboundedReceiver<RunnableHandle>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        debug_assert!(self._task_poller.is_none());
+        self._task_poller = Some(cx.spawn(|this, mut cx| async move {
+            let mut futures = FuturesUnordered::new();
+            loop {
+
+                select_biased! {
+                    new_task = rx.next() => {
+
+                        if let Some(new_task) = new_task {
+                            futures.push(new_task);
+                        }
+
+                    },
+                    finished_task = futures.next() => {
+                        if let Some(finished_task) = finished_task {
+                            if finished_task.as_ref().map_or(false, |task| task.status.is_err()) {
+                                this.update(&mut cx, |this: &mut Self, cx| {
+                                    this.current_status = Some(false);
+                                    cx.notify()
+                                })
+                                .ok();
+                                return;
+                            } else if finished_task.map_or(false, |task| task.status.is_ok()) && futures.is_empty() {
+                                this.update(&mut cx, |this: &mut Self, cx| {
+                                    this.current_status = Some(true);
+                                    cx.notify()
+                                })
+                                .ok();
+                            }
+                            dbg!(futures.len());
+                        }
+                    },
+                    complete => {
+                        dbg!(futures.len(), rx.is_terminated());
+                    }
+
+                }
+            }
+        }));
+    }
+
+    pub(crate) fn color(&self) -> Option<Color> {
+        if self._task_poller.is_none() {
+            return None;
+        }
+        let color = match self.current_status {
             Some(true) => Color::Success,
             Some(false) => Color::Error,
             None => Color::Modified,
-        }
+        };
+        Some(color)
     }
 }

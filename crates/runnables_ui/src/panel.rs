@@ -224,15 +224,14 @@ impl Panel for RunnablesPanel {
                         .filter(|handle| handle.result().is_none())
                 })
                 .collect();
-            if !tasks.is_empty() {
-                self.status_bar_tracker = Some(StatusIconTracker::new(tasks, cx));
-                cx.notify();
-            }
+
+            self.status_bar_tracker = Some(StatusIconTracker::new(tasks, cx));
+            cx.notify();
         }
     }
     fn collapsed_icon_color(&self, cx: &WindowContext) -> Option<Color> {
         if let Some(tracker) = &self.status_bar_tracker.as_ref() {
-            Some(tracker.read(cx).color())
+            tracker.read(cx).color()
         } else {
             // We don't care about the color if we're active.
             None
