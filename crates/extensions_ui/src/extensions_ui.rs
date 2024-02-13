@@ -166,6 +166,36 @@ impl ExtensionsPage {
             .read(cx)
             .extension_status(&extension.id);
 
+        let upgrade_button = match status.clone() {
+            ExtensionStatus::NotInstalled
+            | ExtensionStatus::Installing
+            | ExtensionStatus::Removing => None,
+            ExtensionStatus::Installed(installed_version) => {
+                if installed_version != extension.version {
+                    Some(
+                        Button::new(SharedString::from(extension.id.clone()), "Upgrade")
+                            .on_click(cx.listener({
+                                let extension_id = extension.id.clone();
+                                let version = extension.version.clone();
+                                move |this, _, cx| {
+                                    this.telemetry.report_app_event(
+                                        "extensions page: install extension".to_string(),
+                                    );
+                                    this.install_extension(
+                                        extension_id.clone(),
+                                        version.clone(),
+                                        cx,
+                                    );
+                                }
+                            }))
+                            .color(Color::Accent),
+                    )
+                } else {
+                    None
+                }
+            }
+        };
+
         let button = match status {
             ExtensionStatus::NotInstalled | ExtensionStatus::Installing => {
                 Button::new(SharedString::from(extension.id.clone()), "Install")
@@ -222,7 +252,13 @@ impl ExtensionsPage {
                                         .size(HeadlineSize::XSmall),
                                 ),
                         )
-                        .child(button),
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .justify_between()
+                                .children(upgrade_button)
+                                .child(button),
+                        ),
                 )
                 .child(
                     h_flex().justify_between().child(

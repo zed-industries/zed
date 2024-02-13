@@ -41,6 +41,7 @@ pub struct Extension {
     pub repository: String,
 }
 
+#[derive(Clone)]
 pub enum ExtensionStatus {
     NotInstalled,
     Installing,
