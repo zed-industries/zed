@@ -476,123 +476,136 @@ impl ExtensionStore {
                 .spawn(async move {
                     let mut manifest = Manifest::default();
 
-                    let mut extension_paths = fs
-                        .read_dir(&extensions_dir)
-                        .await
-                        .context("failed to read extensions directory")?;
-                    while let Some(extension_dir) = extension_paths.next().await {
-                        let extension_dir = extension_dir?;
-                        let Some(extension_name) =
-                            extension_dir.file_name().and_then(OsStr::to_str)
-                        else {
-                            continue;
-                        };
+                    fs.create_dir(&extensions_dir).await.log_err();
 
-                        #[derive(Deserialize)]
-                        struct ExtensionJson {
-                            pub version: String,
-                        }
-
-                        let extension_json_path = extension_dir.join("extension.json");
-                        let extension_json: ExtensionJson =
-                            serde_json::from_str(&fs.load(&extension_json_path).await?)?;
-
-                        manifest
-                            .extensions
-                            .insert(extension_name.into(), extension_json.version.into());
-
-                        if let Ok(mut grammar_paths) =
-                            fs.read_dir(&extension_dir.join("grammars")).await
-                        {
-                            while let Some(grammar_path) = grammar_paths.next().await {
-                                let grammar_path = grammar_path?;
-                                let Ok(relative_path) = grammar_path.strip_prefix(&extension_dir)
-                                else {
-                                    continue;
-                                };
-                                let Some(grammar_name) =
-                                    grammar_path.file_stem().and_then(OsStr::to_str)
-                                else {
-                                    continue;
-                                };
-
-                                manifest.grammars.insert(
-                                    grammar_name.into(),
-                                    GrammarManifestEntry {
-                                        extension: extension_name.into(),
-                                        path: relative_path.into(),
-                                    },
-                                );
-                            }
-                        }
-
-                        if let Ok(mut language_paths) =
-                            fs.read_dir(&extension_dir.join("languages")).await
-                        {
-                            while let Some(language_path) = language_paths.next().await {
-                                let language_path = language_path?;
-                                let Ok(relative_path) = language_path.strip_prefix(&extension_dir)
-                                else {
-                                    continue;
-                                };
-                                let config = fs.load(&language_path.join("config.toml")).await?;
-                                let config = ::toml::from_str::<LanguageConfig>(&config)?;
-
-                                manifest.languages.insert(
-                                    config.name.clone(),
-                                    LanguageManifestEntry {
-                                        extension: extension_name.into(),
-                                        path: relative_path.into(),
-                                        matcher: config.matcher,
-                                        grammar: config.grammar,
-                                    },
-                                );
-                            }
-                        }
-
-                        if let Ok(mut theme_paths) =
-                            fs.read_dir(&extension_dir.join("themes")).await
-                        {
-                            while let Some(theme_path) = theme_paths.next().await {
-                                let theme_path = theme_path?;
-                                let Ok(relative_path) = theme_path.strip_prefix(&extension_dir)
-                                else {
-                                    continue;
-                                };
-
-                                let Some(theme_family) =
-                                    ThemeRegistry::read_user_theme(&theme_path, fs.clone())
-                                        .await
-                                        .log_err()
-                                else {
-                                    continue;
-                                };
-
-                                for theme in theme_family.themes {
-                                    let location = ThemeManifestEntry {
-                                        extension: extension_name.into(),
-                                        path: relative_path.into(),
-                                    };
-
-                                    manifest.themes.insert(theme.name, location);
-                                }
-                            }
+                    let extension_paths = fs.read_dir(&extensions_dir).await;
+                    if let Ok(mut extension_paths) = extension_paths {
+                        while let Some(extension_dir) = extension_paths.next().await {
+                            let Ok(extension_dir) = extension_dir else {
+                                continue;
+                            };
+                            Self::add_extension_to_manifest(
+                                fs.clone(),
+                                extension_dir,
+                                &mut manifest,
+                            )
+                            .await
+                            .log_err();
                         }
                     }
 
-                    fs.save(
-                        &manifest_path,
-                        &serde_json::to_string_pretty(&manifest)?.as_str().into(),
-                        Default::default(),
-                    )
-                    .await
-                    .context("failed to save extension manifest")?;
+                    if let Ok(manifest_json) = serde_json::to_string_pretty(&manifest) {
+                        fs.save(
+                            &manifest_path,
+                            &manifest_json.as_str().into(),
+                            Default::default(),
+                        )
+                        .await
+                        .context("failed to save extension manifest")
+                        .log_err();
+                    }
 
-                    anyhow::Ok(manifest)
+                    manifest
                 })
-                .await?;
+                .await;
             this.update(&mut cx, |this, cx| this.manifest_updated(manifest, cx))
         })
+    }
+
+    async fn add_extension_to_manifest(
+        fs: Arc<dyn Fs>,
+        extension_dir: PathBuf,
+        manifest: &mut Manifest,
+    ) -> Result<()> {
+        let extension_name = extension_dir
+            .file_name()
+            .and_then(OsStr::to_str)
+            .ok_or_else(|| anyhow!("invalid extension name"))?;
+
+        #[derive(Deserialize)]
+        struct ExtensionJson {
+            pub version: String,
+        }
+
+        let extension_json_path = extension_dir.join("extension.json");
+        let extension_json = fs
+            .load(&extension_json_path)
+            .await
+            .context("failed to load extension.json")?;
+        let extension_json: ExtensionJson =
+            serde_json::from_str(&extension_json).context("invalid extension.json")?;
+
+        manifest
+            .extensions
+            .insert(extension_name.into(), extension_json.version.into());
+
+        if let Ok(mut grammar_paths) = fs.read_dir(&extension_dir.join("grammars")).await {
+            while let Some(grammar_path) = grammar_paths.next().await {
+                let grammar_path = grammar_path?;
+                let Ok(relative_path) = grammar_path.strip_prefix(&extension_dir) else {
+                    continue;
+                };
+                let Some(grammar_name) = grammar_path.file_stem().and_then(OsStr::to_str) else {
+                    continue;
+                };
+
+                manifest.grammars.insert(
+                    grammar_name.into(),
+                    GrammarManifestEntry {
+                        extension: extension_name.into(),
+                        path: relative_path.into(),
+                    },
+                );
+            }
+        }
+
+        if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
+            while let Some(language_path) = language_paths.next().await {
+                let language_path = language_path?;
+                let Ok(relative_path) = language_path.strip_prefix(&extension_dir) else {
+                    continue;
+                };
+                let config = fs.load(&language_path.join("config.toml")).await?;
+                let config = ::toml::from_str::<LanguageConfig>(&config)?;
+
+                manifest.languages.insert(
+                    config.name.clone(),
+                    LanguageManifestEntry {
+                        extension: extension_name.into(),
+                        path: relative_path.into(),
+                        matcher: config.matcher,
+                        grammar: config.grammar,
+                    },
+                );
+            }
+        }
+
+        if let Ok(mut theme_paths) = fs.read_dir(&extension_dir.join("themes")).await {
+            while let Some(theme_path) = theme_paths.next().await {
+                let theme_path = theme_path?;
+                let Ok(relative_path) = theme_path.strip_prefix(&extension_dir) else {
+                    continue;
+                };
+
+                let Some(theme_family) = ThemeRegistry::read_user_theme(&theme_path, fs.clone())
+                    .await
+                    .log_err()
+                else {
+                    continue;
+                };
+
+                for theme in theme_family.themes {
+                    let location = ThemeManifestEntry {
+                        extension: extension_name.into(),
+                        path: relative_path.into(),
+                    };
+
+                    manifest.themes.insert(theme.name, location);
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
