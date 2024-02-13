@@ -679,6 +679,10 @@ impl LanguageRegistryState {
         languages_to_remove: &[Arc<str>],
         grammars_to_remove: &[Arc<str>],
     ) {
+        if languages_to_remove.is_empty() && grammars_to_remove.is_empty() {
+            return;
+        }
+
         self.languages
             .retain(|language| !languages_to_remove.contains(&language.name()));
         self.available_languages
@@ -695,6 +699,10 @@ impl LanguageRegistryState {
         languages_to_reload: &[Arc<str>],
         grammars_to_reload: &[Arc<str>],
     ) {
+        if languages_to_reload.is_empty() && grammars_to_reload.is_empty() {
+            return;
+        }
+
         for (name, grammar) in self.grammars.iter_mut() {
             if grammars_to_reload.contains(name) {
                 if let AvailableGrammar::Loaded(path, _) = grammar {

@@ -2,18 +2,19 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::ClientSettings;
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashSet};
 use fs::{Fs, RemoveOptions};
 use futures::channel::mpsc::unbounded;
 use futures::StreamExt as _;
 use futures::{io::BufReader, AsyncReadExt as _};
-use gpui::{actions, AppContext, Context, Global, Model, ModelContext, SharedString, Task};
+use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use std::cmp::Ordering;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -68,12 +69,12 @@ struct GlobalExtensionStore(Model<ExtensionStore>);
 
 impl Global for GlobalExtensionStore {}
 
-#[derive(Deserialize, Serialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Manifest {
-    pub extensions: HashMap<Arc<str>, Arc<str>>,
-    pub grammars: HashMap<Arc<str>, GrammarManifestEntry>,
-    pub languages: HashMap<Arc<str>, LanguageManifestEntry>,
-    pub themes: HashMap<String, ThemeManifestEntry>,
+    pub extensions: BTreeMap<Arc<str>, Arc<str>>,
+    pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
+    pub languages: BTreeMap<Arc<str>, LanguageManifestEntry>,
+    pub themes: BTreeMap<Arc<str>, ThemeManifestEntry>,
 }
 
 #[derive(PartialEq, Eq, Debug, PartialOrd, Ord, Deserialize, Serialize)]
@@ -312,28 +313,68 @@ impl ExtensionStore {
     }
 
     fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) {
+        fn diff<'a, T, I1, I2>(old: I1, new: I2) -> (Vec<Arc<str>>, Vec<Arc<str>>)
+        where
+            T: PartialEq,
+            I1: Iterator<Item = (&'a Arc<str>, T)>,
+            I2: Iterator<Item = (&'a Arc<str>, T)>,
+        {
+            let mut removed_keys = Vec::new();
+            let mut added_keys = Vec::new();
+            let mut old = old.peekable();
+            let mut new = new.peekable();
+            loop {
+                match (old.peek(), new.peek()) {
+                    (None, None) => return (removed_keys, added_keys),
+                    (None, Some(_)) => added_keys.push(new.next().unwrap().0.clone()),
+                    (Some(_), None) => removed_keys.push(old.next().unwrap().0.clone()),
+                    (Some((old_key, _)), Some((new_key, _))) => match old_key.cmp(&new_key) {
+                        Ordering::Equal => {
+                            let (old_key, old_value) = old.next().unwrap();
+                            let (new_key, new_value) = new.next().unwrap();
+                            if old_value != new_value {
+                                removed_keys.push(old_key.clone());
+                                added_keys.push(new_key.clone());
+                            }
+                        }
+                        Ordering::Less => {
+                            removed_keys.push(old.next().unwrap().0.clone());
+                        }
+                        Ordering::Greater => {
+                            added_keys.push(new.next().unwrap().0.clone());
+                        }
+                    },
+                }
+            }
+        }
+
         let old_manifest = self.manifest.read();
-        let language_names = old_manifest.languages.keys().cloned().collect::<Vec<_>>();
-        let grammar_names = old_manifest.grammars.keys().cloned().collect::<Vec<_>>();
-        let theme_names = old_manifest
-            .themes
-            .keys()
-            .cloned()
-            .map(SharedString::from)
-            .collect::<Vec<_>>();
+        let (languages_to_remove, languages_to_add) =
+            diff(old_manifest.languages.iter(), manifest.languages.iter());
+        let (grammars_to_remove, grammars_to_add) =
+            diff(old_manifest.grammars.iter(), manifest.grammars.iter());
+        let (themes_to_remove, themes_to_add) =
+            diff(old_manifest.themes.iter(), manifest.themes.iter());
         drop(old_manifest);
-        self.language_registry
-            .remove_languages(&language_names, &grammar_names);
-        self.theme_registry.remove_user_themes(&theme_names);
+
+        let themes_to_remove = &themes_to_remove
+            .into_iter()
+            .map(|theme| theme.into())
+            .collect::<Vec<_>>();
+        self.theme_registry.remove_user_themes(&themes_to_remove);
 
         self.language_registry
-            .register_wasm_grammars(manifest.grammars.iter().map(|(grammar_name, grammar)| {
+            .register_wasm_grammars(grammars_to_add.iter().map(|grammar_name| {
+                let grammar = manifest.grammars.get(grammar_name).unwrap();
                 let mut grammar_path = self.extensions_dir.clone();
                 grammar_path.extend([grammar.extension.as_ref(), grammar.path.as_path()]);
                 (grammar_name.clone(), grammar_path)
             }));
 
-        for (language_name, language) in &manifest.languages {
+        self.language_registry
+            .remove_languages(&languages_to_remove, &grammars_to_remove);
+        for language_name in &languages_to_add {
+            let language = manifest.languages.get(language_name.as_ref()).unwrap();
             let mut language_path = self.extensions_dir.clone();
             language_path.extend([language.extension.as_ref(), language.path.as_path()]);
             self.language_registry.register_language(
@@ -354,10 +395,13 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let root_dir = self.extensions_dir.clone();
         let theme_registry = self.theme_registry.clone();
-        let themes = manifest.themes.clone();
+        let themes = themes_to_add
+            .iter()
+            .filter_map(|name| manifest.themes.get(name).cloned())
+            .collect::<Vec<_>>();
         cx.background_executor()
             .spawn(async move {
-                for theme in themes.values() {
+                for theme in &themes {
                     let mut theme_path = root_dir.clone();
                     theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
 
@@ -600,7 +644,7 @@ impl ExtensionStore {
                         path: relative_path.into(),
                     };
 
-                    manifest.themes.insert(theme.name, location);
+                    manifest.themes.insert(theme.name.into(), location);
                 }
             }
         }
