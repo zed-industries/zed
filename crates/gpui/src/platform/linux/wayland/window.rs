@@ -167,6 +167,14 @@ impl WaylandWindowState {
             fun()
         }
     }
+
+    pub fn close(&self) {
+        let mut callbacks = self.callbacks.lock();
+        if let Some( fun) = callbacks.close.take() {
+            fun()
+        }
+        self.toplevel.destroy();
+    }
 }
 
 #[derive(Clone)]
@@ -309,11 +317,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        //todo!(linux)
+        self.0.callbacks.lock().should_close = Some(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        //todo!(linux)
+        self.0.callbacks.lock().close = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {

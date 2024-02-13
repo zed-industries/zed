@@ -11,7 +11,6 @@ use wayland_client::{
     },
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
 };
-use wayland_protocols::wp;
 
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
@@ -28,6 +27,7 @@ pub(crate) struct WaylandClientState {
     buffer: Option<wl_buffer::WlBuffer>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     windows: Vec<(xdg_surface::XdgSurface, Arc<WaylandWindowState>)>,
+    platform_inner: Arc<LinuxPlatformInner>,
 }
 
 pub(crate) struct WaylandClient {
@@ -48,6 +48,7 @@ impl WaylandClient {
             buffer: None,
             wm_base: None,
             windows: Vec::new(),
+            platform_inner: Arc::clone(&linux_platform_inner),
         };
         let event_queue: EventQueue<WaylandClientState> = conn.new_event_queue();
         let qh = event_queue.handle();
@@ -226,6 +227,16 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
                     return;
                 }
             }
+        } else if let xdg_toplevel::Event::Close = event {
+            state.windows.retain(|(_, window)| {
+                if window.toplevel.id() == xdg_toplevel.id() {
+                    window.toplevel.destroy();
+                    false
+                } else {
+                    true
+                }
+            });
+            state.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
         }
     }
 }
