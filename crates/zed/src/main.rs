@@ -173,7 +173,13 @@ fn main() {
         );
         assistant::init(cx);
 
-        extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
+        extension::init(
+            fs.clone(),
+            http.clone(),
+            languages.clone(),
+            ThemeRegistry::global(cx),
+            cx,
+        );
 
         load_user_themes_in_background(fs.clone(), cx);
         #[cfg(target_os = "macos")]
@@ -254,6 +260,7 @@ fn main() {
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
+        extensions_ui::init(cx);
 
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);

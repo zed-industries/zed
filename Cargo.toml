@@ -22,6 +22,7 @@ members = [
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
+    "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
     "crates/file_finder",
@@ -113,6 +114,7 @@ db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
+extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
@@ -177,6 +179,7 @@ zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-tar = "0.4.2"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ctor = "0.2.6"
