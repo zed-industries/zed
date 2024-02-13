@@ -1,17 +1,22 @@
+use crate::platform::linux::blade_renderer::BladeRenderer;
+use crate::platform::linux::wayland::display::WaylandDisplay;
+use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
+use crate::scene::Scene;
+use crate::{
+    px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
+    WindowAppearance, WindowBounds, WindowOptions,
+};
+use blade_graphics as gpu;
+use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
+use futures::channel::oneshot::Receiver;
+use parking_lot::Mutex;
+use raw_window_handle::{
+    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
+};
 use std::any::Any;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
-use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
-use futures::channel::oneshot::Receiver;
-use parking_lot::Mutex;
-use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
-use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
-use crate::{px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WindowAppearance, WindowBounds, WindowOptions};
-use crate::platform::linux::blade_renderer::BladeRenderer;
-use crate::platform::linux::wayland::display::WaylandDisplay;
-use crate::scene::Scene;
-use blade_graphics as gpu;
 
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
@@ -31,7 +36,7 @@ struct Callbacks {
 
 struct WaylandWindowInner {
     renderer: BladeRenderer,
-    bounds: Bounds<i32>
+    bounds: Bounds<i32>,
 }
 
 struct RawWindow {
@@ -57,20 +62,20 @@ unsafe impl HasRawDisplayHandle for RawWindow {
 
 impl WaylandWindowInner {
     fn new(
-        conn: &Arc<wayland_client::Connection>, 
+        conn: &Arc<wayland_client::Connection>,
         wl_surf: &Arc<wl_surface::WlSurface>,
-        bounds: Bounds<i32>
+        bounds: Bounds<i32>,
     ) -> Self {
         let raw = RawWindow {
             window: wl_surf.id().as_ptr() as *mut _,
-            display: conn.backend().display_ptr() as *mut _
+            display: conn.backend().display_ptr() as *mut _,
         };
         let gpu = Arc::new(
             unsafe {
                 gpu::Context::init_windowed(
                     &raw,
                     gpu::ContextDesc {
-                        validation: cfg!(debug_assertions),
+                        validation: false,
                         capture: false,
                     },
                 )
@@ -84,18 +89,17 @@ impl WaylandWindowInner {
         };
         Self {
             renderer: BladeRenderer::new(gpu, extent),
-            bounds
+            bounds,
         }
     }
-
 }
 
 pub(crate) struct WaylandWindowState {
     conn: Arc<wayland_client::Connection>,
     inner: Mutex<WaylandWindowInner>,
-    pub(crate)callbacks: Mutex<Callbacks>,
+    pub(crate) callbacks: Mutex<Callbacks>,
     pub(crate) surface: Arc<wl_surface::WlSurface>,
-    pub(crate) toplevel: Arc<xdg_toplevel::XdgToplevel>
+    pub(crate) toplevel: Arc<xdg_toplevel::XdgToplevel>,
 }
 
 impl WaylandWindowState {
@@ -116,7 +120,7 @@ impl WaylandWindowState {
                 origin: Point::default(),
                 size: Size {
                     width: 500,
-                    height: 500
+                    height: 500,
                 }, //todo!(implement)
             },
             WindowBounds::Fixed(bounds) => bounds.map(|p| p.0 as i32),
@@ -125,13 +129,7 @@ impl WaylandWindowState {
         Self {
             conn: Arc::clone(conn),
             surface: Arc::clone(&wl_surf),
-            inner: Mutex::new(
-                WaylandWindowInner::new(
-                    &Arc::clone(conn),
-                    &wl_surf,
-                    bounds,
-                )
-            ),
+            inner: Mutex::new(WaylandWindowInner::new(&Arc::clone(conn), &wl_surf, bounds)),
             callbacks: Mutex::new(Callbacks::default()),
             toplevel,
         }
@@ -153,14 +151,17 @@ impl WaylandWindowState {
                 width: width as u32,
                 height: height as u32,
                 depth: 1,
-            });  
+            });
         }
         let mut callbacks = self.callbacks.lock();
         if let Some(ref mut fun) = callbacks.resize {
-            fun(Size {
-                width: px(width as f32),
-                height: px(height as f32),
-            }, 1.0);
+            fun(
+                Size {
+                    width: px(width as f32),
+                    height: px(height as f32),
+                },
+                1.0,
+            );
         }
         if let Some(ref mut fun) = callbacks.moved {
             fun()
@@ -170,7 +171,6 @@ impl WaylandWindowState {
 
 #[derive(Clone)]
 pub(crate) struct WaylandWindow(pub(crate) Arc<WaylandWindowState>);
-
 
 impl HasWindowHandle for WaylandWindow {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
@@ -244,7 +244,13 @@ impl PlatformWindow for WaylandWindow {
     }
 
     //todo!(linux)
-    fn prompt(&self, level: PromptLevel, msg: &str, detail: Option<&str>, answers: &[&str]) -> Receiver<usize> {
+    fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> Receiver<usize> {
         unimplemented!()
     }
 

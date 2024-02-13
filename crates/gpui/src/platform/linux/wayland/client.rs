@@ -1,20 +1,27 @@
+use parking_lot::Mutex;
 use std::rc::Rc;
 use std::sync::Arc;
-use parking_lot::Mutex;
-use wayland_client::{delegate_noop, protocol::{
-    wl_buffer, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-    wl_surface, wl_callback
-}, Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use wayland_client::protocol::wl_callback::WlCallback;
+use wayland_client::{
+    delegate_noop,
+    protocol::{
+        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm,
+        wl_shm_pool,
+        wl_surface::{self, WlSurface},
+    },
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+};
 use wayland_protocols::wp;
 
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-
-use crate::{platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, PlatformDisplay, WindowOptions};
 use crate::platform::linux::client::Client;
-use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::platform::linux::wayland::window::WaylandWindow;
+use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::{
+    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId,
+    PlatformDisplay, WindowOptions,
+};
 
 pub(crate) struct WaylandClientState {
     compositor: Option<wl_compositor::WlCompositor>,
@@ -28,16 +35,19 @@ pub(crate) struct WaylandClient {
     conn: Arc<Connection>,
     state: Mutex<WaylandClientState>,
     event_queue: Mutex<EventQueue<WaylandClientState>>,
-    qh: Arc<QueueHandle<WaylandClientState>>
+    qh: Arc<QueueHandle<WaylandClientState>>,
 }
 
 impl WaylandClient {
-    pub(crate) fn new(linux_platform_inner: Arc<LinuxPlatformInner>, conn: Arc<Connection>) -> Self {
+    pub(crate) fn new(
+        linux_platform_inner: Arc<LinuxPlatformInner>,
+        conn: Arc<Connection>,
+    ) -> Self {
         let state = WaylandClientState {
             compositor: None,
             buffer: None,
             wm_base: None,
-            windows: Vec::new()
+            windows: Vec::new(),
         };
         let event_queue: EventQueue<WaylandClientState> = conn.new_event_queue();
         let qh = event_queue.handle();
@@ -46,7 +56,7 @@ impl WaylandClient {
             conn,
             state: Mutex::new(state),
             event_queue: Mutex::new(event_queue),
-            qh: Arc::new(qh)
+            qh: Arc::new(qh),
         }
     }
 }
@@ -81,7 +91,11 @@ impl Client for WaylandClient {
         todo!()
     }
 
-    fn open_window(&self, handle: AnyWindowHandle, options: WindowOptions) -> Box<dyn PlatformWindow> {
+    fn open_window(
+        &self,
+        handle: AnyWindowHandle,
+        options: WindowOptions,
+    ) -> Box<dyn PlatformWindow> {
         let mut state = self.state.lock();
 
         let wm_base = state.wm_base.as_ref().unwrap();
@@ -91,16 +105,16 @@ impl Client for WaylandClient {
         let toplevel = xdg_surface.get_toplevel(&self.qh, ());
         let wl_surface = Arc::new(wl_surface);
 
-        wl_surface.frame(&self.qh, ());
+        wl_surface.frame(&self.qh, wl_surface.clone());
         wl_surface.commit();
 
         let window_state: Arc<WaylandWindowState> = Arc::new(WaylandWindowState::new(
             &self.conn,
-            wl_surface,
+            wl_surface.clone(),
             Arc::new(toplevel),
-            options
+            options,
         ));
-        window_state.update();
+        // window_state.update();
 
         state.windows.push((xdg_surface, Arc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
@@ -116,10 +130,14 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, .. } = event {
+        if let wl_registry::Event::Global {
+            name, interface, ..
+        } = event
+        {
             match &interface[..] {
                 "wl_compositor" => {
-                    let compositor = registry.bind::<wl_compositor::WlCompositor, _, _>(name, 1, qh, ());
+                    let compositor =
+                        registry.bind::<wl_compositor::WlCompositor, _, _>(name, 1, qh, ());
                     state.compositor = Some(compositor);
                 }
                 "xdg_wm_base" => {
@@ -140,25 +158,26 @@ delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
 delegate_noop!(WaylandClientState: ignore wl_seat::WlSeat);
 delegate_noop!(WaylandClientState: ignore wl_keyboard::WlKeyboard);
 
-impl Dispatch<WlCallback, ()> for WaylandClientState {
-    fn event(state: &mut Self,
-             _: &WlCallback,
-             event: wl_callback::Event,
-             _: &(),
-             _: &Connection,
-             qh: &QueueHandle<Self>
+impl Dispatch<WlCallback, Arc<WlSurface>> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        _: &WlCallback,
+        event: wl_callback::Event,
+        surf: &Arc<WlSurface>,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
         if let wl_callback::Event::Done { .. } = event {
             for window in &state.windows {
-                let window = &state.windows[0]; // todo!(linux)
-                window.1.surface.frame(qh, ());
-                window.1.update();
-                window.1.surface.commit();
+                if window.1.surface.id() == surf.id() {
+                    window.1.surface.frame(qh, surf.clone());
+                    window.1.update();
+                    window.1.surface.commit();
+                }
             }
         }
     }
 }
-
 
 impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
     fn event(
@@ -191,7 +210,12 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let xdg_toplevel::Event::Configure { width, height, states } = event {
+        if let xdg_toplevel::Event::Configure {
+            width,
+            height,
+            states,
+        } = event
+        {
             if width == 0 || height == 0 {
                 return;
             }

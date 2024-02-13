@@ -673,7 +673,7 @@ impl AppContext {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, cx| cx.draw()).unwrap();
+                    self.update_window(window, |_, cx| {}).unwrap();
                 }
 
                 #[allow(clippy::collapsible_else_if)]
