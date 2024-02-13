@@ -240,14 +240,19 @@ impl ExtensionsPage {
                         .items_center()
                         .justify_between()
                         .child(
-                            Label::new(format!("Author: {}", extension.authors.join(", ")))
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
                         )
                         .child(
-                            Label::new(format!("Version: {}", extension.version))
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
+                            Label::new(format!("v{}", extension.version)).size(LabelSize::Small),
                         ),
                 ),
         )
