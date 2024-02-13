@@ -197,11 +197,18 @@ impl ExtensionStore {
         }
     }
 
-    pub fn fetch_extensions(&self, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Extension>>> {
+    pub fn fetch_extensions(
+        &self,
+        search: Option<&str>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Extension>>> {
         let url = format!(
-            "{}/{}",
+            "{}/{}{query}",
             ClientSettings::get_global(cx).server_url,
-            "api/extensions"
+            "api/extensions",
+            query = search
+                .map(|search| format!("?filter={search}"))
+                .unwrap_or_default()
         );
         let http_client = self.http_client.clone();
         cx.spawn(move |_, _| async move {

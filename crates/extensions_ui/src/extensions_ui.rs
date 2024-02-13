@@ -99,7 +99,7 @@ impl ExtensionsPage {
                 query_contains_error: false,
                 query_editor,
             };
-            this.fetch_extensions(cx);
+            this.fetch_extensions(None, cx);
 
             this
         });
@@ -107,7 +107,9 @@ impl ExtensionsPage {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        self.fetch_extensions(cx);
+        let search = self.search_query(cx);
+
+        self.fetch_extensions(search.as_deref(), cx);
     }
 
     fn install_extension(
@@ -138,9 +140,9 @@ impl ExtensionsPage {
         cx.notify();
     }
 
-    fn fetch_extensions(&mut self, cx: &mut ViewContext<Self>) {
+    fn fetch_extensions(&mut self, search: Option<&str>, cx: &mut ViewContext<Self>) {
         let extensions =
-            ExtensionStore::global(cx).update(cx, |store, cx| store.fetch_extensions(cx));
+            ExtensionStore::global(cx).update(cx, |store, cx| store.fetch_extensions(search, cx));
 
         cx.spawn(move |this, mut cx| async move {
             let extensions = extensions.await?;
@@ -150,17 +152,6 @@ impl ExtensionsPage {
             })
         })
         .detach_and_log_err(cx);
-    }
-
-    fn search_extension(&self, cx: &mut ViewContext<Self>) {
-        println!("SEARCH EXTENSION {}", self.search_query(cx));
-        let query = self.search_query(cx);
-        if query.contains('.') {
-            // search by file extension ex: .rs
-        } else {
-            // search by extension name
-        }
-        // &self.get_extensions_from_server()
     }
 
     fn render_extensions(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>) -> Vec<Div> {
@@ -320,6 +311,7 @@ impl ExtensionsPage {
             },
         )
     }
+
     fn on_query_change(
         &mut self,
         _: View<Editor>,
@@ -328,11 +320,17 @@ impl ExtensionsPage {
     ) {
         if let editor::EditorEvent::Edited = event {
             self.query_contains_error = false;
-            self.search_extension(cx);
+            self.fetch_extensions(self.search_query(cx).as_deref(), cx);
         }
     }
-    pub fn search_query(&self, cx: &WindowContext) -> String {
-        self.query_editor.read(cx).text(cx)
+
+    pub fn search_query(&self, cx: &WindowContext) -> Option<String> {
+        let search = self.query_editor.read(cx).text(cx);
+        if search.trim().is_empty() {
+            None
+        } else {
+            Some(search)
+        }
     }
 }
 
