@@ -3,12 +3,12 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{Extension, ExtensionStatus, ExtensionStore};
 use fs::Fs;
 use gpui::{
-    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled,
-    TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace,
-    WindowContext,
+    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
+    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use settings::Settings;
+use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -33,12 +33,12 @@ pub fn init(cx: &mut AppContext) {
 pub struct ExtensionsPage {
     workspace: WeakView<Workspace>,
     fs: Arc<dyn Fs>,
-    focus_handle: FocusHandle,
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
     extensions_entries: Vec<Extension>,
     query_editor: View<Editor>,
     query_contains_error: bool,
+    extension_fetch_task: Option<Task<()>>,
 }
 
 impl Render for ExtensionsPage {
@@ -46,11 +46,10 @@ impl Render for ExtensionsPage {
         h_flex()
             .full()
             .bg(cx.theme().colors().editor_background)
-            .track_focus(&self.focus_handle)
             .child(
                 v_flex()
                     .full()
-                    .p(px(16.))
+                    .p_4()
                     .child(
                         h_flex()
                             .w_full()
@@ -76,40 +75,23 @@ impl Render for ExtensionsPage {
 impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
-            let focus_handle = cx.focus_handle();
-
-            cx.on_focus(&focus_handle, Self::focus_in).detach();
-
-            cx.on_release(|this: &mut Self, _, _| {
-                this.telemetry
-                    .report_app_event("extensions page: close".to_string());
-            })
-            .detach();
-
             let query_editor = cx.new_view(|cx| Editor::single_line(cx));
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let mut this = Self {
                 fs: workspace.project().read(cx).fs().clone(),
-                focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
                 extensions_entries: Vec::new(),
                 query_contains_error: false,
+                extension_fetch_task: None,
                 query_editor,
             };
             this.fetch_extensions(None, cx);
-
             this
         });
         extensions_panel
-    }
-
-    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        let search = self.search_query(cx);
-
-        self.fetch_extensions(search.as_deref(), cx);
     }
 
     fn install_extension(
@@ -366,7 +348,15 @@ impl ExtensionsPage {
     ) {
         if let editor::EditorEvent::Edited = event {
             self.query_contains_error = false;
-            self.fetch_extensions(self.search_query(cx).as_deref(), cx);
+            self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+                this.update(&mut cx, |this, cx| {
+                    this.fetch_extensions(this.search_query(cx).as_deref(), cx);
+                })
+                .ok();
+            }));
         }
     }
 
@@ -383,8 +373,8 @@ impl ExtensionsPage {
 impl EventEmitter<ItemEvent> for ExtensionsPage {}
 
 impl FocusableView for ExtensionsPage {
-    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.query_editor.read(cx).focus_handle(cx)
     }
 }
 
@@ -414,15 +404,15 @@ impl Item for ExtensionsPage {
         _workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        Some(cx.new_view(|cx| ExtensionsPage {
+        Some(cx.new_view(|_| ExtensionsPage {
             fs: self.fs.clone(),
-            focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             list: UniformListScrollHandle::new(),
             telemetry: self.telemetry.clone(),
             extensions_entries: Default::default(),
             query_editor: self.query_editor.clone(),
             query_contains_error: false,
+            extension_fetch_task: None,
         }))
     }
 
