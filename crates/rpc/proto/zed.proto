@@ -212,13 +212,13 @@ enum ErrorCode {
     SignedOut = 3;
     UpgradeRequired = 4;
     Forbidden = 5;
-    WrongReleaseChannel = 6;
     NeedsCla = 7;
     NotARootChannel = 8;
     BadPublicNesting = 9;
     CircularNesting = 10;
     WrongMoveTarget = 11;
     UnsharedItem = 12;
+    reserved 6;
 }
 
 message Test {

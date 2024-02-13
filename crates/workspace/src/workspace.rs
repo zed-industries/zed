@@ -4201,7 +4201,6 @@ pub fn join_channel(
                                 "This channel is private, and you do not have access. Please ask someone to add you and try again.".into()
                             },
                             ErrorCode::Disconnected => "Please check your internet connection and try again.".into(),
-                            ErrorCode::WrongReleaseChannel => format!("Others in the channel are using the {} release of Zed. Please switch to join this call.", err.error_tag("required").unwrap_or("other")).into(),
                             _ => format!("{}\n\nPlease try again.", err).into(),
                         };
                         cx.prompt(
