@@ -3,7 +3,7 @@
 //! Not literally though - rendering, layout and all that jazz is a responsibility of [`EditorElement`][EditorElement].
 //! Instead, [`DisplayMap`] decides where Inlays/Inlay hints are displayed, when
 //! to apply a soft wrap, where to add fold indicators, whether there are any tabs in the buffer that
-//! we display as spaces and where to display custom blocks (like diagnostics)
+//! we display as spaces and where to display custom blocks (like diagnostics).
 //! Seems like a lot? That's because it is. [`DisplayMap`] is conceptually made up
 //! of several smaller structures that form a hierarchy (starting at the bottom):
 //! - [`InlayMap`] that decides where the [`Inlay`]s should be displayed.

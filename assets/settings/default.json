@@ -104,8 +104,10 @@
   "show_whitespaces": "selection",
   // Settings related to calls in Zed
   "calls": {
-    // Join calls with the microphone muted by default
-    "mute_on_join": false
+    // Join calls with the microphone live by default
+    "mute_on_join": false,
+    // Share your project when you are the first to join a channel
+    "share_on_join": true
   },
   // Toolbar related settings
   "toolbar": {
