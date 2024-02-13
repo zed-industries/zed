@@ -311,6 +311,13 @@ impl ExtensionStore {
     }
 
     fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) {
+        let old_manifest = self.manifest.read();
+        let language_names = old_manifest.languages.keys().cloned().collect::<Vec<_>>();
+        let grammar_names = old_manifest.grammars.keys().cloned().collect::<Vec<_>>();
+        drop(old_manifest);
+        self.language_registry
+            .remove_languages(&language_names, &grammar_names);
+
         self.language_registry
             .register_wasm_grammars(manifest.grammars.iter().map(|(grammar_name, grammar)| {
                 let mut grammar_path = self.extensions_dir.clone();
