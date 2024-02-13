@@ -217,46 +217,44 @@ impl ExtensionsPage {
                 .rounded_md()
                 .child(
                     h_flex()
-                        .w_full()
-                        .items_center()
                         .justify_between()
-                        .child(Headline::new(extension.name.clone()).size(HeadlineSize::Medium)),
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .items_center()
-                        .justify_between()
-                        .map(|this| match extension.description.as_ref() {
-                            Some(description) => this.child(
-                                Label::new(description.clone())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Default),
-                            ),
-                            None => this.child(div()),
-                        })
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_end()
+                                .child(
+                                    Headline::new(extension.name.clone())
+                                        .size(HeadlineSize::Medium),
+                                )
+                                .child(
+                                    Headline::new(format!("v{}", extension.version))
+                                        .size(HeadlineSize::XSmall),
+                                ),
+                        )
                         .child(button),
                 )
                 .child(
+                    h_flex().justify_between().child(
+                        Label::new(format!(
+                            "{}: {}",
+                            if extension.authors.len() > 1 {
+                                "Authors"
+                            } else {
+                                "Author"
+                            },
+                            extension.authors.join(", ")
+                        ))
+                        .size(LabelSize::Small),
+                    ),
+                )
+                .child(
                     h_flex()
-                        .w_full()
-                        .items_center()
                         .justify_between()
-                        .child(
-                            Label::new(format!(
-                                "{}: {}",
-                                if extension.authors.len() > 1 {
-                                    "Authors"
-                                } else {
-                                    "Author"
-                                },
-                                extension.authors.join(", ")
-                            ))
-                            .size(LabelSize::Small),
-                        )
-                        .child(
-                            Label::new(format!("v{}", extension.version)).size(LabelSize::Small),
-                        ),
+                        .children(extension.description.as_ref().map(|description| {
+                            Label::new(description.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Default)
+                        })),
                 ),
         )
     }
