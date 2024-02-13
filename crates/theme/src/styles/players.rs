@@ -140,7 +140,7 @@ impl PlayerColors {
     }
 
     pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
-        let len = cmp::max(self.0.len() - 1, 0);
+        let len = cmp::max(self.0.len() - 1, 1);
         self.0[(participant_index as usize % len) + 1]
     }
 }
