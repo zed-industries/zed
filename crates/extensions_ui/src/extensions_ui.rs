@@ -179,7 +179,7 @@ impl ExtensionsPage {
                                 let version = extension.version.clone();
                                 move |this, _, cx| {
                                     this.telemetry.report_app_event(
-                                        "extensions page: install extension".to_string(),
+                                        "extensions: install extension".to_string(),
                                     );
                                     this.install_extension(
                                         extension_id.clone(),
@@ -204,7 +204,7 @@ impl ExtensionsPage {
                         let version = extension.version.clone();
                         move |this, _, cx| {
                             this.telemetry
-                                .report_app_event("extensions page: install extension".to_string());
+                                .report_app_event("extensions: install extension".to_string());
                             this.install_extension(extension_id.clone(), version.clone(), cx);
                         }
                     }))
@@ -215,9 +215,8 @@ impl ExtensionsPage {
                     .on_click(cx.listener({
                         let extension_id = extension.id.clone();
                         move |this, _, cx| {
-                            this.telemetry.report_app_event(
-                                "extensions page: uninstall extension".to_string(),
-                            );
+                            this.telemetry
+                                .report_app_event("extensions: uninstall extension".to_string());
                             this.uninstall_extension(extension_id.clone(), cx);
                         }
                     }))
