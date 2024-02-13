@@ -399,6 +399,7 @@ pub struct Editor {
     workspace: Option<(WeakView<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
+    use_modal_editing: bool,
     read_only: bool,
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
@@ -1482,6 +1483,7 @@ impl Editor {
             workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
+            use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
             leader_peer_id: None,
@@ -1780,6 +1782,14 @@ impl Editor {
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
         self.show_copilot_suggestions = show_copilot_suggestions;
+    }
+
+    pub fn set_use_modal_editing(&mut self, to: bool) {
+        self.use_modal_editing = to;
+    }
+
+    pub fn use_modal_editing(&self) -> bool {
+        self.use_modal_editing
     }
 
     fn selections_did_change(
@@ -7836,7 +7846,6 @@ impl Editor {
         Some(rename)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
     }
