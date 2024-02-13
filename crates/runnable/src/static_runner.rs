@@ -1,6 +1,6 @@
 //! This module is responsible for executing static runnables, that is runnables defined by the user
 //! in the config file.
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{PendingOutput, Runnable, RunnableHandle};
 use anyhow::Context;
@@ -24,11 +24,18 @@ impl Runnable for StaticRunner {
         Box::new(self.clone())
     }
 
-    fn exec(&self, mut cx: AsyncAppContext) -> anyhow::Result<RunnableHandle> {
+    fn exec(
+        &self,
+        cwd: Option<PathBuf>,
+        mut cx: AsyncAppContext,
+    ) -> anyhow::Result<RunnableHandle> {
         let mut command = Command::new(self.runnable.command.clone());
         let mut command = command.args(self.runnable.args.clone());
         if let Some(env_path) = std::env::var_os("PATH") {
             command = command.env("PATH", env_path);
+        }
+        if let Some(cwd) = cwd {
+            command = command.current_dir(cwd);
         }
         command = command
             .stderr(Stdio::piped())
@@ -97,7 +104,7 @@ mod tests {
         });
         let ex = cx.executor().clone();
         ex.spawn(async_process::driver()).detach();
-        let task_handle = cx.update(|cx| runner.exec(cx.to_async())).unwrap();
+        let task_handle = cx.update(|cx| runner.exec(None, cx.to_async())).unwrap();
         let runnable_result = task_handle.await.unwrap();
         assert!(runnable_result.status.unwrap().success());
         assert_eq!(
@@ -117,7 +124,7 @@ mod tests {
         });
         let ex = cx.executor().clone();
         ex.spawn(async_process::driver()).detach();
-        let task_handle = cx.update(|cx| runner.exec(cx.to_async())).unwrap();
+        let task_handle = cx.update(|cx| runner.exec(None, cx.to_async())).unwrap();
         let cancel_token = task_handle.termination_handle();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(3));

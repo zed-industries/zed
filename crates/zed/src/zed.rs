@@ -391,7 +391,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         return;
                     };
 
-                    let Some(handle) = runnable.schedule(cx).log_err() else {
+                    // TODO: has to receive some applicable path + has to spawn the terminal with the output stream
+                    // same as the .spawn does in the runnables_ui's modal.rs::confirm
+                    let Some(handle) = runnable.schedule(None, cx).log_err() else {
                         return;
                     };
                     cx.spawn(|_, _| async move {

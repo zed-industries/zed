@@ -37,6 +37,34 @@ impl RunnablesModalDelegate {
             placeholder_text: Arc::from("Select runnable..."),
         }
     }
+
+    fn task_cwd(
+        &mut self,
+        cx: &mut ViewContext<'_, picker::Picker<Self>>,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let cwd = self.workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let cwd = match project
+                .active_entry()
+                .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
+            {
+                Some(worktree) => Some(worktree.read(cx).abs_path()),
+                None => {
+                    let mut all_worktrees = project.worktrees().fuse();
+                    let single_worktree = all_worktrees.next();
+                    let another_worktree = all_worktrees.next();
+                    anyhow::ensure!(
+                        another_worktree.is_none(),
+                        "Cannot determine task cwd for multiple worktrees"
+                    );
+
+                    single_worktree.map(|worktree| worktree.read(cx).abs_path())
+                }
+            };
+            Ok(cwd)
+        })??;
+        Ok(cwd.map(|path| path.to_path_buf()))
+    }
 }
 pub(crate) struct RunnablesModal {
     picker: View<Picker<RunnablesModalDelegate>>,
@@ -165,8 +193,11 @@ impl PickerDelegate for RunnablesModalDelegate {
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
+        let Some(cwd) = self.task_cwd(cx).log_err() else {
+            return;
+        };
         let ix = self.matches[current_match_index].candidate_id;
-        if let Some(handle) = self.candidates[ix].schedule(cx).log_err() {
+        if let Some(handle) = self.candidates[ix].schedule(cwd, cx).log_err() {
             if let Some(output) = handle.output.as_ref() {
                 self.workspace
                     .update(cx, |_, cx| {

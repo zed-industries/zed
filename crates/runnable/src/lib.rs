@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use smol::io::BufReader;
 pub use static_runner::StaticRunner;
 use std::any::Any;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::task::Poll;
 use util::ResultExt;
@@ -149,7 +149,7 @@ pub struct ExecutionResult {
 /// is to get spawned.
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(&self, cx: gpui::AsyncAppContext) -> Result<RunnableHandle>;
+    fn exec(&self, cwd: Option<PathBuf>, cx: gpui::AsyncAppContext) -> Result<RunnableHandle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
@@ -189,11 +189,11 @@ pub(crate) enum RunState {
 
 impl RunnableToken {
     /// Schedules a task or returns a handle to it if it's already running.
-    pub fn schedule(&self, cx: &mut AppContext) -> Result<RunnableHandle> {
+    pub fn schedule(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Result<RunnableHandle> {
         let mut spawned_first_time = false;
         let ret = self.state.update(cx, |this, cx| match this {
             RunState::NotScheduled(runnable) => {
-                let handle = runnable.exec(cx.to_async())?;
+                let handle = runnable.exec(cwd, cx.to_async())?;
                 spawned_first_time = true;
                 *this = RunState::Scheduled(handle.clone());
 
