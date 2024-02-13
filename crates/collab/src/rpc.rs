@@ -102,7 +102,6 @@ impl<R: RequestMessage> Response<R> {
 
 #[derive(Clone)]
 struct Session {
-    zed_environment: Arc<str>,
     user_id: UserId,
     connection_id: ConnectionId,
     db: Arc<tokio::sync::Mutex<DbHandle>>,
@@ -617,7 +616,6 @@ impl Server {
                 user_id,
                 connection_id,
                 db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
-                zed_environment: this.app_state.config.zed_environment.clone(),
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone(),
@@ -1009,12 +1007,7 @@ async fn create_room(
     let room = session
         .db()
         .await
-        .create_room(
-            session.user_id,
-            session.connection_id,
-            &live_kit_room,
-            &session.zed_environment,
-        )
+        .create_room(session.user_id, session.connection_id, &live_kit_room)
         .await?;
 
     response.send(proto::CreateRoomResponse {
@@ -1044,12 +1037,7 @@ async fn join_room(
         let room = session
             .db()
             .await
-            .join_room(
-                room_id,
-                session.user_id,
-                session.connection_id,
-                session.zed_environment.as_ref(),
-            )
+            .join_room(room_id, session.user_id, session.connection_id)
             .await?;
         room_updated(&room.room, &session.peer);
         room.into_inner()
@@ -2734,12 +2722,7 @@ async fn join_channel_internal(
         let db = session.db().await;
 
         let (joined_room, membership_updated, role) = db
-            .join_channel(
-                channel_id,
-                session.user_id,
-                session.connection_id,
-                session.zed_environment.as_ref(),
-            )
+            .join_channel(channel_id, session.user_id, session.connection_id)
             .await?;
 
         let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {
