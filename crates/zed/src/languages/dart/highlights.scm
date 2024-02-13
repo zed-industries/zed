@@ -3,7 +3,7 @@
 ; Methods
 ; --------------------
 (function_type
-    name: (identifier) @method)
+    name: (identifier) @function)
 (super) @function
 
 ; Annotations
@@ -56,6 +56,8 @@
   "]"
   "{"
   "}"
+  "<"
+  ">"
   ]  @punctuation.bracket
 
 ; Delimiters
@@ -72,17 +74,14 @@
   name: (identifier) @type)
 (constructor_signature
   name: (identifier) @type)
-;; TODO: does not work
-;(type_identifier
-;(identifier) @type)
 (scoped_identifier
   scope: (identifier) @type)
 (function_signature
-  name: (identifier) @method)
+  name: (identifier) @function)
 (getter_signature
-  (identifier) @method)
+  (identifier) @function)
 (setter_signature
-  name: (identifier) @method)
+  name: (identifier) @function)
 (enum_declaration
   name: (identifier) @type)
 (enum_constant
@@ -122,14 +121,6 @@
 
 (this) @variable.builtin
 
-; Parameters
-; --------------------
-(formal_parameter
-  name: (identifier) @parameter)
-
-(named_argument
-  (label (identifier) @parameter))
-
 ; Literals
 ; --------------------
 [
@@ -152,7 +143,7 @@
 
 ; Keywords
 ; --------------------
-["import" "library" "export"] @include
+["import" "library" "export"] @keyword.include
 
 ; Reserved words (cannot be used as identifiers)
 ; TODO: "rethrow" @keyword
@@ -205,7 +196,7 @@
 ((identifier) @variable.builtin
   (#vim-match? @variable.builtin "^(abstract|as|covariant|deferred|dynamic|export|external|factory|Function|get|implements|import|interface|library|operator|mixin|part|set|static|typedef)$"))
 
-["if" "else" "switch" "default"] @conditional
+["if" "else" "switch" "default"] @keyword
 
 [
   "try"
@@ -213,9 +204,6 @@
   "catch"
   "finally"
   (break_statement)
-  ] @exception
+  ] @keyword
 
-["do" "while" "continue" "for"] @repeat
-
-; Error
-(ERROR) @error
+["do" "while" "continue" "for"] @keyword

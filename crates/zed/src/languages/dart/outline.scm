@@ -1,4 +1,3 @@
-
 (class_definition
     "class" @context
     name: (_) @name) @item
