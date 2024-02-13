@@ -45,6 +45,7 @@ pub struct Extension {
 pub enum ExtensionStatus {
     NotInstalled,
     Installing,
+    Upgrading,
     Installed(Arc<str>),
     Removing,
 }
@@ -54,7 +55,8 @@ pub struct ExtensionStore {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     extensions_dir: PathBuf,
-    extensions_being_installed_or_installed: HashSet<Arc<str>>,
+    extensions_being_installed: HashSet<Arc<str>>,
+    extensions_being_uninstalled: HashSet<Arc<str>>,
     manifest_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
@@ -140,7 +142,8 @@ impl ExtensionStore {
             manifest: Default::default(),
             extensions_dir: extensions_dir.join("installed"),
             manifest_path: extensions_dir.join("manifest.json"),
-            extensions_being_installed_or_installed: Default::default(),
+            extensions_being_installed: Default::default(),
+            extensions_being_uninstalled: Default::default(),
             fs,
             http_client,
             language_registry,
@@ -186,12 +189,15 @@ impl ExtensionStore {
     }
 
     pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
+        let is_uninstalling = self.extensions_being_uninstalled.contains(extension_id);
+        if is_uninstalling {
+            return ExtensionStatus::Removing;
+        }
+
         let installed_version = self.manifest.read().extensions.get(extension_id).cloned();
-        let is_processing = self
-            .extensions_being_installed_or_installed
-            .contains(extension_id);
-        match (installed_version, is_processing) {
-            (Some(_), true) => ExtensionStatus::Removing,
+        let is_installing = self.extensions_being_installed.contains(extension_id);
+        match (installed_version, is_installing) {
+            (Some(_), true) => ExtensionStatus::Upgrading,
             (Some(version), false) => ExtensionStatus::Installed(version.clone()),
             (None, true) => ExtensionStatus::Installing,
             (None, false) => ExtensionStatus::NotInstalled,
@@ -251,8 +257,7 @@ impl ExtensionStore {
         let extensions_dir = self.extensions_dir();
         let http_client = self.http_client.clone();
 
-        self.extensions_being_installed_or_installed
-            .insert(extension_id.clone());
+        self.extensions_being_installed.insert(extension_id.clone());
 
         cx.spawn(move |this, mut cx| async move {
             let mut response = http_client
@@ -267,7 +272,7 @@ impl ExtensionStore {
 
             this.update(&mut cx, |store, cx| {
                 store
-                    .extensions_being_installed_or_installed
+                    .extensions_being_installed
                     .remove(extension_id.as_ref());
                 store.reload(cx)
             })?
@@ -283,7 +288,7 @@ impl ExtensionStore {
         let extensions_dir = self.extensions_dir();
         let fs = self.fs.clone();
 
-        self.extensions_being_installed_or_installed
+        self.extensions_being_uninstalled
             .insert(extension_id.clone());
 
         cx.spawn(move |this, mut cx| async move {
@@ -297,7 +302,7 @@ impl ExtensionStore {
             .await?;
 
             this.update(&mut cx, |this, cx| {
-                this.extensions_being_installed_or_installed
+                this.extensions_being_uninstalled
                     .remove(extension_id.as_ref());
                 this.reload(cx)
             })?

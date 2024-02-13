@@ -173,27 +173,33 @@ impl ExtensionsPage {
             ExtensionStatus::Installed(installed_version) => {
                 if installed_version != extension.version {
                     Some(
-                        Button::new(SharedString::from(extension.id.clone()), "Upgrade")
-                            .on_click(cx.listener({
-                                let extension_id = extension.id.clone();
-                                let version = extension.version.clone();
-                                move |this, _, cx| {
-                                    this.telemetry.report_app_event(
-                                        "extensions: install extension".to_string(),
-                                    );
-                                    this.install_extension(
-                                        extension_id.clone(),
-                                        version.clone(),
-                                        cx,
-                                    );
-                                }
-                            }))
-                            .color(Color::Accent),
+                        Button::new(
+                            SharedString::from(format!("upgrade-{}", extension.id)),
+                            "Upgrade",
+                        )
+                        .on_click(cx.listener({
+                            let extension_id = extension.id.clone();
+                            let version = extension.version.clone();
+                            move |this, _, cx| {
+                                this.telemetry
+                                    .report_app_event("extensions: install extension".to_string());
+                                this.install_extension(extension_id.clone(), version.clone(), cx);
+                            }
+                        }))
+                        .color(Color::Accent),
                     )
                 } else {
                     None
                 }
             }
+            ExtensionStatus::Upgrading => Some(
+                Button::new(
+                    SharedString::from(format!("upgrade-{}", extension.id)),
+                    "Upgrade",
+                )
+                .color(Color::Accent)
+                .disabled(true),
+            ),
         };
 
         let button = match status {
@@ -210,7 +216,9 @@ impl ExtensionsPage {
                     }))
                     .disabled(matches!(status, ExtensionStatus::Installing))
             }
-            ExtensionStatus::Installed(_) | ExtensionStatus::Removing => {
+            ExtensionStatus::Installed(_)
+            | ExtensionStatus::Upgrading
+            | ExtensionStatus::Removing => {
                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
                     .on_click(cx.listener({
                         let extension_id = extension.id.clone();
@@ -220,7 +228,10 @@ impl ExtensionsPage {
                             this.uninstall_extension(extension_id.clone(), cx);
                         }
                     }))
-                    .disabled(matches!(status, ExtensionStatus::Removing))
+                    .disabled(matches!(
+                        status,
+                        ExtensionStatus::Upgrading | ExtensionStatus::Removing
+                    ))
             }
         }
         .color(Color::Accent);
