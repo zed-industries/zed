@@ -1,5 +1,6 @@
 use gpui::Hsla;
 use serde_derive::Deserialize;
+use std::cmp;
 
 use crate::{amber, blue, jade, lime, orange, pink, purple, red};
 
@@ -139,7 +140,7 @@ impl PlayerColors {
     }
 
     pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
-        let len = self.0.len() - 1;
+        let len = cmp::max(self.0.len() - 1, 0);
         self.0[(participant_index as usize % len) + 1]
     }
 }
