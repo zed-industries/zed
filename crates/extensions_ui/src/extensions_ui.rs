@@ -3,9 +3,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{Extension, ExtensionStatus, ExtensionStore};
 use fs::Fs;
 use gpui::{
-    uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle,
-    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled,
+    TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace,
+    WindowContext,
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
@@ -14,8 +15,10 @@ use ui::prelude::*;
 
 use workspace::{
     item::{Item, ItemEvent},
-    Extensions, Workspace, WorkspaceId,
+    Workspace, WorkspaceId,
 };
+
+actions!(zed, [Extensions]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
