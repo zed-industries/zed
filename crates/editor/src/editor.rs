@@ -1017,12 +1017,53 @@ impl CompletionsMenu {
 
         let completions = self.completions.read();
         matches.sort_unstable_by_key(|mat| {
+            // We do want to strike a balance here between what the language server tells us
+            // to sort by (the sort_text) and what are "obvious" good matches (i.e. when you type
+            // `Creat` and there is a local variable called `CreateComponent`).
+            // So what we do is: we bucket all matches into two buckets
+            // - Strong matches
+            // - Weak matches
+            // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
+            // and the Weak matches are the rest.
+            //
+            // For the strong matches, we sort by the language-servers score first and for the weak
+            // matches, we prefer our fuzzy finder first.
+            //
+            // The thinking behind that: it's useless to take the sort_text the language-server gives
+            // us into account when it's obviously a bad match.
+
+            #[derive(PartialEq, Eq, PartialOrd, Ord)]
+            enum MatchScore<'a> {
+                Strong {
+                    sort_text: Option<&'a str>,
+                    score: Reverse<OrderedFloat<f64>>,
+                    sort_key: (usize, &'a str),
+                },
+                Weak {
+                    score: Reverse<OrderedFloat<f64>>,
+                    sort_text: Option<&'a str>,
+                    sort_key: (usize, &'a str),
+                },
+            }
+
             let completion = &completions[mat.candidate_id];
-            (
-                completion.lsp_completion.sort_text.as_ref(),
-                Reverse(OrderedFloat(mat.score)),
-                completion.sort_key(),
-            )
+            let sort_key = completion.sort_key();
+            let sort_text = completion.lsp_completion.sort_text.as_deref();
+            let score = Reverse(OrderedFloat(mat.score));
+
+            if mat.score >= 0.2 {
+                MatchScore::Strong {
+                    sort_text,
+                    score,
+                    sort_key,
+                }
+            } else {
+                MatchScore::Weak {
+                    score,
+                    sort_text,
+                    sort_key,
+                }
+            }
         });
 
         for mat in &mut matches {
