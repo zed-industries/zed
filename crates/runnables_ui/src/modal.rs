@@ -186,7 +186,6 @@ impl PickerDelegate for RunnablesModalDelegate {
                     };
                     panel.update(cx, |this, cx| {
                         if let Some(tracker) = this.status_bar_tracker.as_ref() {
-                            dbg!("pushing");
                             tracker.update(cx, |this, cx| this.push(handle, cx));
                             cx.notify();
                         }
