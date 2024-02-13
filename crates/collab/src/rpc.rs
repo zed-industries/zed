@@ -864,7 +864,7 @@ pub fn routes(server: Arc<Server>) -> Router<Body> {
 
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
-    _app_version_header: Option<TypedHeader<AppVersionHeader>>,
+    app_version_header: Option<TypedHeader<AppVersionHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(user): Extension<User>,
@@ -877,6 +877,19 @@ pub async fn handle_websocket_request(
             "client must be upgraded".to_string(),
         )
             .into_response();
+    }
+
+    // the first version of zed that sent this header was 0.121.x
+    if let Some(version) = app_version_header.map(|header| header.0 .0) {
+        // 0.123.0 was a nightly version with incompatible collab changes
+        // that were reverted.
+        if version == "0.123.0".parse().unwrap() {
+            return (
+                StatusCode::UPGRADE_REQUIRED,
+                "client must be upgraded".to_string(),
+            )
+                .into_response();
+        }
     }
 
     let socket_address = socket_address.to_string();
