@@ -303,6 +303,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ["ERB", "Plain Text", "Ruby"]
         );
         assert_eq!(
+            language_registry.grammar_names(),
+            ["embedded_template".into(), "ruby".into()]
+        );
+        assert_eq!(
             theme_registry.list_names(false),
             [
                 "Gruvbox",
@@ -318,5 +322,28 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         // on startup.
         assert_eq!(fs.read_dir_call_count(), prev_fs_read_dir_call_count);
         assert_eq!(fs.metadata_call_count(), prev_fs_metadata_call_count + 2);
+    });
+
+    store
+        .update(cx, |store, cx| {
+            store.uninstall_extension("zed-ruby".into(), cx)
+        })
+        .await
+        .unwrap();
+
+    expected_manifest.extensions.remove("zed-ruby");
+    expected_manifest.languages.remove("Ruby");
+    expected_manifest.languages.remove("ERB");
+    expected_manifest.grammars.remove("ruby");
+    expected_manifest.grammars.remove("embedded_template");
+
+    store.read_with(cx, |store, _| {
+        let manifest = store.manifest.read();
+        assert_eq!(manifest.grammars, expected_manifest.grammars);
+        assert_eq!(manifest.languages, expected_manifest.languages);
+        assert_eq!(manifest.themes, expected_manifest.themes);
+
+        assert_eq!(language_registry.language_names(), ["Plain Text"]);
+        assert_eq!(language_registry.grammar_names(), []);
     });
 }
