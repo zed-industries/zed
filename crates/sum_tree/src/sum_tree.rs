@@ -145,7 +145,7 @@ impl<T: Item> SumTree<T> {
 
             let mut summary = item_summaries[0].clone();
             for item_summary in &item_summaries[1..] {
-                <T::Summary as Summary>::add_summary(&mut summary, &item_summary, cx);
+                <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
             }
 
             nodes.push(Node::Leaf {
@@ -214,7 +214,7 @@ impl<T: Item> SumTree<T> {
                     items.iter().map(|item| item.summary()).collect();
                 let mut summary = item_summaries[0].clone();
                 for item_summary in &item_summaries[1..] {
-                    <T::Summary as Summary>::add_summary(&mut summary, &item_summary, cx);
+                    <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
                 }
                 SumTree(Arc::new(Node::Leaf {
                     summary,
@@ -239,7 +239,7 @@ impl<T: Item> SumTree<T> {
                         .collect();
                     let mut summary = child_summaries[0].clone();
                     for child_summary in &child_summaries[1..] {
-                        <T::Summary as Summary>::add_summary(&mut summary, &child_summary, cx);
+                        <T::Summary as Summary>::add_summary(&mut summary, child_summary, cx);
                     }
                     SumTree(Arc::new(Node::Internal {
                         height,
