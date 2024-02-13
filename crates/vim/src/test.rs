@@ -5,7 +5,6 @@ mod vim_test_context;
 
 use std::time::Duration;
 
-use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::DisplayPoint;
 use futures::StreamExt;

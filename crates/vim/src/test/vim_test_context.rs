@@ -1,11 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
-use editor::test::{
-    editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
-};
-use futures::Future;
+use editor::test::editor_lsp_test_context::EditorLspTestContext;
 use gpui::{Context, View, VisualContext};
-use lsp::request;
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
