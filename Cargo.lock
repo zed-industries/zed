@@ -4912,6 +4912,7 @@ dependencies = [
  "regex",
  "rpc",
  "schemars",
+ "seahash",
  "serde",
  "serde_derive",
  "serde_json",

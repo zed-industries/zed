@@ -1098,7 +1098,8 @@ impl LocalWorktree {
         let project_id = self.share.as_ref().map(|share| share.project_id);
 
         let text = buffer.as_rope().clone();
-        let fingerprint = text.fingerprint();
+        // todo: po: this should be a "current" fingerprint
+        let fingerprint = buffer.saved_version_fingerprint();
         let version = buffer.version();
         let save = self.write_file(path.as_ref(), text, buffer.line_ending(), cx);
         let fs = Arc::clone(&self.fs);
@@ -1161,7 +1162,7 @@ impl LocalWorktree {
                     buffer_id,
                     version: serialize_version(&version),
                     mtime: Some(mtime.into()),
-                    fingerprint: serialize_fingerprint(fingerprint),
+                    fingerprint: serialize_fingerprint(fingerprint.clone()),
                 })?;
             }
 

@@ -59,6 +59,7 @@ pulldown-cmark.workspace = true
 tree-sitter.workspace = true
 unicase = "2.6"
 util.workspace = true
+seahash = "4.1.0"
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

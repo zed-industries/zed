@@ -2,7 +2,7 @@
 
 use crate::{
     diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, CursorShape, Diagnostic,
-    Language,
+    Language, RopeFingerprint,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -15,13 +15,14 @@ pub use proto::{BufferState, Operation};
 
 /// Serializes a [`RopeFingerprint`] to be sent over RPC.
 pub fn serialize_fingerprint(fingerprint: RopeFingerprint) -> String {
-    fingerprint.to_hex()
+    todo!()
 }
 
 /// Deserializes a [`RopeFingerprint`] from the RPC representation.
 pub fn deserialize_fingerprint(fingerprint: &str) -> Result<RopeFingerprint> {
-    RopeFingerprint::from_hex(fingerprint)
-        .map_err(|error| anyhow!("invalid fingerprint: {}", error))
+    todo!()
+    // RopeFingerprint::from_hex(fingerprint)
+    //     .map_err(|error| anyhow!("invalid fingerprint: {}", error))
 }
 
 /// Deserializes a `[text::LineEnding]` from the RPC representation.

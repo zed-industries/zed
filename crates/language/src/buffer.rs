@@ -17,6 +17,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
+use collections::HashSet;
 use futures::channel::oneshot;
 use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel};
 use lazy_static::lazy_static;
@@ -27,10 +28,12 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    cell::RefCell,
     cmp::{self, Ordering},
     collections::BTreeMap,
     ffi::OsStr,
     future::Future,
+    hash::Hasher,
     iter::{self, Iterator, Peekable},
     mem,
     ops::{Deref, Range},
@@ -45,9 +48,9 @@ use text::operation_queue::OperationQueue;
 use text::*;
 pub use text::{
     Anchor, Bias, Buffer as TextBuffer, BufferId, BufferSnapshot as TextBufferSnapshot, Edit,
-    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, RopeFingerprint, Selection,
-    SelectionGoal, Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint,
-    ToPointUtf16, Transaction, TransactionId, Unclipped,
+    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection, SelectionGoal,
+    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
+    Transaction, TransactionId, Unclipped,
 };
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
@@ -74,6 +77,87 @@ pub enum Capability {
     ReadOnly,
 }
 
+#[derive(Clone)]
+pub struct RopeFingerprint {
+    current_version: clock::Global,
+    len: usize,
+    hashes: Vec<u64>,
+}
+
+const HASH_EXTENT: usize = 1024;
+impl RopeFingerprint {
+    fn new(buffer: &TextBuffer) -> Self {
+        let mut this = Self {
+            current_version: buffer.version(),
+            len: buffer.len(),
+            hashes: Self::hash_buffer(&buffer),
+        };
+        this
+    }
+    fn hash_buffer(buffer: &TextBuffer) -> Vec<u64> {
+        let buffer_len = buffer.len();
+        let max_chunk_id = (buffer_len + HASH_EXTENT - 1) / HASH_EXTENT;
+        let mut ret = Vec::with_capacity(max_chunk_id);
+        for chunk in 0..max_chunk_id {
+            let mut hasher = seahash::SeaHasher::new();
+            let max = ((chunk + 1) * HASH_EXTENT).min(buffer_len);
+            for bytes in buffer.bytes_in_range(chunk * HASH_EXTENT..max) {
+                hasher.write(&bytes);
+            }
+            ret.push(hasher.finish());
+        }
+        ret
+    }
+    fn from_bytes(current_version: clock::Global, buffer: &[u8]) -> Self {
+        let max_chunk_id = (buffer.len() + HASH_EXTENT - 1) / HASH_EXTENT;
+        let mut hashes = Vec::with_capacity(max_chunk_id);
+        for chunk in 0..max_chunk_id {
+            let mut hasher = seahash::SeaHasher::new();
+            for bytes in buffer.chunks(HASH_EXTENT) {
+                hasher.write(&bytes);
+            }
+            hashes.push(hasher.finish());
+        }
+        Self {
+            current_version,
+            len: buffer.len(),
+            hashes,
+        }
+    }
+    fn update_hash(&mut self, buffer: &TextBuffer) {
+        if buffer.len() != self.len {
+            return;
+        }
+        let mut chunks_to_rehash = HashSet::new();
+        for edit in buffer.edits_since::<usize>(&self.current_version) {
+            debug_assert_eq!(edit.old, edit.new);
+            let start_chunk_id = edit.new.start / HASH_EXTENT;
+            let end_chunk_id = edit.new.end / HASH_EXTENT;
+            chunks_to_rehash.insert(start_chunk_id);
+            if start_chunk_id != end_chunk_id {
+                chunks_to_rehash.insert(end_chunk_id);
+            }
+        }
+        for chunk in chunks_to_rehash {
+            let mut hasher = seahash::SeaHasher::new();
+            let max = ((chunk + 1) * HASH_EXTENT).min(self.len);
+            for bytes in buffer.bytes_in_range(chunk * HASH_EXTENT..max) {
+                hasher.write(&bytes);
+            }
+            self.hashes[chunk] = hasher.finish();
+        }
+        self.current_version = buffer.version();
+    }
+    fn matches(&self, other: &Self) -> bool {
+        if self.len != other.len {
+            false
+        } else if self.current_version == other.current_version {
+            true
+        } else {
+            self.hashes == other.hashes
+        }
+    }
+}
 /// An in-memory representation of a source code file, including its text,
 /// syntax trees, git status, and diagnostics.
 pub struct Buffer {
@@ -89,6 +173,7 @@ pub struct Buffer {
     saved_version: clock::Global,
     /// A hash of the current contents of the buffer's file.
     file_fingerprint: RopeFingerprint,
+    current_fingerprint: RefCell<RopeFingerprint>,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -571,7 +656,7 @@ impl Buffer {
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
-        this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
+        //this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
@@ -588,7 +673,7 @@ impl Buffer {
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
-            saved_version_fingerprint: proto::serialize_fingerprint(self.file_fingerprint),
+            saved_version_fingerprint: "aa".to_string(), //proto::serialize_fingerprint(self.file_fingerprint),
             saved_mtime: Some(self.saved_mtime.into()),
         }
     }
@@ -668,11 +753,12 @@ impl Buffer {
         } else {
             UNIX_EPOCH
         };
-
+        let file_fingerprint = RopeFingerprint::new(&buffer);
         Self {
             saved_mtime,
             saved_version: buffer.version(),
-            file_fingerprint: buffer.as_rope().fingerprint(),
+            current_fingerprint: RefCell::new(file_fingerprint.clone()),
+            file_fingerprint,
             reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
@@ -748,7 +834,7 @@ impl Buffer {
 
     /// The fingerprint of the buffer's text when the buffer was last saved or reloaded from disk.
     pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
-        self.file_fingerprint
+        self.file_fingerprint.clone()
     }
 
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
@@ -822,15 +908,15 @@ impl Buffer {
 
                     this.did_reload(
                         this.version(),
-                        this.as_rope().fingerprint(),
+                        RopeFingerprint::new(this),
                         this.line_ending(),
                         new_mtime,
                         cx,
                     );
                 } else {
                     this.did_reload(
-                        prev_version,
-                        Rope::text_fingerprint(&new_text),
+                        prev_version.clone(),
+                        RopeFingerprint::from_bytes(prev_version, new_text.as_bytes()),
                         this.line_ending(),
                         this.saved_mtime,
                         cx,
@@ -853,14 +939,15 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
-        self.file_fingerprint = fingerprint;
+        self.file_fingerprint = fingerprint.clone();
+        self.current_fingerprint = RefCell::new(fingerprint);
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
-                self.file_fingerprint,
+                self.file_fingerprint.clone(),
                 self.line_ending(),
                 self.saved_mtime,
                 cx,
@@ -1518,16 +1605,23 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
+    fn content_differs(&self) -> bool {
+        if self.file_fingerprint.len != self.text.len() {
+            return true;
+        }
+        let mut current = self.current_fingerprint.borrow_mut();
+        current.update_hash(self);
+        !current.matches(&self.file_fingerprint)
+    }
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.file_fingerprint != self.as_rope().fingerprint()
-            || self.file.as_ref().map_or(false, |file| file.is_deleted())
+        self.content_differs() || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
-        self.file_fingerprint != self.as_rope().fingerprint()
+        self.content_differs()
             && self
                 .file
                 .as_ref()
