@@ -315,19 +315,19 @@ impl<D: PickerDelegate> Picker<D> {
                         .collect()
                 },
             )
+            .py_2()
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
-            ElementContainer::List(state) => {
-                div()
-                    .size_full()
-                    .id("candidates")
-                    .child(
-                        list(state.clone())
-                            .size_full()
-                            .h(self.max_height.unwrap_or(rems(18.).into())), //TODO fix layout
-                    )
-                    .into_any_element()
-            }
+            ElementContainer::List(state) => div()
+                .size_full()
+                .id("candidates")
+                .child(
+                    list(state.clone())
+                        .w_full()
+                        .py_2()
+                        .max_h(self.max_height.unwrap_or(rems(18.).into())),
+                )
+                .into_any_element(),
         }
     }
 }
@@ -367,7 +367,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 el.child(
                     v_flex()
                         .flex_grow()
-                        .py_2()
                         .max_h(self.max_height.unwrap_or(rems(18.).into()))
                         .overflow_hidden()
                         .children(self.delegate.render_header(cx))

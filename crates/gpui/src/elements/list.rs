@@ -7,8 +7,8 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    point, px, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
-    IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
+    Element, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
     WindowContext,
 };
 use collections::VecDeque;
@@ -271,6 +271,7 @@ impl StateInner {
         height: Pixels,
         delta: Point<Pixels>,
         cx: &mut WindowContext,
+        padding: Edges<Pixels>,
     ) {
         // Drop scroll events after a reset, since we can't calculate
         // the new logical scroll top without the item heights
@@ -278,7 +279,8 @@ impl StateInner {
             return;
         }
 
-        let scroll_max = (self.items.summary().height - height).max(px(0.));
+        let scroll_max =
+            (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
         let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
             .max(px(0.))
             .min(scroll_max);
@@ -363,8 +365,43 @@ impl Element for List {
     ) -> (crate::LayoutId, Self::State) {
         let mut style = Style::default();
         style.refine(&self.style);
+
         let layout_id = cx.with_text_style(style.text_style().cloned(), |cx| {
-            cx.request_layout(&style, None)
+            let state = &mut *self.state.0.borrow_mut();
+
+            let padding = style.padding.to_pixels(
+                state
+                    .last_layout_bounds
+                    .map(|b| b.size)
+                    .unwrap_or(size(px(0.), px(0.)))
+                    .into(),
+                cx.rem_size(),
+            );
+
+            let mut all_rendered = true;
+            let mut total_height = padding.top + padding.bottom;
+            let mut cursor = state.items.cursor::<Count>();
+            for item in cursor.by_ref() {
+                if let ListItem::Rendered { height } = item {
+                    total_height += *height;
+                } else {
+                    all_rendered = false;
+                    break;
+                }
+            }
+
+            let last_width = state.last_layout_bounds.map(|b| b.size.width);
+
+            if all_rendered && last_width.is_some() {
+                cx.request_measured_layout(
+                    style,
+                    move |_known_dimensions, _available_space, _cx| {
+                        size(last_width.unwrap(), total_height)
+                    },
+                )
+            } else {
+                cx.request_layout(&style, [])
+            }
         });
         (layout_id, ())
     }
@@ -379,6 +416,9 @@ impl Element for List {
 
         state.reset = false;
 
+        let mut style = Style::default();
+        style.refine(&self.style);
+
         // If the width of the list has changed, invalidate all cached item heights
         if state.last_layout_bounds.map_or(true, |last_bounds| {
             last_bounds.size.width != bounds.size.width
@@ -392,7 +432,8 @@ impl Element for List {
         let old_items = state.items.clone();
         let mut measured_items = VecDeque::new();
         let mut item_elements = VecDeque::new();
-        let mut rendered_height = px(0.);
+        let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
+        let mut rendered_height = padding.top;
         let mut scroll_top = state.logical_scroll_top();
 
         let available_item_space = Size {
@@ -431,6 +472,7 @@ impl Element for List {
             rendered_height += height;
             measured_items.push_back(ListItem::Rendered { height });
         }
+        rendered_height += padding.bottom;
 
         // Prepare to start walking upward from the item at the scroll top.
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
@@ -502,7 +544,7 @@ impl Element for List {
 
         // Paint the visible items
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            let mut item_origin = bounds.origin;
+            let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
             item_origin.y -= scroll_top.offset_in_item;
             for item_element in &mut item_elements {
                 let item_height = item_element.measure(available_item_space, cx).height;
@@ -516,6 +558,7 @@ impl Element for List {
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
+        let padding = padding.clone();
 
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
@@ -527,6 +570,7 @@ impl Element for List {
                     height,
                     event.delta.pixel_delta(px(20.)),
                     cx,
+                    padding,
                 )
             }
         });
