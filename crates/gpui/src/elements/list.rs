@@ -369,17 +369,8 @@ impl Element for List {
         let layout_id = cx.with_text_style(style.text_style().cloned(), |cx| {
             let state = &mut *self.state.0.borrow_mut();
 
-            let padding = style.padding.to_pixels(
-                state
-                    .last_layout_bounds
-                    .map(|b| b.size)
-                    .unwrap_or(size(px(0.), px(0.)))
-                    .into(),
-                cx.rem_size(),
-            );
-
             let mut all_rendered = true;
-            let mut total_height = padding.top + padding.bottom;
+            let mut total_height = px(0.);
             let mut cursor = state.items.cursor::<Count>();
             for item in cursor.by_ref() {
                 if let ListItem::Rendered { height } = item {
@@ -396,13 +387,24 @@ impl Element for List {
                 if all_rendered {
                     return cx.request_measured_layout(
                         style,
-                        move |_known_dimensions, _available_space, _cx| {
-                            size(last_width, total_height)
+                        move |_known_dimensions, available_space, _cx| {
+                            let height = match available_space.height {
+                                AvailableSpace::Definite(height) => total_height.min(height),
+                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                    total_height
+                                }
+                            };
+                            size(last_width, height)
                         },
                     );
                 }
             }
-            cx.request_layout(&style, [])
+
+            if state.reset {
+                cx.request_measured_layout(style, move |_, _, _| size(px(0.), px(0.)))
+            } else {
+                cx.request_layout(&style, [])
+            }
         });
         (layout_id, ())
     }
@@ -543,16 +545,19 @@ impl Element for List {
         cursor.seek(&Count(measured_range.end), Bias::Right, &());
         new_items.append(cursor.suffix(&()), &());
 
-        // Paint the visible items
-        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
-            item_origin.y -= scroll_top.offset_in_item;
-            for item_element in &mut item_elements {
-                let item_height = item_element.measure(available_item_space, cx).height;
-                item_element.draw(item_origin, available_item_space, cx);
-                item_origin.y += item_height;
-            }
-        });
+        // Only paint the visible items, if there is actually any space for them (taking padding into account)
+        if bounds.size.height > padding.top + padding.bottom {
+            // Paint the visible items
+            cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
+                item_origin.y -= scroll_top.offset_in_item;
+                for item_element in &mut item_elements {
+                    let item_height = item_element.measure(available_item_space, cx).height;
+                    item_element.draw(item_origin, available_item_space, cx);
+                    item_origin.y += item_height;
+                }
+            });
+        }
 
         state.items = new_items;
         state.last_layout_bounds = Some(bounds);
