@@ -38,6 +38,7 @@ pub struct ExtensionsPage {
     extensions_entries: Vec<Extension>,
     query_editor: View<Editor>,
     query_contains_error: bool,
+    _subscription: gpui::Subscription,
     extension_fetch_task: Option<Task<()>>,
 }
 
@@ -75,6 +76,9 @@ impl Render for ExtensionsPage {
 impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
+            let store = ExtensionStore::global(cx);
+            let subscription = cx.observe(&store, |_, _, cx| cx.notify());
+
             let query_editor = cx.new_view(|cx| Editor::single_line(cx));
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
@@ -86,6 +90,7 @@ impl ExtensionsPage {
                 extensions_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
+                _subscription: subscription,
                 query_editor,
             };
             this.fetch_extensions(None, cx);
@@ -100,25 +105,15 @@ impl ExtensionsPage {
         version: Arc<str>,
         cx: &mut ViewContext<Self>,
     ) {
-        let install = ExtensionStore::global(cx).update(cx, |store, cx| {
+        ExtensionStore::global(cx).update(cx, |store, cx| {
             store.install_extension(extension_id, version, cx)
         });
-        cx.spawn(move |this, mut cx| async move {
-            install.await?;
-            this.update(&mut cx, |_, cx| cx.notify())
-        })
-        .detach_and_log_err(cx);
         cx.notify();
     }
 
     fn uninstall_extension(&self, extension_id: Arc<str>, cx: &mut ViewContext<Self>) {
-        let install = ExtensionStore::global(cx)
+        ExtensionStore::global(cx)
             .update(cx, |store, cx| store.uninstall_extension(extension_id, cx));
-        cx.spawn(move |this, mut cx| async move {
-            install.await?;
-            this.update(&mut cx, |_, cx| cx.notify())
-        })
-        .detach_and_log_err(cx);
         cx.notify();
     }
 
@@ -404,15 +399,21 @@ impl Item for ExtensionsPage {
         _workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        Some(cx.new_view(|_| ExtensionsPage {
-            fs: self.fs.clone(),
-            workspace: self.workspace.clone(),
-            list: UniformListScrollHandle::new(),
-            telemetry: self.telemetry.clone(),
-            extensions_entries: Default::default(),
-            query_editor: self.query_editor.clone(),
-            query_contains_error: false,
-            extension_fetch_task: None,
+        Some(cx.new_view(|cx| {
+            let store = ExtensionStore::global(cx);
+            let subscription = cx.observe(&store, |_, _, cx| cx.notify());
+
+            ExtensionsPage {
+                fs: self.fs.clone(),
+                workspace: self.workspace.clone(),
+                list: UniformListScrollHandle::new(),
+                telemetry: self.telemetry.clone(),
+                extensions_entries: Default::default(),
+                query_editor: self.query_editor.clone(),
+                _subscription: subscription,
+                query_contains_error: false,
+                extension_fetch_task: None,
+            }
         }))
     }
 
