@@ -3,9 +3,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{Extension, ExtensionStatus, ExtensionStore};
 use fs::Fs;
 use gpui::{
-    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
-    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
+    FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
+    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
+    WhiteSpace, WindowContext,
 };
 use settings::Settings;
 use std::time::Duration;
@@ -35,6 +36,7 @@ pub struct ExtensionsPage {
     fs: Arc<dyn Fs>,
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
+    is_fetching_extensions: bool,
     extensions_entries: Vec<Extension>,
     query_editor: View<Editor>,
     query_contains_error: bool,
@@ -56,6 +58,7 @@ impl ExtensionsPage {
                 workspace: workspace.weak_handle(),
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
+                is_fetching_extensions: false,
                 extensions_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
@@ -87,15 +90,30 @@ impl ExtensionsPage {
     }
 
     fn fetch_extensions(&mut self, search: Option<&str>, cx: &mut ViewContext<Self>) {
+        self.is_fetching_extensions = true;
+        cx.notify();
+
         let extensions =
             ExtensionStore::global(cx).update(cx, |store, cx| store.fetch_extensions(search, cx));
 
         cx.spawn(move |this, mut cx| async move {
-            let extensions = extensions.await?;
-            this.update(&mut cx, |this, cx| {
-                this.extensions_entries = extensions;
-                cx.notify();
-            })
+            let fetch_result = extensions.await;
+            match fetch_result {
+                Ok(extensions) => this.update(&mut cx, |this, cx| {
+                    this.extensions_entries = extensions;
+                    this.is_fetching_extensions = false;
+                    cx.notify();
+                }),
+                Err(err) => {
+                    this.update(&mut cx, |this, cx| {
+                        this.is_fetching_extensions = false;
+                        cx.notify();
+                    })
+                    .ok();
+
+                    Err(err)
+                }
+            }
         })
         .detach_and_log_err(cx);
     }
@@ -314,11 +332,25 @@ impl ExtensionsPage {
         if let editor::EditorEvent::Edited = event {
             self.query_contains_error = false;
             self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(250))
-                    .await;
+                let search = this
+                    .update(&mut cx, |this, cx| this.search_query(cx))
+                    .ok()
+                    .flatten();
+
+                // Only debounce the fetching of extensions if we have a search
+                // query.
+                //
+                // If the search was just cleared then we can just reload the list
+                // of extensions without a debounce, which allows us to avoid seeing
+                // an intermittent flash of a "no extensions" state.
+                if let Some(_) = search {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(250))
+                        .await;
+                };
+
                 this.update(&mut cx, |this, cx| {
-                    this.fetch_extensions(this.search_query(cx).as_deref(), cx);
+                    this.fetch_extensions(search.as_deref(), cx);
                 })
                 .ok();
             }));
@@ -337,32 +369,55 @@ impl ExtensionsPage {
 
 impl Render for ExtensionsPage {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        h_flex()
-            .full()
+        v_flex()
+            .size_full()
+            .p_4()
+            .gap_4()
             .bg(cx.theme().colors().editor_background)
             .child(
-                v_flex()
-                    .full()
-                    .p_4()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
-                    )
-                    .child(h_flex().w_56().my_4().child(self.render_search(cx)))
-                    .child(
-                        h_flex().flex_col().items_start().full().child(
+                h_flex()
+                    .w_full()
+                    .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+            )
+            .child(h_flex().w_56().child(self.render_search(cx)))
+            .child(v_flex().size_full().overflow_y_hidden().map(|this| {
+                if self.extensions_entries.is_empty() {
+                    let message = if self.is_fetching_extensions {
+                        "Loading extensions..."
+                    } else if self.search_query(cx).is_some() {
+                        "No extensions that match your search."
+                    } else {
+                        "No extensions."
+                    };
+
+                    return this.child(Label::new(message));
+                }
+
+                this.child(
+                    canvas({
+                        let view = cx.view().clone();
+                        let scroll_handle = self.list.clone();
+                        let item_count = self.extensions_entries.len();
+                        move |bounds, cx| {
                             uniform_list::<_, Div, _>(
-                                cx.view().clone(),
+                                view,
                                 "entries",
-                                self.extensions_entries.len(),
+                                item_count,
                                 Self::render_extensions,
                             )
                             .size_full()
-                            .track_scroll(self.list.clone()),
-                        ),
-                    ),
-            )
+                            .track_scroll(scroll_handle)
+                            .into_any_element()
+                            .draw(
+                                bounds.origin,
+                                bounds.size.map(AvailableSpace::Definite),
+                                cx,
+                            )
+                        }
+                    })
+                    .size_full(),
+                )
+            }))
     }
 }
 
@@ -409,6 +464,7 @@ impl Item for ExtensionsPage {
                 workspace: self.workspace.clone(),
                 list: UniformListScrollHandle::new(),
                 telemetry: self.telemetry.clone(),
+                is_fetching_extensions: false,
                 extensions_entries: Default::default(),
                 query_editor: self.query_editor.clone(),
                 _subscription: subscription,
