@@ -392,16 +392,17 @@ impl Element for List {
 
             let last_width = state.last_layout_bounds.map(|b| b.size.width);
 
-            if all_rendered && last_width.is_some() {
-                cx.request_measured_layout(
-                    style,
-                    move |_known_dimensions, _available_space, _cx| {
-                        size(last_width.unwrap(), total_height)
-                    },
-                )
-            } else {
-                cx.request_layout(&style, [])
+            if let Some(last_width) = last_width {
+                if all_rendered {
+                    return cx.request_measured_layout(
+                        style,
+                        move |_known_dimensions, _available_space, _cx| {
+                            size(last_width, total_height)
+                        },
+                    );
+                }
             }
+            cx.request_layout(&style, [])
         });
         (layout_id, ())
     }
@@ -558,7 +559,6 @@ impl Element for List {
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
-        let padding = padding.clone();
 
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
