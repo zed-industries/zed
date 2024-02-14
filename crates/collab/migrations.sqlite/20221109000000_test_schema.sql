@@ -353,3 +353,26 @@ CREATE TABLE contributors (
     signed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id)
 );
+
+CREATE TABLE extensions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    latest_version INTEGER REFERENCES extension_versions(id),
+    total_download_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE extension_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    extension_id INTEGER REFERENCES extensions(id),
+    published_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    description TEXT NOT NULL,
+    authors TEXT NOT NULL,
+    version TEXT NOT NULL,
+    download_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
+CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");
+CREATE INDEX "index_extensions_name" ON "extensions" ("name");
+CREATE UNIQUE INDEX "index_extension_versions_extension_id_version" ON "extension_versions" ("extension_id", "version");
