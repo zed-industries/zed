@@ -85,7 +85,7 @@ impl LspAdapter for TerraformLspAdapter {
                 .await?
                 .status;
             if !unzip_status.success() {
-                Err(anyhow!("failed to unzip deno archive"))?;
+                Err(anyhow!("failed to unzip Terraform LS archive"))?;
             }
 
             remove_matching(&container_dir, |entry| entry != version_dir).await;
