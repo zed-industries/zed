@@ -23,7 +23,7 @@ use std::{
     path::PathBuf,
     str::{self, FromStr as _},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
     },
     time::{Duration, Instant},
@@ -59,14 +59,14 @@ pub struct LanguageServerBinary {
 /// A running language server process.
 pub struct LanguageServer {
     server_id: LanguageServerId,
-    next_id: AtomicUsize,
+    next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
     name: String,
     capabilities: ServerCapabilities,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-    io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+    io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     executor: BackgroundExecutor,
     #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
@@ -87,8 +87,8 @@ pub enum Subscription {
         notification_handlers: Option<Arc<Mutex<HashMap<&'static str, NotificationHandler>>>>,
     },
     Io {
-        id: usize,
-        io_handlers: Option<Weak<Mutex<HashMap<usize, IoHandler>>>>,
+        id: i32,
+        io_handlers: Option<Weak<Mutex<HashMap<i32, IoHandler>>>>,
     },
 }
 
@@ -98,7 +98,7 @@ pub enum Subscription {
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RequestId {
-    Int(usize),
+    Int(i32),
     Str(String),
 }
 
@@ -316,7 +316,7 @@ impl LanguageServer {
         mut on_unhandled_notification: F,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
         cx: AsyncAppContext,
     ) -> anyhow::Result<()>
     where
@@ -397,7 +397,7 @@ impl LanguageServer {
 
     async fn handle_stderr<Stderr>(
         stderr: Stderr,
-        io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
         stderr_capture: Arc<Mutex<Option<String>>>,
     ) -> anyhow::Result<()>
     where
@@ -435,7 +435,7 @@ impl LanguageServer {
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     ) -> anyhow::Result<()>
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
@@ -631,7 +631,7 @@ impl LanguageServer {
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
-            let next_id = AtomicUsize::new(self.next_id.load(SeqCst));
+            let next_id = AtomicI32::new(self.next_id.load(SeqCst));
             let outbound_tx = self.outbound_tx.clone();
             let executor = self.executor.clone();
             let mut output_done = self.output_done_rx.lock().take().unwrap();
@@ -860,7 +860,7 @@ impl LanguageServer {
     }
 
     fn request_internal<T: request::Request>(
-        next_id: &AtomicUsize,
+        next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
