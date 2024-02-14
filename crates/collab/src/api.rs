@@ -1,3 +1,5 @@
+mod extensions;
+
 use crate::{
     auth,
     db::{ContributorSelector, User, UserId},
@@ -28,6 +30,7 @@ pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
         .route("/contributors", get(get_contributors).post(add_contributor))
         .route("/contributor", get(check_is_contributor))
+        .merge(extensions::router())
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
