@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS extensions (
     name TEXT NOT NULL,
     external_id TEXT NOT NULL,
     latest_version INTEGER,
-    total_download_count INTEGER NOT NULL DEFAULT 0
+    total_download_count BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS extension_versions (
@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS extension_versions (
     description TEXT NOT NULL,
     authors TEXT NOT NULL,
     version TEXT NOT NULL,
-    download_count INTEGER NOT NULL DEFAULT 0
+    download_count BIGINT NOT NULL DEFAULT 0
 );
 
 ALTER TABLE extensions ADD CONSTRAINT extensions_latest_version_fkey FOREIGN KEY (latest_version) REFERENCES extension_versions (id);
