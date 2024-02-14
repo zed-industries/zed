@@ -101,7 +101,7 @@ impl LspAdapter for JavaLspAdapter {
                     return Some(CodeLabel {
                         text,
                         runs,
-                        filter_range: detail.len() + 1..detail.len() + 1 + name.rfind('(').unwrap(),
+                        filter_range: detail.len() + 1..detail.len() + 1 + name.rfind('(')?,
                     });
                 }
             }
@@ -116,6 +116,14 @@ impl LspAdapter for JavaLspAdapter {
                         filter_range: 0..name.len(),
                     });
                 }
+            }
+            Some(lsp::CompletionItemKind::KEYWORD) => {
+                let highlight_id = language.grammar()?.highlight_id_for_name("keyword")?;
+                let mut label = CodeLabel::plain(completion.label.clone(), None);
+
+                label.runs.push((0..label.text.len(), highlight_id));
+
+                return Some(label);
             }
             Some(kind) if kind != lsp::CompletionItemKind::SNIPPET => {
                 warn!("Unimplemented completion: {completion:#?}")
