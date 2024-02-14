@@ -6,4 +6,4 @@ Release Notes:
 
 - N/A
 
-Optionally, include screenshots / media that can be included in the release notes.
+Optionally, include screenshots / media showcasing your addition that can be included in the release notes.
