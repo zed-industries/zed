@@ -216,8 +216,9 @@ impl ExtensionsPage {
         div().w_full().child(
             v_flex()
                 .w_full()
-                .p_3()
+                .h_32()
                 .mt_4()
+                .p_3()
                 .gap_2()
                 .bg(cx.theme().colors().elevated_surface_background)
                 .border_1()
