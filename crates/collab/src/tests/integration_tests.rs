@@ -1881,7 +1881,7 @@ fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> 
 }
 
 #[gpui::test]
-async fn test_mute(
+async fn test_mute_deafen(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -1920,7 +1920,7 @@ async fn test_mute(
     room_a.read_with(cx_a, |room, _| assert!(!room.is_muted()));
     room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
 
-    // Users A and B are both unmuted.
+    // Users A and B are both muted.
     assert_eq!(
         participant_audio_state(&room_a, cx_a),
         &[ParticipantAudioState {
@@ -1962,6 +1962,30 @@ async fn test_mute(
         }]
     );
 
+    // User A deafens
+    room_a.update(cx_a, |room, cx| room.toggle_deafen(cx));
+    executor.run_until_parked();
+
+    // User A does not hear user B.
+    room_a.read_with(cx_a, |room, _| assert!(room.is_muted()));
+    room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
+    assert_eq!(
+        participant_audio_state(&room_a, cx_a),
+        &[ParticipantAudioState {
+            user_id: client_b.user_id().unwrap(),
+            is_muted: false,
+            audio_tracks_playing: vec![false],
+        }]
+    );
+    assert_eq!(
+        participant_audio_state(&room_b, cx_b),
+        &[ParticipantAudioState {
+            user_id: client_a.user_id().unwrap(),
+            is_muted: true,
+            audio_tracks_playing: vec![true],
+        }]
+    );
+
     // User B calls user C, C joins.
     active_call_b
         .update(cx_b, |call, cx| {
@@ -1976,6 +2000,22 @@ async fn test_mute(
         .unwrap();
     executor.run_until_parked();
 
+    // User A does not hear users B or C.
+    assert_eq!(
+        participant_audio_state(&room_a, cx_a),
+        &[
+            ParticipantAudioState {
+                user_id: client_b.user_id().unwrap(),
+                is_muted: false,
+                audio_tracks_playing: vec![false],
+            },
+            ParticipantAudioState {
+                user_id: client_c.user_id().unwrap(),
+                is_muted: false,
+                audio_tracks_playing: vec![false],
+            }
+        ]
+    );
     assert_eq!(
         participant_audio_state(&room_b, cx_b),
         &[

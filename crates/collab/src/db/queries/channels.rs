@@ -97,59 +97,12 @@ impl Database {
         .await
     }
 
-    pub async fn set_in_channel_call(
-        &self,
-        channel_id: ChannelId,
-        user_id: UserId,
-        in_call: bool,
-    ) -> Result<(proto::Room, ChannelRole)> {
-        self.transaction(move |tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            let role = self.channel_role_for_user(&channel, user_id, &*tx).await?;
-            if role.is_none() || role == Some(ChannelRole::Banned) {
-                Err(ErrorCode::Forbidden.anyhow())?
-            }
-            let role = role.unwrap();
-
-            let Some(room) = room::Entity::find()
-                .filter(room::Column::ChannelId.eq(channel_id))
-                .one(&*tx)
-                .await?
-            else {
-                Err(anyhow!("no room exists"))?
-            };
-
-            let result = room_participant::Entity::update_many()
-                .filter(
-                    Condition::all()
-                        .add(room_participant::Column::RoomId.eq(room.id))
-                        .add(room_participant::Column::UserId.eq(user_id)),
-                )
-                .set(room_participant::ActiveModel {
-                    in_call: ActiveValue::Set(in_call),
-                    ..Default::default()
-                })
-                .exec(&*tx)
-                .await?;
-
-            if result.rows_affected != 1 {
-                Err(anyhow!("not in channel"))?
-            }
-
-            let room = self.get_room(room.id, &*tx).await?;
-            Ok((room, role))
-        })
-        .await
-    }
-
     /// Adds a user to the specified channel.
     pub async fn join_channel(
         &self,
         channel_id: ChannelId,
         user_id: UserId,
-        autojoin: bool,
         connection: ConnectionId,
-        environment: &str,
     ) -> Result<(JoinRoom, Option<MembershipUpdated>, ChannelRole)> {
         self.transaction(move |tx| async move {
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
@@ -209,10 +162,10 @@ impl Database {
 
             let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
             let room_id = self
-                .get_or_create_channel_room(channel_id, &live_kit_room, environment, &*tx)
+                .get_or_create_channel_room(channel_id, &live_kit_room, &*tx)
                 .await?;
 
-            self.join_channel_room_internal(room_id, user_id, autojoin, connection, role, &*tx)
+            self.join_channel_room_internal(room_id, user_id, connection, role, &*tx)
                 .await
                 .map(|jr| (jr, accept_invite_result, role))
         })
@@ -979,7 +932,6 @@ impl Database {
         &self,
         channel_id: ChannelId,
         live_kit_room: &str,
-        environment: &str,
         tx: &DatabaseTransaction,
     ) -> Result<RoomId> {
         let room = room::Entity::find()
@@ -988,19 +940,11 @@ impl Database {
             .await?;
 
         let room_id = if let Some(room) = room {
-            if let Some(env) = room.environment {
-                if &env != environment {
-                    Err(ErrorCode::WrongReleaseChannel
-                        .with_tag("required", &env)
-                        .anyhow())?;
-                }
-            }
             room.id
         } else {
             let result = room::Entity::insert(room::ActiveModel {
                 channel_id: ActiveValue::Set(Some(channel_id)),
                 live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
-                environment: ActiveValue::Set(Some(environment.to_string())),
                 ..Default::default()
             })
             .exec(&*tx)

@@ -2797,18 +2797,50 @@ name = "extension"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-compression",
+ "async-tar",
+ "client",
  "collections",
  "fs",
  "futures 0.3.28",
  "gpui",
  "language",
+ "log",
  "parking_lot 0.11.2",
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "theme",
  "toml",
  "util",
+]
+
+[[package]]
+name = "extensions_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "client",
+ "db",
+ "editor",
+ "extension",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui",
+ "log",
+ "picker",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -8437,6 +8469,7 @@ dependencies = [
  "env_logger",
  "log",
  "rand 0.8.5",
+ "rayon",
 ]
 
 [[package]]
@@ -10940,7 +10973,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.123.0"
+version = "0.123.1"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -10971,6 +11004,7 @@ dependencies = [
  "editor",
  "env_logger",
  "extension",
+ "extensions_ui",
  "feature_flags",
  "feedback",
  "file_finder",
