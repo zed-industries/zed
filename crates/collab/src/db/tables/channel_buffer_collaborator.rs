@@ -1,4 +1,4 @@
-use crate::db::{ChannelBufferCollaboratorId, ChannelId, ReplicaId, ServerId, UserId};
+use crate::db::{BufferId, ChannelBufferCollaboratorId, ReplicaId, ServerId, UserId};
 use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;
 
@@ -7,7 +7,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: ChannelBufferCollaboratorId,
-    pub channel_id: ChannelId,
+    pub buffer_id: BufferId,
     pub connection_id: i32,
     pub connection_server_id: ServerId,
     pub connection_lost: bool,
@@ -25,19 +25,6 @@ impl Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {
-    #[sea_orm(
-        belongs_to = "super::channel::Entity",
-        from = "Column::ChannelId",
-        to = "super::channel::Column::Id"
-    )]
-    Channel,
-}
-
-impl Related<super::channel::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Channel.def()
-    }
-}
+pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

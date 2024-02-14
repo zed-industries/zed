@@ -23,7 +23,7 @@ impl Database {
         &self,
         environment: &str,
         new_server_id: ServerId,
-    ) -> Result<(Vec<RoomId>, Vec<ChannelId>)> {
+    ) -> Result<(Vec<RoomId>, Vec<BufferId>)> {
         self.transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryRoomIds {
@@ -31,8 +31,8 @@ impl Database {
             }
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryChannelIds {
-                ChannelId,
+            enum QueryBufferIds {
+                BufferId,
             }
 
             let stale_server_epochs = self
@@ -49,19 +49,19 @@ impl Database {
                 .into_values::<_, QueryRoomIds>()
                 .all(&*tx)
                 .await?;
-            let channel_ids = channel_buffer_collaborator::Entity::find()
+            let buffer_ids = channel_buffer_collaborator::Entity::find()
                 .select_only()
-                .column(channel_buffer_collaborator::Column::ChannelId)
+                .column(channel_buffer_collaborator::Column::BufferId)
                 .distinct()
                 .filter(
                     channel_buffer_collaborator::Column::ConnectionServerId
                         .is_in(stale_server_epochs.iter().copied()),
                 )
-                .into_values::<_, QueryChannelIds>()
+                .into_values::<_, QueryBufferIds>()
                 .all(&*tx)
                 .await?;
 
-            Ok((room_ids, channel_ids))
+            Ok((room_ids, buffer_ids))
         })
         .await
     }

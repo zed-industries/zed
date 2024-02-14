@@ -207,7 +207,7 @@ messages!(
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
-    (LeaveChannelBuffer, Background),
+    (LeaveChannelBuffer, Foreground),
     (LeaveChannelChat, Foreground),
     (LeaveProject, Foreground),
     (LeaveRoom, Foreground),

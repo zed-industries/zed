@@ -222,7 +222,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             .unwrap();
 
         buffers.push(
-            db.transaction(|tx| async move { db.get_channel_buffer(channel, &*tx).await })
+            db.transaction(|tx| async move { db.get_channel_notes_buffer(channel, &*tx).await })
                 .await
                 .unwrap(),
         );
@@ -337,12 +337,14 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     let buffer_changes = db
         .transaction(|tx| {
             let buffers = &buffers;
-            let mut hash = HashMap::default();
-            hash.insert(buffers[0].id, buffers[0].channel_id);
-            hash.insert(buffers[1].id, buffers[1].channel_id);
-            hash.insert(buffers[2].id, buffers[2].channel_id);
 
-            async move { db.latest_channel_buffer_changes(&hash, &*tx).await }
+            async move {
+                db.latest_channel_buffer_changes(
+                    vec![buffers[0].id, buffers[1].id, buffers[2].id].into_iter(),
+                    &*tx,
+                )
+                .await
+            }
         })
         .await
         .unwrap();
@@ -350,13 +352,13 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     pretty_assertions::assert_eq!(
         buffer_changes,
         [
-            rpc::proto::ChannelBufferVersion {
-                channel_id: buffers[0].channel_id.to_proto(),
+            rpc::proto::ChannelBufferVersion2 {
+                buffer_id: buffers[0].id.to_proto(),
                 epoch: 0,
                 version: serialize_version(&text_buffers[0].version()),
             },
-            rpc::proto::ChannelBufferVersion {
-                channel_id: buffers[1].channel_id.to_proto(),
+            rpc::proto::ChannelBufferVersion2 {
+                buffer_id: buffers[1].id.to_proto(),
                 epoch: 1,
                 version: serialize_version(&text_buffers[1].version())
                     .into_iter()
@@ -364,8 +366,8 @@ async fn test_channel_buffers_last_operations(db: &Database) {
                         == buffer_changes[1].version.first().unwrap().replica_id)
                     .collect::<Vec<_>>(),
             },
-            rpc::proto::ChannelBufferVersion {
-                channel_id: buffers[2].channel_id.to_proto(),
+            rpc::proto::ChannelBufferVersion2 {
+                buffer_id: buffers[2].id.to_proto(),
                 epoch: 0,
                 version: serialize_version(&text_buffers[2].version()),
             },

@@ -1003,13 +1003,33 @@ message UpdateChannels {
     repeated uint64 remove_channel_invitations = 6;
     repeated ChannelParticipants channel_participants = 7;
     repeated ChannelMessageId latest_channel_message_ids = 8;
+
     repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
+
+    repeated ChannelBuffer buffers = 10;
+    repeated uint64 deleted_files = 11;
+    repeated ChannelBufferVersion2 latest_buffer_versions = 12;
 }
 
 message UpdateUserChannels {
     repeated ChannelMessageId observed_channel_message_id = 1;
-    repeated ChannelBufferVersion observed_channel_buffer_version = 2;
     repeated ChannelMembership channel_memberships = 3;
+
+    repeated ChannelBufferVersion observed_channel_buffer_version = 2;
+    repeated ChannelBufferVersion2 observed_buffer_versions = 4;
+}
+
+message ChannelBuffer {
+    uint64 id = 1;
+    uint64 channel_id = 2;
+    string name = 3;
+    bool is_notes = 4;
+}
+
+message ChannelBufferVersion2 {
+    uint64 buffer_id = 1;
+    repeated VectorClockEntry version = 2;
+    uint64 epoch = 3;
 }
 
 message ChannelMembership {

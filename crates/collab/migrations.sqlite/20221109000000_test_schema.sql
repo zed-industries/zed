@@ -38,7 +38,6 @@ CREATE INDEX "index_contacts_user_id_b" ON "contacts" ("user_id_b");
 CREATE TABLE "rooms" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "live_kit_room" VARCHAR NOT NULL,
-    "environment" VARCHAR,
     "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
@@ -163,8 +162,7 @@ CREATE TABLE "room_participants" (
     "calling_connection_id" INTEGER NOT NULL,
     "calling_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE SET NULL,
     "participant_index" INTEGER,
-    "role" TEXT,
-    "in_call" BOOLEAN NOT NULL DEFAULT FALSE
+    "role" TEXT
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");
 CREATE INDEX "index_room_participants_on_room_id" ON "room_participants" ("room_id");
@@ -247,7 +245,9 @@ CREATE UNIQUE INDEX "index_channel_members_on_channel_id_and_user_id" ON "channe
 CREATE TABLE "buffers" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
-    "epoch" INTEGER NOT NULL DEFAULT 0
+    "epoch" INTEGER NOT NULL DEFAULT 0,
+    "name" TEXT NOT NULL,
+    "is_notes" BOOL NOT NULL
 );
 
 CREATE INDEX "index_buffers_on_channel_id" ON "buffers" ("channel_id");
@@ -271,7 +271,8 @@ CREATE TABLE "buffer_snapshots" (
 
 CREATE TABLE "channel_buffer_collaborators" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+    "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE,
+    "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
     "connection_id" INTEGER NOT NULL,
     "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
     "connection_lost" BOOLEAN NOT NULL DEFAULT false,

@@ -8,6 +8,8 @@ pub struct Model {
     pub id: BufferId,
     pub epoch: i32,
     pub channel_id: ChannelId,
+    pub name: String,
+    pub is_notes: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

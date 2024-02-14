@@ -627,30 +627,32 @@ impl Database {
 
         let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
 
-        let mut channel_ids_by_buffer_id = HashMap::default();
-        let mut rows = buffer::Entity::find()
-            .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
-            .stream(&*tx)
+        let buffers = buffer::Entity::find()
+            .filter(buffer::Column::ChannelId.is_in(channels.iter().map(|c| c.id)))
+            .all(&*tx)
             .await?;
-        while let Some(row) = rows.next().await {
-            let row = row?;
-            channel_ids_by_buffer_id.insert(row.id, row.channel_id);
-        }
-        drop(rows);
 
         let latest_buffer_versions = self
-            .latest_channel_buffer_changes(&channel_ids_by_buffer_id, &*tx)
+            .latest_channel_buffer_changes(buffers.iter().map(|b| b.id), &*tx)
             .await?;
-
         let latest_channel_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
 
         let observed_buffer_versions = self
-            .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, &*tx)
+            .observed_channel_buffer_changes(buffers.iter().map(|b| b.id), user_id, &*tx)
             .await?;
-
         let observed_channel_messages = self
             .observed_channel_messages(&channel_ids, user_id, &*tx)
             .await?;
+
+        let buffers = buffers
+            .into_iter()
+            .map(|buffer| proto::ChannelBuffer {
+                id: buffer.id.0 as u64,
+                channel_id: buffer.channel_id.0 as u64,
+                name: buffer.name,
+                is_notes: buffer.is_notes,
+            })
+            .collect();
 
         Ok(ChannelsForUser {
             channel_memberships,
@@ -658,6 +660,7 @@ impl Database {
             channel_participants,
             latest_buffer_versions,
             latest_channel_messages,
+            buffers,
             observed_buffer_versions,
             observed_channel_messages,
         })

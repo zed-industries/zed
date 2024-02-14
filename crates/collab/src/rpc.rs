@@ -306,7 +306,7 @@ impl Server {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
                 tracing::info!("cleanup timeout expired, retrieving stale rooms");
-                if let Some((room_ids, channel_ids)) = app_state
+                if let Some((room_ids, buffer_ids)) = app_state
                     .db
                     .stale_server_resource_ids(&app_state.config.zed_environment, server_id)
                     .await
@@ -314,14 +314,14 @@ impl Server {
                 {
                     tracing::info!(stale_room_count = room_ids.len(), "retrieved stale rooms");
                     tracing::info!(
-                        stale_channel_buffer_count = channel_ids.len(),
+                        stale_channel_buffer_count = buffer_ids.len(),
                         "retrieved stale channel buffers"
                     );
 
-                    for channel_id in channel_ids {
+                    for buffer_id in buffer_ids {
                         if let Some(refreshed_channel_buffer) = app_state
                             .db
-                            .clear_stale_channel_buffer_collaborators(channel_id, server_id)
+                            .clear_stale_channel_buffer_collaborators(buffer_id, server_id)
                             .await
                             .trace_err()
                         {
@@ -329,7 +329,7 @@ impl Server {
                                 peer.send(
                                     connection_id,
                                     proto::UpdateChannelBufferCollaborators {
-                                        channel_id: channel_id.to_proto(),
+                                        channel_id: buffer_id.to_proto(),
                                         collaborators: refreshed_channel_buffer
                                             .collaborators
                                             .clone(),
@@ -3335,6 +3335,23 @@ fn notify_membership_updated(
 }
 
 fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserChannels {
+    let mut notes_ids = HashMap::default();
+    for buffer in &channels.buffers {
+        if buffer.is_notes {
+            notes_ids.insert(buffer.id, buffer.channel_id);
+        }
+    }
+    // TODO: this can be removed after zed 0.123.x is retired
+    let mut observed_buffer_versions = Vec::new();
+    for version in &channels.observed_buffer_versions {
+        if let Some(channel_id) = notes_ids.get(&version.buffer_id) {
+            observed_buffer_versions.push(proto::ChannelBufferVersion {
+                channel_id: *channel_id,
+                epoch: version.epoch,
+                version: version.version.clone(),
+            })
+        }
+    }
     proto::UpdateUserChannels {
         channel_memberships: channels
             .channel_memberships
@@ -3344,7 +3361,8 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
                 role: m.role.into(),
             })
             .collect(),
-        observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
+        observed_channel_buffer_version: observed_buffer_versions,
+        observed_buffer_versions: channels.observed_buffer_versions.clone(),
         observed_channel_message_id: channels.observed_channel_messages.clone(),
         ..Default::default()
     }
@@ -3360,7 +3378,26 @@ fn build_channels_update(
         update.channels.push(channel.to_proto());
     }
 
-    update.latest_channel_buffer_versions = channels.latest_buffer_versions;
+    let mut notes_ids = HashMap::default();
+    for buffer in channels.buffers {
+        if buffer.is_notes {
+            notes_ids.insert(buffer.id, buffer.channel_id);
+        }
+    }
+    // TODO: this can be removed after zed 0.123.x is retired
+    let mut latest_notes_versions = Vec::new();
+    for version in &channels.latest_buffer_versions {
+        if let Some(channel_id) = notes_ids.get(&version.buffer_id) {
+            latest_notes_versions.push(proto::ChannelBufferVersion {
+                channel_id: *channel_id,
+                epoch: version.epoch,
+                version: version.version.clone(),
+            })
+        }
+    }
+
+    update.latest_channel_buffer_versions = latest_notes_versions;
+    update.latest_buffer_versions = channels.latest_buffer_versions;
     update.latest_channel_message_ids = channels.latest_channel_messages;
 
     for (channel_id, participants) in channels.channel_participants {
@@ -3582,15 +3619,17 @@ async fn leave_channel_buffers_for_session(session: &Session) -> Result<()> {
         .await?;
 
     for left_buffer in left_channel_buffers {
-        channel_buffer_updated(
-            session.connection_id,
-            left_buffer.connections,
-            &proto::UpdateChannelBufferCollaborators {
-                channel_id: left_buffer.channel_id.to_proto(),
-                collaborators: left_buffer.collaborators,
-            },
-            &session.peer,
-        );
+        if left_buffer.buffer.is_notes {
+            channel_buffer_updated(
+                session.connection_id,
+                left_buffer.connections,
+                &proto::UpdateChannelBufferCollaborators {
+                    channel_id: left_buffer.buffer.channel_id.to_proto(),
+                    collaborators: left_buffer.collaborators,
+                },
+                &session.peer,
+            );
+        }
     }
 
     Ok(())

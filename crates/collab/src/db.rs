@@ -588,9 +588,10 @@ pub struct ChannelsForUser {
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
 
-    pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
+    pub buffers: Vec<proto::ChannelBuffer>,
+    pub observed_buffer_versions: Vec<proto::ChannelBufferVersion2>,
     pub observed_channel_messages: Vec<proto::ChannelMessageId>,
-    pub latest_buffer_versions: Vec<proto::ChannelBufferVersion>,
+    pub latest_buffer_versions: Vec<proto::ChannelBufferVersion2>,
     pub latest_channel_messages: Vec<proto::ChannelMessageId>,
 }
 
