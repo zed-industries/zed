@@ -42,37 +42,6 @@ pub struct ExtensionsPage {
     extension_fetch_task: Option<Task<()>>,
 }
 
-impl Render for ExtensionsPage {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        h_flex()
-            .full()
-            .bg(cx.theme().colors().editor_background)
-            .child(
-                v_flex()
-                    .full()
-                    .p_4()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
-                    )
-                    .child(h_flex().w_56().my_4().child(self.render_search(cx)))
-                    .child(
-                        h_flex().flex_col().items_start().full().child(
-                            uniform_list::<_, Div, _>(
-                                cx.view().clone(),
-                                "entries",
-                                self.extensions_entries.len(),
-                                Self::render_extensions,
-                            )
-                            .size_full()
-                            .track_scroll(self.list.clone()),
-                        ),
-                    ),
-            )
-    }
-}
-
 impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
@@ -363,6 +332,37 @@ impl ExtensionsPage {
         } else {
             Some(search)
         }
+    }
+}
+
+impl Render for ExtensionsPage {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .full()
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                v_flex()
+                    .full()
+                    .p_4()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+                    )
+                    .child(h_flex().w_56().my_4().child(self.render_search(cx)))
+                    .child(
+                        h_flex().flex_col().items_start().full().child(
+                            uniform_list::<_, Div, _>(
+                                cx.view().clone(),
+                                "entries",
+                                self.extensions_entries.len(),
+                                Self::render_extensions,
+                            )
+                            .size_full()
+                            .track_scroll(self.list.clone()),
+                        ),
+                    ),
+            )
     }
 }
 
