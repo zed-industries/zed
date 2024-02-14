@@ -30,6 +30,29 @@ Options:
   "
 }
 
+function uploadDsym
+{
+  SPACE="zed-debug-symbols"
+  REGION="nyc3"
+  file_to_upload="$1"
+  file_name="$2"
+  date=$(date +"%a, %d %b %Y %T %z")
+  acl="x-amz-acl:public-read"
+  content_type="application/octet-stream"
+  storage_type="x-amz-storage-class:STANDARD"
+  string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${space_path}/${file_name}"
+  signature=$(echo -en "${string}" | openssl sha1 -hmac "${DIGITALOCEAN_SPACES_SECRET_KEY}" -binary | base64)
+
+  curl --fail -vv -s -X PUT -T "$file_to_upload" \
+    -H "Host: ${SPACE}.${REGION}.digitaloceanspaces.com" \
+    -H "Date: $date" \
+    -H "Content-Type: $content_type" \
+    -H "$storage_type" \
+    -H "$acl" \
+    -H "Authorization: AWS ${DIGITALOCEAN_SPACES_ACCESS_KEY}:$signature" \
+    "https://${SPACE}.${REGION}.digitaloceanspaces.com/${file_name}"
+}
+
 while getopts 'dlfoh' flag
 do
     case "${flag}" in
@@ -111,6 +134,18 @@ popd
 echo "Bundled ${app_path}"
 
 if [ "$local_arch" = false ]; then
+    echo "Uploading dSYMs"
+    dsymutil --flat target/aarch64-apple-darwin/release/Zed
+    dsymutil --flat target/x86_64-apple-darwin/release/Zed
+    version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
+    if [ "$channel" == "nightly" ]; then
+        version="$version-$(git rev-parse --short HEAD)"
+    fi
+    gzip target/aarch64-apple-darwin/release/Zed.dwarf
+    gzip target/x86_64-apple-darwin/release/Zed.dwarf
+    uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-aarch64-apple-darwin.dwarf.gz"
+    uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-x86_64-apple-darwin.dwarf.gz"
+
     echo "Creating fat binaries"
     lipo \
         -create \

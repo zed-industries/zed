@@ -20,7 +20,6 @@ pub struct Model {
     pub calling_connection_server_id: Option<ServerId>,
     pub participant_index: Option<i32>,
     pub role: Option<ChannelRole>,
-    pub in_call: bool,
 }
 
 impl Model {

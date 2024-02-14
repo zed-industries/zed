@@ -24,7 +24,7 @@ use workspace::{
 
 use super::TestClient;
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_basic_following(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -437,7 +437,6 @@ async fn test_basic_following(
         })
         .await
         .unwrap();
-
     executor.run_until_parked();
     let shared_screen = workspace_a.update(cx_a, |workspace, cx| {
         workspace
@@ -523,7 +522,6 @@ async fn test_basic_following(
         workspace_a.update(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
         None
     );
-    executor.run_until_parked();
 }
 
 #[gpui::test]
@@ -2006,7 +2004,7 @@ async fn join_channel(
     client: &TestClient,
     cx: &mut TestAppContext,
 ) -> anyhow::Result<()> {
-    cx.update(|cx| workspace::open_channel(channel_id, client.app_state.clone(), None, cx))
+    cx.update(|cx| workspace::join_channel(channel_id, client.app_state.clone(), None, cx))
         .await
 }
 

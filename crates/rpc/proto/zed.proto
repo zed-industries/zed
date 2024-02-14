@@ -184,12 +184,9 @@ message Envelope {
         SetRoomParticipantRole set_room_participant_role = 156;
 
         UpdateUserChannels update_user_channels = 157;
-
-        JoinChannel2 join_channel2 = 158;
-        JoinChannelCall join_channel_call = 159;
-        JoinChannelCallResponse join_channel_call_response = 160;
-        LeaveChannelCall leave_channel_call = 161; // current max
     }
+
+    reserved 158 to 161;
 }
 
 // Messages
@@ -215,13 +212,13 @@ enum ErrorCode {
     SignedOut = 3;
     UpgradeRequired = 4;
     Forbidden = 5;
-    WrongReleaseChannel = 6;
     NeedsCla = 7;
     NotARootChannel = 8;
     BadPublicNesting = 9;
     CircularNesting = 10;
     WrongMoveTarget = 11;
     UnsharedItem = 12;
+    reserved 6;
 }
 
 message Test {
@@ -296,7 +293,7 @@ message Participant {
     ParticipantLocation location = 4;
     uint32 participant_index = 5;
     ChannelRole role = 6;
-    bool in_call = 7;
+    reserved 7;
 }
 
 message PendingParticipant {
@@ -1036,22 +1033,6 @@ message ChannelParticipants {
 }
 
 message JoinChannel {
-    uint64 channel_id = 1;
-}
-
-message JoinChannel2 {
-    uint64 channel_id = 1;
-}
-
-message JoinChannelCall {
-    uint64 channel_id = 1;
-}
-
-message JoinChannelCallResponse {
-    LiveKitConnectionInfo live_kit_connection_info = 1;
-}
-
-message LeaveChannelCall {
     uint64 channel_id = 1;
 }
 

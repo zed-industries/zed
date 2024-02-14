@@ -1,7 +1,7 @@
 use crate::{
     db::{self, UserId},
     rpc::RECONNECT_TIMEOUT,
-    tests::{room_participants, test_server::join_channel_call, RoomParticipants, TestServer},
+    tests::{room_participants, RoomParticipants, TestServer},
 };
 use call::ActiveCall;
 use channel::{ChannelId, ChannelMembership, ChannelStore};
@@ -382,7 +382,6 @@ async fn test_channel_room(
         .update(cx_a, |active_call, cx| active_call.join_channel(zed_id, cx))
         .await
         .unwrap();
-    join_channel_call(cx_a).await.unwrap();
 
     // Give everyone a chance to observe user A joining
     executor.run_until_parked();
@@ -430,7 +429,7 @@ async fn test_channel_room(
         .update(cx_b, |active_call, cx| active_call.join_channel(zed_id, cx))
         .await
         .unwrap();
-    join_channel_call(cx_b).await.unwrap();
+
     executor.run_until_parked();
 
     cx_a.read(|cx| {
@@ -552,9 +551,6 @@ async fn test_channel_room(
         .update(cx_b, |active_call, cx| active_call.join_channel(zed_id, cx))
         .await
         .unwrap();
-
-    join_channel_call(cx_a).await.unwrap();
-    join_channel_call(cx_b).await.unwrap();
 
     executor.run_until_parked();
 

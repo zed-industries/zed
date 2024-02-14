@@ -1,6 +1,6 @@
 use crate::{
-    CachedLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerName, LspAdapter,
-    LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    CachedLspAdapter, Language, LanguageConfig, LanguageId, LanguageMatcher, LanguageServerName,
+    LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -43,8 +43,7 @@ struct LanguageRegistryState {
     languages: Vec<Arc<Language>>,
     available_languages: Vec<AvailableLanguage>,
     grammars: HashMap<Arc<str>, AvailableGrammar>,
-    next_available_language_id: AvailableLanguageId,
-    loading_languages: HashMap<AvailableLanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
+    loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
     theme: Option<Arc<Theme>>,
     version: usize,
@@ -68,7 +67,7 @@ pub struct PendingLanguageServer {
 
 #[derive(Clone)]
 struct AvailableLanguage {
-    id: AvailableLanguageId,
+    id: LanguageId,
     name: Arc<str>,
     grammar: Option<Arc<str>>,
     matcher: LanguageMatcher,
@@ -76,8 +75,6 @@ struct AvailableLanguage {
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
     loaded: bool,
 }
-
-type AvailableLanguageId = usize;
 
 enum AvailableGrammar {
     Native(tree_sitter::Language),
@@ -126,7 +123,6 @@ impl LanguageRegistry {
                 languages: vec![PLAIN_TEXT.clone()],
                 available_languages: Default::default(),
                 grammars: Default::default(),
-                next_available_language_id: 0,
                 loading_languages: Default::default(),
                 subscription: watch::channel(),
                 theme: Default::default(),
@@ -155,9 +151,15 @@ impl LanguageRegistry {
         self.state.write().reload();
     }
 
-    /// Clears out the given languages and reload them from scratch.
-    pub fn reload_languages(&self, languages: &[Arc<str>], grammars: &[Arc<str>]) {
-        self.state.write().reload_languages(languages, grammars);
+    /// Removes the specified languages and grammars from the registry.
+    pub fn remove_languages(
+        &self,
+        languages_to_remove: &[Arc<str>],
+        grammars_to_remove: &[Arc<str>],
+    ) {
+        self.state
+            .write()
+            .remove_languages(languages_to_remove, grammars_to_remove)
     }
 
     #[cfg(any(feature = "test-support", test))]
@@ -194,7 +196,7 @@ impl LanguageRegistry {
         }
 
         state.available_languages.push(AvailableLanguage {
-            id: post_inc(&mut state.next_available_language_id),
+            id: LanguageId::new(),
             name,
             grammar: grammar_name,
             matcher,
@@ -202,6 +204,9 @@ impl LanguageRegistry {
             lsp_adapters,
             loaded: false,
         });
+        state.version += 1;
+        state.reload_count += 1;
+        *state.subscription.0.borrow_mut() = ();
     }
 
     /// Adds grammars to the registry. Language configurations reference a grammar by name. The
@@ -222,11 +227,15 @@ impl LanguageRegistry {
         &self,
         grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, PathBuf)>,
     ) {
-        self.state.write().grammars.extend(
+        let mut state = self.state.write();
+        state.grammars.extend(
             grammars
                 .into_iter()
                 .map(|(name, path)| (name.into(), AvailableGrammar::Unloaded(path))),
         );
+        state.version += 1;
+        state.reload_count += 1;
+        *state.subscription.0.borrow_mut() = ();
     }
 
     pub fn language_names(&self) -> Vec<String> {
@@ -238,6 +247,13 @@ impl LanguageRegistry {
             .chain(state.languages.iter().map(|l| l.config.name.to_string()))
             .collect::<Vec<_>>();
         result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
+        result
+    }
+
+    pub fn grammar_names(&self) -> Vec<Arc<str>> {
+        let state = self.state.read();
+        let mut result = state.grammars.keys().cloned().collect::<Vec<_>>();
+        result.sort_unstable_by_key(|grammar_name| grammar_name.to_lowercase());
         result
     }
 
@@ -358,7 +374,7 @@ impl LanguageRegistry {
                                         None
                                     };
 
-                                    Language::new(config, grammar)
+                                    Language::new_with_id(id, config, grammar)
                                         .with_lsp_adapters(language.lsp_adapters)
                                         .await
                                         .with_queries(queries)
@@ -660,40 +676,21 @@ impl LanguageRegistryState {
         *self.subscription.0.borrow_mut() = ();
     }
 
-    fn reload_languages(
+    fn remove_languages(
         &mut self,
-        languages_to_reload: &[Arc<str>],
-        grammars_to_reload: &[Arc<str>],
+        languages_to_remove: &[Arc<str>],
+        grammars_to_remove: &[Arc<str>],
     ) {
-        for (name, grammar) in self.grammars.iter_mut() {
-            if grammars_to_reload.contains(name) {
-                if let AvailableGrammar::Loaded(path, _) = grammar {
-                    *grammar = AvailableGrammar::Unloaded(path.clone());
-                }
-            }
+        if languages_to_remove.is_empty() && grammars_to_remove.is_empty() {
+            return;
         }
 
-        self.languages.retain(|language| {
-            let should_reload = languages_to_reload.contains(&language.config.name)
-                || language
-                    .config
-                    .grammar
-                    .as_ref()
-                    .map_or(false, |grammar| grammars_to_reload.contains(&grammar));
-            !should_reload
-        });
-
-        for language in &mut self.available_languages {
-            if languages_to_reload.contains(&language.name)
-                || language
-                    .grammar
-                    .as_ref()
-                    .map_or(false, |grammar| grammars_to_reload.contains(grammar))
-            {
-                language.loaded = false;
-            }
-        }
-
+        self.languages
+            .retain(|language| !languages_to_remove.contains(&language.name()));
+        self.available_languages
+            .retain(|language| !languages_to_remove.contains(&language.name));
+        self.grammars
+            .retain(|name, _| !grammars_to_remove.contains(&name));
         self.version += 1;
         self.reload_count += 1;
         *self.subscription.0.borrow_mut() = ();
@@ -701,7 +698,7 @@ impl LanguageRegistryState {
 
     /// Mark the given language as having been loaded, so that the
     /// language registry won't try to load it again.
-    fn mark_language_loaded(&mut self, id: AvailableLanguageId) {
+    fn mark_language_loaded(&mut self, id: LanguageId) {
         for language in &mut self.available_languages {
             if language.id == id {
                 language.loaded = true;
