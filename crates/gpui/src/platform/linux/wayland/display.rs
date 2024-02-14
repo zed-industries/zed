@@ -10,12 +10,12 @@ pub(crate) struct WaylandDisplay {}
 impl PlatformDisplay for WaylandDisplay {
     // todo!(linux)
     fn id(&self) -> DisplayId {
-        return DisplayId(123);  // return some fake data so it doesn't panic
+        return DisplayId(123); // return some fake data so it doesn't panic
     }
 
     // todo!(linux)
     fn uuid(&self) -> anyhow::Result<Uuid> {
-        return Ok(Uuid::from_bytes([0; 16]));  // return some fake data so it doesn't panic
+        return Ok(Uuid::from_bytes([0; 16])); // return some fake data so it doesn't panic
     }
 
     // todo!(linux)
@@ -26,6 +26,6 @@ impl PlatformDisplay for WaylandDisplay {
                 width: GlobalPixels(1000f32),
                 height: GlobalPixels(500f32),
             },
-        }  // return some fake data so it doesn't panic
+        } // return some fake data so it doesn't panic
     }
 }

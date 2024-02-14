@@ -1,12 +1,12 @@
 #![allow(unused)]
 
+use std::env;
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::Duration,
 };
-use std::env;
 
 use async_task::Runnable;
 use flume::{Receiver, Sender};
@@ -15,17 +15,16 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use wayland_client::Connection;
 
+use crate::platform::linux::client::Client;
+use crate::platform::linux::client_dispatcher::ClientDispatcher;
+use crate::platform::linux::wayland::{WaylandClient, WaylandClientDispatcher};
+use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
     Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, Task, WindowOptions
-    ,
+    SemanticVersion, Task, WindowOptions,
 };
-use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
-use crate::platform::linux::client::Client;
-use crate::platform::linux::client_dispatcher::ClientDispatcher;
-use crate::platform::linux::wayland::{WaylandClient, WaylandClientDispatcher};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -91,7 +90,8 @@ impl LinuxPlatform {
         state: Mutex<LinuxPlatformState>,
     ) -> Self {
         let conn = Arc::new(Connection::connect_to_env().unwrap());
-        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = Arc::new(WaylandClientDispatcher::new(&conn));
+        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
+            Arc::new(WaylandClientDispatcher::new(&conn));
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
         let inner = Arc::new(LinuxPlatformInner {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
@@ -101,10 +101,7 @@ impl LinuxPlatform {
             callbacks,
             state,
         });
-        let client = Arc::new(WaylandClient::new(
-            Arc::clone(&inner),
-            Arc::clone(&conn),
-        ));
+        let client = Arc::new(WaylandClient::new(Arc::clone(&inner), Arc::clone(&conn)));
         Self {
             client,
             inner: Arc::clone(&inner),
@@ -121,7 +118,8 @@ impl LinuxPlatform {
         let (xcb_connection, x_root_index) = xcb::Connection::connect(None).unwrap();
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
         let xcb_connection = Arc::new(xcb_connection);
-        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> = Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
+        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
+            Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
         let inner = Arc::new(LinuxPlatformInner {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),

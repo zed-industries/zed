@@ -13,14 +13,14 @@ use raw_window_handle::{
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
-use crate::{
-    Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, px, Size,
-    WindowAppearance, WindowBounds, WindowOptions,
-};
-use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::platform::linux::blade_renderer::BladeRenderer;
 use crate::platform::linux::wayland::display::WaylandDisplay;
+use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
+use crate::{
+    px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
+    WindowAppearance, WindowBounds, WindowOptions,
+};
 
 #[derive(Default)]
 struct Callbacks {
@@ -81,7 +81,7 @@ impl WaylandWindowInner {
                     },
                 )
             }
-                .unwrap(),
+            .unwrap(),
         );
         let extent = gpu::Extent {
             width: bounds.size.width as u32,

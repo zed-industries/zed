@@ -2,25 +2,25 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_client::{
-    Connection,
     delegate_noop,
-    Dispatch, EventQueue, protocol::{
+    protocol::{
         wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm,
         wl_shm_pool,
         wl_surface::{self, WlSurface},
-    }, Proxy, QueueHandle,
+    },
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
 };
-use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-use crate::{
-    AnyWindowHandle, DisplayId, platform::linux::wayland::window::WaylandWindowState,
-    PlatformDisplay, WindowOptions,
-};
-use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::window::WaylandWindow;
+use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::{
+    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId,
+    PlatformDisplay, WindowOptions,
+};
 
 pub(crate) struct WaylandClientState {
     compositor: Option<wl_compositor::WlCompositor>,

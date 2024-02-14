@@ -5,13 +5,13 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::{atomic::Ordering::SeqCst, Arc},
     time::Duration,
 };
 
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use futures::{channel::oneshot, Future, future::LocalBoxFuture};
+use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use slotmap::SlotMap;
 use smol::future::FutureExt;
 use time::UtcOffset;
@@ -28,15 +28,15 @@ use util::{
     ResultExt,
 };
 
+use crate::WindowAppearance;
 use crate::{
-    Action, ActionRegistry, Any, AnyView, AnyWindowHandle, AppMetadata,
-    AssetSource, BackgroundExecutor, ClipboardItem, Context, current_platform, DispatchPhase, Entity,
-    EventEmitter, ForegroundExecutor, Global, image_cache::ImageCache, init_app_menus, KeyBinding, Keymap, Keystroke,
+    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
+    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
     LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
     TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
 };
-use crate::WindowAppearance;
 
 mod async_context;
 mod entity_map;
