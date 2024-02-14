@@ -63,9 +63,6 @@ jobs:
       - name: Sign into DigitalOcean docker registry
         run: doctl registry login
 
-      - name: Prune Docker system
-        run: docker system prune  --filter 'until=720h' -f
-
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
@@ -77,6 +74,9 @@ jobs:
 
       - name: Publish docker image
         run: docker push registry.digitalocean.com/zed/collab:${GITHUB_SHA}
+
+      - name: Prune Docker system
+        run: docker system prune  --filter 'until=72h' -f
 
   deploy:
     name: Deploy new server image

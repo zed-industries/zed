@@ -11,6 +11,7 @@ ARG GITHUB_SHA
 ENV GITHUB_SHA=$GITHUB_SHA
 RUN --mount=type=cache,target=./script/node_modules \
     --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=./target \
     cargo build --release --package collab --bin collab
 
