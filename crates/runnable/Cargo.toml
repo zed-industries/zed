@@ -13,8 +13,6 @@ anyhow.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-async-process = "2.0.1"
-postage = "0.5"
 parking_lot.workspace = true
 smol.workspace = true
 

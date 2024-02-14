@@ -16,12 +16,11 @@ test-support = [
     "project/test-support",
     "settings/test-support",
     "gpui/test-support",
-    "fs/test-support"
+    "fs/test-support",
 ]
 
 [dependencies]
 anyhow.workspace = true
-async-channel = "2.2.0"
 async-recursion = "1.0.0"
 bincode = "1.2.1"
 call.workspace = true

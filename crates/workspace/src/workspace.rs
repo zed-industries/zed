@@ -12,7 +12,6 @@ mod toolbar;
 mod workspace_settings;
 
 use anyhow::{anyhow, Context as _, Result};
-use async_channel::Receiver;
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
@@ -166,7 +165,6 @@ impl_actions!(
         CloseAllItemsAndPanes,
         NewFileInDirection,
         OpenTerminal,
-        OpenTerminalStream,
         Save,
         SaveAll,
         SwapPaneInDirection,
@@ -221,26 +219,6 @@ impl Clone for Toast {
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct OpenTerminalStream {
-    pub source: Option<Receiver<String>>,
-}
-
-impl PartialEq for OpenTerminalStream {
-    fn eq(&self, _: &Self) -> bool {
-        false
-    }
-}
-
-impl<'de> Deserialize<'de> for OpenTerminalStream {
-    fn deserialize<D>(_: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(Self { source: None })
-    }
 }
 
 pub type WorkspaceId = i64;

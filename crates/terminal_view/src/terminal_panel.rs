@@ -1,7 +1,6 @@
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
-use async_channel::Receiver;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
@@ -13,7 +12,10 @@ use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
+use terminal::{
+    terminal_settings::{TerminalDockPosition, TerminalSettings},
+    ExternalTask,
+};
 use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -35,7 +37,7 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
-            workspace.register_action(TerminalPanel::open_terminal_stream);
+            workspace.register_action(TerminalPanel::spawn_task_in_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<TerminalPanel>(cx);
             });
@@ -272,14 +274,22 @@ impl TerminalPanel {
         })
     }
 
-    pub fn open_terminal_stream(
+    pub fn spawn_task_in_terminal(
         workspace: &mut Workspace,
-        action: &workspace::OpenTerminalStream,
+        action: &runnable::SpawnTaskInTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(source) = action.source.as_ref() else {
+        if action.label.is_empty() || action.command.is_empty() {
             return;
+        }
+        let external_task = ExternalTask {
+            label: action.label.clone(),
+            command: action.command.clone(),
+            args: action.args.clone(),
+            cancellation_rx: action.cancellation_rx.clone(),
+            completion_tx: action.completion_tx.clone(),
         };
+        let working_directory = action.cwd.clone();
         // TODO kb this will add an extra initial terminal (see `set_active`) if focuses the terminal panel for the first time
         // TODO kb this also will leave terminal panes that will be restored on restart, which is bad — ignore those instead
         let Some(terminal_panel) = workspace.focus_panel::<Self>(cx) else {
@@ -287,7 +297,7 @@ impl TerminalPanel {
         };
 
         terminal_panel.update(cx, |terminal_panel, cx| {
-            terminal_panel.add_terminal(None, Some(source.clone()), cx)
+            terminal_panel.add_terminal(working_directory, Some(external_task), cx)
         })
     }
 
@@ -307,7 +317,7 @@ impl TerminalPanel {
     fn add_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        streaming_source: Option<Receiver<String>>,
+        external_task: Option<ExternalTask>,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
@@ -325,7 +335,7 @@ impl TerminalPanel {
                 let window = cx.window_handle();
                 if let Some(terminal) = workspace.project().update(cx, |project, cx| {
                     project
-                        .create_terminal(working_directory, streaming_source, window, cx)
+                        .create_terminal(working_directory, external_task, window, cx)
                         .log_err()
                 }) {
                     let terminal = Box::new(cx.new_view(|cx| {

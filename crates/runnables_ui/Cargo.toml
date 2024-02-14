@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 anyhow.workspace = true
-async-channel = "2.2.0"
 db.workspace = true
 editor.workspace = true
 fs.workspace = true

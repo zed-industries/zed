@@ -53,28 +53,29 @@ impl StatusIconTracker {
             self._runnable_poller = Some(cx.spawn(|this, mut cx| async move {
                 let mut futures = FuturesUnordered::new();
                 loop {
-
                     select_biased! {
-                        new_runnable = rx.next() => {
-
-                            if let Some(new_runnable) = new_runnable {
+                        new_handle = rx.next() => {
+                            if let Some(new_handle) = new_handle {
                                 this.update(&mut cx, |this: &mut Self, _cx| {
                                     this.current_status.take();
                                 }).ok();
-                                futures.push(new_runnable);
+                                let mut handle_completion = new_handle.completion_rx().clone();
+                                futures.push(async move {
+                                    handle_completion.next().await
+                                });
                             }
 
                         },
-                        finished_runnable = futures.next() => {
-                            if let Some(finished_runnable) = finished_runnable {
-                                if finished_runnable.as_ref().map_or(false, |runnable| runnable.status.is_err()) {
+                        completion_status = futures.next() => {
+                            if let Some(completion_status) = completion_status {
+                                if completion_status.as_ref().map_or(false, |completion_status| !completion_status) {
                                     this.update(&mut cx, |this: &mut Self, cx| {
                                         this.current_status = Some(false);
                                         cx.notify()
                                     })
                                     .ok();
                                     return;
-                                } else if finished_runnable.map_or(false, |runnable| runnable.status.is_ok()) && futures.is_empty() {
+                                } else if completion_status.map_or(false, |completion_status| completion_status) && futures.is_empty() {
                                     this.update(&mut cx, |this: &mut Self, cx| {
                                         this.current_status = Some(true);
                                         cx.notify()

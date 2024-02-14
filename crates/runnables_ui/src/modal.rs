@@ -1,15 +1,14 @@
 use std::{path::PathBuf, sync::Arc};
 
-use async_channel::unbounded;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, Action, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
+    actions, rems, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
     ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
-use runnable::{NewLineAvailable, Token};
+use runnable::Token;
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -17,6 +16,7 @@ use workspace::{ModalView, Workspace};
 use crate::RunnablesPanel;
 
 actions!(runnables, [Spawn]);
+
 /// A modal used to spawn new runnables.
 pub(crate) struct RunnablesModalDelegate {
     inventory: Model<Inventory>,
@@ -211,22 +211,6 @@ impl PickerDelegate for RunnablesModalDelegate {
         };
 
         if let Some(handle) = self.candidates[ix].schedule(cwd, cx).log_err() {
-            if let Some(output) = handle.output.as_ref() {
-                self.workspace
-                    .update(cx, |_, cx| {
-                        let (tx, rx) = unbounded();
-                        cx.window_context()
-                            .subscribe(output, move |_, line: &NewLineAvailable, _| {
-                                let msg = line.as_ref().to_owned();
-                                tx.send_blocking(msg).ok();
-                            })
-                            .detach();
-                        cx.dispatch_action(
-                            workspace::OpenTerminalStream { source: Some(rx) }.boxed_clone(),
-                        );
-                    })
-                    .log_err();
-            }
             self.workspace
                 .update(cx, |workspace, cx| {
                     let Some(panel) = workspace.panel::<RunnablesPanel>(cx) else {

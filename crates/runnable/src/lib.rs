@@ -1,29 +1,55 @@
 //! Defines baseline interface of Runnables in Zed.
 // #![deny(missing_docs)]
-mod handle;
 pub mod static_runnable_file;
 mod static_runner;
 mod static_source;
 
 use anyhow::Result;
-use async_process::ExitStatus;
-use futures::stream::AbortHandle;
-pub use futures::stream::Aborted as RunnableTerminated;
-use gpui::{AppContext, EntityId, Model, ModelContext, WeakModel};
-pub use handle::{Handle, NewLineAvailable, PendingOutput};
+use gpui::{impl_actions, AppContext, EntityId, Model, ModelContext, WeakModel};
+use serde::Deserialize;
+use smol::channel::{Receiver, Sender};
+use static_runnable_file::Definition;
 pub use static_runner::StaticRunner;
 pub use static_source::{StaticSource, TrackedFile};
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use util::ResultExt;
 
-#[derive(Clone, Debug)]
-/// Represents the result of a runnable.
-pub struct ExecutionResult {
-    /// Status of the runnable. Should be `Ok` if the runnable launch succeeded, `Err` otherwise.
-    pub status: Result<ExitStatus, Arc<anyhow::Error>>,
-    pub output: Option<Model<PendingOutput>>,
+impl_actions!(runnable, [SpawnTaskInTerminal]);
+
+#[derive(Debug, Default, Clone)]
+pub struct SpawnTaskInTerminal {
+    pub label: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: Option<PathBuf>,
+    pub cancellation_rx: Option<Receiver<()>>,
+    pub completion_tx: Option<Sender<bool>>,
+}
+
+impl PartialEq for SpawnTaskInTerminal {
+    fn eq(&self, other: &Self) -> bool {
+        self.label.eq(&other.label)
+            && self.command.eq(&other.command)
+            && self.args.eq(&other.args)
+            && self.cwd.eq(&other.cwd)
+    }
+}
+
+impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
+    fn deserialize<D>(_: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self {
+            label: String::new(),
+            command: String::new(),
+            args: Vec::new(),
+            cwd: None,
+            cancellation_rx: None,
+            completion_tx: None,
+        })
+    }
 }
 
 /// Represents a short lived recipe of a runnable, whose main purpose
@@ -32,6 +58,44 @@ pub trait Runnable {
     fn name(&self) -> String;
     fn exec(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Result<Handle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
+}
+
+/// Represents a runnable that's already underway. That runnable can be cancelled at any time.
+#[derive(Clone)]
+pub struct Handle {
+    completion_rx: Receiver<bool>,
+    cancelation_tx: Sender<()>,
+}
+
+impl Handle {
+    pub fn new(definition: &Definition, cwd: Option<PathBuf>, cx: &mut AppContext) -> Self {
+        let (completion_tx, completion_rx) = smol::channel::bounded(2);
+        let (cancelation_tx, cancellation_rx) = smol::channel::bounded(2);
+        cx.dispatch_action(&SpawnTaskInTerminal {
+            label: definition.label.clone(),
+            command: definition.command.clone(),
+            args: definition.args.clone(),
+            cwd,
+            cancellation_rx: Some(cancellation_rx),
+            completion_tx: Some(completion_tx),
+        });
+        Self {
+            completion_rx,
+            cancelation_tx,
+        }
+    }
+
+    pub fn has_succeeded(&self) -> Option<bool> {
+        self.completion_rx.try_recv().ok()
+    }
+
+    pub fn cancel(&self) {
+        self.cancelation_tx.try_send(()).ok();
+    }
+
+    pub fn completion_rx(&self) -> &Receiver<bool> {
+        &self.completion_rx
+    }
 }
 
 /// [`Source`] produces runnables that can be scheduled.
@@ -87,17 +151,15 @@ impl Token {
             RunState::Scheduled(handle) => Ok(handle.clone()),
         });
         if spawned_first_time {
-            // todo: this should be a noop when ran multiple times, but we should still strive to do it just once.
-            cx.spawn(|_| async_process::driver()).detach();
             self.state.update(cx, |_, cx| {
                 cx.spawn(|state, mut cx| async move {
                     let Some(this) = state.upgrade() else {
                         return;
                     };
                     let Some(handle) = this
-                        .update(&mut cx, |this, _| {
-                            if let RunState::Scheduled(this) = this {
-                                Some(this.clone())
+                        .update(&mut cx, |state, _| {
+                            if let RunState::Scheduled(handle) = state {
+                                Some(handle.clone())
                             } else {
                                 None
                             }
@@ -107,7 +169,7 @@ impl Token {
                     else {
                         return;
                     };
-                    let _ = handle.fut.await.log_err();
+                    let _ = handle.completion_rx.recv().await.ok();
                 })
                 .detach()
             })
@@ -117,32 +179,8 @@ impl Token {
 
     pub fn handle(&self, cx: &AppContext) -> Option<Handle> {
         let state = self.state.read(cx);
-        if let RunState::Scheduled(state) = state {
-            Some(state.clone())
-        } else {
-            None
-        }
-    }
-
-    pub fn result<'a>(
-        &self,
-        cx: &'a AppContext,
-    ) -> Option<Result<ExecutionResult, RunnableTerminated>> {
-        if let RunState::Scheduled(state) = self.state.read(cx) {
-            state.fut.peek().cloned().map(|res| {
-                res.map(|runnable_result| ExecutionResult {
-                    status: runnable_result,
-                    output: state.output.clone(),
-                })
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn cancel_handle(&self, cx: &AppContext) -> Option<AbortHandle> {
-        if let RunState::Scheduled(state) = self.state.read(cx) {
-            Some(state.termination_handle())
+        if let RunState::Scheduled(handle) = state {
+            Some(handle.clone())
         } else {
             None
         }

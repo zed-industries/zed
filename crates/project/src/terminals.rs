@@ -1,11 +1,10 @@
 use crate::Project;
-use async_channel::Receiver;
 use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use terminal::{
-    terminal_settings::{self, TerminalSettings, VenvSettingsContent},
-    Terminal, TerminalBuilder,
+    terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
+    ExternalTask, Terminal, TerminalBuilder,
 };
 
 // #[cfg(target_os = "macos")]
@@ -19,8 +18,7 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        // TODO kb disable user input based on its presence, stream its contents into the terminal
-        streaming_source: Option<Receiver<String>>,
+        mut external_task: Option<ExternalTask>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
@@ -31,18 +29,37 @@ impl Project {
 
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
-        let shell = settings.shell.clone();
+        let external_task_completion_tx = external_task
+            .as_mut()
+            .and_then(|task| task.completion_tx.take());
+        let external_task_cancellation_rx = external_task
+            .as_mut()
+            .and_then(|task| task.cancellation_rx.take());
+        let (external_task_label, shell) = if let Some(external_task) = external_task {
+            (
+                Some(external_task.label),
+                Shell::WithArguments {
+                    program: external_task.command,
+                    args: external_task.args,
+                },
+            )
+        } else {
+            (None, settings.shell.clone())
+        };
 
         let terminal = TerminalBuilder::new(
             working_directory.clone(),
-            shell.clone(),
+            external_task_completion_tx,
+            shell,
             settings.env.clone(),
             Some(settings.blinking.clone()),
             settings.alternate_scroll,
             window,
         )
         .map(|builder| {
-            let terminal_handle = cx.new_model(|cx| builder.subscribe(streaming_source, cx));
+            let terminal_handle = cx.new_model(|cx| {
+                builder.subscribe(external_task_label, external_task_cancellation_rx, cx)
+            });
 
             self.terminals
                 .local_handles

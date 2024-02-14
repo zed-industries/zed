@@ -211,6 +211,7 @@ impl Panel for RunnablesPanel {
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }
+
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
             self.status_bar_tracker.take();
@@ -220,11 +221,7 @@ impl Panel for RunnablesPanel {
             let runnables: Vec<_> = self.inventory.update(cx, |this, cx| {
                 this.list_runnables(&path, cx)
                     .into_iter()
-                    .filter_map(|runnable| {
-                        runnable
-                            .handle(cx)
-                            .filter(|handle| handle.result().is_none())
-                    })
+                    .filter_map(|runnable| runnable.handle(cx))
                     .collect()
             });
 
@@ -255,9 +252,9 @@ impl Render for RunnablesPanel {
         let state = ListState::new(runnables_in_flight.len(), ListAlignment::Top, px(2.), {
             move |index, cx| {
                 let runnable = runnables_in_flight[index].clone();
-                let result = runnable.result(cx);
-                let cancelable = runnable.cancel_handle(cx).filter(|_| result.is_none());
-                let reschedulable_runnable = result
+                let handle = runnable.handle(cx);
+                let succeeded = handle.as_ref().and_then(|handle| handle.has_succeeded());
+                let reschedulable_runnable = succeeded
                     .is_some()
                     .then(|| {
                         available_runnables.iter().find(|unscheduled_runnable| {
@@ -281,8 +278,7 @@ impl Render for RunnablesPanel {
                             }
                         }),
                     )
-                    .when_some(result, |this, result| {
-                        let succeeded = result.is_ok();
+                    .when_some(succeeded, |this, succeeded| {
                         let icon = if succeeded {
                             IconName::Check
                         } else {
@@ -290,16 +286,18 @@ impl Render for RunnablesPanel {
                         };
                         this.start_slot(Icon::new(icon))
                     })
-                    .when_some(cancelable, |this, cancel_token| {
-                        this.end_hover_slot(
-                            IconButton::new(
-                                ("Runnable cancel button", runnable.id()),
-                                IconName::XCircle,
+                    .when_some(handle, |this, handle| {
+                        this.when(succeeded.is_none(), |this| {
+                            this.end_hover_slot(
+                                IconButton::new(
+                                    ("Runnable cancel button", runnable.id()),
+                                    IconName::XCircle,
+                                )
+                                .on_click(move |_, _| {
+                                    handle.cancel();
+                                }),
                             )
-                            .on_click(move |_, _| {
-                                cancel_token.abort();
-                            }),
-                        )
+                        })
                     })
                     .when_some(reschedulable_runnable, |this, runnable| {
                         this.end_hover_slot(

@@ -30,12 +30,14 @@ use mappings::mouse::{
     scroll_report,
 };
 
-use async_channel::Receiver;
 use collections::{HashMap, VecDeque};
-use procinfo::LocalProcessInfo;
+use procinfo::{LocalProcessInfo, LocalProcessStatus};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::stream::StreamExt;
+use smol::{
+    channel::{Receiver, Sender},
+    stream::StreamExt,
+};
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -279,6 +281,14 @@ impl Display for TerminalError {
     }
 }
 
+pub struct ExternalTask {
+    pub label: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub cancellation_rx: Option<Receiver<()>>,
+    pub completion_tx: Option<Sender<bool>>,
+}
+
 pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<AlacTermEvent>,
@@ -287,6 +297,7 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
+        external_task_completion_tx: Option<Sender<bool>>,
         shell: Shell,
         env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
@@ -385,6 +396,7 @@ impl TerminalBuilder {
         let word_regex = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
 
         let terminal = Terminal {
+            external_task_completion_tx,
             pty_tx: Notifier(pty_tx),
             term,
             events: VecDeque::with_capacity(10), //Should never get this high.
@@ -414,31 +426,37 @@ impl TerminalBuilder {
 
     pub fn subscribe(
         mut self,
-        streaming_source: Option<Receiver<String>>,
+        label: Option<String>,
+        cancellation_rx: Option<Receiver<()>>,
         cx: &mut ModelContext<Terminal>,
     ) -> Terminal {
-        if let Some(streaming_source) = streaming_source {
+        if let Some(cancellation_rx) = cancellation_rx {
             cx.spawn(|terminal, mut cx| async move {
-                while let Ok(streamed_chunk) = streaming_source.recv().await {
+                if let Ok(()) = cancellation_rx.recv().await {
                     terminal.update(&mut cx, |terminal, cx| {
-                        terminal.process_event(&AlacTermEvent::PtyWrite(streamed_chunk), cx);
+                        terminal.process_event(&AlacTermEvent::Exit, cx);
                     })?;
                 }
                 anyhow::Ok(())
             })
-            .detach_and_log_err(cx)
+            .detach();
         }
 
         //Event loop
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|terminal, mut cx| async move {
+            if let Some(label) = label {
+                terminal.update(&mut cx, |terminal, cx| {
+                    terminal.process_event(&AlacTermEvent::Title(label), cx);
+                })?;
+            }
             while let Some(event) = self.events_rx.next().await {
-                this.update(&mut cx, |this, cx| {
+                terminal.update(&mut cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
-                    this.process_event(&event, cx);
+                    terminal.process_event(&event, cx);
                 })?;
 
                 'outer: loop {
-                    let mut events = vec![];
+                    let mut events = Vec::new();
                     let mut timer = cx
                         .background_executor()
                         .timer(Duration::from_millis(4))
@@ -449,6 +467,10 @@ impl TerminalBuilder {
                             _ = timer => break,
                             event = self.events_rx.next().fuse() => {
                                 if let Some(event) = event {
+                                    if matches!(event, AlacTermEvent::Exit) {
+                                        // TODO kb
+                                    }
+
                                     if matches!(event, AlacTermEvent::Wakeup) {
                                         wakeup = true;
                                     } else {
@@ -469,7 +491,7 @@ impl TerminalBuilder {
                         smol::future::yield_now().await;
                         break 'outer;
                     } else {
-                        this.update(&mut cx, |this, cx| {
+                        terminal.update(&mut cx, |this, cx| {
                             if wakeup {
                                 this.process_event(&AlacTermEvent::Wakeup, cx);
                             }
@@ -485,7 +507,7 @@ impl TerminalBuilder {
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         self.terminal
     }
@@ -554,6 +576,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
+    external_task_completion_tx: Option<Sender<bool>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
@@ -605,7 +628,22 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => cx.emit(Event::CloseTerminal),
+            AlacTermEvent::Exit => {
+                if let Some(completion_tx) = &self.external_task_completion_tx {
+                    if matches!(event, AlacTermEvent::Exit) {
+                        let successful =
+                            self.foreground_process_info.as_ref().map_or(false, |info| {
+                                matches!(
+                                    info.status,
+                                    LocalProcessStatus::Dead | LocalProcessStatus::Stop
+                                )
+                            });
+                        completion_tx.try_send(successful).ok();
+                    }
+                } else {
+                    cx.emit(Event::CloseTerminal)
+                }
+            }
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }

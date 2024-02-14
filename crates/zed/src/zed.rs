@@ -394,7 +394,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         return;
                     };
                     cx.spawn(|_, _| async move {
-                        let _ = dbg!(handle.await);
+                        let _ = dbg!(handle.completion_rx().clone().next().await);
                     })
                     .detach();
                 });
