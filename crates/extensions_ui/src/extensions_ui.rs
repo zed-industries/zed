@@ -216,6 +216,7 @@ impl ExtensionsPage {
         div().w_full().child(
             v_flex()
                 .w_full()
+                .h(rems(7.))
                 .p_3()
                 .mt_4()
                 .gap_2()
