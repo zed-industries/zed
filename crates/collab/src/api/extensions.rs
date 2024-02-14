@@ -48,8 +48,12 @@ async fn get_extensions(
                 id: extension.external_id,
                 name: extension.name,
                 version: version.version,
-                authors: Vec::new(),
-                repository: "todo!()".into(),
+                authors: version
+                    .authors
+                    .split(',')
+                    .map(|author| author.trim().to_string())
+                    .collect::<Vec<_>>(),
+                repository: version.repository,
                 grammars: None,
                 languages: None,
                 themes: None,
