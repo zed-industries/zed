@@ -54,7 +54,7 @@ impl TestServer {
         Ok(SERVERS
             .lock()
             .get(url)
-            .ok_or_else(|| anyhow!("no server found for url: {}", url))?
+            .ok_or_else(|| anyhow!("no server found for url"))?
             .clone())
     }
 
@@ -172,6 +172,7 @@ impl TestServer {
         //todo!(linux): Remove this once the cross-platform LiveKit implementation is merged
         #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
+
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&room_name)
@@ -431,15 +432,6 @@ struct TestServerRoom {
     video_tracks: Vec<Arc<TestServerVideoTrack>>,
     audio_tracks: Vec<Arc<TestServerAudioTrack>>,
     participant_permissions: HashMap<Sid, proto::ParticipantPermission>,
-}
-
-impl Drop for TestServerRoom {
-    fn drop(&mut self) {
-        for room in self.client_rooms.values() {
-            let mut state = room.0.lock();
-            *state.connection.0.borrow_mut() = ConnectionState::Disconnected;
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -727,15 +719,11 @@ impl LocalTrackPublication {
 
     pub fn is_muted(&self) -> bool {
         if let Some(room) = self.room.upgrade() {
-            if room.is_connected() {
-                room.test_server()
-                    .is_track_muted(&room.token(), &self.sid)
-                    .unwrap_or(true)
-            } else {
-                true
-            }
+            room.test_server()
+                .is_track_muted(&room.token(), &self.sid)
+                .unwrap_or(false)
         } else {
-            true
+            false
         }
     }
 

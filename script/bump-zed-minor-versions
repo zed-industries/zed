@@ -39,10 +39,6 @@ function cleanup {
 trap cleanup EXIT
 
 echo "Checking invariants before taking any actions..."
-if [[ $patch != 0 ]]; then
-  echo "patch version on main should be zero"
-  exit 1
-fi
 if [[ $(cat crates/zed/RELEASE_CHANNEL) != dev && $(cat crates/zed/RELEASE_CHANNEL) != nightly ]]; then
   echo "release channel on main should be dev or nightly"
   exit 1

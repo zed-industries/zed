@@ -189,6 +189,14 @@ impl ThemeRegistry {
         }));
     }
 
+    /// Removes the themes with the given names from the registry.
+    pub fn remove_user_themes(&self, themes_to_remove: &[SharedString]) {
+        self.state
+            .write()
+            .themes
+            .retain(|name, _| !themes_to_remove.contains(name))
+    }
+
     pub fn clear(&mut self) {
         self.state.write().themes.clear();
     }

@@ -15,8 +15,6 @@ use std::sync::{
     Arc,
 };
 
-const TEST_RELEASE_CHANNEL: &'static str = "test";
-
 pub struct TestDb {
     pub db: Option<Arc<Database>>,
     pub connection: Option<sqlx::AnyConnection>,

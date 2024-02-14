@@ -110,12 +110,10 @@ impl Database {
         user_id: UserId,
         connection: ConnectionId,
         live_kit_room: &str,
-        release_channel: &str,
     ) -> Result<proto::Room> {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
                 live_kit_room: ActiveValue::set(live_kit_room.into()),
-                environment: ActiveValue::set(Some(release_channel.to_string())),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -135,7 +133,6 @@ impl Database {
                 ))),
                 participant_index: ActiveValue::set(Some(0)),
                 role: ActiveValue::set(Some(ChannelRole::Admin)),
-                in_call: ActiveValue::set(true),
 
                 id: ActiveValue::NotSet,
                 location_kind: ActiveValue::NotSet,
@@ -188,7 +185,6 @@ impl Database {
                 ))),
                 initial_project_id: ActiveValue::set(initial_project_id),
                 role: ActiveValue::set(Some(called_user_role)),
-                in_call: ActiveValue::set(true),
 
                 id: ActiveValue::NotSet,
                 answering_connection_id: ActiveValue::NotSet,
@@ -304,31 +300,21 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
-        environment: &str,
     ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryChannelIdAndEnvironment {
+            enum QueryChannelId {
                 ChannelId,
-                Environment,
             }
 
-            let (channel_id, release_channel): (Option<ChannelId>, Option<String>) =
-                room::Entity::find()
-                    .select_only()
-                    .column(room::Column::ChannelId)
-                    .column(room::Column::Environment)
-                    .filter(room::Column::Id.eq(room_id))
-                    .into_values::<_, QueryChannelIdAndEnvironment>()
-                    .one(&*tx)
-                    .await?
-                    .ok_or_else(|| anyhow!("no such room"))?;
-
-            if let Some(release_channel) = release_channel {
-                if &release_channel != environment {
-                    Err(anyhow!("must join using the {} release", release_channel))?;
-                }
-            }
+            let channel_id: Option<ChannelId> = room::Entity::find()
+                .select_only()
+                .column(room::Column::ChannelId)
+                .filter(room::Column::Id.eq(room_id))
+                .into_values::<_, QueryChannelId>()
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such room"))?;
 
             if channel_id.is_some() {
                 Err(anyhow!("tried to join channel call directly"))?
@@ -416,7 +402,6 @@ impl Database {
         &self,
         room_id: RoomId,
         user_id: UserId,
-        autojoin: bool,
         connection: ConnectionId,
         role: ChannelRole,
         tx: &DatabaseTransaction,
@@ -440,8 +425,6 @@ impl Database {
             ))),
             participant_index: ActiveValue::Set(Some(participant_index)),
             role: ActiveValue::set(Some(role)),
-            in_call: ActiveValue::set(autojoin),
-
             id: ActiveValue::NotSet,
             location_kind: ActiveValue::NotSet,
             location_project_id: ActiveValue::NotSet,
@@ -1263,7 +1246,6 @@ impl Database {
                         location: Some(proto::ParticipantLocation { variant: location }),
                         participant_index: participant_index as u32,
                         role: db_participant.role.unwrap_or(ChannelRole::Member).into(),
-                        in_call: db_participant.in_call,
                     },
                 );
             } else {

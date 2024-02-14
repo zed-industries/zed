@@ -1,7 +1,4 @@
-use crate::{
-    db::ChannelId,
-    tests::{test_server::join_channel_call, TestServer},
-};
+use crate::{db::ChannelId, tests::TestServer};
 use call::ActiveCall;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
@@ -35,7 +32,7 @@ async fn test_channel_guests(
     cx_a.executor().run_until_parked();
 
     // Client B joins channel A as a guest
-    cx_b.update(|cx| workspace::open_channel(channel_id, client_b.app_state.clone(), None, cx))
+    cx_b.update(|cx| workspace::join_channel(channel_id, client_b.app_state.clone(), None, cx))
         .await
         .unwrap();
 
@@ -75,7 +72,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
         .await;
 
     let project_a = client_a.build_test_project(cx_a).await;
-    cx_a.update(|cx| workspace::open_channel(channel_id, client_a.app_state.clone(), None, cx))
+    cx_a.update(|cx| workspace::join_channel(channel_id, client_a.app_state.clone(), None, cx))
         .await
         .unwrap();
 
@@ -87,12 +84,10 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     cx_a.run_until_parked();
 
     // Client B joins channel A as a guest
-    cx_b.update(|cx| workspace::open_channel(channel_id, client_b.app_state.clone(), None, cx))
+    cx_b.update(|cx| workspace::join_channel(channel_id, client_b.app_state.clone(), None, cx))
         .await
         .unwrap();
     cx_a.run_until_parked();
-
-    join_channel_call(cx_b).await.unwrap();
 
     // client B opens 1.txt as a guest
     let (workspace_b, cx_b) = client_b.active_workspace(cx_b);

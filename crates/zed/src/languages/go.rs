@@ -6,6 +6,7 @@ pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
 use regex::Regex;
+use serde_json::json;
 use smol::{fs, process};
 use std::{
     any::Any,
@@ -168,6 +169,12 @@ impl super::LspAdapter for GoLspAdapter {
                 binary.arguments = vec!["--help".into()];
                 binary
             })
+    }
+
+    fn initialization_options(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "usePlaceholders": true,
+        }))
     }
 
     async fn label_for_completion(

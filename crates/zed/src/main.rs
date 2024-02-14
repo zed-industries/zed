@@ -173,7 +173,13 @@ fn main() {
         );
         assistant::init(cx);
 
-        extension::init(fs.clone(), languages.clone(), ThemeRegistry::global(cx), cx);
+        extension::init(
+            fs.clone(),
+            http.clone(),
+            languages.clone(),
+            ThemeRegistry::global(cx),
+            cx,
+        );
 
         load_user_themes_in_background(fs.clone(), cx);
         #[cfg(target_os = "macos")]
@@ -254,6 +260,7 @@ fn main() {
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
+        extensions_ui::init(cx);
 
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);
@@ -314,7 +321,7 @@ fn main() {
                 cx.spawn(|cx| async move {
                     // ignore errors here, we'll show a generic "not signed in"
                     let _ = authenticate(client, &cx).await;
-                    cx.update(|cx| workspace::open_channel(channel_id, app_state, None, cx))?
+                    cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))?
                         .await?;
                     anyhow::Ok(())
                 })
@@ -369,7 +376,7 @@ fn main() {
                         cx.update(|mut cx| {
                             cx.spawn(|cx| async move {
                                 cx.update(|cx| {
-                                    workspace::open_channel(channel_id, app_state, None, cx)
+                                    workspace::join_channel(channel_id, app_state, None, cx)
                                 })?
                                 .await?;
                                 anyhow::Ok(())
