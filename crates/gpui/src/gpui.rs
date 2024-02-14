@@ -150,6 +150,10 @@ pub use window::*;
 use std::{any::Any, borrow::BorrowMut};
 use taffy::TaffyLayoutEngine;
 
+#[cfg(all(feature = "test-support", not(test), not(feature = "test-support-outside-test")))]
+compile_error!("GPUI Test support enabled in a non-test build");
+
+
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
 pub trait Context {

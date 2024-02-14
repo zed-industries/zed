@@ -8,6 +8,7 @@ publish = false
 license = "Apache-2.0"
 
 [features]
+test-support-outside-test = ["test-support"]
 test-support = [
     "backtrace",
     "dhat",
