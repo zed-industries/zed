@@ -13,6 +13,7 @@ pub struct Model {
     pub published_at: PrimitiveDateTime,
     pub version: String,
     pub authors: String,
+    pub repository: String,
     pub description: String,
     pub download_count: i64,
 }

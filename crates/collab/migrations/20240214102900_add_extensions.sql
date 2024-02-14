@@ -10,9 +10,10 @@ CREATE TABLE IF NOT EXISTS extension_versions (
     id SERIAL PRIMARY KEY,
     extension_id INTEGER REFERENCES extensions(id),
     published_at TIMESTAMP NOT NULL DEFAULT now(),
-    description TEXT NOT NULL,
-    authors TEXT NOT NULL,
     version TEXT NOT NULL,
+    authors TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    description TEXT NOT NULL,
     download_count BIGINT NOT NULL DEFAULT 0
 );
 

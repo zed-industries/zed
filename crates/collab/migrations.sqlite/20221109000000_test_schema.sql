@@ -366,9 +366,10 @@ CREATE TABLE extension_versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     extension_id INTEGER REFERENCES extensions(id),
     published_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    description TEXT NOT NULL,
-    authors TEXT NOT NULL,
     version TEXT NOT NULL,
+    authors TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    description TEXT NOT NULL,
     download_count INTEGER NOT NULL DEFAULT 0
 );
 
