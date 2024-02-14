@@ -22,6 +22,7 @@ members = [
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
+    "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
     "crates/file_finder",
@@ -113,6 +114,7 @@ db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
+extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
@@ -177,6 +179,7 @@ zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-tar = "0.4.2"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ctor = "0.2.6"
@@ -227,7 +230,7 @@ tree-sitter-astro = { git = "https://github.com/virchau13/tree-sitter-astro.git"
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-beancount = { git = "https://github.com/polarmutex/tree-sitter-beancount", rev = "da1bf8c6eb0ae7a97588affde7227630bcd678b6" }
 tree-sitter-c = "0.20.1"
-tree-sitter-clojure = { git = "https://github.com/prcastro/tree-sitter-clojure", branch = "update-ts"}
+tree-sitter-clojure = { git = "https://github.com/prcastro/tree-sitter-clojure", branch = "update-ts" }
 tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-sharp", rev = "dd5e59721a5f8dae34604060833902b882023aaf" }
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
@@ -275,6 +278,8 @@ wasmtime = "16"
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1d8975319c2d5de1bf710e7e21db25b0eee4bc66" }
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
+# Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
+pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fcda0d5259d0acf902aee6de7d2501f2bd6629" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

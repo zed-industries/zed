@@ -96,7 +96,7 @@ objc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 flume = "0.11"
-xcb = { version = "1.3", features = ["as-raw-xcb-connection"] }
+xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr"] }
 wayland-client= { version = "0.31.2" }
 wayland-protocols = { version = "0.31.2", features = ["client"] }
 wayland-backend = { version = "0.3.3", features = ["client_system"] }

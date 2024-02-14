@@ -2396,6 +2396,7 @@ mod tests {
                 .unwrap()
         }
     }
+
     fn init_keymap_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
@@ -2409,6 +2410,7 @@ mod tests {
             app_state
         })
     }
+
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
         let executor = cx.executor();
