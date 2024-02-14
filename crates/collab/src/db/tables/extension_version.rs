@@ -1,6 +1,8 @@
+use sea_orm::entity::prelude::*;
+use time::PrimitiveDateTime;
+
 use crate::db::ExtensionId;
 use crate::db::ExtensionVersionId;
-use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "extension_versions")]
@@ -12,7 +14,7 @@ pub struct Model {
     pub version: String,
     pub authors: String,
     pub description: String,
-    pub download_count: usize,
+    pub download_count: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
