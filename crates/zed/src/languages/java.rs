@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 pub use language::*;
+use log::warn;
 use lsp::LanguageServerBinary;
-use std::{any::Any, path::PathBuf, str};
+use std::{any::Any, path::PathBuf, str, sync::Arc};
 use util::paths::HOME;
 
 pub struct JavaLspAdapter;
@@ -66,5 +67,62 @@ impl LspAdapter for JavaLspAdapter {
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         vec!["java".into()]
+    }
+
+    async fn label_for_completion(
+        &self,
+        completion: &lsp::CompletionItem,
+        language: &Arc<Language>,
+    ) -> Option<CodeLabel> {
+        match completion.kind {
+            Some(
+                lsp::CompletionItemKind::VARIABLE
+                | lsp::CompletionItemKind::CONSTANT
+                | lsp::CompletionItemKind::FIELD,
+            ) => {
+                if let Some((name, detail)) = completion.label.split_once(" : ") {
+                    let text = format!("{detail} {name}");
+                    let source = Rope::from(format!("{} = null;", text).as_str());
+                    let runs = language.highlight_text(&source, 0..text.len());
+
+                    return Some(CodeLabel {
+                        text,
+                        runs,
+                        filter_range: detail.len() + 1..detail.len() + 1 + name.len(),
+                    });
+                }
+            }
+            Some(lsp::CompletionItemKind::METHOD) => {
+                if let Some((name, detail)) = completion.label.split_once(" : ") {
+                    let text = format!("{detail} {name}");
+                    let source = Rope::from(format!("{} {{}}", text).as_str());
+                    let runs = language.highlight_text(&source, 0..text.len());
+
+                    return Some(CodeLabel {
+                        text,
+                        runs,
+                        filter_range: detail.len() + 1..detail.len() + 1 + name.rfind('(').unwrap(),
+                    });
+                }
+            }
+            Some(lsp::CompletionItemKind::CLASS) => {
+                if let Some((name, _detail)) = completion.label.split_once(" - ") {
+                    let source = Rope::from(format!("class {} {{}}", name).as_str());
+                    let runs = language.highlight_text(&source, 6..6 + name.len());
+
+                    return Some(CodeLabel {
+                        text: name.into(),
+                        runs,
+                        filter_range: 0..name.len(),
+                    });
+                }
+            }
+            Some(kind) if kind != lsp::CompletionItemKind::SNIPPET => {
+                warn!("Unimplemented completion: {completion:#?}")
+            }
+            _ => (),
+        }
+
+        None
     }
 }
