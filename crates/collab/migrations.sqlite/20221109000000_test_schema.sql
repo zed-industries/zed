@@ -358,7 +358,7 @@ CREATE TABLE extensions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     external_id TEXT NOT NULL,
-    latest_version INTEGER REFERENCES extension_versions(id),
+    latest_version INTEGER,
     total_download_count INTEGER NOT NULL DEFAULT 0
 );
 
@@ -371,6 +371,8 @@ CREATE TABLE extension_versions (
     version TEXT NOT NULL,
     download_count INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE extensions ADD CONSTRAINT extensions_latest_version_fkey FOREIGN KEY (latest_version) REFERENCES extension_versions (id);
 
 CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
 CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");

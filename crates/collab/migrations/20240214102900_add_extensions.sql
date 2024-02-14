@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS extensions (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     external_id TEXT NOT NULL,
-    latest_version INTEGER REFERENCES extension_versions(id),
+    latest_version INTEGER,
     total_download_count INTEGER NOT NULL DEFAULT 0
 );
 
@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS extension_versions (
     version TEXT NOT NULL,
     download_count INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE extensions ADD CONSTRAINT extensions_latest_version_fkey FOREIGN KEY (latest_version) REFERENCES extension_versions (id);
 
 CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
 CREATE INDEX "trigram_index_extensions_name" ON "extensions" USING GIN(name gin_trgm_ops);
