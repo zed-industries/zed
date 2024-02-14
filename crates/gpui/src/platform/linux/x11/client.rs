@@ -41,6 +41,11 @@ impl X11Client {
             }),
         }
     }
+
+    fn get_window(&self, win: x::Window) -> Rc<X11WindowState> {
+        let state = self.state.lock();
+        Rc::clone(&state.windows[&win])
+    }
 }
 
 impl Client for X11Client {
@@ -58,18 +63,14 @@ impl Client for X11Client {
                             // window "x" button clicked by user, we gracefully exit
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
-                            let mut state = self.state.lock();
+                            let state = self.state.lock();
                             self.platform_inner.state.lock().quit_requested |=
                                 state.windows.is_empty();
                         }
                     }
                 }
                 xcb::Event::X(x::Event::Expose(ev)) => {
-                    let window = {
-                        let state = self.state.lock();
-                        Rc::clone(&state.windows[&ev.window()])
-                    };
-                    window.expose();
+                    self.get_window(ev.window()).refresh();
                 }
                 xcb::Event::X(x::Event::ConfigureNotify(ev)) => {
                     let bounds = Bounds {
@@ -82,12 +83,14 @@ impl Client for X11Client {
                             height: ev.height().into(),
                         },
                     };
-                    let window = {
-                        let state = self.state.lock();
-                        Rc::clone(&state.windows[&ev.window()])
-                    };
-                    window.configure(bounds)
+                    self.get_window(ev.window()).configure(bounds)
                 }
+                xcb::Event::Present(xcb::present::Event::CompleteNotify(ev)) => {
+                    let window = self.get_window(ev.window());
+                    window.refresh();
+                    window.request_refresh();
+                }
+                xcb::Event::Present(xcb::present::Event::IdleNotify(_ev)) => {}
                 _ => {}
             }
 
@@ -117,7 +120,7 @@ impl Client for X11Client {
 
     fn open_window(
         &self,
-        handle: AnyWindowHandle,
+        _handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
         let x_window = self.xcb_connection.generate_id();
@@ -129,6 +132,7 @@ impl Client for X11Client {
             x_window,
             &self.atoms,
         ));
+        window_ptr.request_refresh();
 
         self.state
             .lock()

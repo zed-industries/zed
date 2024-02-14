@@ -61,6 +61,7 @@
 
 #![deny(missing_docs)]
 #![allow(clippy::type_complexity)]
+#![allow(clippy::collapsible_else_if)]
 
 #[macro_use]
 mod action;

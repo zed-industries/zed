@@ -96,7 +96,7 @@ objc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 flume = "0.11"
-xcb = { version = "1.3", features = ["as-raw-xcb-connection"] }
+xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr"] }
 as-raw-xcb-connection = "1"
 #TODO: use these on all platforms
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "c4f951a88b345724cb952e920ad30e39851f7760" }

@@ -111,6 +111,9 @@ impl App {
     /// Builds an app with the given asset source.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        log::info!("GPUI was compiled in test mode");
+
         Self(AppContext::new(
             current_platform(),
             Arc::new(()),
@@ -676,7 +679,6 @@ impl AppContext {
                     self.update_window(window, |_, cx| cx.draw()).unwrap();
                 }
 
-                #[allow(clippy::collapsible_else_if)]
                 if self.pending_effects.is_empty() {
                     break;
                 }
