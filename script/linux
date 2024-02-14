@@ -38,7 +38,7 @@ if [[ -n $pacman ]]; then
     fontconfig
     vulkan-validation-layers
   )
-  $maysudo "$pacman" -S --noconfirm "${deps[@]}"
+  $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
 fi
 
