@@ -1,8 +1,8 @@
 //! Defines baseline interface of Runnables in Zed.
 // #![deny(missing_docs)]
 pub mod static_runnable_file;
-pub mod static_runner;
-pub mod static_source;
+mod static_runner;
+mod static_source;
 
 use anyhow::{Context, Result};
 use async_process::{ChildStderr, ChildStdout, ExitStatus};
@@ -15,6 +15,7 @@ use gpui::{AppContext, AsyncAppContext, EntityId, Model, ModelContext, Task, Wea
 use parking_lot::Mutex;
 use smol::io::BufReader;
 pub use static_runner::StaticRunner;
+pub use static_source::{StaticSource, TrackedFile};
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -153,6 +154,10 @@ pub trait Runnable {
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
+/// [`Source`] produces runnables that can be scheduled.
+///
+/// Implementations of this trait could be e.g. [`StaticSource`] that parses tasks from a .json files and provides process templates to be spawned;
+/// another one could be a language server providing lenses with tests or build server listing all targets for a given project.
 pub trait Source: Any {
     fn as_any(&mut self) -> &mut dyn Any;
     fn runnables_for_path(

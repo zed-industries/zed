@@ -8,6 +8,7 @@ use async_process::{Command, Stdio};
 use futures::FutureExt;
 use gpui::AsyncAppContext;
 
+/// [`StaticRunner`] is a [`Runnable`] defined in .json file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StaticRunner {
     runnable: super::static_runnable_file::Definition,

@@ -103,10 +103,7 @@ impl RunnablesModal {
     }
 }
 impl Render for RunnablesModal {
-    fn render(
-        &mut self,
-        cx: &mut ui::prelude::ViewContext<Self>,
-    ) -> impl gpui::prelude::IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
         v_flex()
             .w(rems(20.))
             .child(self.picker.clone())
@@ -137,11 +134,7 @@ impl PickerDelegate for RunnablesModalDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        cx: &mut ui::prelude::ViewContext<picker::Picker<Self>>,
-    ) {
+    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<picker::Picker<Self>>) {
         self.selected_index = ix;
     }
 
@@ -248,7 +241,7 @@ impl PickerDelegate for RunnablesModalDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ui::prelude::ViewContext<picker::Picker<Self>>,
+        _cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         //let runnable = self.candidates[target_index].metadata();

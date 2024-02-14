@@ -171,12 +171,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 app_state.fs.clone(),
                 paths::RUNNABLES.clone(),
             );
-            let tracked_file = runnable::static_source::TrackedFile::new(
-                RunnableProvider::default(),
-                runnables_file_rx,
-                cx,
-            );
-            let source = runnable::static_source::StaticSource::new(tracked_file, cx);
+            let tracked_file =
+                runnable::TrackedFile::new(RunnableProvider::default(), runnables_file_rx, cx);
+            let source = runnable::StaticSource::new(tracked_file, cx);
             project.update(cx, |project, cx| {
                 project
                     .runnable_inventory()

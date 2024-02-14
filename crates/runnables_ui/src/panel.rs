@@ -244,7 +244,7 @@ impl Panel for RunnablesPanel {
 
 impl Render for RunnablesPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut runnables: Vec<_> = self
+        let runnables: Vec<_> = self
             .inventory
             .update(cx, |this, cx| this.list_runnables(&PathBuf::new(), cx));
 

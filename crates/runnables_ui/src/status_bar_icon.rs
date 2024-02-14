@@ -58,7 +58,7 @@ impl StatusIconTracker {
                         new_runnable = rx.next() => {
 
                             if let Some(new_runnable) = new_runnable {
-                                this.update(&mut cx, |this: &mut Self, cx| {
+                                this.update(&mut cx, |this: &mut Self, _cx| {
                                     this.current_status.take();
                                 }).ok();
                                 futures.push(new_runnable);

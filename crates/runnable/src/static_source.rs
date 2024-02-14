@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use futures::StreamExt;
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
@@ -23,7 +20,7 @@ pub struct StaticSource {
 }
 
 /// A Wrapper around deserializable T that keeps track of it's contents
-/// via a provided channel. Once T value changes, the observers of TrackedFile are
+/// via a provided channel. Once T value changes, the observers of [`TrackedFile`] are
 /// notified.
 pub struct TrackedFile<T> {
     parsed_contents: T,
