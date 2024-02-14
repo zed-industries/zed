@@ -201,10 +201,15 @@ impl PickerDelegate for RunnablesModalDelegate {
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
+        let Some(current_match) = self.matches.get(current_match_index) else {
+            return;
+        };
+
+        let ix = current_match.candidate_id;
         let Some(cwd) = self.runnable_cwd(cx).log_err() else {
             return;
         };
-        let ix = self.matches[current_match_index].candidate_id;
+
         if let Some(handle) = self.candidates[ix].schedule(cwd, cx).log_err() {
             if let Some(output) = handle.output.as_ref() {
                 self.workspace
