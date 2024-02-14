@@ -305,7 +305,7 @@ where
 
         let output_line = String::from_utf8_lossy(&buffer);
         capture.lock().push_str(&output_line);
-        output_tx.unbounded_send(output_line.to_string()).ok();
+        output_tx.unbounded_send(output_line.into_owned()).ok();
 
         // Don't starve the main thread when receiving lots of messages at once.
         smol::future::yield_now().await;
