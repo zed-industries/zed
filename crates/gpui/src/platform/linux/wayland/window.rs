@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[derive(Default)]
-struct Callbacks {
+pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> bool>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
