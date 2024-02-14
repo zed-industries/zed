@@ -257,10 +257,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         },
     );
 
-    store
-        .update(cx, |store, cx| store.reload(cx))
-        .await
-        .unwrap();
+    store.update(cx, |store, cx| store.reload(cx));
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {
@@ -331,13 +328,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(fs.metadata_call_count(), prev_fs_metadata_call_count + 2);
     });
 
-    store
-        .update(cx, |store, cx| {
-            store.uninstall_extension("zed-ruby".into(), cx)
-        })
-        .await
-        .unwrap();
+    store.update(cx, |store, cx| {
+        store.uninstall_extension("zed-ruby".into(), cx)
+    });
 
+    cx.executor().run_until_parked();
     expected_manifest.extensions.remove("zed-ruby");
     expected_manifest.languages.remove("Ruby");
     expected_manifest.languages.remove("ERB");
