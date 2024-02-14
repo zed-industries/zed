@@ -138,8 +138,10 @@ impl WaylandWindowState {
 
     pub fn update(&self) {
         let mut cb = self.callbacks.lock();
-        if let Some(ref mut fun) = cb.request_frame {
+        if let Some(mut fun) = cb.request_frame.take() {
+            drop(cb);
             fun();
+            self.callbacks.lock().request_frame = Some(fun);
         }
     }
 
