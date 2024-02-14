@@ -36,7 +36,6 @@ function uploadDsym
   REGION="nyc3"
   file_to_upload="$1"
   file_name="$2"
-  space_path="nightly"
   date=$(date +"%a, %d %b %Y %T %z")
   acl="x-amz-acl:public-read"
   content_type="application/octet-stream"
@@ -51,7 +50,7 @@ function uploadDsym
     -H "$storage_type" \
     -H "$acl" \
     -H "Authorization: AWS ${DIGITALOCEAN_SPACES_ACCESS_KEY}:$signature" \
-    "https://${SPACE}.${REGION}.digitaloceanspaces.com/${space_path}/${file_name}"
+    "https://${SPACE}.${REGION}.digitaloceanspaces.com/${file_name}"
 }
 
 while getopts 'dlfoh' flag
@@ -142,8 +141,10 @@ if [ "$local_arch" = false ]; then
     if [ "$channel" == "nightly" ]; then
         version="$version-$(git rev-parse --short HEAD)"
     fi
-    uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf "$channel/Zed-$version-aarch64-apple-darwin.dwarf"
-    uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf "$channel/Zed-$version-x86_64-apple-darwin.dwarf"
+    gzip target/aarch64-apple-darwin/release/Zed.dwarf
+    gzip target/x86_64-apple-darwin/release/Zed.dwarf
+    uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-aarch64-apple-darwin.dwarf.gz"
+    uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-x86_64-apple-darwin.dwarf.gz"
 
     echo "Creating fat binaries"
     lipo \
