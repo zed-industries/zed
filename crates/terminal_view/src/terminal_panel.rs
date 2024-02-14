@@ -2,12 +2,14 @@ use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
+use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
     FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
+use parking_lot::Mutex;
 use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
@@ -76,7 +78,7 @@ impl TerminalPanel {
                             .icon_size(IconSize::Small)
                             .on_click(move |_, cx| {
                                 terminal_panel
-                                    .update(cx, |panel, cx| panel.add_terminal(None, cx))
+                                    .update(cx, |panel, cx| panel.add_terminal(None, None, cx))
                                     .log_err();
                             })
                             .tooltip(|cx| Tooltip::text("New Terminal", cx)),
@@ -267,7 +269,7 @@ impl TerminalPanel {
         };
 
         this.update(cx, |this, cx| {
-            this.add_terminal(Some(action.working_directory.clone()), cx)
+            this.add_terminal(Some(action.working_directory.clone()), None, cx)
         })
     }
 
@@ -279,8 +281,14 @@ impl TerminalPanel {
         let Some(source) = action.source.as_ref() else {
             return;
         };
-        // TODO kb init the terminal properly before this
-        workspace.focus_panel::<Self>(cx);
+        // TODO kb this will add an extra initial terminal (see `set_active`) if focuses the terminal panel for the first time
+        let Some(terminal_panel) = workspace.focus_panel::<Self>(cx) else {
+            return;
+        };
+
+        terminal_panel.update(cx, |terminal_panel, cx| {
+            terminal_panel.add_terminal(None, Some(Arc::clone(source)), cx)
+        })
     }
 
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -293,10 +301,15 @@ impl TerminalPanel {
             return;
         };
 
-        this.update(cx, |this, cx| this.add_terminal(None, cx))
+        this.update(cx, |this, cx| this.add_terminal(None, None, cx))
     }
 
-    fn add_terminal(&mut self, working_directory: Option<PathBuf>, cx: &mut ViewContext<Self>) {
+    fn add_terminal(
+        &mut self,
+        working_directory: Option<PathBuf>,
+        streaming_source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let workspace = self.workspace.clone();
         cx.spawn(|this, mut cx| async move {
             let pane = this.update(&mut cx, |this, _| this.pane.clone())?;
@@ -312,7 +325,7 @@ impl TerminalPanel {
                 let window = cx.window_handle();
                 if let Some(terminal) = workspace.project().update(cx, |project, cx| {
                     project
-                        .create_terminal(working_directory, window, cx)
+                        .create_terminal(working_directory, streaming_source, window, cx)
                         .log_err()
                 }) {
                     let terminal = Box::new(cx.new_view(|cx| {
@@ -464,7 +477,7 @@ impl Panel for TerminalPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active && self.pane.read(cx).items_len() == 0 {
-            self.add_terminal(None, cx)
+            self.add_terminal(None, None, cx)
         }
     }
 

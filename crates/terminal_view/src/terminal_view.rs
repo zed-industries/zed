@@ -118,7 +118,7 @@ impl TerminalView {
         let terminal = workspace
             .project()
             .update(cx, |project, cx| {
-                project.create_terminal(working_directory, window, cx)
+                project.create_terminal(working_directory, None, window, cx)
             })
             .notify_err(workspace, cx);
 
@@ -845,7 +845,7 @@ impl Item for TerminalView {
                 });
 
             let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(cwd, window, cx)
+                project.create_terminal(cwd, None, window, cx)
             })??;
             pane.update(&mut cx, |_, cx| {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))

@@ -31,6 +31,7 @@ use mappings::mouse::{
 };
 
 use collections::{HashMap, VecDeque};
+use parking_lot::Mutex;
 use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -284,6 +285,7 @@ pub struct TerminalBuilder {
 
 impl TerminalBuilder {
     pub fn new(
+        streaming_source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
         working_directory: Option<PathBuf>,
         shell: Shell,
         env: HashMap<String, String>,
@@ -322,7 +324,7 @@ impl TerminalBuilder {
 
         let config = Config {
             scrolling_history: 10000,
-            ..Default::default()
+            ..Config::default()
         };
 
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context

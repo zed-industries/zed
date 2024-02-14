@@ -1,7 +1,12 @@
 use crate::Project;
+use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
+use parking_lot::Mutex;
 use settings::Settings;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettingsContent},
     Terminal, TerminalBuilder,
@@ -18,63 +23,65 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
+        // TODO kb disable user input based on its presence, stream its contents into the terminal
+        streaming_source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
-        if self.is_remote() {
-            return Err(anyhow::anyhow!(
-                "creating terminals as a guest is not supported yet"
-            ));
-        } else {
-            let settings = TerminalSettings::get_global(cx);
-            let python_settings = settings.detect_venv.clone();
-            let shell = settings.shell.clone();
+        anyhow::ensure!(
+            !self.is_remote(),
+            "creating terminals as a guest is not supported yet"
+        );
 
-            let terminal = TerminalBuilder::new(
-                working_directory.clone(),
-                shell.clone(),
-                settings.env.clone(),
-                Some(settings.blinking.clone()),
-                settings.alternate_scroll,
-                window,
-            )
-            .map(|builder| {
-                let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
+        let settings = TerminalSettings::get_global(cx);
+        let python_settings = settings.detect_venv.clone();
+        let shell = settings.shell.clone();
 
-                self.terminals
-                    .local_handles
-                    .push(terminal_handle.downgrade());
+        let terminal = TerminalBuilder::new(
+            streaming_source,
+            working_directory.clone(),
+            shell.clone(),
+            settings.env.clone(),
+            Some(settings.blinking.clone()),
+            settings.alternate_scroll,
+            window,
+        )
+        .map(|builder| {
+            let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
 
-                let id = terminal_handle.entity_id();
-                cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
-                    let handles = &mut project.terminals.local_handles;
+            self.terminals
+                .local_handles
+                .push(terminal_handle.downgrade());
 
-                    if let Some(index) = handles
-                        .iter()
-                        .position(|terminal| terminal.entity_id() == id)
-                    {
-                        handles.remove(index);
-                        cx.notify();
-                    }
-                })
-                .detach();
+            let id = terminal_handle.entity_id();
+            cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                let handles = &mut project.terminals.local_handles;
 
-                if let Some(python_settings) = &python_settings.as_option() {
-                    let activate_command = Project::get_activate_command(python_settings);
-                    let activate_script_path =
-                        self.find_activate_script_path(python_settings, working_directory);
-                    self.activate_python_virtual_environment(
-                        activate_command,
-                        activate_script_path,
-                        &terminal_handle,
-                        cx,
-                    );
+                if let Some(index) = handles
+                    .iter()
+                    .position(|terminal| terminal.entity_id() == id)
+                {
+                    handles.remove(index);
+                    cx.notify();
                 }
-                terminal_handle
-            });
+            })
+            .detach();
 
-            terminal
-        }
+            if let Some(python_settings) = &python_settings.as_option() {
+                let activate_command = Project::get_activate_command(python_settings);
+                let activate_script_path =
+                    self.find_activate_script_path(python_settings, working_directory);
+                self.activate_python_virtual_environment(
+                    activate_command,
+                    activate_script_path,
+                    &terminal_handle,
+                    cx,
+                );
+            }
+            terminal_handle
+        });
+
+        terminal
     }
 
     pub fn find_activate_script_path(
