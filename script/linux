@@ -11,6 +11,7 @@ if [[ -n $apt ]]; then
     libasound2-dev
     libfontconfig-dev
     vulkan-validationlayers*
+    libwayland-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -24,6 +25,7 @@ if [[ -n $dnf ]]; then
     alsa-lib-devel
     fontconfig-devel
     vulkan-validation-layers
+    wayland-devel
   )
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
@@ -37,6 +39,7 @@ if [[ -n $pacman ]]; then
     alsa-lib
     fontconfig
     vulkan-validation-layers
+    wayland
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
