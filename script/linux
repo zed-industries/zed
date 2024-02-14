@@ -41,7 +41,7 @@ if [[ -n $pacman ]]; then
     vulkan-validation-layers
     wayland
   )
-  $maysudo "$pacman" -S --noconfirm "${deps[@]}"
+  $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
 fi
 

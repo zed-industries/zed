@@ -50,7 +50,6 @@ pub struct ExcerptId(usize);
 pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
     buffers: RefCell<HashMap<BufferId, BufferState>>,
-    next_excerpt_id: usize,
     subscriptions: Topic,
     singleton: bool,
     replica_id: ReplicaId,
@@ -232,7 +231,6 @@ impl MultiBuffer {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
-            next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: false,
             capability,
@@ -272,7 +270,6 @@ impl MultiBuffer {
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
             buffers: RefCell::new(buffers),
-            next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: self.singleton,
             capability: self.capability,
@@ -993,7 +990,12 @@ impl MultiBuffer {
         O: text::ToOffset,
     {
         let mut ids = Vec::new();
-        let mut next_excerpt_id = self.next_excerpt_id;
+        let mut next_excerpt_id =
+            if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
+                last_entry.id.0 + 1
+            } else {
+                1
+            };
         self.insert_excerpts_with_ids_after(
             prev_excerpt_id,
             buffer,
@@ -1079,9 +1081,6 @@ impl MultiBuffer {
                         ..buffer_snapshot.anchor_after(&primary.end)
                 }),
             };
-            if id.0 >= self.next_excerpt_id {
-                self.next_excerpt_id = id.0 + 1;
-            }
             excerpts.push((id, range.clone()));
             let excerpt = Excerpt::new(
                 id,
@@ -1093,6 +1092,10 @@ impl MultiBuffer {
             );
             new_excerpts.push(excerpt, &());
             prev_locator = locator.clone();
+
+            if let Some(last_mapping_entry) = new_excerpt_ids.last() {
+                assert!(id > last_mapping_entry.id, "excerpt ids must be increasing");
+            }
             new_excerpt_ids.push(ExcerptIdMapping { id, locator }, &());
         }
 
