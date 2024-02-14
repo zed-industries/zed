@@ -505,5 +505,33 @@
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
     }
+  },
+  {
+    // Directory expansion
+    "context": "ProjectPanel && not_editing",
+    "bindings": {
+      "escape": "project_panel::ToggleFocus",
+      "enter": "project_panel::Open",
+      "o": "project_panel::Open",
+      "t": "project_panel::Open",
+      "v": "project_panel::Open",
+      "d": "project_panel::NewDirectory",
+      "%": "project_panel::NewFile",
+      "shift-r": "project_panel::Rename",
+      "m m": "project_panel::Cut",
+      "m c": "project_panel::Copy",
+      "m t": "project_panel::Paste",
+      "x": "project_panel::RevealInFinder",
+      "l": "project_panel::ExpandSelectedEntry",
+      "h": "project_panel::CollapseSelectedEntry",
+      // Move up and down
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrev",
+      "shift-d": "project_panel::Delete",
+      "/": "project_panel::NewSearchInDirectory",
+      // zed specific
+      "q p": "project_panel::CopyPath",
+      "q r": "project_panel::CopyRelativePath"
+    }
   }
 ]

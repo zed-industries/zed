@@ -233,6 +233,23 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
         "sor" | "sor " | "sort" | "sort " => ("sort", SortLinesCaseSensitive.boxed_clone()),
         "sor i" | "sort i" => ("sort i", SortLinesCaseInsensitive.boxed_clone()),
 
+        // Explore, etc.
+        "E" | "Ex" | "Exp" | "Expl" | "Explo" | "Explor" | "Explore" => {
+            ("Explore", project_panel::ToggleFocus.boxed_clone())
+        }
+        "H" | "He" | "Hex" | "Hexp" | "Hexpl" | "Hexplo" | "Hexplor" | "Hexplore" => {
+            ("Hexplore", project_panel::ToggleFocus.boxed_clone())
+        }
+        "L" | "Le" | "Lex" | "Lexp" | "Lexpl" | "Lexplo" | "Lexplor" | "Lexplore" => {
+            ("Lexplore", project_panel::ToggleFocus.boxed_clone())
+        }
+        "S" | "Se" | "Sex" | "Sexp" | "Sexpl" | "Sexplo" | "Sexplor" | "Sexplore" => {
+            ("Sexplore", project_panel::ToggleFocus.boxed_clone())
+        }
+        "Ve" | "Vex" | "Vexp" | "Vexpl" | "Vexplo" | "Vexplor" | "Vexplore" => {
+            ("Vexplore", project_panel::ToggleFocus.boxed_clone())
+        }
+
         // goto (other ranges handled under _ => )
         "$" => ("$", EndOfDocument.boxed_clone()),
         "%" => ("%", EndOfDocument.boxed_clone()),
