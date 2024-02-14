@@ -638,10 +638,18 @@ fn start_background_scan_tasks(
         let background = cx.background_executor().clone();
         async move {
             let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
+            let case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
+                log::error!(
+                    "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
+                );
+                true
+            });
+
             BackgroundScanner::new(
                 snapshot,
                 next_entry_id,
                 fs,
+                case_sensitive,
                 scan_states_tx,
                 background,
                 scan_requests_rx,
@@ -3229,6 +3237,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 struct BackgroundScanner {
     state: Mutex<BackgroundScannerState>,
     fs: Arc<dyn Fs>,
+    fs_case_sensitive: bool,
     status_updates_tx: UnboundedSender<ScanState>,
     executor: BackgroundExecutor,
     scan_requests_rx: channel::Receiver<ScanRequest>,
@@ -3249,6 +3258,7 @@ impl BackgroundScanner {
         snapshot: LocalSnapshot,
         next_entry_id: Arc<AtomicUsize>,
         fs: Arc<dyn Fs>,
+        fs_case_sensitive: bool,
         status_updates_tx: UnboundedSender<ScanState>,
         executor: BackgroundExecutor,
         scan_requests_rx: channel::Receiver<ScanRequest>,
@@ -3256,6 +3266,7 @@ impl BackgroundScanner {
     ) -> Self {
         Self {
             fs,
+            fs_case_sensitive,
             status_updates_tx,
             executor,
             scan_requests_rx,
@@ -3884,6 +3895,21 @@ impl BackgroundScanner {
                     let metadata = self.fs.metadata(abs_path).await?;
                     if let Some(metadata) = metadata {
                         let canonical_path = self.fs.canonicalize(abs_path).await?;
+
+                        // If we're on a case-insensitive filesystem (default on macOS), we want
+                        // to only ignore metadata for non-symlink files if their absolute-path matches
+                        // the canonical-path.
+                        // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
+                        // and we want to ignore the metadata for the old path (`test.txt`) so it's
+                        // treated as removed.
+                        if !self.fs_case_sensitive && !metadata.is_symlink {
+                            let canonical_file_name = canonical_path.file_name();
+                            let file_name = abs_path.file_name();
+                            if canonical_file_name != file_name {
+                                return Ok(None);
+                            }
+                        }
+
                         anyhow::Ok(Some((metadata, canonical_path)))
                     } else {
                         Ok(None)

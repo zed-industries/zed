@@ -444,6 +444,65 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[gpui::test]
+async fn test_renaming_case_only(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    init_test(cx);
+
+    const OLD_NAME: &str = "aaa.rs";
+    const NEW_NAME: &str = "AAA.rs";
+
+    let fs = Arc::new(RealFs);
+    let temp_root = temp_tree(json!({
+        OLD_NAME: "",
+    }));
+
+    let tree = Worktree::local(
+        build_client(cx),
+        temp_root.path(),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![Path::new(""), Path::new(OLD_NAME)]
+        );
+    });
+
+    fs.rename(
+        &temp_root.path().join(OLD_NAME),
+        &temp_root.path().join(NEW_NAME),
+        fs::RenameOptions {
+            overwrite: true,
+            ignore_if_exists: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![Path::new(""), Path::new(NEW_NAME)]
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     init_test(cx);
