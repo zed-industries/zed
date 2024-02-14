@@ -4548,6 +4548,7 @@ dependencies = [
  "postage",
  "release_channel",
  "serde",
+ "serde-aux",
  "serde_derive",
  "serde_json",
  "smol",
@@ -7505,6 +7506,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "870026e60fa08c69f064aa766c10f10b1d62db9ccd4d0abb206472bee0ce3b32"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde-aux"
+version = "4.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a86348501c129f3ad50c2f4635a01971f76974cd8a3f335988a0f1581c082765"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

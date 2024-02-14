@@ -9,6 +9,9 @@ use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_aux::field_attributes::{
+    deserialize_number_from_string, deserialize_option_number_from_string,
+};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
@@ -107,6 +110,7 @@ pub struct Request<'a, T> {
 #[derive(Serialize, Deserialize)]
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
+    #[serde(deserialize_with = "deserialize_number_from_string")]
     id: usize,
     #[serde(default)]
     error: Option<Error>,
@@ -139,7 +143,7 @@ struct Notification<'a, T> {
 /// Language server RPC notification message before it is deserialized into a concrete type.
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_option_number_from_string")]
     id: Option<usize>,
     #[serde(borrow)]
     method: &'a str,
