@@ -1019,6 +1019,10 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn request_draw(&self) {
+        //TODO: make it so we produce a frame on the next refresh cycle
+    }
+
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
         this.renderer.draw(scene);

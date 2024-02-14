@@ -522,6 +522,7 @@ impl<'a> WindowContext<'a> {
         if !self.window.drawing {
             self.window.refreshing = true;
             self.window.dirty.set(true);
+            self.window.platform_window.request_draw();
         }
     }
 
@@ -2054,6 +2055,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
         if !self.window.drawing {
             self.window_cx.window.dirty.set(true);
+            self.window.platform_window.request_draw();
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,
             });

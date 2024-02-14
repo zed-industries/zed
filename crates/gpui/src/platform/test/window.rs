@@ -282,6 +282,7 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
+    fn request_draw(&self) {}
     fn draw(&self, _scene: &crate::Scene) {}
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
