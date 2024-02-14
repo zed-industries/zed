@@ -7660,8 +7660,9 @@ impl Editor {
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
-            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
+            project.prepare_rename(cursor_buffer.clone(), cursor_buffer_offset, cx)
         });
+        drop(snapshot);
 
         Some(cx.spawn(|this, mut cx| async move {
             let rename_range = if let Some(range) = prepare_rename.await? {
@@ -7681,11 +7682,12 @@ impl Editor {
                 })?
             };
             if let Some(rename_range) = rename_range {
-                let rename_buffer_range = rename_range.to_offset(&snapshot);
-                let cursor_offset_in_rename_range =
-                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-
                 this.update(&mut cx, |this, cx| {
+                    let snapshot = cursor_buffer.read(cx).snapshot();
+                    let rename_buffer_range = rename_range.to_offset(&snapshot);
+                    let cursor_offset_in_rename_range =
+                        cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+
                     this.take_rename(false, cx);
                     let buffer = this.buffer.read(cx).read(cx);
                     let cursor_offset = selection.head().to_offset(&buffer);
