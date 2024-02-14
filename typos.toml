@@ -22,5 +22,6 @@ extend-ignore-re = [
     ":ba\\|z",
     # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
     "ADD COLUMN enviroment TEXT",
+    "ALTER TABLE rooms DROP COLUMN enviroment;",
 ]
 check-filename = true
