@@ -185,13 +185,13 @@ pub(crate) struct WaylandWindow(pub(crate) Arc<WaylandWindowState>);
 
 impl HasWindowHandle for WaylandWindow {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        todo!()
+        unimplemented!()
     }
 }
 
 impl HasDisplayHandle for WaylandWindow {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
-        todo!()
+        unimplemented!()
     }
 }
 

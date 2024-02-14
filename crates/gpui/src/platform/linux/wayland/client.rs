@@ -89,7 +89,7 @@ impl Client for WaylandClient {
     }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        todo!()
+        unimplemented!()
     }
 
     fn open_window(
