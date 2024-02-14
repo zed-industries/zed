@@ -3,9 +3,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{Extension, ExtensionStatus, ExtensionStore};
 use fs::Fs;
 use gpui::{
-    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
-    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
+    FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
+    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
+    WhiteSpace, WindowContext,
 };
 use settings::Settings;
 use std::time::Duration;
@@ -338,73 +339,46 @@ impl ExtensionsPage {
 impl Render for ExtensionsPage {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            // .size_full()
-            .w_full()
-            .h(px(500.))
+            .size_full()
+            .p_4()
+            .gap_4()
             .bg(cx.theme().colors().editor_background)
-            .overflow_y_hidden()
-            .max_h(px(500.))
-            .map(|this| {
+            .child(
+                h_flex()
+                    .w_full()
+                    .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+            )
+            .child(h_flex().w_56().child(self.render_search(cx)))
+            .child(v_flex().size_full().overflow_y_hidden().map(|this| {
                 if self.extensions_entries.is_empty() {
-                    this.child(div().child(Label::new("Loading...")))
-                } else {
-                    this.child(
-                        uniform_list::<_, Div, _>(
-                            cx.view().clone(),
-                            "entries",
-                            self.extensions_entries.len(),
-                            Self::render_extensions,
-                        )
-                        // .size_full()
-                        .w_full()
-                        .h(px(500.))
-                        .track_scroll(self.list.clone()),
-                    )
+                    return this.child(Label::new("No extensions."));
                 }
-            })
 
-        // .child(
-
-        //     uniform_list::<_, Div, _>(
-        //         cx.view().clone(),
-        //         "entries",
-        //         self.extensions_entries.len(),
-        //         Self::render_extensions,
-        //     )
-        //     // .size_full()
-        //     .w_full()
-        //     .h(px(500.))
-        //     .track_scroll(self.list.clone()),
-        // )
-        // .child(
-        //     v_flex()
-        //         .full()
-        //         .p_4()
-        //         .child(
-        //             h_flex()
-        //                 .w_full()
-        //                 .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
-        //         )
-        //         .child(h_flex().w_56().my_4().child(self.render_search(cx)))
-        //         .child(
-        //             h_flex()
-        //                 .flex_col()
-        //                 .items_start()
-        //                 .full()
-        //                 .overflow_y_hidden()
-        //                 .max_h(px(500.))
-        //                 .child(
-        //                     uniform_list::<_, Div, _>(
-        //                         cx.view().clone(),
-        //                         "entries",
-        //                         self.extensions_entries.len(),
-        //                         Self::render_extensions,
-        //                     )
-        //                     .size_full()
-        //                     .track_scroll(self.list.clone()),
-        //                 ),
-        //         ),
-        // )
+                this.child(
+                    canvas({
+                        let view = cx.view().clone();
+                        let scroll_handle = self.list.clone();
+                        let item_count = self.extensions_entries.len();
+                        move |bounds, cx| {
+                            uniform_list::<_, Div, _>(
+                                view,
+                                "entries",
+                                item_count,
+                                Self::render_extensions,
+                            )
+                            .size_full()
+                            .track_scroll(scroll_handle)
+                            .into_any_element()
+                            .draw(
+                                bounds.origin,
+                                bounds.size.map(AvailableSpace::Definite),
+                                cx,
+                            )
+                        }
+                    })
+                    .size_full(),
+                )
+            }))
     }
 }
 
