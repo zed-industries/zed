@@ -17,8 +17,6 @@ CREATE TABLE IF NOT EXISTS extension_versions (
 );
 
 CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
+CREATE INDEX "trigram_index_extensions_name" ON "extensions" USING GIN(name gin_trgm_ops);
 CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");
-CREATE INDEX "index_extensions_name" ON "extensions" ("name");
 CREATE UNIQUE INDEX "index_extension_versions_extension_id_version" ON "extension_versions" ("extension_id", "version");
-
-CREATE INDEX trigram_index_extensions_on_name ON extensions USING GIN(name gin_trgm_ops);
