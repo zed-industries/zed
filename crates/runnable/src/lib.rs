@@ -10,7 +10,7 @@ use async_process::ExitStatus;
 use futures::stream::AbortHandle;
 pub use futures::stream::Aborted as RunnableTerminated;
 use gpui::{AppContext, EntityId, Model, ModelContext, WeakModel};
-pub use handle::{Handle, PendingOutput};
+pub use handle::{Handle, NewLineAvailable, PendingOutput};
 pub use static_runner::StaticRunner;
 pub use static_source::{StaticSource, TrackedFile};
 use std::any::Any;
@@ -23,14 +23,14 @@ use util::ResultExt;
 pub struct ExecutionResult {
     /// Status of the runnable. Should be `Ok` if the runnable launch succeeded, `Err` otherwise.
     pub status: Result<ExitStatus, Arc<anyhow::Error>>,
-    pub output: Option<PendingOutput>,
+    pub output: Option<Model<PendingOutput>>,
 }
 
 /// Represents a short lived recipe of a runnable, whose main purpose
 /// is to get spawned.
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(&self, cwd: Option<PathBuf>, cx: gpui::AsyncAppContext) -> Result<Handle>;
+    fn exec(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Result<Handle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
@@ -78,7 +78,7 @@ impl Token {
         let mut spawned_first_time = false;
         let ret = self.state.update(cx, |this, cx| match this {
             RunState::NotScheduled(runnable) => {
-                let handle = runnable.exec(cwd, cx.to_async())?;
+                let handle = runnable.exec(cwd, cx)?;
                 spawned_first_time = true;
                 *this = RunState::Scheduled(handle.clone());
 

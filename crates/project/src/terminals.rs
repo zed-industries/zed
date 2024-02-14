@@ -1,12 +1,8 @@
 use crate::Project;
-use futures::channel::mpsc::UnboundedReceiver;
+use async_channel::Receiver;
 use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
-use parking_lot::Mutex;
 use settings::Settings;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettingsContent},
     Terminal, TerminalBuilder,
@@ -24,7 +20,7 @@ impl Project {
         &mut self,
         working_directory: Option<PathBuf>,
         // TODO kb disable user input based on its presence, stream its contents into the terminal
-        streaming_source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
+        streaming_source: Option<Receiver<String>>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {

@@ -12,6 +12,7 @@ mod toolbar;
 mod workspace_settings;
 
 use anyhow::{anyhow, Context as _, Result};
+use async_channel::Receiver;
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
@@ -21,10 +22,7 @@ use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
-    channel::{
-        mpsc::{self, UnboundedReceiver},
-        oneshot,
-    },
+    channel::{mpsc, oneshot},
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
@@ -46,7 +44,6 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use parking_lot::Mutex;
 use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
     model::{ItemId, WorkspaceLocation},
@@ -228,7 +225,7 @@ pub struct OpenTerminal {
 
 #[derive(Debug, Default, Clone)]
 pub struct OpenTerminalStream {
-    pub source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
+    pub source: Option<Receiver<String>>,
 }
 
 impl PartialEq for OpenTerminalStream {

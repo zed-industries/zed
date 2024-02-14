@@ -6,7 +6,7 @@ use crate::{Handle, PendingOutput, Runnable};
 use anyhow::Context;
 use async_process::{Command, Stdio};
 use futures::FutureExt;
-use gpui::AsyncAppContext;
+use gpui::AppContext;
 
 /// [`StaticRunner`] is a [`Runnable`] defined in .json file.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,7 +25,7 @@ impl Runnable for StaticRunner {
         Box::new(self.clone())
     }
 
-    fn exec(&self, cwd: Option<PathBuf>, mut cx: AsyncAppContext) -> anyhow::Result<Handle> {
+    fn exec(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> anyhow::Result<Handle> {
         let mut command = Command::new(self.runnable.command.clone());
         let mut command = command.args(self.runnable.args.clone());
         if let Some(env_path) = std::env::var_os("PATH") {
@@ -51,7 +51,7 @@ impl Runnable for StaticRunner {
                 .stderr
                 .take()
                 .expect("stdout should be present due to `Stdio::piped` usage above"),
-            &mut cx,
+            cx,
         ));
 
         Handle::new(
@@ -64,7 +64,7 @@ impl Runnable for StaticRunner {
                 })
                 .boxed(),
             output,
-            cx.clone(),
+            cx.to_async(),
         )
     }
 

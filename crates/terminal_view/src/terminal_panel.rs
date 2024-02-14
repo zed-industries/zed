@@ -1,15 +1,14 @@
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
+use async_channel::Receiver;
 use db::kvp::KEY_VALUE_STORE;
-use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
     FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use parking_lot::Mutex;
 use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
@@ -282,12 +281,13 @@ impl TerminalPanel {
             return;
         };
         // TODO kb this will add an extra initial terminal (see `set_active`) if focuses the terminal panel for the first time
+        // TODO kb this also will leave terminal panes that will be restored on restart, which is bad — ignore those instead
         let Some(terminal_panel) = workspace.focus_panel::<Self>(cx) else {
             return;
         };
 
         terminal_panel.update(cx, |terminal_panel, cx| {
-            terminal_panel.add_terminal(None, Some(Arc::clone(source)), cx)
+            terminal_panel.add_terminal(None, Some(source.clone()), cx)
         })
     }
 
@@ -307,7 +307,7 @@ impl TerminalPanel {
     fn add_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        streaming_source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
+        streaming_source: Option<Receiver<String>>,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();

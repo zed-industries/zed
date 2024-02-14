@@ -6267,6 +6267,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "async-channel 2.2.0",
  "async-trait",
  "backtrace",
  "client",
@@ -7138,6 +7139,7 @@ name = "runnables_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.2.0",
  "db",
  "editor",
  "fs",
@@ -8707,6 +8709,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "async-channel 2.2.0",
  "collections",
  "db",
  "dirs 4.0.0",
@@ -8717,7 +8720,6 @@ dependencies = [
  "libc",
  "mio-extras",
  "ordered-float 2.10.0",
- "parking_lot 0.11.2",
  "procinfo",
  "rand 0.8.5",
  "schemars",
@@ -8738,6 +8740,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.2.0",
  "client",
  "collections",
  "db",
@@ -8751,7 +8754,6 @@ dependencies = [
  "libc",
  "mio-extras",
  "ordered-float 2.10.0",
- "parking_lot 0.11.2",
  "procinfo",
  "project",
  "rand 0.8.5",
@@ -10862,6 +10864,7 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.2.0",
  "async-recursion 1.0.5",
  "bincode",
  "call",

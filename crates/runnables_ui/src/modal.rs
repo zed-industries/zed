@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use async_channel::unbounded;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, rems, Action, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
@@ -8,7 +9,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
-use runnable::Token;
+use runnable::{NewLineAvailable, Token};
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -208,11 +209,15 @@ impl PickerDelegate for RunnablesModalDelegate {
             if let Some(output) = handle.output.as_ref() {
                 self.workspace
                     .update(cx, |_, cx| {
+                        let (tx, rx) = unbounded();
+                        cx.window_context()
+                            .subscribe(output, move |_, line: &NewLineAvailable, _| {
+                                let msg = line.as_ref().to_owned();
+                                tx.send_blocking(msg).ok();
+                            })
+                            .detach();
                         cx.dispatch_action(
-                            workspace::OpenTerminalStream {
-                                source: Some(output.subscribe()),
-                            }
-                            .boxed_clone(),
+                            workspace::OpenTerminalStream { source: Some(rx) }.boxed_clone(),
                         );
                     })
                     .log_err();

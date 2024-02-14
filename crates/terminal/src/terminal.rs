@@ -30,8 +30,8 @@ use mappings::mouse::{
     scroll_report,
 };
 
+use async_channel::Receiver;
 use collections::{HashMap, VecDeque};
-use parking_lot::Mutex;
 use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -414,12 +414,12 @@ impl TerminalBuilder {
 
     pub fn subscribe(
         mut self,
-        streaming_source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
+        streaming_source: Option<Receiver<String>>,
         cx: &mut ModelContext<Terminal>,
     ) -> Terminal {
         if let Some(streaming_source) = streaming_source {
             cx.spawn(|terminal, mut cx| async move {
-                while let Some(streamed_chunk) = streaming_source.lock().next().await {
+                while let Ok(streamed_chunk) = streaming_source.recv().await {
                     terminal.update(&mut cx, |terminal, cx| {
                         terminal.process_event(&AlacTermEvent::PtyWrite(streamed_chunk), cx);
                     })?;
