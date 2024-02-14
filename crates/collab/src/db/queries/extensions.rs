@@ -35,7 +35,27 @@ impl Database {
                     .await?
             };
 
-            todo!()
+            let latest_version_ids = extensions
+                .iter()
+                .filter_map(|extension| extension.latest_version)
+                .collect::<Vec<_>>();
+
+            let extension_versions = extension_version::Entity::find()
+                .filter(extension_version::Column::Id.is_in(latest_version_ids))
+                .all(&*tx)
+                .await?;
+
+            Ok(extensions
+                .into_iter()
+                .map(|extension| {
+                    let latest_version = extension_versions
+                        .iter()
+                        .find(|version| Some(version.id) == extension.latest_version)
+                        .unwrap();
+
+                    (extension, latest_version.clone())
+                })
+                .collect())
         })
         .await
     }
