@@ -105,16 +105,18 @@ impl LspAdapter for JavaLspAdapter {
                     });
                 }
             }
-            Some(lsp::CompletionItemKind::CLASS) => {
-                if let Some((name, _detail)) = completion.label.split_once(" - ") {
-                    let source = Rope::from(format!("class {} {{}}", name).as_str());
-                    let runs = language.highlight_text(&source, 6..6 + name.len());
+            Some(
+                lsp::CompletionItemKind::CLASS
+                | lsp::CompletionItemKind::INTERFACE
+                | lsp::CompletionItemKind::ENUM,
+            ) => {
+                if let Some((name, detail)) = completion.label.split_once(" - ") {
+                    let highlight_id = language.grammar()?.highlight_id_for_name("type")?;
+                    let mut label = CodeLabel::plain(format!("{name} (import {detail})"), None);
 
-                    return Some(CodeLabel {
-                        text: name.into(),
-                        runs,
-                        filter_range: 0..name.len(),
-                    });
+                    label.runs.push((0..name.len(), highlight_id));
+
+                    return Some(label);
                 }
             }
             Some(lsp::CompletionItemKind::KEYWORD) => {
