@@ -337,32 +337,74 @@ impl ExtensionsPage {
 
 impl Render for ExtensionsPage {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        h_flex()
-            .full()
+        v_flex()
+            // .size_full()
+            .w_full()
+            .h(px(500.))
             .bg(cx.theme().colors().editor_background)
-            .child(
-                v_flex()
-                    .full()
-                    .p_4()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+            .overflow_y_hidden()
+            .max_h(px(500.))
+            .map(|this| {
+                if self.extensions_entries.is_empty() {
+                    this.child(div().child(Label::new("Loading...")))
+                } else {
+                    this.child(
+                        uniform_list::<_, Div, _>(
+                            cx.view().clone(),
+                            "entries",
+                            self.extensions_entries.len(),
+                            Self::render_extensions,
+                        )
+                        // .size_full()
+                        .w_full()
+                        .h(px(500.))
+                        .track_scroll(self.list.clone()),
                     )
-                    .child(h_flex().w_56().my_4().child(self.render_search(cx)))
-                    .child(
-                        h_flex().flex_col().items_start().full().child(
-                            uniform_list::<_, Div, _>(
-                                cx.view().clone(),
-                                "entries",
-                                self.extensions_entries.len(),
-                                Self::render_extensions,
-                            )
-                            .size_full()
-                            .track_scroll(self.list.clone()),
-                        ),
-                    ),
-            )
+                }
+            })
+
+        // .child(
+
+        //     uniform_list::<_, Div, _>(
+        //         cx.view().clone(),
+        //         "entries",
+        //         self.extensions_entries.len(),
+        //         Self::render_extensions,
+        //     )
+        //     // .size_full()
+        //     .w_full()
+        //     .h(px(500.))
+        //     .track_scroll(self.list.clone()),
+        // )
+        // .child(
+        //     v_flex()
+        //         .full()
+        //         .p_4()
+        //         .child(
+        //             h_flex()
+        //                 .w_full()
+        //                 .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+        //         )
+        //         .child(h_flex().w_56().my_4().child(self.render_search(cx)))
+        //         .child(
+        //             h_flex()
+        //                 .flex_col()
+        //                 .items_start()
+        //                 .full()
+        //                 .overflow_y_hidden()
+        //                 .max_h(px(500.))
+        //                 .child(
+        //                     uniform_list::<_, Div, _>(
+        //                         cx.view().clone(),
+        //                         "entries",
+        //                         self.extensions_entries.len(),
+        //                         Self::render_extensions,
+        //                     )
+        //                     .size_full()
+        //                     .track_scroll(self.list.clone()),
+        //                 ),
+        //         ),
+        // )
     }
 }
 
