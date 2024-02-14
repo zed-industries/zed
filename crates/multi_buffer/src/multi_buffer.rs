@@ -2912,9 +2912,12 @@ impl MultiBufferSnapshot {
     /// Returns the smallest enclosing bracket ranges containing the given range or
     /// None if no brackets contain range or the range is not contained in a single
     /// excerpt
+    ///
+    /// Can optionally pass a range_filter to filter the ranges of brackets to consider
     pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
+        range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
     ) -> Option<(Range<usize>, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
@@ -2926,6 +2929,12 @@ impl MultiBufferSnapshot {
         };
 
         for (open, close) in enclosing_bracket_ranges {
+            if let Some(range_filter) = range_filter {
+                if !range_filter(open.clone(), close.clone()) {
+                    continue;
+                }
+            }
+
             let len = close.end - open.start;
 
             if let Some((existing_open, existing_close)) = &result {
