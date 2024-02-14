@@ -141,8 +141,10 @@ if [ "$local_arch" = false ]; then
     if [ "$channel" == "nightly" ]; then
         version="$version-$(git rev-parse --short HEAD)"
     fi
-    uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf "$channel/Zed-$version-aarch64-apple-darwin.dwarf"
-    uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf "$channel/Zed-$version-x86_64-apple-darwin.dwarf"
+    gzip target/aarch64-apple-darwin/release/Zed.dwarf
+    gzip target/x86_64-apple-darwin/release/Zed.dwarf
+    uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-aarch64-apple-darwin.dwarf.gz"
+    uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-x86_64-apple-darwin.dwarf.gz"
 
     echo "Creating fat binaries"
     lipo \
