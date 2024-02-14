@@ -299,7 +299,7 @@ impl Render for BufferSearchBar {
             )
             .child(
                 h_flex()
-                    .gap_0p5()
+                    .gap_2()
                     .flex_none()
                     .child(
                         IconButton::new("select-all", ui::IconName::SelectAll)
@@ -323,19 +323,18 @@ impl Render for BufferSearchBar {
                     )),
             );
 
-        let replace_line = self.replace_enabled.then(|| {
+        let replace_line = should_show_replace_input.then(|| {
             h_flex()
-                .gap_0p5()
+                .gap_2()
                 .flex_1()
                 .child(
                     h_flex()
                         .flex_1()
                         // We're giving this a fixed height to match the height of the search input,
                         // which has an icon inside that is increasing its height.
-                        // .h_8()
+                        .h_8()
                         .px_2()
                         .py_1()
-                        .gap_2()
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .rounded_lg()
@@ -347,22 +346,28 @@ impl Render for BufferSearchBar {
                             cx,
                         )),
                 )
-                .when(should_show_replace_input, |this| {
-                    this.child(
-                        IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
-                            .tooltip(move |cx| {
-                                Tooltip::for_action("Replace next", &ReplaceNext, cx)
-                            })
-                            .on_click(
-                                cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
-                            ),
-                    )
-                    .child(
-                        IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
-                            .tooltip(move |cx| Tooltip::for_action("Replace all", &ReplaceAll, cx))
-                            .on_click(cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx))),
-                    )
-                })
+                .child(
+                    h_flex()
+                        .flex_none()
+                        .child(
+                            IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
+                                .tooltip(move |cx| {
+                                    Tooltip::for_action("Replace next", &ReplaceNext, cx)
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
+                                ),
+                        )
+                        .child(
+                            IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
+                                .tooltip(move |cx| {
+                                    Tooltip::for_action("Replace all", &ReplaceAll, cx)
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx)),
+                                ),
+                        ),
+                )
         });
 
         v_flex()
@@ -393,7 +398,7 @@ impl Render for BufferSearchBar {
             .when(self.supported_options().word, |this| {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
-            .gap_1()
+            .gap_2()
             .child(
                 h_flex().child(search_line.w_full()).child(
                     IconButton::new(SharedString::from("Close"), IconName::Close)
