@@ -126,6 +126,7 @@ tree-sitter-glsl.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-gomod.workspace = true
 tree-sitter-gowork.workspace = true
+tree-sitter-graphql.workspace = true
 tree-sitter-haskell.workspace = true
 tree-sitter-hcl.workspace = true
 tree-sitter-heex.workspace = true

@@ -10184,6 +10184,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-graphql"
+version = "0.0.1"
+source = "git+https://github.com/11bit/tree-sitter-graphql?rev=15ab5a0b1f06fabc422429a1796b4f3e441f20dc#15ab5a0b1f06fabc422429a1796b4f3e441f20dc"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-haskell"
 version = "0.14.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-haskell?rev=cf98de23e4285b8e6bcb57b050ef2326e2cc284b#cf98de23e4285b8e6bcb57b050ef2326e2cc284b"
@@ -11964,6 +11973,7 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
+ "tree-sitter-graphql",
  "tree-sitter-haskell",
  "tree-sitter-hcl",
  "tree-sitter-heex",
