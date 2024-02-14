@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use runnable::{RunnableToken, Source};
+use runnable::{Source, Token};
 
 struct SourceInInventory {
     source: Model<Box<dyn Source>>,
@@ -29,7 +29,7 @@ impl Inventory {
         cx.notify();
     }
 
-    pub fn list_runnables(&self, path: &Path, cx: &mut AppContext) -> Vec<RunnableToken> {
+    pub fn list_runnables(&self, path: &Path, cx: &mut AppContext) -> Vec<Token> {
         let mut runnables = vec![];
         for source in &self.sources {
             runnables.extend(

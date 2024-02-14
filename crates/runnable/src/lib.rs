@@ -24,7 +24,7 @@ use util::ResultExt;
 
 /// Represents a runnable that's already underway. That runnable can be cancelled at any time.
 #[derive(Clone)]
-pub struct RunnableHandle {
+pub struct Handle {
     fut: Shared<Task<Result<Result<ExitStatus, Arc<anyhow::Error>>, RunnableTerminated>>>,
     pub output: Option<PendingOutput>,
     cancel_token: AbortHandle,
@@ -86,7 +86,7 @@ impl PendingOutput {
     }
 }
 
-impl RunnableHandle {
+impl Handle {
     pub fn new(
         fut: BoxFuture<'static, Result<ExitStatus, Arc<anyhow::Error>>>,
         output: Option<PendingOutput>,
@@ -118,7 +118,7 @@ impl RunnableHandle {
     }
 }
 
-impl Future for RunnableHandle {
+impl Future for Handle {
     type Output = Result<ExecutionResult, RunnableTerminated>;
 
     fn poll(
@@ -150,7 +150,7 @@ pub struct ExecutionResult {
 /// is to get spawned.
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(&self, cwd: Option<PathBuf>, cx: gpui::AsyncAppContext) -> Result<RunnableHandle>;
+    fn exec(&self, cwd: Option<PathBuf>, cx: gpui::AsyncAppContext) -> Result<Handle>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
@@ -164,16 +164,16 @@ pub trait Source: Any {
         &mut self,
         path: &Path,
         cx: &mut ModelContext<Box<dyn Source>>,
-    ) -> anyhow::Result<Vec<RunnableToken>>;
+    ) -> anyhow::Result<Vec<Token>>;
 }
 
 #[derive(PartialEq)]
-pub struct RunnableMetadata {
+pub struct Metadata {
     source: WeakModel<Box<dyn Source>>,
     display_name: String,
 }
 
-impl RunnableMetadata {
+impl Metadata {
     pub fn display_name(&self) -> &str {
         &self.display_name
     }
@@ -181,20 +181,20 @@ impl RunnableMetadata {
 
 /// Represents a runnable that might or might not be already running.
 #[derive(Clone)]
-pub struct RunnableToken {
-    metadata: Arc<RunnableMetadata>,
+pub struct Token {
+    metadata: Arc<Metadata>,
     state: Model<RunState>,
 }
 
 #[derive(Clone)]
 pub(crate) enum RunState {
     NotScheduled(Arc<dyn Runnable>),
-    Scheduled(RunnableHandle),
+    Scheduled(Handle),
 }
 
-impl RunnableToken {
+impl Token {
     /// Schedules a runnable or returns a handle to it if it's already running.
-    pub fn schedule(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Result<RunnableHandle> {
+    pub fn schedule(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Result<Handle> {
         let mut spawned_first_time = false;
         let ret = self.state.update(cx, |this, cx| match this {
             RunState::NotScheduled(runnable) => {
@@ -235,7 +235,7 @@ impl RunnableToken {
         ret
     }
 
-    pub fn handle(&self, cx: &AppContext) -> Option<RunnableHandle> {
+    pub fn handle(&self, cx: &AppContext) -> Option<Handle> {
         let state = self.state.read(cx);
         if let RunState::Scheduled(state) = state {
             Some(state.clone())
@@ -272,7 +272,7 @@ impl RunnableToken {
         self.handle(cx).is_some()
     }
 
-    pub fn metadata(&self) -> &RunnableMetadata {
+    pub fn metadata(&self) -> &Metadata {
         &self.metadata
     }
 

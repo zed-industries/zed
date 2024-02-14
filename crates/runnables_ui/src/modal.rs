@@ -8,7 +8,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
-use runnable::RunnableToken;
+use runnable::Token;
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -19,7 +19,7 @@ actions!(runnables, [Spawn]);
 /// A modal used to spawn new runnables.
 pub(crate) struct RunnablesModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Vec<RunnableToken>,
+    candidates: Vec<Token>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     placeholder_text: Arc<str>,

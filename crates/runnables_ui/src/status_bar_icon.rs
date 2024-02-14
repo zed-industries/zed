@@ -7,7 +7,7 @@ use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
 use gpui::ModelContext;
 use gpui::{AppContext, Context as _, Model, Task};
-use runnable::RunnableHandle;
+use runnable::Handle;
 use ui::Color;
 
 type Succeeded = bool;
@@ -24,14 +24,14 @@ pub(super) struct StatusIconTracker {
     /// That is achieved by creating new `RunnablesStatusBarIcon`, thus we want to stop polling in the old one (once it's dropped).
     /// We also don't start it until we have at least one runnable running.
     _runnable_poller: Option<Task<()>>,
-    tx: UnboundedSender<RunnableHandle>,
-    rx: Option<UnboundedReceiver<RunnableHandle>>,
+    tx: UnboundedSender<Handle>,
+    rx: Option<UnboundedReceiver<Handle>>,
 }
 
 impl StatusIconTracker {
-    pub(crate) fn new<'a>(runnables: Vec<RunnableHandle>, cx: &mut AppContext) -> Model<Self> {
+    pub(crate) fn new<'a>(runnables: Vec<Handle>, cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|cx| {
-            let (tx, rx) = unbounded::<RunnableHandle>();
+            let (tx, rx) = unbounded::<Handle>();
             let mut ret = Self {
                 current_status: None,
                 _runnable_poller: None,
@@ -105,7 +105,7 @@ impl StatusIconTracker {
         };
         Some(color)
     }
-    pub(crate) fn push(&mut self, handle: RunnableHandle, cx: &mut ModelContext<Self>) {
+    pub(crate) fn push(&mut self, handle: Handle, cx: &mut ModelContext<Self>) {
         self.start_poller(cx);
         let _ = self.tx.unbounded_send(handle);
     }

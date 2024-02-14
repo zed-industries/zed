@@ -7,15 +7,13 @@ use util::ResultExt;
 
 use crate::{
     static_runnable_file::{Definition, RunnableProvider},
-    RunState, Runnable, RunnableToken, Source, StaticRunner,
+    RunState, Runnable, Source, StaticRunner, Token,
 };
 use futures::channel::mpsc::UnboundedReceiver;
 
 pub struct StaticSource {
-    // This is gonna come into play later once we tackle handling multiple instances of a single runnable (spawning multiple runnables from a single static runnable definition).
-    #[allow(unused)]
     definitions: Model<TrackedFile<RunnableProvider>>,
-    runnables: Vec<RunnableToken>,
+    runnables: Vec<Token>,
     _subscription: Subscription,
 }
 
@@ -88,13 +86,13 @@ impl StaticSource {
     fn token_from_definition(
         runnable: Definition,
         cx: &mut ModelContext<Box<dyn Source>>,
-    ) -> crate::RunnableToken {
+    ) -> crate::Token {
         let runner = StaticRunner::new(runnable.clone());
         let display_name = runner.name();
         let source = cx.weak_model();
         let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
-        crate::RunnableToken {
-            metadata: Arc::new(crate::RunnableMetadata {
+        crate::Token {
+            metadata: Arc::new(crate::Metadata {
                 source,
                 display_name,
             }),
@@ -108,7 +106,7 @@ impl Source for StaticSource {
         &mut self,
         _: &std::path::Path,
         cx: &mut ModelContext<Box<dyn Source>>,
-    ) -> anyhow::Result<Vec<RunnableToken>> {
+    ) -> anyhow::Result<Vec<Token>> {
         let mut known_definitions: HashMap<String, _> = self
             .definitions
             .read(cx)

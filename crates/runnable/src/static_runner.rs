@@ -2,7 +2,7 @@
 //! in the config file.
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{PendingOutput, Runnable, RunnableHandle};
+use crate::{Handle, PendingOutput, Runnable};
 use anyhow::Context;
 use async_process::{Command, Stdio};
 use futures::FutureExt;
@@ -25,11 +25,7 @@ impl Runnable for StaticRunner {
         Box::new(self.clone())
     }
 
-    fn exec(
-        &self,
-        cwd: Option<PathBuf>,
-        mut cx: AsyncAppContext,
-    ) -> anyhow::Result<RunnableHandle> {
+    fn exec(&self, cwd: Option<PathBuf>, mut cx: AsyncAppContext) -> anyhow::Result<Handle> {
         let mut command = Command::new(self.runnable.command.clone());
         let mut command = command.args(self.runnable.args.clone());
         if let Some(env_path) = std::env::var_os("PATH") {
@@ -58,7 +54,7 @@ impl Runnable for StaticRunner {
             &mut cx,
         ));
 
-        RunnableHandle::new(
+        Handle::new(
             command_handle
                 .status()
                 .map(|runnable_result| {
