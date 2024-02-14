@@ -663,6 +663,10 @@ impl AppContext {
                     }
                 }
             } else {
+                //todo!(linux): this `cx.draw()` command
+                // resets the `dirty` flag, thus preventing
+                // Linux presentation from kicking off.
+                #[cfg(not(target_os = "linux"))]
                 #[cfg(any(test, feature = "test-support"))]
                 for window in self
                     .windows
