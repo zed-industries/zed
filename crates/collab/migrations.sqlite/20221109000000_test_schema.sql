@@ -356,26 +356,22 @@ CREATE TABLE contributors (
 
 CREATE TABLE extensions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
     external_id TEXT NOT NULL,
-    latest_version INTEGER,
+    name TEXT NOT NULL,
+    latest_version TEXT NOT NULL,
     total_download_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE extension_versions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
     extension_id INTEGER REFERENCES extensions(id),
-    published_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     version TEXT NOT NULL,
+    published_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     authors TEXT NOT NULL,
     repository TEXT NOT NULL,
     description TEXT NOT NULL,
-    download_count INTEGER NOT NULL DEFAULT 0
+    download_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (extension_id, version)
 );
-
-ALTER TABLE extensions ADD CONSTRAINT extensions_latest_version_fkey FOREIGN KEY (latest_version) REFERENCES extension_versions (id);
 
 CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
 CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");
-CREATE INDEX "index_extensions_name" ON "extensions" ("name");
-CREATE UNIQUE INDEX "index_extension_versions_extension_id_version" ON "extension_versions" ("extension_id", "version");

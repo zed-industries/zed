@@ -1,17 +1,15 @@
+use crate::db::ExtensionId;
 use sea_orm::entity::prelude::*;
 use time::PrimitiveDateTime;
-
-use crate::db::ExtensionId;
-use crate::db::ExtensionVersionId;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "extension_versions")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: ExtensionVersionId,
     pub extension_id: ExtensionId,
-    pub published_at: PrimitiveDateTime,
+    #[sea_orm(primary_key)]
     pub version: String,
+    pub published_at: PrimitiveDateTime,
     pub authors: String,
     pub repository: String,
     pub description: String,
@@ -20,7 +18,11 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_one = "super::extension::Entity")]
+    #[sea_orm(
+        belongs_to = "super::extension::Entity",
+        from = "Column::ExtensionId",
+        to = "super::extension::Column::Id"
+    )]
     Extension,
 }
 

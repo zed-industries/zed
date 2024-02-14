@@ -22,6 +22,8 @@ use std::sync::Arc;
 use tower::ServiceBuilder;
 use tracing::instrument;
 
+pub use extensions::fetch_extensions_periodically;
+
 pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))

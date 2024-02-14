@@ -1,16 +1,14 @@
-use sea_orm::entity::prelude::*;
-
 use crate::db::ExtensionId;
-use crate::db::ExtensionVersionId;
+use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "extensions")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: ExtensionId,
-    pub name: String,
     pub external_id: String,
-    pub latest_version: Option<ExtensionVersionId>,
+    pub name: String,
+    pub latest_version: String,
     pub total_download_count: i64,
 }
 

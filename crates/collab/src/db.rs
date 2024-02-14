@@ -717,3 +717,12 @@ pub struct WorktreeSettingsFile {
     pub path: String,
     pub content: String,
 }
+
+pub struct NewExtensionVersion {
+    pub name: String,
+    pub version: semver::Version,
+    pub description: String,
+    pub authors: Vec<String>,
+    pub repository: String,
+    pub published_at: time::PrimitiveDateTime,
+}

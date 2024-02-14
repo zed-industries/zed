@@ -8,6 +8,7 @@ pub mod rpc;
 #[cfg(test)]
 mod tests;
 
+use aws_config::{BehaviorVersion, Region};
 use axum::{http::StatusCode, response::IntoResponse};
 use db::Database;
 use executor::Executor;
@@ -100,6 +101,9 @@ pub struct Config {
     pub live_kit_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
+    pub blob_store_access_key: Option<String>,
+    pub blob_store_secret_key: Option<String>,
+    pub blob_store_bucket: Option<String>,
     pub zed_environment: Arc<str>,
 }
 
@@ -118,6 +122,7 @@ pub struct MigrateConfig {
 pub struct AppState {
     pub db: Arc<Database>,
     pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
+    pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub config: Config,
 }
 
@@ -146,8 +151,28 @@ impl AppState {
         let this = Self {
             db: Arc::new(db),
             live_kit_client,
+            blob_store_client: build_blob_store_client(&config).await,
             config,
         };
         Ok(Arc::new(this))
     }
+}
+
+async fn build_blob_store_client(config: &Config) -> Option<aws_sdk_s3::Client> {
+    let keys = aws_sdk_s3::config::Credentials::new(
+        config.blob_store_access_key.clone()?,
+        config.blob_store_secret_key.clone()?,
+        None,
+        None,
+        "env",
+    );
+
+    let s3_config = aws_config::defaults(BehaviorVersion::latest())
+        .endpoint_url("https://nyc3.digitaloceanspaces.com")
+        .region(Region::new("nyc3"))
+        .credentials_provider(keys)
+        .load()
+        .await;
+
+    Some(aws_sdk_s3::Client::new(&s3_config))
 }

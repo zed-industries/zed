@@ -15,9 +15,11 @@ name = "seed"
 required-features = ["seed-support"]
 
 [dependencies]
-anyhow.workspace = true
-async-tungstenite = "0.16"
 axum = { version = "0.5", features = ["json", "headers", "ws"] }
+anyhow.workspace = true
+aws-config = { version = "1.1.5" }
+aws-sdk-s3 = { version = "1.15.0" }
+async-tungstenite = "0.16"
 axum-extra = { version = "0.3", features = ["erased-json"] }
 base64 = "0.13"
 chrono.workspace = true
@@ -40,13 +42,26 @@ rand.workspace = true
 reqwest = { version = "0.11", features = ["json"], optional = true }
 rpc.workspace = true
 scrypt = "0.7"
-sea-orm = { version = "0.12.x", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
+sea-orm = { version = "0.12.x", features = [
+  "sqlx-postgres",
+  "postgres-array",
+  "runtime-tokio-rustls",
+  "with-uuid",
+] }
+semver.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 sha-1 = "0.9"
 smallvec.workspace = true
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+sqlx = { version = "0.7", features = [
+  "runtime-tokio-rustls",
+  "postgres",
+  "json",
+  "time",
+  "uuid",
+  "any",
+] }
 text.workspace = true
 time.workspace = true
 tokio = { version = "1", features = ["full"] }
