@@ -78,6 +78,7 @@
 [
   (string)
   (template_string)
+  (template_literal_type)
 ] @string
 
 (regex) @string.regex
@@ -91,6 +92,7 @@
   "."
   ","
   ":"
+  "?"
 ] @punctuation.delimiter
 
 [
@@ -195,6 +197,10 @@
 ] @keyword
 
 (template_substitution
+  "${" @punctuation.special
+  "}" @punctuation.special) @embedded
+
+(template_type
   "${" @punctuation.special
   "}" @punctuation.special) @embedded
 
