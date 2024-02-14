@@ -35,6 +35,7 @@ use parking_lot::Mutex;
 use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use smol::stream::StreamExt;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -285,7 +286,6 @@ pub struct TerminalBuilder {
 
 impl TerminalBuilder {
     pub fn new(
-        streaming_source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
         working_directory: Option<PathBuf>,
         shell: Shell,
         env: HashMap<String, String>,
@@ -412,11 +412,25 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
+    pub fn subscribe(
+        mut self,
+        streaming_source: Option<Arc<Mutex<UnboundedReceiver<String>>>>,
+        cx: &mut ModelContext<Terminal>,
+    ) -> Terminal {
+        if let Some(streaming_source) = streaming_source {
+            cx.spawn(|terminal, mut cx| async move {
+                while let Some(streamed_chunk) = streaming_source.lock().next().await {
+                    terminal.update(&mut cx, |terminal, cx| {
+                        terminal.process_event(&AlacTermEvent::PtyWrite(streamed_chunk), cx);
+                    })?;
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
+        }
+
         //Event loop
         cx.spawn(|this, mut cx| async move {
-            use futures::StreamExt;
-
             while let Some(event) = self.events_rx.next().await {
                 this.update(&mut cx, |this, cx| {
                     //Process the first event immediately for lowered latency
@@ -433,7 +447,7 @@ impl TerminalBuilder {
                     loop {
                         futures::select_biased! {
                             _ = timer => break,
-                            event = self.events_rx.next() => {
+                            event = self.events_rx.next().fuse() => {
                                 if let Some(event) = event {
                                     if matches!(event, AlacTermEvent::Wakeup) {
                                         wakeup = true;
@@ -471,7 +485,7 @@ impl TerminalBuilder {
 
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
 
         self.terminal
     }

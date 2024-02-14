@@ -38,7 +38,6 @@ impl Project {
         let shell = settings.shell.clone();
 
         let terminal = TerminalBuilder::new(
-            streaming_source,
             working_directory.clone(),
             shell.clone(),
             settings.env.clone(),
@@ -47,7 +46,7 @@ impl Project {
             window,
         )
         .map(|builder| {
-            let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
+            let terminal_handle = cx.new_model(|cx| builder.subscribe(streaming_source, cx));
 
             self.terminals
                 .local_handles

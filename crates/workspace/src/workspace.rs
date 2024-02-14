@@ -54,7 +54,7 @@ pub use persistence::{
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::Deserialize;
 use settings::Settings;
 use shared_screen::SharedScreen;
 use status_bar::StatusBar;
