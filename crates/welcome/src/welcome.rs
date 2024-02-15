@@ -158,9 +158,11 @@ impl Render for WelcomePage {
                                         )
                                         .on_click(
                                             cx.listener(move |this, selection, cx| {
+                                                // Log event
                                                 this.telemetry.report_app_event(
                                                     "welcome page: toggle vim".to_string(),
                                                 );
+                                                // Update setting based on checkbox selection
                                                 this.update_settings::<VimModeSetting>(
                                                     selection,
                                                     cx,
@@ -169,7 +171,32 @@ impl Render for WelcomePage {
                                             }),
                                         ),
                                     )
-                                    .child(Label::new("Enable vim mode")),
+                                    // .child(Label::new("Enable vim mode"))
+                                    // Removec existing Label
+                                    .child(
+                                        Button::new("enable-vim-button", "Enable vim mode")
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                // Check current setting state
+                                                let current_state =
+                                                    VimModeSetting::get_global(cx).0;
+                                                // Specify selection from current_state : boolean
+                                                let new_state = if current_state {
+                                                    ui::Selection::Unselected
+                                                } else {
+                                                    ui::Selection::Selected
+                                                };
+
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: toggle vim".to_string(),
+                                                );
+                                                // Update setting based on the new state determined
+                                                this.update_settings::<VimModeSetting>(
+                                                    &new_state,
+                                                    cx,
+                                                    |setting, value| *setting = Some(value),
+                                                );
+                                            })),
+                                    ),
                             )
                             .child(
                                 h_flex()
@@ -208,7 +235,49 @@ impl Render for WelcomePage {
                                             }),
                                         ),
                                     )
-                                    .child(Label::new("Send anonymous usage data")),
+                                    // .child(Label::new("Send anonymous usage data"))
+                                    // Removed existing Label
+                                    .child(
+                                        Button::new(
+                                            "enable-telemetry-button",
+                                            "Send anonymous usage data",
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, cx| {
+                                                // Check current setting state
+                                                let current_state =
+                                                    TelemetrySettings::get_global(cx).metrics;
+                                                // Specify selection from current_state : boolean
+                                                let new_state = if current_state {
+                                                    ui::Selection::Unselected
+                                                } else {
+                                                    ui::Selection::Selected
+                                                };
+
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: toggle metric telemetry"
+                                                        .to_string(),
+                                                );
+                                                // Update setting based on the new state determined
+                                                this.update_settings::<TelemetrySettings>(
+                                                    &new_state,
+                                                    cx,
+                                                    {
+                                                        let telemetry = this.telemetry.clone();
+
+                                                        move |settings, value| {
+                                                            settings.metrics = Some(value);
+
+                                                            telemetry.report_setting_event(
+                                                                "metric telemetry",
+                                                                value.to_string(),
+                                                            );
+                                                        }
+                                                    },
+                                                );
+                                            }),
+                                        ),
+                                    ),
                             )
                             .child(
                                 h_flex()
@@ -247,7 +316,43 @@ impl Render for WelcomePage {
                                             }),
                                         ),
                                     )
-                                    .child(Label::new("Send crash reports")),
+                                    // .child(Label::new("Send crash reports"))
+                                    .child(
+                                        Button::new("enable-crash-button", "Send crash reports")
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                // Check current setting state
+                                                let current_state =
+                                                    TelemetrySettings::get_global(cx).diagnostics;
+                                                // Specify selection from current_state : boolean
+                                                let new_state = if current_state {
+                                                    ui::Selection::Unselected
+                                                } else {
+                                                    ui::Selection::Selected
+                                                };
+
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: toggle diagnostic telemetry"
+                                                        .to_string(),
+                                                );
+                                                // Update setting based on the new state determined
+                                                this.update_settings::<TelemetrySettings>(
+                                                    &new_state,
+                                                    cx,
+                                                    {
+                                                        let telemetry = this.telemetry.clone();
+
+                                                        move |settings, value| {
+                                                            settings.diagnostics = Some(value);
+
+                                                            telemetry.report_setting_event(
+                                                                "diagnostic telemetry",
+                                                                value.to_string(),
+                                                            );
+                                                        }
+                                                    },
+                                                );
+                                            })),
+                                    ),
                             ),
                     ),
             )
