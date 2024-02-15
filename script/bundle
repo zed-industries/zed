@@ -40,7 +40,7 @@ function uploadDsym
   acl="x-amz-acl:public-read"
   content_type="application/octet-stream"
   storage_type="x-amz-storage-class:STANDARD"
-  string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${space_path}/${file_name}"
+  string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${file_name}"
   signature=$(echo -en "${string}" | openssl sha1 -hmac "${DIGITALOCEAN_SPACES_SECRET_KEY}" -binary | base64)
 
   curl --fail -vv -s -X PUT -T "$file_to_upload" \
@@ -141,8 +141,16 @@ if [ "$local_arch" = false ]; then
     if [ "$channel" == "nightly" ]; then
         version="$version-$(git rev-parse --short HEAD)"
     fi
+
+    echo "Removing existing gzipped dSYMs"
+    rm -f target/aarch64-apple-darwin/release/Zed.dwarf.gz
+    rm -f target/x86_64-apple-darwin/release/Zed.dwarf.gz
+
+    echo "Gzipping dSYMs"
     gzip target/aarch64-apple-darwin/release/Zed.dwarf
     gzip target/x86_64-apple-darwin/release/Zed.dwarf
+
+    echo "Uploading dSYMs"
     uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-aarch64-apple-darwin.dwarf.gz"
     uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-x86_64-apple-darwin.dwarf.gz"
 
