@@ -115,9 +115,21 @@ impl LinuxPlatform {
         callbacks: Mutex<Callbacks>,
         state: Mutex<LinuxPlatformState>,
     ) -> Self {
-        let (xcb_connection, x_root_index) =
-            xcb::Connection::connect_with_extensions(None, &[xcb::Extension::Present], &[])
-                .unwrap();
+        let (xcb_connection, x_root_index) = xcb::Connection::connect_with_extensions(
+            None,
+            &[xcb::Extension::Present, xcb::Extension::Xkb],
+            &[],
+        )
+        .unwrap();
+
+        let xkb_ver = xcb_connection
+            .wait_for_reply(xcb_connection.send_request(&xcb::xkb::UseExtension {
+                wanted_major: xcb::xkb::MAJOR_VERSION as u16,
+                wanted_minor: xcb::xkb::MINOR_VERSION as u16,
+            }))
+            .unwrap();
+        assert!(xkb_ver.supported());
+
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
         let xcb_connection = Arc::new(xcb_connection);
         let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =

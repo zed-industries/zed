@@ -162,8 +162,7 @@ impl X11WindowState {
                     | x::EventMask::BUTTON3_MOTION
                     | x::EventMask::BUTTON4_MOTION
                     | x::EventMask::BUTTON5_MOTION
-                    | x::EventMask::BUTTON_MOTION
-                    | x::EventMask::KEYMAP_STATE,
+                    | x::EventMask::BUTTON_MOTION,
             ),
         ];
 
@@ -327,9 +326,16 @@ impl X11WindowState {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
-        let mut callbacks = self.callbacks.lock();
-        if let Some(ref mut fun) = callbacks.input {
-            fun(input);
+        if let Some(ref mut fun) = self.callbacks.lock().input {
+            if fun(input.clone()) {
+                return;
+            }
+        }
+        if let PlatformInput::KeyDown(event) = input {
+            let mut inner = self.inner.lock();
+            if let Some(ref mut input_handler) = inner.input_handler {
+                input_handler.replace_text_in_range(None, &event.keystroke.key);
+            }
         }
     }
 }
