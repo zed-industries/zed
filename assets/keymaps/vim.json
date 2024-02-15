@@ -117,6 +117,8 @@
       "ctrl-e": "vim::LineDown",
       "ctrl-y": "vim::LineUp",
       // "g" commands
+      "g e": "vim::PreviousWordEnd",
+      "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
       "g t": "pane::ActivateNextItem",
