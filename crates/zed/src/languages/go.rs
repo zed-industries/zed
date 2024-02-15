@@ -174,6 +174,15 @@ impl super::LspAdapter for GoLspAdapter {
     fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "usePlaceholders": true,
+            "hints": {
+                "assignVariableTypes": true,
+                "compositeLiteralFields": true,
+                "compositeLiteralTypes": true,
+                "constantValues": true,
+                "functionTypeParameters": true,
+                "parameterNames": true,
+                "rangeVariableTypes": true
+            }
         }))
     }
 
