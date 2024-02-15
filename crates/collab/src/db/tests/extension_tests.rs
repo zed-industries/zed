@@ -84,6 +84,7 @@ async fn test_extensions(db: &Arc<Database>) {
                 name: "Extension One".into(),
                 version: "0.0.2".into(),
                 authors: vec!["max".into(), "marshall".into()],
+                description: "a good extension".into(),
                 repository: "ext1/repo".into(),
                 published_at: t0,
                 download_count: 0,
@@ -93,6 +94,7 @@ async fn test_extensions(db: &Arc<Database>) {
                 name: "Extension Two".into(),
                 version: "0.2.0".into(),
                 authors: vec!["marshall".into()],
+                description: "a great extension".into(),
                 repository: "ext2/repo".into(),
                 published_at: t0,
                 download_count: 0
@@ -129,6 +131,7 @@ async fn test_extensions(db: &Arc<Database>) {
                 name: "Extension Two".into(),
                 version: "0.2.0".into(),
                 authors: vec!["marshall".into()],
+                description: "a great extension".into(),
                 repository: "ext2/repo".into(),
                 published_at: t0,
                 download_count: 7
@@ -138,6 +141,7 @@ async fn test_extensions(db: &Arc<Database>) {
                 name: "Extension One".into(),
                 version: "0.0.2".into(),
                 authors: vec!["max".into(), "marshall".into()],
+                description: "a good extension".into(),
                 repository: "ext1/repo".into(),
                 published_at: t0,
                 download_count: 5,
@@ -165,7 +169,7 @@ async fn test_extensions(db: &Arc<Database>) {
                 vec![NewExtensionVersion {
                     name: "Extension Two".into(),
                     version: semver::Version::parse("0.1.0").unwrap(),
-                    description: "an old  extension".into(),
+                    description: "an old extension".into(),
                     authors: vec!["marshall".into()],
                     repository: "ext2/repo".into(),
                     published_at: t0,
@@ -201,6 +205,7 @@ async fn test_extensions(db: &Arc<Database>) {
                 name: "Extension Two".into(),
                 version: "0.2.0".into(),
                 authors: vec!["marshall".into()],
+                description: "a great extension".into(),
                 repository: "ext2/repo".into(),
                 published_at: t0,
                 download_count: 7
@@ -210,6 +215,7 @@ async fn test_extensions(db: &Arc<Database>) {
                 name: "Extension One".into(),
                 version: "0.0.3".into(),
                 authors: vec!["max".into(), "marshall".into()],
+                description: "a real good extension".into(),
                 repository: "ext1/repo".into(),
                 published_at: t0,
                 download_count: 5,
