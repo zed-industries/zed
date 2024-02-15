@@ -751,6 +751,7 @@ pub fn serialize_iso8601<S: Serializer>(
         .encode();
 
     datetime
+        .assume_utc()
         .format(&time::format_description::well_known::Iso8601::<SERDE_CONFIG>)
         .map_err(S::Error::custom)?
         .serialize(serializer)
