@@ -14,6 +14,7 @@ use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use wayland_client::Connection;
+use rfd::AsyncFileDialog;
 
 use crate::platform::linux::client::Client;
 use crate::platform::linux::client_dispatcher::ClientDispatcher;
@@ -202,7 +203,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn open_url(&self, url: &str) {
-        unimplemented!()
+        open::that(url);
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -213,15 +214,69 @@ impl Platform for LinuxPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
-        unimplemented!()
+        let (done_tx, done_rx) = oneshot::channel();
+        self.foreground_executor()
+            .spawn(async move {
+
+                let dialog = AsyncFileDialog::new()
+                    .set_directory("./");
+
+                // XXX: Can options.files and options.directories both be true? RFD doesn't seem to
+                // support that.
+                if options.directories && options.files {
+                    unimplemented!();
+                }
+
+                let result: Option<Vec<PathBuf>> = if options.directories {
+                    if options.multiple {
+                        dialog.pick_folders().await.map(|handles|
+                            handles.into_iter().map(|handle| handle.path().to_path_buf()).collect()
+                        )
+                    } else {
+                        dialog.pick_folder().await.map(|handle|
+                            vec![handle.path().to_path_buf()]
+                        )
+                    }
+                } else {
+                    if options.multiple {
+                        dialog.pick_files().await.map(|handles|
+                            handles.into_iter().map(|handle| handle.path().to_path_buf()).collect()
+                        )
+                    } else {
+                        dialog.pick_file().await.map(|handle|
+                            vec![handle.path().to_path_buf()]
+                        )
+                    }
+                };
+
+                done_tx.send(result);
+            })
+            .detach();
+        done_rx
     }
 
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
-        unimplemented!()
+        let (done_tx, done_rx) = oneshot::channel();
+        let directory = directory.to_owned();
+        self.foreground_executor()
+            .spawn(async move {
+                let result = AsyncFileDialog::new()
+                    .set_directory(directory)
+                    .pick_file()
+                    .await;
+
+                let result: Option<PathBuf> = result.map(|file|
+                    file.path().to_path_buf()
+                );
+
+                done_tx.send(result);
+            })
+            .detach();
+        done_rx
     }
 
     fn reveal_path(&self, path: &Path) {
-        unimplemented!()
+        open::that(path);
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
