@@ -93,6 +93,7 @@ pub struct LocalWorktree {
     diagnostic_summaries: HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
+    fs_case_sensitive: bool,
     visible: bool,
 }
 
@@ -314,6 +315,13 @@ impl Worktree {
             .await
             .context("failed to stat worktree path")?;
 
+        let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
+            log::error!(
+                "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
+            );
+            true
+        });
+
         let closure_fs = Arc::clone(&fs);
         let closure_next_entry_id = Arc::clone(&next_entry_id);
         let closure_abs_path = abs_path.to_path_buf();
@@ -435,6 +443,7 @@ impl Worktree {
                 diagnostic_summaries: Default::default(),
                 client,
                 fs,
+                fs_case_sensitive,
                 visible,
             })
         })
@@ -1301,9 +1310,29 @@ impl LocalWorktree {
         let abs_old_path = self.absolutize(&old_path);
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
+        let case_sensitive = self.fs_case_sensitive;
         let rename = cx.background_executor().spawn(async move {
-            fs.rename(&abs_old_path?, &abs_new_path?, Default::default())
-                .await
+            let abs_old_path = abs_old_path?;
+            let abs_new_path = abs_new_path?;
+
+            let abs_old_path_lower = abs_old_path.to_str().map(|p| p.to_lowercase());
+            let abs_new_path_lower = abs_new_path.to_str().map(|p| p.to_lowercase());
+
+            // If we're on a case-insensitive FS and we're doing a case-only rename (i.e. `foobar` to `FOOBAR`)
+            // we want to overwrite, because otherwise we run into a file-already-exists error.
+            let overwrite = !case_sensitive
+                && abs_old_path != abs_new_path
+                && abs_old_path_lower == abs_new_path_lower;
+
+            fs.rename(
+                &abs_old_path,
+                &abs_new_path,
+                fs::RenameOptions {
+                    overwrite,
+                    ..Default::default()
+                },
+            )
+            .await
         });
 
         cx.spawn(|this, mut cx| async move {
