@@ -125,12 +125,12 @@ jobs:
             - name: Build Zed
               run: cargo build -p zed
     bundle:
-        name: Bundle app
+        name: Bundle macOS app
         runs-on:
             - self-hosted
             - bundle
         if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-build-dmg') }}
-        needs: [macos_tests, linux_tests]
+        needs: [macos_tests]
         env:
             MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
             MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
