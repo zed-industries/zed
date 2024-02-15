@@ -96,7 +96,8 @@ objc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 flume = "0.11"
-xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr"] }
+# todo!(linux) - Technically do not use `randr`, but it doesn't compile otherwise
+xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr", "xkb"] }
 wayland-client= { version = "0.31.2" }
 wayland-protocols = { version = "0.31.2", features = ["client"] }
 wayland-backend = { version = "0.3.3", features = ["client_system"] }
@@ -106,3 +107,4 @@ blade-graphics = { git = "https://github.com/kvark/blade", rev = "c4f951a88b3457
 blade-macros = { git = "https://github.com/kvark/blade", rev = "c4f951a88b345724cb952e920ad30e39851f7760" }
 bytemuck = "1"
 cosmic-text = "0.10.0"
+xkbcommon = { version = "0.7", features = ["x11"] }
