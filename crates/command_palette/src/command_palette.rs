@@ -317,8 +317,8 @@ impl PickerDelegate for CommandPaletteDelegate {
         });
         let action = command.action;
         cx.focus(&self.previous_focus_handle);
-        cx.dispatch_action(action);
         self.dismissed(cx);
+        cx.dispatch_action(action);
     }
 
     fn render_match(
