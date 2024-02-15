@@ -107,6 +107,7 @@ pub fn init(
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
+        ("regex", tree_sitter_regex::language()),
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
@@ -312,6 +313,7 @@ pub fn init(
     );
     language!("scheme");
     language!("racket");
+    language!("regex");
     language!("lua", vec![Arc::new(lua::LuaLspAdapter)]);
     language!(
         "yaml",
