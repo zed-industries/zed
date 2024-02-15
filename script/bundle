@@ -40,7 +40,7 @@ function uploadDsym
   acl="x-amz-acl:public-read"
   content_type="application/octet-stream"
   storage_type="x-amz-storage-class:STANDARD"
-  string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${space_path}/${file_name}"
+  string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${file_name}"
   signature=$(echo -en "${string}" | openssl sha1 -hmac "${DIGITALOCEAN_SPACES_SECRET_KEY}" -binary | base64)
 
   curl --fail -vv -s -X PUT -T "$file_to_upload" \
