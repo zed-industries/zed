@@ -8,12 +8,14 @@ pub mod rpc;
 #[cfg(test)]
 mod tests;
 
+use anyhow::anyhow;
 use aws_config::{BehaviorVersion, Region};
 use axum::{http::StatusCode, response::IntoResponse};
 use db::Database;
 use executor::Executor;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
+use util::ResultExt;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -153,28 +155,44 @@ impl AppState {
         let this = Self {
             db: Arc::new(db),
             live_kit_client,
-            blob_store_client: build_blob_store_client(&config).await,
+            blob_store_client: build_blob_store_client(&config).await.log_err(),
             config,
         };
         Ok(Arc::new(this))
     }
 }
 
-async fn build_blob_store_client(config: &Config) -> Option<aws_sdk_s3::Client> {
+async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::Client> {
     let keys = aws_sdk_s3::config::Credentials::new(
-        config.blob_store_access_key.clone()?,
-        config.blob_store_secret_key.clone()?,
+        config
+            .blob_store_access_key
+            .clone()
+            .ok_or_else(|| anyhow!("missing blob_store_access_key"))?,
+        config
+            .blob_store_secret_key
+            .clone()
+            .ok_or_else(|| anyhow!("missing blob_store_secret_key"))?,
         None,
         None,
         "env",
     );
 
     let s3_config = aws_config::defaults(BehaviorVersion::latest())
-        .endpoint_url(config.blob_store_url.as_ref()?)
-        .region(Region::new(config.blob_store_region.clone()?))
+        .endpoint_url(
+            config
+                .blob_store_url
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing blob_store_url"))?,
+        )
+        .region(Region::new(
+            config
+                .blob_store_region
+                .clone()
+                .ok_or_else(|| anyhow!("missing blob_store_region"))?,
+        ))
         .credentials_provider(keys)
         .load()
         .await;
 
-    Some(aws_sdk_s3::Client::new(&s3_config))
+    Ok(aws_sdk_s3::Client::new(&s3_config))
 }

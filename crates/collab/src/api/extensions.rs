@@ -110,9 +110,11 @@ const EXTENSION_DOWNLOAD_URL_LIFETIME: Duration = Duration::from_secs(3 * 60);
 
 pub fn fetch_extensions_from_blob_store_periodically(app_state: Arc<AppState>, executor: Executor) {
     let Some(blob_store_client) = app_state.blob_store_client.clone() else {
+        log::info!("no blob store client");
         return;
     };
     let Some(blob_store_bucket) = app_state.config.blob_store_bucket.clone() else {
+        log::info!("no blob store bucket");
         return;
     };
 
