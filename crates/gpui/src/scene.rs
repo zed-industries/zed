@@ -2,6 +2,7 @@ use crate::{
     point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, EntityId, Hsla, Pixels,
     Point, ScaledPixels, StackingOrder,
 };
+use bytemuck::Zeroable;
 use collections::{BTreeMap, FxHashSet};
 use std::{fmt::Debug, iter::Peekable, slice};
 
@@ -11,6 +12,7 @@ pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 pub(crate) type LayerId = u32;
 pub(crate) type DrawOrder = u32;
 
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub(crate) struct ViewId {
@@ -501,6 +503,7 @@ pub(crate) enum PrimitiveBatch<'a> {
     Surfaces(&'a [Surface]),
 }
 
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct Quad {
@@ -533,6 +536,7 @@ impl From<Quad> for Primitive {
     }
 }
 
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct Underline {
@@ -564,6 +568,7 @@ impl From<Underline> for Primitive {
     }
 }
 
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct Shadow {
@@ -596,6 +601,7 @@ impl From<Shadow> for Primitive {
     }
 }
 
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
@@ -629,6 +635,7 @@ impl From<MonochromeSprite> for Primitive {
     }
 }
 
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
@@ -847,6 +854,7 @@ impl From<Path<ScaledPixels>> for Primitive {
     }
 }
 
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub(crate) struct PathVertex<P: Clone + Default + Debug> {

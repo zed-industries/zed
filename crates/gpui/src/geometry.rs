@@ -3,6 +3,7 @@
 //! between them.
 
 use core::fmt::Debug;
+use bytemuck::Zeroable;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
 use serde_derive::{Deserialize, Serialize};
@@ -55,6 +56,7 @@ pub trait Along {
 /// let point = Point { x: 10, y: 20 };
 /// println!("{:?}", point); // Outputs: Point { x: 10, y: 20 }
 /// ```
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -344,6 +346,7 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
 ///
 /// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
 /// It is commonly used to specify dimensions for elements in a UI, such as a window or element.
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -652,6 +655,7 @@ impl Size<Length> {
 /// assert_eq!(bounds.origin, origin);
 /// assert_eq!(bounds.size, size);
 /// ```
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -1206,6 +1210,7 @@ impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 /// assert_eq!(edges.bottom, 30.0);
 /// assert_eq!(edges.left, 40.0);
 /// ```
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -1618,6 +1623,7 @@ impl From<f32> for Edges<Pixels> {
 /// Represents the corners of a box in a 2D space, such as border radius.
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -1890,6 +1896,7 @@ impl From<Pixels> for Corners<Pixels> {
 /// let scaled_length = length.scale(2.0);
 /// assert_eq!(scaled_length, Pixels(20.0));
 /// ```
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(
     Clone,
     Copy,
@@ -2129,6 +2136,7 @@ impl From<usize> for Pixels {
 /// interfacing with hardware that operates on the pixel level. Unlike logical pixels that may be
 /// affected by the device's scale factor, `DevicePixels` always correspond to real pixels on the
 /// display.
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(
     Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
 )]
@@ -2224,6 +2232,7 @@ impl From<usize> for DevicePixels {
 /// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
 /// dimensions and positions can be specified in a way that scales appropriately across different
 /// display resolutions.
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub(crate) f32);
@@ -2280,6 +2289,7 @@ impl From<ScaledPixels> for f64 {
 /// display's boundaries. This type is particularly useful in multi-monitor setups where
 /// positioning and measurements need to be consistent and relative to a "global" origin point
 /// rather than being relative to any individual display.
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct GlobalPixels(pub(crate) f32);

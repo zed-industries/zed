@@ -1,4 +1,5 @@
 use anyhow::bail;
+use bytemuck::Zeroable;
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
 
@@ -174,6 +175,7 @@ impl TryFrom<&'_ str> for Rgba {
 }
 
 /// An HSLA color
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Default, Copy, Clone, Debug)]
 #[repr(C)]
 pub struct Hsla {

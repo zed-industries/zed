@@ -71,6 +71,7 @@ struct ShaderPolySpritesData {
     b_poly_sprites: gpu::BufferPiece,
 }
 
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 struct PathSprite {

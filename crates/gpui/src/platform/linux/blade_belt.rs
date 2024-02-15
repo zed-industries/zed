@@ -75,8 +75,7 @@ impl BladeBelt {
         chunk.into()
     }
 
-    //todo!(linux): enforce T: bytemuck::Zeroable
-    pub fn alloc_data<T>(&mut self, data: &[T], gpu: &gpu::Context) -> gpu::BufferPiece {
+    pub fn alloc_data<T: bytemuck::Zeroable>(&mut self, data: &[T], gpu: &gpu::Context) -> gpu::BufferPiece {
         assert!(!data.is_empty());
         let type_alignment = mem::align_of::<T>() as u64;
         debug_assert_eq!(

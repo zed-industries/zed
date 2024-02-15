@@ -10,6 +10,7 @@ use crate::{
     WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
+use bytemuck::Zeroable;
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
@@ -477,6 +478,7 @@ impl Window {
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
 /// rendered. Currently, only rectangular content masks are supported, but we give the mask its own type
 /// to leave room to support more complex shapes in the future.
+#[cfg_attr(target_os = "linux", derive(Zeroable))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct ContentMask<P: Clone + Default + Debug> {
