@@ -173,6 +173,30 @@ impl Client for X11Client {
                         }));
                     }
                 }
+                xcb::Event::X(x::Event::MotionNotify(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let pressed_button = super::button_from_state(ev.state());
+                    let position =
+                        Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
+                        pressed_button,
+                        position,
+                        modifiers,
+                    }));
+                }
+                xcb::Event::X(x::Event::LeaveNotify(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let pressed_button = super::button_from_state(ev.state());
+                    let position =
+                        Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
+                        pressed_button,
+                        position,
+                        modifiers,
+                    }));
+                }
                 _ => {}
             }
 
