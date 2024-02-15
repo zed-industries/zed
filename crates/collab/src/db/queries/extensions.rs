@@ -41,6 +41,7 @@ impl Database {
                             .split(',')
                             .map(|author| author.trim().to_string())
                             .collect::<Vec<_>>(),
+                        description: version.description,
                         repository: version.repository,
                         published_at: version.published_at,
                         download_count: extension.total_download_count as u64,

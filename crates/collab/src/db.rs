@@ -733,6 +733,7 @@ pub struct ExtensionMetadata {
     pub name: String,
     pub version: String,
     pub authors: Vec<String>,
+    pub description: String,
     pub repository: String,
     #[serde(serialize_with = "serialize_iso8601")]
     pub published_at: PrimitiveDateTime,
