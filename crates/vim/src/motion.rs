@@ -1170,22 +1170,12 @@ fn previous_word_end(
         let mut prev_ch = None;
         let mut offset = point.to_point(map).to_offset(&map.buffer_snapshot);
 
-        /*
-        find_preceding_boundary(map, point, FindRange::MultiLine, |right, left| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), false);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), false);
-            left_kind != right_kind && right.is_whitespace()
-        });
-        */
-
         for ch in map.buffer_snapshot.reversed_chars_at(offset) {
             if let Some(prev_ch) = prev_ch {
                 let right = prev_ch;
                 let left = ch;
-                println!("left: {:?}, right: {:?}", left, right);
                 let left_kind = coerce_punctuation(char_kind(&scope, left), false);
                 let right_kind = coerce_punctuation(char_kind(&scope, right), false);
-                println!("left kind: {:?}, right kind: {:?}", left_kind, right_kind);
                 if left_kind != right_kind && right.is_whitespace() {
                     break;
                 }
