@@ -462,6 +462,21 @@ enum LineEnd {
     EndOfFile(DisplayPoint),
 }
 
+/// If not `around` (i.e. inner), returns a range that surrounds the paragraph
+/// where `relative_to` is in. If `around`, principally returns the range ending
+/// at the end of the next paragraph.
+///
+/// Here, the "paragraph" is defined as a block of non-blank lines or a block of
+/// blank lines. If the paragraph ends with a trailing newline (i.e. not with
+/// EOF), the returned range ends at the trailing newline of the paragraph (i.e.
+/// the trailing newline is not subject to subsequent operations).
+///
+/// Edge cases:
+/// - If `around` and if the current paragraph is the last paragraph of the
+///   file and is blank, then the selection results in an error.
+/// - If `around` and if the current paragraph is the last paragraph of the
+///   file and is not blank, then the returned range starts at the start of the
+///   previous paragraph, if it exists.
 fn paragraph(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -535,7 +550,7 @@ fn paragraph(
         LineEnd::EndOfFile(point) => point,
     };
     let range = paragraph_start..paragraph_end;
-    return Some(range);
+    Some(range)
 }
 
 const EMPTY_LINE_WHITESPACE: &[char] = &[' ', '\t'];
