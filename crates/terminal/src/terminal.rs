@@ -285,8 +285,8 @@ pub struct ExternalTask {
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
-    pub cancellation_rx: Option<Receiver<()>>,
-    pub completion_tx: Option<Sender<bool>>,
+    pub cancellation_rx: Receiver<()>,
+    pub completion_tx: Sender<bool>,
 }
 
 pub struct TerminalBuilder {
@@ -297,7 +297,7 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        external_task_completion_tx: Option<Sender<bool>>,
+        external_task: Option<ExternalTaskState>,
         shell: Shell,
         env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
@@ -396,7 +396,7 @@ impl TerminalBuilder {
         let word_regex = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
 
         let terminal = Terminal {
-            external_task_completion_tx,
+            external_task,
             pty_tx: Notifier(pty_tx),
             term,
             events: VecDeque::with_capacity(10), //Should never get this high.
@@ -426,7 +426,6 @@ impl TerminalBuilder {
 
     pub fn subscribe(
         mut self,
-        label: Option<String>,
         cancellation_rx: Option<Receiver<()>>,
         cx: &mut ModelContext<Terminal>,
     ) -> Terminal {
@@ -444,11 +443,6 @@ impl TerminalBuilder {
 
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
-            if let Some(label) = label {
-                terminal.update(&mut cx, |terminal, cx| {
-                    terminal.process_event(&AlacTermEvent::Title(label), cx);
-                })?;
-            }
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(&mut cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
@@ -572,7 +566,6 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
-    external_task_completion_tx: Option<Sender<bool>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
@@ -593,6 +586,12 @@ pub struct Terminal {
     hovered_word: bool,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
+    external_task: Option<ExternalTaskState>,
+}
+
+pub struct ExternalTaskState {
+    pub completion_tx: Sender<bool>,
+    pub label: String,
 }
 
 impl Terminal {
@@ -625,7 +624,7 @@ impl Terminal {
                 cx.emit(Event::Bell);
             }
             AlacTermEvent::Exit => {
-                if let Some(completion_tx) = &self.external_task_completion_tx {
+                if let Some(external_task_state) = &self.external_task {
                     if matches!(event, AlacTermEvent::Exit) {
                         let successful =
                             self.foreground_process_info.as_ref().map_or(false, |info| {
@@ -634,7 +633,7 @@ impl Terminal {
                                     LocalProcessStatus::Dead | LocalProcessStatus::Stop
                                 )
                             });
-                        completion_tx.try_send(successful).ok();
+                        external_task_state.completion_tx.try_send(successful).ok();
                     }
                 } else {
                     cx.emit(Event::CloseTerminal)
@@ -1357,42 +1356,47 @@ impl Terminal {
     }
 
     pub fn title(&self, truncate: bool) -> String {
-        self.foreground_process_info
-            .as_ref()
-            .map(|fpi| {
-                let process_file = fpi
-                    .cwd
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let process_name = format!(
-                    "{}{}",
-                    fpi.name,
-                    if fpi.argv.len() >= 1 {
-                        format!(" {}", (fpi.argv[1..]).join(" "))
+        const MAX_CHARS: usize = 25;
+        match &self.external_task {
+            Some(external_task) => truncate_and_trailoff(&external_task.label, MAX_CHARS),
+            None => self
+                .foreground_process_info
+                .as_ref()
+                .map(|fpi| {
+                    let process_file = fpi
+                        .cwd
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let process_name = format!(
+                        "{}{}",
+                        fpi.name,
+                        if fpi.argv.len() >= 1 {
+                            format!(" {}", (fpi.argv[1..]).join(" "))
+                        } else {
+                            "".to_string()
+                        }
+                    );
+                    let (process_file, process_name) = if truncate {
+                        (
+                            truncate_and_trailoff(&process_file, MAX_CHARS),
+                            truncate_and_trailoff(&process_name, MAX_CHARS),
+                        )
                     } else {
-                        "".to_string()
-                    }
-                );
-                let (process_file, process_name) = if truncate {
-                    (
-                        truncate_and_trailoff(&process_file, 25),
-                        truncate_and_trailoff(&process_name, 25),
-                    )
-                } else {
-                    (process_file, process_name)
-                };
-                format!("{process_file} — {process_name}")
-            })
-            .unwrap_or_else(|| "Terminal".to_string())
+                        (process_file, process_name)
+                    };
+                    format!("{process_file} — {process_name}")
+                })
+                .unwrap_or_else(|| "Terminal".to_string()),
+        }
     }
 
     pub fn can_navigate_to_selected_word(&self) -> bool {
         self.cmd_pressed && self.hovered_word
     }
 
-    pub fn belongs_to_external_process(&self) -> bool {
-        self.external_task_completion_tx.is_some()
+    pub fn created_for_external_task(&self) -> bool {
+        self.external_task.is_some()
     }
 }
 

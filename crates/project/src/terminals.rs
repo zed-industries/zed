@@ -4,7 +4,7 @@ use settings::Settings;
 use std::path::{Path, PathBuf};
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
-    ExternalTask, Terminal, TerminalBuilder,
+    ExternalTask, ExternalTaskState, Terminal, TerminalBuilder,
 };
 
 // #[cfg(target_os = "macos")]
@@ -18,7 +18,7 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        mut external_task: Option<ExternalTask>,
+        external_task: Option<ExternalTask>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
@@ -29,27 +29,26 @@ impl Project {
 
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
-        let external_task_completion_tx = external_task
-            .as_mut()
-            .and_then(|task| task.completion_tx.take());
-        let external_task_cancellation_rx = external_task
-            .as_mut()
-            .and_then(|task| task.cancellation_rx.take());
-        let (external_task_label, shell) = if let Some(external_task) = external_task {
-            (
-                Some(external_task.label),
-                Shell::WithArguments {
-                    program: external_task.command,
-                    args: external_task.args,
-                },
-            )
-        } else {
-            (None, settings.shell.clone())
-        };
+        let (external_task_cancellation_rx, external_task, shell) =
+            if let Some(external_task) = external_task {
+                (
+                    Some(external_task.cancellation_rx),
+                    Some(ExternalTaskState {
+                        label: external_task.label,
+                        completion_tx: external_task.completion_tx,
+                    }),
+                    Shell::WithArguments {
+                        program: external_task.command,
+                        args: external_task.args,
+                    },
+                )
+            } else {
+                (None, None, settings.shell.clone())
+            };
 
         let terminal = TerminalBuilder::new(
             working_directory.clone(),
-            external_task_completion_tx,
+            external_task,
             shell,
             settings.env.clone(),
             Some(settings.blinking.clone()),
@@ -57,9 +56,8 @@ impl Project {
             window,
         )
         .map(|builder| {
-            let terminal_handle = cx.new_model(|cx| {
-                builder.subscribe(external_task_label, external_task_cancellation_rx, cx)
-            });
+            let terminal_handle =
+                cx.new_model(|cx| builder.subscribe(external_task_cancellation_rx, cx));
 
             self.terminals
                 .local_handles

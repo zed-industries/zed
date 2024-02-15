@@ -282,15 +282,19 @@ impl TerminalPanel {
         action: &runnable::SpawnTaskInTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        if action.label.is_empty() || action.command.is_empty() {
+        let Some((cancellation_rx, completion_tx)) = action
+            .cancellation_rx
+            .as_ref()
+            .zip(action.completion_tx.as_ref())
+        else {
             return;
-        }
+        };
         let external_task = ExternalTask {
             label: action.label.clone(),
             command: action.command.clone(),
             args: action.args.clone(),
-            cancellation_rx: action.cancellation_rx.clone(),
-            completion_tx: action.completion_tx.clone(),
+            cancellation_rx: cancellation_rx.clone(),
+            completion_tx: completion_tx.clone(),
         };
         let working_directory = action.cwd.clone();
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
@@ -375,7 +379,7 @@ impl TerminalPanel {
                     .read(cx)
                     .terminal()
                     .read(cx)
-                    .belongs_to_external_process()
+                    .created_for_external_task()
                 {
                     None
                 } else {

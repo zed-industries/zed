@@ -161,7 +161,7 @@ impl TerminalView {
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
                 let terminal = this.terminal().read(cx);
-                if !terminal.belongs_to_external_process() {
+                if !terminal.created_for_external_task() {
                     if let Some(foreground_info) = &terminal.foreground_process_info {
                         let cwd = foreground_info.cwd.clone();
 
@@ -758,10 +758,16 @@ impl Item for TerminalView {
         selected: bool,
         cx: &WindowContext,
     ) -> AnyElement {
-        let title = self.terminal().read(cx).title(true);
+        let terminal = self.terminal().read(cx);
+        let title = terminal.title(true);
+        let icon = if terminal.created_for_external_task() {
+            IconName::Play
+        } else {
+            IconName::Terminal
+        };
         h_flex()
             .gap_2()
-            .child(Icon::new(IconName::Terminal))
+            .child(Icon::new(icon))
             .child(Label::new(title).color(if selected {
                 Color::Default
             } else {
@@ -857,7 +863,7 @@ impl Item for TerminalView {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        if !self.terminal().read(cx).belongs_to_external_process() {
+        if !self.terminal().read(cx).created_for_external_task() {
             cx.background_executor()
                 .spawn(TERMINAL_DB.update_workspace_id(
                     workspace.database_id(),
