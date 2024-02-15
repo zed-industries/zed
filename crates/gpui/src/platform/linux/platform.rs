@@ -49,8 +49,8 @@ pub(crate) struct LinuxPlatformInner {
 }
 
 pub(crate) struct LinuxPlatform {
-    client: Arc<dyn Client>,
-    inner: Arc<LinuxPlatformInner>,
+    client: Rc<dyn Client>,
+    inner: Rc<LinuxPlatformInner>,
 }
 
 pub(crate) struct LinuxPlatformState {
@@ -93,7 +93,7 @@ impl LinuxPlatform {
         let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
             Arc::new(WaylandClientDispatcher::new(&conn));
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
-        let inner = Arc::new(LinuxPlatformInner {
+        let inner = Rc::new(LinuxPlatformInner {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             main_receiver,
@@ -101,10 +101,10 @@ impl LinuxPlatform {
             callbacks,
             state,
         });
-        let client = Arc::new(WaylandClient::new(Arc::clone(&inner), Arc::clone(&conn)));
+        let client = Rc::new(WaylandClient::new(Rc::clone(&inner), Arc::clone(&conn)));
         Self {
             client,
-            inner: Arc::clone(&inner),
+            inner: Rc::clone(&inner),
         }
     }
 
@@ -135,7 +135,7 @@ impl LinuxPlatform {
         let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
             Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
-        let inner = Arc::new(LinuxPlatformInner {
+        let inner = Rc::new(LinuxPlatformInner {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             main_receiver,
@@ -143,15 +143,15 @@ impl LinuxPlatform {
             callbacks,
             state,
         });
-        let client = Arc::new(X11Client::new(
-            Arc::clone(&inner),
+        let client = Rc::new(X11Client::new(
+            Rc::clone(&inner),
             xcb_connection,
             x_root_index,
             atoms,
         ));
         Self {
             client,
-            inner: Arc::clone(&inner),
+            inner: Rc::clone(&inner),
         }
     }
 }

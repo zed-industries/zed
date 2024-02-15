@@ -248,7 +248,7 @@ impl X11WindowState {
 
         // Note: this has to be done after the GPU init, or otherwise
         // the sizes are immediately invalidated.
-        let gpu_extent = query_render_extent(&xcb_connection, x_window);
+        let gpu_extent = query_render_extent(xcb_connection, x_window);
 
         Self {
             xcb_connection: Arc::clone(xcb_connection),

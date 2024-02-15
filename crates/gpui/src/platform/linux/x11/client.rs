@@ -20,7 +20,7 @@ pub(crate) struct X11ClientState {
 }
 
 pub(crate) struct X11Client {
-    platform_inner: Arc<LinuxPlatformInner>,
+    platform_inner: Rc<LinuxPlatformInner>,
     xcb_connection: Arc<xcb::Connection>,
     x_root_index: i32,
     atoms: XcbAtoms,
@@ -29,7 +29,7 @@ pub(crate) struct X11Client {
 
 impl X11Client {
     pub(crate) fn new(
-        inner: Arc<LinuxPlatformInner>,
+        inner: Rc<LinuxPlatformInner>,
         xcb_connection: Arc<xcb::Connection>,
         x_root_index: i32,
         atoms: XcbAtoms,
