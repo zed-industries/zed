@@ -687,7 +687,6 @@ impl BufferSearchBar {
                 });
             });
             self.search_options = options;
-            self.query_contains_error = false;
             self.clear_matches(cx);
             cx.notify();
         }
@@ -804,7 +803,6 @@ impl BufferSearchBar {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited => {
-                self.query_contains_error = false;
                 self.clear_matches(cx);
                 let search = self.update_matches(cx);
                 cx.spawn(|this, mut cx| async move {
@@ -869,6 +867,7 @@ impl BufferSearchBar {
         self.pending_search.take();
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+            self.query_contains_error = false;
             if query.is_empty() {
                 self.active_match_index.take();
                 active_searchable_item.clear_matches(cx);
