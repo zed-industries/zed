@@ -405,7 +405,7 @@ impl Render for BufferSearchBar {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
             .gap_2()
-            .child(h_flex().child(search_line.w_full()))
+            .child(search_line)
             .children(replace_line)
     }
 }
