@@ -90,6 +90,7 @@ pub fn init(
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("html", tree_sitter_html::language()),
+        ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("lua", tree_sitter_lua::language()),
         ("markdown", tree_sitter_markdown::language()),
@@ -258,6 +259,7 @@ pub fn init(
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
             );
+            language!("jsdoc", vec![Arc::new(deno::DenoLspAdapter::new())]);
         }
         false => {
             language!(
@@ -282,6 +284,12 @@ pub fn init(
                     Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
+            );
+            language!(
+                "jsdoc",
+                vec![Arc::new(typescript::TypeScriptLspAdapter::new(
+                    node_runtime.clone(),
+                ))]
             );
         }
     }
