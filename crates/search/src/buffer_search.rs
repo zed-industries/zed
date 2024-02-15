@@ -321,6 +321,12 @@ impl Render for BufferSearchBar {
                         "Select next match",
                         &SelectNextMatch,
                     )),
+            )
+            // Moved Close button into the search_line Div from flex end to make position more intuitive
+            .child(
+                IconButton::new(SharedString::from("Close"), IconName::Close)
+                    .tooltip(move |cx| Tooltip::for_action("Close search bar", &Dismiss, cx))
+                    .on_click(cx.listener(|this, _: &ClickEvent, cx| this.dismiss(&Dismiss, cx))),
             );
 
         let replace_line = should_show_replace_input.then(|| {
@@ -399,15 +405,7 @@ impl Render for BufferSearchBar {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
             .gap_2()
-            .child(
-                h_flex().child(search_line.w_full()).child(
-                    IconButton::new(SharedString::from("Close"), IconName::Close)
-                        .tooltip(move |cx| Tooltip::for_action("Close search bar", &Dismiss, cx))
-                        .on_click(
-                            cx.listener(|this, _: &ClickEvent, cx| this.dismiss(&Dismiss, cx)),
-                        ),
-                ),
-            )
+            .child(h_flex().child(search_line.w_full()))
             .children(replace_line)
     }
 }
