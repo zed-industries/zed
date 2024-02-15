@@ -524,10 +524,7 @@ impl Motion {
             WindowTop => window_top(map, point, &text_layout_details, times - 1),
             WindowMiddle => window_middle(map, point, &text_layout_details),
             WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
-            PreviousWordEnd => (
-                previous_word_end(map, point, &text_layout_details, times),
-                SelectionGoal::None,
-            ),
+            PreviousWordEnd => (previous_word_end(map, point, times), SelectionGoal::None),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -1159,36 +1156,31 @@ fn window_bottom(
     }
 }
 
-fn previous_word_end(
-    map: &DisplaySnapshot,
-    mut point: DisplayPoint,
-    _text_layout_details: &TextLayoutDetails,
-    times: usize,
-) -> DisplayPoint {
+fn previous_word_end(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
-    for _ in 0..times {
-        let mut prev_ch = None;
-        let mut offset = point.to_point(map).to_offset(&map.buffer_snapshot);
-
-        for ch in map.buffer_snapshot.reversed_chars_at(offset) {
-            if let Some(prev_ch) = prev_ch {
-                let right = prev_ch;
-                let left = ch;
-                let left_kind = coerce_punctuation(char_kind(&scope, left), false);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), false);
-                if left_kind != right_kind && right.is_whitespace() {
-                    break;
-                }
-            }
-
-            offset -= ch.len_utf8();
-            prev_ch = Some(ch);
-        }
-
-        point = map.clip_point(offset.to_display_point(map), Bias::Left);
-        point = movement::saturating_left(map, point);
+    if point.column() < map.line_len(point.row()) {
+        *point.column_mut() += 1;
     }
-    point
+    for _ in 0..times {
+        let new_point =
+            movement::find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
+                let left_kind = char_kind(&scope, left);
+                let right_kind = char_kind(&scope, right);
+                match (left_kind, right_kind) {
+                    (CharKind::Punctuation, CharKind::Whitespace)
+                    | (CharKind::Punctuation, CharKind::Word)
+                    | (CharKind::Word, CharKind::Whitespace)
+                    | (CharKind::Word, CharKind::Punctuation) => true,
+                    (CharKind::Whitespace, CharKind::Whitespace) => left == '\n' && right == '\n',
+                    _ => false,
+                }
+            });
+        if new_point == point {
+            break;
+        }
+        point = new_point;
+    }
+    movement::saturating_left(map, point)
 }
 
 #[cfg(test)]
@@ -1613,16 +1605,12 @@ mod test {
     async fn test_previous_word_end(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state(indoc! {r"
-        123 234 345
         456 5ˇ67 678
-        789 890 901
         "})
             .await;
         cx.simulate_shared_keystrokes(["g", "e"]).await;
         cx.assert_shared_state(indoc! {r"
-        123 234 345
         45ˇ6 567 678
-        789 890 901
         "})
             .await;
 
@@ -1630,14 +1618,12 @@ mod test {
         cx.set_shared_state(indoc! {r"
         123 234 345
         456 5ˇ67 678
-        789 890 901
         "})
             .await;
         cx.simulate_shared_keystrokes(["4", "g", "e"]).await;
         cx.assert_shared_state(indoc! {r"
         12ˇ3 234 345
         456 567 678
-        789 890 901
         "})
             .await;
 
@@ -1659,14 +1645,29 @@ mod test {
         // With punctuation and count
         cx.set_shared_state(indoc! {r"
         123 234 345
-        456 5ˇ67 678
+        4;5.6 5ˇ67 678
         789 890 901
         "})
             .await;
         cx.simulate_shared_keystrokes(["5", "g", "e"]).await;
         cx.assert_shared_state(indoc! {r"
-          ˇ123 234 345
-          456 567 678
+          123 234 345
+          ˇ4;5.6 567 678
+          789 890 901
+        "})
+            .await;
+
+        // newlines
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+
+        78ˇ9 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 234 345
+          ˇ
           789 890 901
         "})
             .await;
