@@ -141,8 +141,16 @@ if [ "$local_arch" = false ]; then
     if [ "$channel" == "nightly" ]; then
         version="$version-$(git rev-parse --short HEAD)"
     fi
+
+    echo "Removing existing gzipped dSYMs"
+    rm -f target/aarch64-apple-darwin/release/Zed.dwarf.gz
+    rm -f target/x86_64-apple-darwin/release/Zed.dwarf.gz
+
+    echo "Gzipping dSYMs"
     gzip target/aarch64-apple-darwin/release/Zed.dwarf
     gzip target/x86_64-apple-darwin/release/Zed.dwarf
+
+    echo "Uploading dSYMs"
     uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-aarch64-apple-darwin.dwarf.gz"
     uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-x86_64-apple-darwin.dwarf.gz"
 
