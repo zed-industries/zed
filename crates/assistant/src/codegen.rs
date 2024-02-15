@@ -1,12 +1,14 @@
-use crate::streaming_diff::{Hunk, StreamingDiff};
-use ai::completion::{CompletionProvider, CompletionRequest};
+use crate::{
+    streaming_diff::{Hunk, StreamingDiff},
+    CompletionProvider, LanguageModelRequest,
+};
 use anyhow::Result;
 use editor::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{EventEmitter, Model, ModelContext, Task};
 use language::{Rope, TransactionId};
 use multi_buffer;
-use std::{cmp, future, ops::Range, sync::Arc};
+use std::{cmp, future, ops::Range};
 
 pub enum Event {
     Finished,
@@ -20,7 +22,7 @@ pub enum CodegenKind {
 }
 
 pub struct Codegen {
-    provider: Arc<dyn CompletionProvider>,
+    provider: CompletionProvider,
     buffer: Model<MultiBuffer>,
     snapshot: MultiBufferSnapshot,
     kind: CodegenKind,
@@ -38,7 +40,7 @@ impl Codegen {
     pub fn new(
         buffer: Model<MultiBuffer>,
         kind: CodegenKind,
-        provider: Arc<dyn CompletionProvider>,
+        provider: CompletionProvider,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
@@ -94,7 +96,7 @@ impl Codegen {
         self.error.as_ref()
     }
 
-    pub fn start(&mut self, prompt: Box<dyn CompletionRequest>, cx: &mut ModelContext<Self>) {
+    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
         let range = self.range();
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
@@ -361,7 +363,6 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use ai::test::FakeCompletionProvider;
     use futures::stream::{self};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
@@ -376,12 +377,6 @@ mod tests {
     #[derive(Serialize)]
     pub struct DummyCompletionRequest {
         pub name: String,
-    }
-
-    impl CompletionRequest for DummyCompletionRequest {
-        fn data(&self) -> serde_json::Result<String> {
-            serde_json::to_string(self)
-        }
     }
 
     #[gpui::test(iterations = 10)]
@@ -405,7 +400,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let provider = Arc::new(FakeCompletionProvider::new());
+        let provider = CompletionProvider::fake();
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -415,9 +410,7 @@ mod tests {
             )
         });
 
-        let request = Box::new(DummyCompletionRequest {
-            name: "test".to_string(),
-        });
+        let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
         let mut new_text = concat!(
@@ -430,12 +423,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            println!("CHUNK: {:?}", &chunk);
-            provider.send_completion(chunk);
+            provider.as_fake().send_completion(chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion();
+        provider.as_fake().finish_completion();
         cx.background_executor.run_until_parked();
 
         assert_eq!(
@@ -472,7 +464,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))
         });
-        let provider = Arc::new(FakeCompletionProvider::new());
+        let provider = CompletionProvider::fake();
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -482,9 +474,7 @@ mod tests {
             )
         });
 
-        let request = Box::new(DummyCompletionRequest {
-            name: "test".to_string(),
-        });
+        let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
         let mut new_text = concat!(
@@ -497,11 +487,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion(chunk);
+            provider.as_fake().send_completion(chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion();
+        provider.as_fake().finish_completion();
         cx.background_executor.run_until_parked();
 
         assert_eq!(
@@ -538,7 +528,7 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))
         });
-        let provider = Arc::new(FakeCompletionProvider::new());
+        let provider = CompletionProvider::fake();
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
@@ -548,9 +538,7 @@ mod tests {
             )
         });
 
-        let request = Box::new(DummyCompletionRequest {
-            name: "test".to_string(),
-        });
+        let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
         let mut new_text = concat!(
@@ -563,12 +551,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            println!("{:?}", &chunk);
-            provider.send_completion(chunk);
+            provider.as_fake().send_completion(chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion();
+        provider.as_fake().finish_completion();
         cx.background_executor.run_until_parked();
 
         assert_eq!(

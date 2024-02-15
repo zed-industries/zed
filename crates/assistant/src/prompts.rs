@@ -1,14 +1,6 @@
-use ai::models::LanguageModel;
-use ai::prompts::base::{PromptArguments, PromptChain, PromptPriority, PromptTemplate};
-use ai::prompts::file_context::FileContext;
-use ai::prompts::generate::GenerateInlineContent;
-use ai::prompts::preamble::EngineerPreamble;
-use ai::prompts::repository_context::{PromptCodeSnippet, RepositoryContext};
-use ai::providers::open_ai::OpenAiLanguageModel;
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp::{self, Reverse};
 use std::ops::Range;
-use std::sync::Arc;
 
 #[allow(dead_code)]
 fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> String {
@@ -126,48 +118,48 @@ pub fn generate_content_prompt(
     language_name: Option<&str>,
     buffer: BufferSnapshot,
     range: Range<usize>,
-    search_results: Vec<PromptCodeSnippet>,
     model: &str,
     project_name: Option<String>,
 ) -> anyhow::Result<String> {
+    todo!()
+
     // Using new Prompt Templates
-    let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAiLanguageModel::load(model));
-    let lang_name = if let Some(language_name) = language_name {
-        Some(language_name.to_string())
-    } else {
-        None
-    };
+    // let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAiLanguageModel::load(model));
+    // let lang_name = if let Some(language_name) = language_name {
+    //     Some(language_name.to_string())
+    // } else {
+    //     None
+    // };
 
-    let args = PromptArguments {
-        model: openai_model,
-        language_name: lang_name.clone(),
-        project_name,
-        snippets: search_results.clone(),
-        reserved_tokens: 1000,
-        buffer: Some(buffer),
-        selected_range: Some(range),
-        user_prompt: Some(user_prompt.clone()),
-    };
+    // let args = PromptArguments {
+    //     model: openai_model,
+    //     language_name: lang_name.clone(),
+    //     project_name,
+    //     reserved_tokens: 1000,
+    //     buffer: Some(buffer),
+    //     selected_range: Some(range),
+    //     user_prompt: Some(user_prompt.clone()),
+    // };
 
-    let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
-        (PromptPriority::Mandatory, Box::new(EngineerPreamble {})),
-        (
-            PromptPriority::Ordered { order: 1 },
-            Box::new(RepositoryContext {}),
-        ),
-        (
-            PromptPriority::Ordered { order: 0 },
-            Box::new(FileContext {}),
-        ),
-        (
-            PromptPriority::Mandatory,
-            Box::new(GenerateInlineContent {}),
-        ),
-    ];
-    let chain = PromptChain::new(args, templates);
-    let (prompt, _) = chain.generate(true)?;
+    // let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
+    //     (PromptPriority::Mandatory, Box::new(EngineerPreamble {})),
+    //     (
+    //         PromptPriority::Ordered { order: 1 },
+    //         Box::new(RepositoryContext {}),
+    //     ),
+    //     (
+    //         PromptPriority::Ordered { order: 0 },
+    //         Box::new(FileContext {}),
+    //     ),
+    //     (
+    //         PromptPriority::Mandatory,
+    //         Box::new(GenerateInlineContent {}),
+    //     ),
+    // ];
+    // let chain = PromptChain::new(args, templates);
+    // let (prompt, _) = chain.generate(true)?;
 
-    anyhow::Ok(prompt)
+    // anyhow::Ok(prompt)
 }
 
 #[cfg(test)]

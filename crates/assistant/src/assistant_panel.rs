@@ -2,16 +2,10 @@ use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAiModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
-    Assist, CycleMessageRole, InlineAssist, MessageId, MessageMetadata, MessageStatus,
-    NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
-    SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
-};
-use ai::prompts::repository_context::PromptCodeSnippet;
-use ai::providers::open_ai::OPEN_AI_API_URL;
-use ai::{
-    auth::ProviderCredential,
-    completion::{CompletionProvider, CompletionRequest},
-    providers::open_ai::{OpenAiCompletionProvider, OpenAiRequest, RequestMessage},
+    Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModelRequest,
+    LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus, NewConversation,
+    QuoteSelection, Role, SavedConversation, SavedConversationMetadata, SavedMessage, Split,
+    ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -94,8 +88,7 @@ pub struct AssistantPanel {
     zoomed: bool,
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
-    completion_provider: Arc<dyn CompletionProvider>,
-    api_key_editor: Option<View<Editor>>,
+    completion_provider: CompletionProvider,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
@@ -117,7 +110,10 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
+            let (fs, client) = workspace.update(&mut cx, |workspace, _| {
+                let app_state = workspace.app_state();
+                (app_state.fs.clone(), app_state.client.clone())
+            })?;
             let saved_conversations = SavedConversationMetadata::list(fs.clone())
                 .await
                 .log_err()
@@ -132,12 +128,7 @@ impl AssistantPanel {
                 })
                 .log_err()
                 .unwrap();
-            let completion_provider = OpenAiCompletionProvider::new(
-                api_url,
-                model_name,
-                cx.background_executor().clone(),
-            )
-            .await;
+            let completion_provider = CompletionProvider::from_settings(&mut cx).await;
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -186,8 +177,7 @@ impl AssistantPanel {
                         zoomed: false,
                         focus_handle,
                         toolbar,
-                        completion_provider: Arc::new(completion_provider),
-                        api_key_editor: None,
+                        completion_provider,
                         languages: workspace.app_state().languages.clone(),
                         fs: workspace.app_state().fs.clone(),
                         width: None,
@@ -212,15 +202,16 @@ impl AssistantPanel {
             .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
         cx.notify();
         if self.focus_handle.is_focused(cx) {
-            if self.has_credentials() {
-                if let Some(editor) = self.active_editor() {
-                    cx.focus_view(editor);
-                }
-            }
+            todo!()
+            // if self.has_credentials() {
+            //     if let Some(editor) = self.active_editor() {
+            //         cx.focus_view(editor);
+            //     }
+            // }
 
-            if let Some(api_key_editor) = self.api_key_editor.as_ref() {
-                cx.focus_view(api_key_editor);
-            }
+            // if let Some(api_key_editor) = self.api_key_editor.as_ref() {
+            //     cx.focus_view(api_key_editor);
+            // }
         }
     }
 
@@ -248,7 +239,7 @@ impl AssistantPanel {
         };
         let project = workspace.project().clone();
 
-        if assistant.update(cx, |assistant, _| assistant.has_credentials()) {
+        if assistant.update(cx, |assistant, _| assistant.is_authenticated()) {
             assistant.update(cx, |assistant, cx| {
                 assistant.new_inline_assist(&active_editor, cx, &project)
             });
@@ -256,9 +247,9 @@ impl AssistantPanel {
             let assistant = assistant.downgrade();
             cx.spawn(|workspace, mut cx| async move {
                 assistant
-                    .update(&mut cx, |assistant, cx| assistant.load_credentials(cx))?
+                    .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
                     .await;
-                if assistant.update(&mut cx, |assistant, _| assistant.has_credentials())? {
+                if assistant.update(&mut cx, |assistant, _| assistant.is_authenticated())? {
                     assistant.update(&mut cx, |assistant, cx| {
                         assistant.new_inline_assist(&active_editor, cx, &project)
                     })?;
@@ -468,15 +459,8 @@ impl AssistantPanel {
             InlineAssistantEvent::Confirmed {
                 prompt,
                 include_conversation,
-                retrieve_context,
             } => {
-                self.confirm_inline_assist(
-                    assist_id,
-                    prompt,
-                    *include_conversation,
-                    cx,
-                    *retrieve_context,
-                );
+                self.confirm_inline_assist(assist_id, prompt, *include_conversation, cx);
             }
             InlineAssistantEvent::Canceled => {
                 self.finish_inline_assist(assist_id, true, cx);
@@ -573,7 +557,6 @@ impl AssistantPanel {
         user_prompt: &str,
         include_conversation: bool,
         cx: &mut ViewContext<Self>,
-        retrieve_context: bool,
     ) {
         let conversation = if include_conversation {
             self.active_editor()
@@ -661,53 +644,18 @@ impl AssistantPanel {
 
         let user_prompt = user_prompt.to_string();
 
-        let snippets = if retrieve_context {
-            let Some(project) = project.upgrade() else {
-                return;
-            };
-
-            let search_results = if let Some(semantic_index) = self.semantic_index.clone() {
-                let search_results = semantic_index.update(cx, |this, cx| {
-                    this.search_project(project, user_prompt.to_string(), 10, vec![], vec![], cx)
-                });
-
-                cx.background_executor()
-                    .spawn(async move { search_results.await.unwrap_or_default() })
-            } else {
-                Task::ready(Vec::new())
-            };
-
-            let snippets = cx.spawn(|_, mut cx| async move {
-                let mut snippets = Vec::new();
-                for result in search_results.await {
-                    snippets.push(PromptCodeSnippet::new(
-                        result.buffer,
-                        result.range,
-                        &mut cx,
-                    )?);
-                }
-                anyhow::Ok(snippets)
-            });
-            snippets
-        } else {
-            Task::ready(Ok(Vec::new()))
-        };
-
         let mut model = AssistantSettings::get_global(cx)
             .default_open_ai_model
             .clone();
         let model_name = model.full_name();
 
         let prompt = cx.background_executor().spawn(async move {
-            let snippets = snippets.await?;
-
             let language_name = language_name.as_deref();
             generate_content_prompt(
                 user_prompt,
                 language_name,
                 buffer,
                 range,
-                snippets,
                 model_name,
                 project_name,
             )
@@ -729,18 +677,18 @@ impl AssistantPanel {
             // I Don't know if we want to return a ? here.
             let prompt = prompt.await?;
 
-            messages.push(RequestMessage {
+            messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: prompt,
             });
 
-            let request = Box::new(OpenAiRequest {
+            let request = LanguageModelRequest {
                 model: model.full_name().into(),
                 messages,
                 stream: true,
                 stop: vec!["|END|>".to_string()],
                 temperature,
-            });
+            };
 
             codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx))?;
             anyhow::Ok(())
@@ -792,10 +740,6 @@ impl AssistantPanel {
                 );
             }
         });
-    }
-
-    fn build_api_key_editor(&mut self, cx: &mut WindowContext<'_>) {
-        self.api_key_editor = Some(build_api_key_editor(cx));
     }
 
     fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
@@ -854,49 +798,6 @@ impl AssistantPanel {
         match event {
             ConversationEditorEvent::TabContentChanged => cx.notify(),
         }
-    }
-
-    fn save_credentials(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(api_key) = self
-            .api_key_editor
-            .as_ref()
-            .map(|editor| editor.read(cx).text(cx))
-        {
-            if !api_key.is_empty() {
-                let credential = ProviderCredential::Credentials {
-                    api_key: api_key.clone(),
-                };
-
-                let completion_provider = self.completion_provider.clone();
-                cx.spawn(|this, mut cx| async move {
-                    cx.update(|cx| completion_provider.save_credentials(cx, credential))?
-                        .await;
-
-                    this.update(&mut cx, |this, cx| {
-                        this.api_key_editor.take();
-                        this.focus_handle.focus(cx);
-                        cx.notify();
-                    })
-                })
-                .detach_and_log_err(cx);
-            }
-        } else {
-            cx.propagate();
-        }
-    }
-
-    fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
-        let completion_provider = self.completion_provider.clone();
-        cx.spawn(|this, mut cx| async move {
-            cx.update(|cx| completion_provider.delete_credentials(cx))?
-                .await;
-            this.update(&mut cx, |this, cx| {
-                this.build_api_key_editor(cx);
-                this.focus_handle.focus(cx);
-                cx.notify();
-            })
-        })
-        .detach_and_log_err(cx);
     }
 
     fn toggle_zoom(&mut self, _: &workspace::ToggleZoom, cx: &mut ViewContext<Self>) {
@@ -1112,12 +1013,18 @@ impl AssistantPanel {
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
         let languages = self.languages.clone();
+        let completion_provider = self.completion_provider.clone();
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = fs.load(&path).await?;
             let saved_conversation = serde_json::from_str(&saved_conversation)?;
-            let conversation =
-                Conversation::deserialize(saved_conversation, path.clone(), languages, &mut cx)
-                    .await?;
+            let conversation = Conversation::deserialize(
+                saved_conversation,
+                path.clone(),
+                languages,
+                completion_provider,
+                &mut cx,
+            )
+            .await?;
 
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
@@ -1141,20 +1048,145 @@ impl AssistantPanel {
             .position(|editor| editor.read(cx).conversation.read(cx).path.as_deref() == Some(path))
     }
 
-    fn has_credentials(&mut self) -> bool {
-        self.completion_provider.has_credentials()
+    fn is_authenticated(&mut self) -> bool {
+        self.completion_provider.is_authenticated()
     }
 
-    fn load_credentials(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
-        let completion_provider = self.completion_provider.clone();
-        cx.spawn(|_, mut cx| async move {
-            if let Some(retrieve_credentials) = cx
-                .update(|cx| completion_provider.retrieve_credentials(cx))
-                .log_err()
-            {
-                retrieve_credentials.await;
+    fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        self.completion_provider.authenticate(cx)
+    }
+
+    fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let header = TabBar::new("assistant_header")
+            .start_child(
+                h_flex().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
+            )
+            .children(self.active_editor().map(|editor| {
+                h_flex()
+                    .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
+                    .flex_1()
+                    .px_2()
+                    .child(Label::new(editor.read(cx).title(cx)).into_element())
+            }))
+            .when(self.focus_handle.contains_focused(cx), |this| {
+                this.end_child(
+                    h_flex()
+                        .gap_2()
+                        .when(self.active_editor().is_some(), |this| {
+                            this.child(h_flex().gap_1().children(self.render_editor_tools(cx)))
+                                .child(
+                                    ui::Divider::vertical()
+                                        .inset()
+                                        .color(ui::DividerColor::Border),
+                                )
+                        })
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Self::render_plus_button(cx))
+                                .child(self.render_zoom_button(cx)),
+                        ),
+                )
+            });
+
+        let contents = if self.active_editor().is_some() {
+            let mut registrar = DivRegistrar::new(
+                |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
+                cx,
+            );
+            BufferSearchBar::register(&mut registrar);
+            registrar.into_div()
+        } else {
+            div()
+        };
+        v_flex()
+            .key_context("AssistantPanel")
+            .size_full()
+            .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
+                this.new_conversation(cx);
+            }))
+            .on_action(cx.listener(AssistantPanel::toggle_zoom))
+            .on_action(cx.listener(AssistantPanel::deploy))
+            .on_action(cx.listener(AssistantPanel::select_next_match))
+            .on_action(cx.listener(AssistantPanel::select_prev_match))
+            .on_action(cx.listener(AssistantPanel::handle_editor_cancel))
+            .track_focus(&self.focus_handle)
+            .child(header)
+            .children(if self.toolbar.read(cx).hidden() {
+                None
+            } else {
+                Some(self.toolbar.clone())
+            })
+            .child(
+                contents
+                    .flex_1()
+                    .child(if let Some(editor) = self.active_editor() {
+                        editor.clone().into_any_element()
+                    } else {
+                        let view = cx.view().clone();
+                        let scroll_handle = self.saved_conversations_scroll_handle.clone();
+                        let conversation_count = self.saved_conversations.len();
+                        canvas(move |bounds, cx| {
+                            uniform_list(
+                                view,
+                                "saved_conversations",
+                                conversation_count,
+                                |this, range, cx| {
+                                    range
+                                        .map(|ix| this.render_saved_conversation(ix, cx))
+                                        .collect()
+                                },
+                            )
+                            .track_scroll(scroll_handle)
+                            .into_any_element()
+                            .draw(
+                                bounds.origin,
+                                bounds.size.map(AvailableSpace::Definite),
+                                cx,
+                            );
+                        })
+                        .size_full()
+                        .into_any_element()
+                    }),
+            )
+    }
+
+    fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        match &self.completion_provider {
+            CompletionProvider::OpenAi(_) => v_flex().gap_6().p_4().child(Label::new(
+                "Please assign an OPENAI_API_KEY environment variable, then restart Zed.",
+            )),
+            CompletionProvider::ZedDotDev(_) => {
+                const LABEL: &str = "Generate and analyze code with language models. You can dialog with the assistant in this panel or transform code inline.";
+
+                v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("sign_in", "Sign in")
+                                .icon_color(Color::Muted)
+                                .icon(IconName::Github)
+                                .icon_position(IconPosition::Start)
+                                .style(ButtonStyle::Filled)
+                                .full_width()
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.completion_provider
+                                        .authenticate(cx)
+                                        .detach_and_log_err(cx);
+                                })),
+                        )
+                        .child(
+                            div().flex().w_full().items_center().child(
+                                Label::new("Sign in to enable collaboration.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                        ),
+                )
             }
-        })
+            #[cfg(test)]
+            CompletionProvider::Fake(_) => panic!(),
+        }
     }
 }
 
@@ -1168,138 +1200,10 @@ fn build_api_key_editor(cx: &mut WindowContext) -> View<Editor> {
 
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if let Some(api_key_editor) = self.api_key_editor.clone() {
-            const INSTRUCTIONS: [&'static str; 6] = [
-                "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
-                " - You can create an API key at: platform.openai.com/api-keys",
-                " - Make sure your OpenAI account has credits",
-                " - Having a subscription for another service like GitHub Copilot won't work.",
-                " ",
-                "Paste your OpenAI API key and press Enter to use the assistant:"
-            ];
-
-            v_flex()
-                .p_4()
-                .size_full()
-                .on_action(cx.listener(AssistantPanel::save_credentials))
-                .track_focus(&self.focus_handle)
-                .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .rounded_md()
-                        .child(self.render_api_key_editor(&api_key_editor, cx)),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Label::new("Click on").size(LabelSize::Small))
-                        .child(Icon::new(IconName::Ai).size(IconSize::XSmall))
-                        .child(
-                            Label::new("in the status bar to close this panel.")
-                                .size(LabelSize::Small),
-                        ),
-                )
+        if self.completion_provider.is_authenticated() {
+            self.render_signed_in(cx).into_any_element()
         } else {
-            let header = TabBar::new("assistant_header")
-                .start_child(
-                    h_flex().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
-                )
-                .children(self.active_editor().map(|editor| {
-                    h_flex()
-                        .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
-                        .flex_1()
-                        .px_2()
-                        .child(Label::new(editor.read(cx).title(cx)).into_element())
-                }))
-                .when(self.focus_handle.contains_focused(cx), |this| {
-                    this.end_child(
-                        h_flex()
-                            .gap_2()
-                            .when(self.active_editor().is_some(), |this| {
-                                this.child(h_flex().gap_1().children(self.render_editor_tools(cx)))
-                                    .child(
-                                        ui::Divider::vertical()
-                                            .inset()
-                                            .color(ui::DividerColor::Border),
-                                    )
-                            })
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(Self::render_plus_button(cx))
-                                    .child(self.render_zoom_button(cx)),
-                            ),
-                    )
-                });
-
-            let contents = if self.active_editor().is_some() {
-                let mut registrar = DivRegistrar::new(
-                    |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
-                    cx,
-                );
-                BufferSearchBar::register(&mut registrar);
-                registrar.into_div()
-            } else {
-                div()
-            };
-            v_flex()
-                .key_context("AssistantPanel")
-                .size_full()
-                .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
-                    this.new_conversation(cx);
-                }))
-                .on_action(cx.listener(AssistantPanel::reset_credentials))
-                .on_action(cx.listener(AssistantPanel::toggle_zoom))
-                .on_action(cx.listener(AssistantPanel::deploy))
-                .on_action(cx.listener(AssistantPanel::select_next_match))
-                .on_action(cx.listener(AssistantPanel::select_prev_match))
-                .on_action(cx.listener(AssistantPanel::handle_editor_cancel))
-                .track_focus(&self.focus_handle)
-                .child(header)
-                .children(if self.toolbar.read(cx).hidden() {
-                    None
-                } else {
-                    Some(self.toolbar.clone())
-                })
-                .child(
-                    contents
-                        .flex_1()
-                        .child(if let Some(editor) = self.active_editor() {
-                            editor.clone().into_any_element()
-                        } else {
-                            let view = cx.view().clone();
-                            let scroll_handle = self.saved_conversations_scroll_handle.clone();
-                            let conversation_count = self.saved_conversations.len();
-                            canvas(move |bounds, cx| {
-                                uniform_list(
-                                    view,
-                                    "saved_conversations",
-                                    conversation_count,
-                                    |this, range, cx| {
-                                        range
-                                            .map(|ix| this.render_saved_conversation(ix, cx))
-                                            .collect()
-                                    },
-                                )
-                                .track_scroll(scroll_handle)
-                                .into_any_element()
-                                .draw(
-                                    bounds.origin,
-                                    bounds.size.map(AvailableSpace::Definite),
-                                    cx,
-                                );
-                            })
-                            .size_full()
-                            .into_any_element()
-                        }),
-                )
+            self.render_signed_out(cx).into_any_element()
         }
     }
 }
@@ -1361,13 +1265,11 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
-            let load_credentials = self.load_credentials(cx);
+            let load_credentials = self.authenticate(cx);
             cx.spawn(|this, mut cx| async move {
                 load_credentials.await;
                 this.update(&mut cx, |this, cx| {
-                    if !this.has_credentials() {
-                        this.build_api_key_editor(cx);
-                    } else if this.editors.is_empty() {
+                    if this.is_authenticated() && this.editors.is_empty() {
                         this.new_conversation(cx);
                     }
                 })
@@ -1427,7 +1329,7 @@ struct Conversation {
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
-    completion_provider: Arc<dyn CompletionProvider>,
+    completion_provider: CompletionProvider,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1436,7 +1338,7 @@ impl Conversation {
     fn new(
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
-        completion_provider: Arc<dyn CompletionProvider>,
+        completion_provider: CompletionProvider,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.new_model(|cx| {
@@ -1523,6 +1425,7 @@ impl Conversation {
         saved_conversation: SavedConversation,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        completion_provider: CompletionProvider,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
         let id = match saved_conversation.id {
@@ -1531,18 +1434,6 @@ impl Conversation {
         };
         let model = saved_conversation.model;
         let api_url = saved_conversation.api_url;
-        let completion_provider: Arc<dyn CompletionProvider> = Arc::new(
-            OpenAiCompletionProvider::new(
-                api_url
-                    .clone()
-                    .unwrap_or_else(|| OPEN_AI_API_URL.to_string()),
-                model.full_name().into(),
-                cx.background_executor().clone(),
-            )
-            .await,
-        );
-        cx.update(|cx| completion_provider.retrieve_credentials(cx))?
-            .await;
 
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
@@ -1716,12 +1607,12 @@ impl Conversation {
         }
 
         if should_assist {
-            if !self.completion_provider.has_credentials() {
+            if !self.completion_provider.is_authenticated() {
                 log::info!("completion provider has no credentials");
                 return Default::default();
             }
 
-            let request: Box<dyn CompletionRequest> = Box::new(OpenAiRequest {
+            let request = LanguageModelRequest {
                 model: self.model.full_name().to_string(),
                 messages: self
                     .messages(cx)
@@ -1731,7 +1622,7 @@ impl Conversation {
                 stream: true,
                 stop: vec![],
                 temperature: 1.0,
-            });
+            };
 
             let stream = self.completion_provider.complete(request);
             let assistant_message = self
@@ -1991,7 +1882,7 @@ impl Conversation {
 
     fn summarize(&mut self, cx: &mut ModelContext<Self>) {
         if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            if !self.completion_provider.has_credentials() {
+            if !self.completion_provider.is_authenticated() {
                 return;
             }
 
@@ -1999,18 +1890,18 @@ impl Conversation {
                 .messages(cx)
                 .take(2)
                 .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
-                .chain(Some(RequestMessage {
+                .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
                     content: "Summarize the conversation into a short title without punctuation"
                         .into(),
                 }));
-            let request: Box<dyn CompletionRequest> = Box::new(OpenAiRequest {
+            let request = LanguageModelRequest {
                 model: self.model.full_name().to_string(),
                 messages: messages.collect(),
                 stream: true,
                 stop: vec![],
                 temperature: 1.0,
-            });
+            };
 
             let stream = self.completion_provider.complete(request);
             self.pending_summary = cx.spawn(|this, mut cx| {
@@ -2199,7 +2090,7 @@ struct ConversationEditor {
 
 impl ConversationEditor {
     fn new(
-        completion_provider: Arc<dyn CompletionProvider>,
+        completion_provider: CompletionProvider,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         workspace: WeakView<Workspace>,
@@ -2690,11 +2581,11 @@ pub struct Message {
 }
 
 impl Message {
-    fn to_open_ai_message(&self, buffer: &Buffer) -> RequestMessage {
+    fn to_open_ai_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
         let content = buffer
             .text_for_range(self.offset_range.clone())
             .collect::<String>();
-        RequestMessage {
+        LanguageModelRequestMessage {
             role: self.role,
             content: content.trim_end().into(),
         }
@@ -2705,7 +2596,6 @@ enum InlineAssistantEvent {
     Confirmed {
         prompt: String,
         include_conversation: bool,
-        retrieve_context: bool,
     },
     Canceled,
     Dismissed,
@@ -2969,7 +2859,6 @@ impl InlineAssistant {
             cx.emit(InlineAssistantEvent::Confirmed {
                 prompt,
                 include_conversation: self.include_conversation,
-                retrieve_context: self.retrieve_context,
             });
             self.confirmed = true;
             cx.notify();
@@ -3245,7 +3134,6 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 mod tests {
     use super::*;
     use crate::MessageId;
-    use ai::test::FakeCompletionProvider;
     use gpui::{AppContext, TestAppContext};
     use settings::SettingsStore;
 
@@ -3256,7 +3144,7 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
 
-        let completion_provider = Arc::new(FakeCompletionProvider::new());
+        let completion_provider = CompletionProvider::fake();
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
@@ -3386,7 +3274,7 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = Arc::new(FakeCompletionProvider::new());
+        let completion_provider = CompletionProvider::fake();
 
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
@@ -3485,7 +3373,7 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = Arc::new(FakeCompletionProvider::new());
+        let completion_provider = CompletionProvider::fake();
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
@@ -3569,9 +3457,9 @@ mod tests {
         cx.set_global(settings_store);
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = Arc::new(FakeCompletionProvider::new());
+        let completion_provider = CompletionProvider::fake();
         let conversation =
-            cx.new_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
+            cx.new_model(|cx| Conversation::new(registry.clone(), cx, completion_provider.clone()));
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
             conversation.read_with(cx, |conversation, _| conversation.message_anchors[0].id);
@@ -3609,6 +3497,7 @@ mod tests {
             conversation.read_with(cx, |conversation, cx| conversation.serialize(cx)),
             Default::default(),
             registry.clone(),
+            completion_provider.clone(),
             &mut cx.to_async(),
         )
         .await

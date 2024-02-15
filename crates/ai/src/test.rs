@@ -195,10 +195,6 @@ impl CredentialProvider for FakeCompletionProvider {
 }
 
 impl CompletionProvider for FakeCompletionProvider {
-    fn base_model(&self) -> Box<dyn LanguageModel> {
-        let model: Box<dyn LanguageModel> = Box::new(FakeLanguageModel { capacity: 8190 });
-        model
-    }
     fn complete(
         &self,
         _prompt: Box<dyn CompletionRequest>,
@@ -206,8 +202,5 @@ impl CompletionProvider for FakeCompletionProvider {
         let (tx, rx) = mpsc::channel(1);
         *self.last_completion_tx.lock() = Some(tx);
         async move { Ok(rx.map(|rx| Ok(rx)).boxed()) }.boxed()
-    }
-    fn box_clone(&self) -> Box<dyn CompletionProvider> {
-        Box::new((*self).clone())
     }
 }

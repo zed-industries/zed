@@ -1,3 +1,8 @@
+use crate::providers::open_ai::OPEN_AI_API_URL;
+use crate::{
+    auth::{CredentialProvider, ProviderCredential},
+    completion::{CompletionProvider, CompletionRequest},
+};
 use anyhow::{anyhow, Result};
 use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
@@ -14,14 +19,6 @@ use std::{
     sync::Arc,
 };
 use util::ResultExt;
-
-use crate::{
-    auth::{CredentialProvider, ProviderCredential},
-    completion::{CompletionProvider, CompletionRequest},
-    models::LanguageModel,
-};
-
-use crate::providers::open_ai::{OpenAiLanguageModel, OPEN_AI_API_URL};
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -197,20 +194,15 @@ pub async fn stream_completion(
 #[derive(Clone)]
 pub struct OpenAiCompletionProvider {
     api_url: String,
-    model: OpenAiLanguageModel,
     credential: Arc<RwLock<ProviderCredential>>,
     executor: BackgroundExecutor,
 }
 
 impl OpenAiCompletionProvider {
-    pub async fn new(api_url: String, model_name: String, executor: BackgroundExecutor) -> Self {
-        let model = executor
-            .spawn(async move { OpenAiLanguageModel::load(&model_name) })
-            .await;
+    pub async fn new(api_url: String, executor: BackgroundExecutor) -> Self {
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
         Self {
             api_url,
-            model,
             credential,
             executor,
         }
@@ -293,10 +285,6 @@ impl CredentialProvider for OpenAiCompletionProvider {
 }
 
 impl CompletionProvider for OpenAiCompletionProvider {
-    fn base_model(&self) -> Box<dyn LanguageModel> {
-        let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
-        model
-    }
     fn complete(
         &self,
         prompt: Box<dyn CompletionRequest>,
@@ -321,8 +309,5 @@ impl CompletionProvider for OpenAiCompletionProvider {
             Ok(stream)
         }
         .boxed()
-    }
-    fn box_clone(&self) -> Box<dyn CompletionProvider> {
-        Box::new((*self).clone())
     }
 }

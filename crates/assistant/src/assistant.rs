@@ -1,21 +1,28 @@
 pub mod assistant_panel;
 mod assistant_settings;
 mod codegen;
+mod completion_provider;
 mod prompts;
 mod streaming_diff;
 
-use ai::providers::open_ai::Role;
 use anyhow::Result;
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::OpenAiModel;
 use chrono::{DateTime, Local};
 use collections::HashMap;
+pub(crate) use completion_provider::*;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{actions, AppContext, SharedString};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc};
+use std::{
+    cmp::Reverse,
+    ffi::OsStr,
+    fmt::{self, Display},
+    path::PathBuf,
+    sync::Arc,
+};
 use util::paths::CONVERSATIONS_DIR;
 
 actions!(
@@ -38,6 +45,69 @@ actions!(
     Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 struct MessageId(usize);
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    User,
+    Assistant,
+    System,
+}
+
+impl Role {
+    pub fn cycle(&mut self) {
+        *self = match self {
+            Role::User => Role::Assistant,
+            Role::Assistant => Role::System,
+            Role::System => Role::User,
+        }
+    }
+}
+
+impl Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Role::User => write!(f, "User"),
+            Role::Assistant => write!(f, "Assistant"),
+            Role::System => write!(f, "System"),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct LanguageModelRequestMessage {
+    pub role: Role,
+    pub content: String,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct LanguageModelRequest {
+    pub model: String,
+    pub messages: Vec<LanguageModelRequestMessage>,
+    pub stream: bool,
+    pub stop: Vec<String>,
+    pub temperature: f32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct LanguageModelResponseMessage {
+    pub role: Option<Role>,
+    pub content: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LanguageModelUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LanguageModelChoiceDelta {
+    pub index: u32,
+    pub delta: LanguageModelResponseMessage,
+    pub finish_reason: Option<String>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct MessageMetadata {
