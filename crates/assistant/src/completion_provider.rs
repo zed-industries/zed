@@ -7,9 +7,11 @@ use anyhow::Result;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AppContext, AsyncWindowContext, Task};
 use open_ai::*;
+use settings::Settings;
+use util::ResultExt;
 use zed_dot_dev::*;
 
-use crate::LanguageModelRequest;
+use crate::{assistant_settings::AssistantSettings, LanguageModelRequest};
 
 #[derive(Clone)]
 pub enum CompletionProvider {
@@ -25,7 +27,23 @@ impl CompletionProvider {
         Self::Fake(fake::FakeCompletionProvider::default())
     }
 
-    pub async fn from_settings(_cx: &mut AsyncWindowContext) -> Self {
+    pub fn from_settings(cx: &mut AppContext) -> Self {
+        let settings = AssistantSettings::get_global(cx);
+        // match settings.
+
+        // Self::OpenAi(OpenAiCompletionProvider::from_settings(se))
+
+        let (api_url, model_name) = cx
+            .update(|cx| {
+                let settings = AssistantSettings::get_global(cx);
+                (
+                    settings.openai_api_url.clone(),
+                    settings.default_open_ai_model.full_name().to_string(),
+                )
+            })
+            .log_err()
+            .unwrap();
+
         todo!()
     }
 

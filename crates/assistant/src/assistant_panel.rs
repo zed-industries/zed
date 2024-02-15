@@ -118,16 +118,6 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let (api_url, model_name) = cx
-                .update(|cx| {
-                    let settings = AssistantSettings::get_global(cx);
-                    (
-                        settings.openai_api_url.clone(),
-                        settings.default_open_ai_model.full_name().to_string(),
-                    )
-                })
-                .log_err()
-                .unwrap();
             let completion_provider = CompletionProvider::from_settings(&mut cx).await;
 
             // TODO: deserialize state.

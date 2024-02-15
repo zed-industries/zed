@@ -48,14 +48,51 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
-#[derive(Deserialize, Debug)]
+pub enum AssistantProvider {
+    ZedDotDev {
+        default_model: ZedModel,
+    },
+    OpenAi {
+        default_model: OpenAiModel,
+        api_url: String,
+    },
+}
+
 pub struct AssistantSettings {
     pub button: bool,
     pub dock: AssistantDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub default_open_ai_model: OpenAiModel,
-    pub openai_api_url: String,
+    pub provider: AssistantProvider,
+}
+
+/// Assistant panel settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct AssistantSettingsContentV0 {
+    /// Whether to show the assistant panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the assistant.
+    ///
+    /// Default: right
+    pub dock: Option<AssistantDockPosition>,
+    /// Default width in pixels when the assistant is docked to the left or right.
+    ///
+    /// Default: 640
+    pub default_width: Option<f32>,
+    /// Default height in pixels when the assistant is docked to the bottom.
+    ///
+    /// Default: 320
+    pub default_height: Option<f32>,
+    /// The default OpenAI model to use when starting new conversations.
+    ///
+    /// Default: gpt-4-1106-preview
+    pub default_open_ai_model: Option<OpenAiModel>,
+    /// OpenAI API base URL to use when starting new conversations.
+    ///
+    /// Default: https://api.openai.com/v1
+    pub openai_api_url: Option<String>,
 }
 
 /// Assistant panel settings
