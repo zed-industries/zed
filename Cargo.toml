@@ -247,7 +247,7 @@ tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev 
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
-tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskell", rev = "cf98de23e4285b8e6bcb57b050ef2326e2cc284b" }
+tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskell", rev = "8a99848fc734f9c4ea523b3f2a07df133cbbcec2" }
 tree-sitter-hcl = { git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0" }
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
@@ -266,10 +266,10 @@ tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-rack
 tree-sitter-ruby = "0.20.0"
 tree-sitter-rust = "0.20.3"
 tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9" }
-tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", rev = "697bb515471871e85ff799ea57a76298a71a9cca" }
+tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", rev = "bd60db7d3d06f89b6ec3b287c9a6e9190b5564bd" }
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
-tree-sitter-uiua = { git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2" }
+tree-sitter-uiua = { git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "21dc2db39494585bf29a3f86d5add6e9d11a22ba" }
 tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
