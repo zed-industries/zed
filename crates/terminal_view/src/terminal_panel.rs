@@ -54,6 +54,7 @@ pub struct TerminalPanel {
     width: Option<Pixels>,
     height: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
+    pending_terminals_to_add: usize,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -162,6 +163,7 @@ impl TerminalPanel {
             pending_serialization: Task::ready(None),
             width: None,
             height: None,
+            pending_terminals_to_add: 0,
             _subscriptions: subscriptions,
         };
         this
@@ -291,14 +293,13 @@ impl TerminalPanel {
             completion_tx: action.completion_tx.clone(),
         };
         let working_directory = action.cwd.clone();
-        // TODO kb this will add an extra initial terminal (see `set_active`) if focuses the terminal panel for the first time
-        let Some(terminal_panel) = workspace.focus_panel::<Self>(cx) else {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
-
         terminal_panel.update(cx, |terminal_panel, cx| {
             terminal_panel.add_terminal(working_directory, Some(external_task), cx)
-        })
+        });
+        workspace.focus_panel::<Self>(cx);
     }
 
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -321,6 +322,7 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
+        self.pending_terminals_to_add += 1;
         cx.spawn(|this, mut cx| async move {
             let pane = this.update(&mut cx, |this, _| this.pane.clone())?;
             workspace.update(&mut cx, |workspace, cx| {
@@ -352,7 +354,10 @@ impl TerminalPanel {
                     });
                 }
             })?;
-            this.update(&mut cx, |this, cx| this.serialize(cx))?;
+            this.update(&mut cx, |this, cx| {
+                this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
+                this.serialize(cx)
+            })?;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -502,7 +507,7 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && self.pane.read(cx).items_len() == 0 {
+        if active && self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0 {
             self.add_terminal(None, None, cx)
         }
     }
