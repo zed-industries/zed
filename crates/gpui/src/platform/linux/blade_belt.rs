@@ -76,9 +76,13 @@ impl BladeBelt {
     }
 
     pub fn alloc_data<
-    #[cfg(target_os = "linux")] T: bytemuck::Zeroable,
-    #[cfg(not(target_os = "linux"))] T
-    >(&mut self, data: &[T], gpu: &gpu::Context) -> gpu::BufferPiece {
+        #[cfg(target_os = "linux")] T: bytemuck::Zeroable,
+        #[cfg(not(target_os = "linux"))] T,
+    >(
+        &mut self,
+        data: &[T],
+        gpu: &gpu::Context,
+    ) -> gpu::BufferPiece {
         assert!(!data.is_empty());
         let type_alignment = mem::align_of::<T>() as u64;
         debug_assert_eq!(

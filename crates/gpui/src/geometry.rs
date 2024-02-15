@@ -2,8 +2,8 @@
 //! can be used to describe common units, concepts, and the relationships
 //! between them.
 
-use core::fmt::Debug;
 use bytemuck::Zeroable;
+use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
 use serde_derive::{Deserialize, Serialize};
