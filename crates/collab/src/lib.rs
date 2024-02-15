@@ -101,6 +101,8 @@ pub struct Config {
     pub live_kit_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
+    pub blob_store_url: Option<String>,
+    pub blob_store_region: Option<String>,
     pub blob_store_access_key: Option<String>,
     pub blob_store_secret_key: Option<String>,
     pub blob_store_bucket: Option<String>,
@@ -168,8 +170,8 @@ async fn build_blob_store_client(config: &Config) -> Option<aws_sdk_s3::Client> 
     );
 
     let s3_config = aws_config::defaults(BehaviorVersion::latest())
-        .endpoint_url("https://nyc3.digitaloceanspaces.com")
-        .region(Region::new("nyc3"))
+        .endpoint_url(config.blob_store_url.as_ref()?)
+        .region(Region::new(config.blob_store_region.clone()?))
         .credentials_provider(keys)
         .load()
         .await;

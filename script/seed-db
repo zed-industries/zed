@@ -1,5 +1,4 @@
 #!/bin/bash
 set -e
 
-cd crates/collab
 cargo run --quiet --package=collab --features seed-support --bin seed -- $@
