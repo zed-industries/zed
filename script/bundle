@@ -218,17 +218,17 @@ if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
     exit 0
 fi
 
-if [ "$local_only" = true ]; then
-    # If bundle_name is not set or empty, use the basename of $app_path
-    if [ -z "$bundle_name" ]; then
-        bundle_name=$(basename "$app_path")
-    else
-        # If bundle_name doesn't end in .app, append it
-        if [[ "$bundle_name" != *.app ]]; then
-            bundle_name="$bundle_name.app"
-        fi
+# If bundle_name is not set or empty, use the basename of $app_path
+if [ -z "$bundle_name" ]; then
+    bundle_name=$(basename "$app_path")
+else
+    # If bundle_name doesn't end in .app, append it
+    if [[ "$bundle_name" != *.app ]]; then
+        bundle_name="$bundle_name.app"
     fi
+fi
 
+if [ "$local_only" = true ]; then
     if [ "$overwrite_local_app" = true ]; then
         rm -rf "/Applications/$bundle_name"
     fi
@@ -241,19 +241,38 @@ if [ "$local_only" = true ]; then
         echo "/Applications/$bundle_name"
     fi
 else
-    echo "Creating DMG"
     dmg_target_directory="target/${target_dir}"
     dmg_source_directory="${dmg_target_directory}/dmg"
     dmg_file_path="${dmg_target_directory}/Zed.dmg"
+    xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
 
     rm -rf ${dmg_source_directory}
     mkdir -p ${dmg_source_directory}
     mv "${app_path}" "${dmg_source_directory}"
 
+    if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
+        echo "Creating temporary DMG at ${dmg_file_path} using ${dmg_source_directory} to notarize app bundle"
+        hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+
+        echo "Notarizing DMG with Apple"
+        "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+
+        echo "Removing temporary DMG (used only for notarization)"
+        rm "${dmg_file_path}"
+
+        echo "Stapling notarization ticket to ${dmg_source_directory}/${bundle_name}"
+        "${xcode_bin_dir_path}/stapler" staple "${dmg_source_directory}/${bundle_name}"
+    fi
+
+    echo "Adding symlink to /Applications to ${dmg_source_directory}"
     ln -s /Applications ${dmg_source_directory}
+
+    echo "Creating final DMG at ${dmg_file_path} using ${dmg_source_directory}"
     hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+
     # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
     # This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
+    echo "Removing symlink to /Applications from ${dmg_source_directory}"
     rm ${dmg_source_directory}/Applications
 
     echo "Adding license agreement to DMG"
@@ -262,7 +281,8 @@ else
 
     if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
         echo "Notarizing DMG with Apple"
-        "$(xcode-select -p)/usr/bin/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+        "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+        "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
     fi
 
     if [ "$open_result" = true ]; then
