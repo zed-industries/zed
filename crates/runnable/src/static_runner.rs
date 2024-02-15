@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use crate::{static_runnable_file::Definition, Handle, Runnable};
-use gpui::AppContext;
 
 /// [`StaticRunner`] is a [`Runnable`] defined in .json file.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,8 +21,8 @@ impl Runnable for StaticRunner {
         Box::new(self.clone())
     }
 
-    fn exec(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> anyhow::Result<Handle> {
-        Ok(Handle::new(&self.runnable, cwd, cx))
+    fn exec(&self, cwd: Option<PathBuf>) -> Handle {
+        Handle::new(&self.runnable, cwd)
     }
 
     fn name(&self) -> String {

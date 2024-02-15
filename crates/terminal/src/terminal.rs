@@ -467,10 +467,6 @@ impl TerminalBuilder {
                             _ = timer => break,
                             event = self.events_rx.next().fuse() => {
                                 if let Some(event) = event {
-                                    if matches!(event, AlacTermEvent::Exit) {
-                                        // TODO kb
-                                    }
-
                                     if matches!(event, AlacTermEvent::Wakeup) {
                                         wakeup = true;
                                     } else {

@@ -306,9 +306,9 @@ impl Render for RunnablesPanel {
                                 IconName::Update,
                             )
                             .on_click(move |_, cx| {
-                                // TODO: has to receive some applicable path + has to spawn the terminal with the output stream
+                                // TODO kb: has to receive some applicable path + has to spawn the terminal with the output stream
                                 // same as the .spawn does in the runnables_ui's modal.rs::confirm
-                                runnable.schedule(None, cx).log_err();
+                                runnable.schedule(None, cx);
                             }),
                         )
                     })

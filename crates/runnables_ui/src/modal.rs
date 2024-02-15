@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
+    actions, rems, Action, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
     ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView,
 };
@@ -210,21 +210,23 @@ impl PickerDelegate for RunnablesModalDelegate {
             return;
         };
 
-        if let Some(handle) = self.candidates[ix].schedule(cwd, cx).log_err() {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    let Some(panel) = workspace.panel::<RunnablesPanel>(cx) else {
-                        return;
-                    };
-                    panel.update(cx, |this, cx| {
-                        if let Some(tracker) = this.status_bar_tracker.as_ref() {
-                            tracker.update(cx, |this, cx| this.push(handle, cx));
-                            cx.notify();
-                        }
-                    });
-                })
-                .ok();
-        }
+        let mut handle = self.candidates[ix].schedule(cwd, cx);
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let Some(panel) = workspace.panel::<RunnablesPanel>(cx) else {
+                    return;
+                };
+                if let Some(spawn_action) = handle.take_spawn_action() {
+                    cx.dispatch_action(spawn_action.boxed_clone());
+                }
+                panel.update(cx, |this, cx| {
+                    if let Some(tracker) = this.status_bar_tracker.as_ref() {
+                        tracker.update(cx, |this, cx| this.push(handle, cx));
+                        cx.notify();
+                    }
+                });
+            })
+            .ok();
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {

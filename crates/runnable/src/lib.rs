@@ -56,7 +56,7 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
 /// is to get spawned.
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Result<Handle>;
+    fn exec(&self, cwd: Option<PathBuf>) -> Handle;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
@@ -65,23 +65,24 @@ pub trait Runnable {
 pub struct Handle {
     completion_rx: Receiver<bool>,
     cancelation_tx: Sender<()>,
+    spawn_action: Option<SpawnTaskInTerminal>,
 }
 
 impl Handle {
-    pub fn new(definition: &Definition, cwd: Option<PathBuf>, cx: &mut AppContext) -> Self {
+    pub fn new(definition: &Definition, cwd: Option<PathBuf>) -> Self {
         let (completion_tx, completion_rx) = smol::channel::bounded(2);
         let (cancelation_tx, cancellation_rx) = smol::channel::bounded(2);
-        cx.dispatch_action(&SpawnTaskInTerminal {
-            label: definition.label.clone(),
-            command: definition.command.clone(),
-            args: definition.args.clone(),
-            cwd,
-            cancellation_rx: Some(cancellation_rx),
-            completion_tx: Some(completion_tx),
-        });
         Self {
             completion_rx,
             cancelation_tx,
+            spawn_action: Some(SpawnTaskInTerminal {
+                label: definition.label.clone(),
+                command: definition.command.clone(),
+                args: definition.args.clone(),
+                cwd,
+                cancellation_rx: Some(cancellation_rx),
+                completion_tx: Some(completion_tx),
+            }),
         }
     }
 
@@ -95,6 +96,10 @@ impl Handle {
 
     pub fn completion_rx(&self) -> &Receiver<bool> {
         &self.completion_rx
+    }
+
+    pub fn take_spawn_action(&mut self) -> Option<SpawnTaskInTerminal> {
+        self.spawn_action.take()
     }
 }
 
@@ -138,17 +143,16 @@ pub(crate) enum RunState {
 
 impl Token {
     /// Schedules a runnable or returns a handle to it if it's already running.
-    pub fn schedule(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Result<Handle> {
+    pub fn schedule(&self, cwd: Option<PathBuf>, cx: &mut AppContext) -> Handle {
         let mut spawned_first_time = false;
-        let ret = self.state.update(cx, |this, cx| match this {
+        let handle = self.state.update(cx, |run_state, _| match run_state {
             RunState::NotScheduled(runnable) => {
-                let handle = runnable.exec(cwd, cx)?;
+                let handle = runnable.exec(cwd);
                 spawned_first_time = true;
-                *this = RunState::Scheduled(handle.clone());
-
-                Ok(handle)
+                *run_state = RunState::Scheduled(handle.clone());
+                handle
             }
-            RunState::Scheduled(handle) => Ok(handle.clone()),
+            RunState::Scheduled(handle) => handle.clone(),
         });
         if spawned_first_time {
             self.state.update(cx, |_, cx| {
@@ -174,7 +178,7 @@ impl Token {
                 .detach()
             })
         }
-        ret
+        handle
     }
 
     pub fn handle(&self, cx: &AppContext) -> Option<Handle> {
