@@ -42,6 +42,7 @@ pub(crate) struct WaylandClientState {
     scroll_direction: f64,
     mouse_location: Option<Point<Pixels>>,
     button_pressed: Option<MouseButton>,
+    focused_window: Option<Rc<WaylandWindowState>>,
 }
 
 pub(crate) struct WaylandClient {
@@ -73,6 +74,7 @@ impl WaylandClient {
             scroll_direction: -1.0,
             mouse_location: None,
             button_pressed: None,
+            focused_window: None,
         };
         let event_queue: EventQueue<WaylandClientState> = conn.new_event_queue();
         let qh = event_queue.handle();
@@ -338,13 +340,18 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
             .unwrap();
             state.keymap_state = Some(xkb::State::new(&keymap));
             state.keymap = Some(keymap);
+        } else if let wl_keyboard::Event::Enter { surface, .. } = event {
+            for window in &state.windows {
+                if window.1.surface.id() == surface.id() {
+                    state.focused_window = Some(Rc::clone(&window.1));
+                }
+            }
         } else if let wl_keyboard::Event::Key {
             key,
             state: WEnum::Value(key_state),
             ..
         } = event
         {
-            let window = &state.windows[0]; // todo!(linux)
             let keymap = state.keymap.as_ref().unwrap();
             let keymap_state = state.keymap_state.as_ref().unwrap();
             let key_string = keymap_state.key_get_utf8(Keycode::from(key + 8));
@@ -360,8 +367,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                         state.modifiers.control = true;
                     } else if key.starts_with("alt") {
                         state.modifiers.alt = true;
-                    } else {
-                        window.1.handle_key(
+                    } else if state.focused_window.is_some() {
+                        state.focused_window.as_ref().unwrap().handle_key(
                             KeyDownEvent {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers.clone(),
@@ -384,20 +391,23 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                         state.modifiers.alt = false;
                     } else if key.starts_with("super") {
                         state.modifiers.command = false;
-                    } else {
-                        window.1.handle_event(PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke {
-                                modifiers: state.modifiers.clone(),
-                                key: key.clone(),
-                                ime_key: None,
-                            },
-                        }));
+                    } else if state.focused_window.is_some() {
+                        state
+                            .focused_window
+                            .as_ref()
+                            .unwrap()
+                            .handle_event(PlatformInput::KeyUp(KeyUpEvent {
+                                keystroke: Keystroke {
+                                    modifiers: state.modifiers.clone(),
+                                    key: key.clone(),
+                                    ime_key: None,
+                                },
+                            }));
                     }
                 }
                 _ => {}
             }
         } else if let wl_keyboard::Event::Leave { .. } = event {
-            state.mouse_location = None;
             state.modifiers = Modifiers {
                 control: false,
                 alt: false,
@@ -427,8 +437,26 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let window = &state.windows[0]; // todo!(linux)
-        if let wl_pointer::Event::Motion {
+        if let wl_pointer::Event::Enter {
+            surface,
+            surface_x,
+            surface_y,
+            ..
+        } = event
+        {
+            for window in &state.windows {
+                if window.1.surface.id() == surface.id() {
+                    state.focused_window = Some(Rc::clone(&window.1));
+                }
+            }
+
+            state.mouse_location = Some(Point {
+                x: Pixels::from(surface_x),
+                y: Pixels::from(surface_y),
+            });
+        } else if state.focused_window.is_none() {
+            return;
+        } else if let wl_pointer::Event::Motion {
             time,
             surface_x,
             surface_y,
@@ -439,8 +467,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 x: Pixels::from(surface_x),
                 y: Pixels::from(surface_y),
             });
-            window
-                .1
+            state
+                .focused_window
+                .as_ref()
+                .unwrap()
                 .handle_event(PlatformInput::MouseMove(MouseMoveEvent {
                     position: state.mouse_location.unwrap(),
                     pressed_button: state.button_pressed,
@@ -455,8 +485,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
             match button_state {
                 wl_pointer::ButtonState::Pressed => {
                     state.button_pressed = Some(linux_button_to_gpui(button));
-                    window
-                        .1
+                    state
+                        .focused_window
+                        .as_ref()
+                        .unwrap()
                         .handle_event(PlatformInput::MouseDown(MouseDownEvent {
                             button: linux_button_to_gpui(button),
                             position: state.mouse_location.unwrap(),
@@ -466,18 +498,22 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 }
                 wl_pointer::ButtonState::Released => {
                     state.button_pressed = None;
-                    window.1.handle_event(PlatformInput::MouseUp(MouseUpEvent {
-                        button: linux_button_to_gpui(button),
-                        position: state.mouse_location.unwrap(),
-                        modifiers: Modifiers {
-                            shift: false,
-                            control: false,
-                            alt: false,
-                            function: false,
-                            command: false,
-                        },
-                        click_count: 1,
-                    }));
+                    state
+                        .focused_window
+                        .as_ref()
+                        .unwrap()
+                        .handle_event(PlatformInput::MouseUp(MouseUpEvent {
+                            button: linux_button_to_gpui(button),
+                            position: state.mouse_location.unwrap(),
+                            modifiers: Modifiers {
+                                shift: false,
+                                control: false,
+                                alt: false,
+                                function: false,
+                                command: false,
+                            },
+                            click_count: 1,
+                        }));
                 }
                 _ => {}
             }
@@ -499,8 +535,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         } = event
         {
             let value = value * state.scroll_direction;
-            window
-                .1
+            state
+                .focused_window
+                .as_ref()
+                .unwrap()
                 .handle_event(PlatformInput::ScrollWheel(ScrollWheelEvent {
                     position: state.mouse_location.unwrap(),
                     delta: match axis {
@@ -511,6 +549,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                     modifiers: state.modifiers.clone(),
                     touch_phase: TouchPhase::Started,
                 }))
+        } else if let wl_pointer::Event::Leave { surface, .. } = event {
+            state.mouse_location = None;
+            state.focused_window = None;
         }
     }
 }
