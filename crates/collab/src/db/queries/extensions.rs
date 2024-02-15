@@ -5,7 +5,7 @@ impl Database {
         &self,
         filter: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<(extension::Model, extension_version::Model)>> {
+    ) -> Result<Vec<ExtensionMetadata>> {
         self.transaction(|tx| async move {
             let mut condition = Condition::all();
             if let Some(filter) = filter {
@@ -16,22 +16,42 @@ impl Database {
             let extensions = extension::Entity::find()
                 .filter(condition)
                 .order_by_desc(extension::Column::TotalDownloadCount)
+                .order_by_asc(extension::Column::Id)
                 .limit(Some(limit as u64))
-                .find_also_related(extension_version::Entity)
+                .filter(
+                    extension::Column::LatestVersion
+                        .into_expr()
+                        .eq(extension_version::Column::Version.into_expr()),
+                )
+                .inner_join(extension_version::Entity)
+                .select_also(extension_version::Entity)
                 .all(&*tx)
                 .await?;
 
             Ok(extensions
                 .into_iter()
-                .filter_map(|(extension, latest_version)| Some((extension, latest_version?)))
+                .filter_map(|(extension, latest_version)| {
+                    let version = latest_version?;
+                    Some(ExtensionMetadata {
+                        id: extension.external_id,
+                        name: extension.name,
+                        version: version.version,
+                        authors: version
+                            .authors
+                            .split(',')
+                            .map(|author| author.trim().to_string())
+                            .collect::<Vec<_>>(),
+                        repository: version.repository,
+                        published_at: version.published_at,
+                        download_count: extension.total_download_count as u64,
+                    })
+                })
                 .collect())
         })
         .await
     }
 
-    pub async fn get_known_extension_versions<'a>(
-        &self,
-    ) -> Result<HashMap<String, HashSet<String>>> {
+    pub async fn get_known_extension_versions<'a>(&self) -> Result<HashMap<String, Vec<String>>> {
         self.transaction(|tx| async move {
             let mut extension_external_ids_by_id = HashMap::default();
 
@@ -42,7 +62,7 @@ impl Database {
             }
             drop(rows);
 
-            let mut known_versions_by_extension_id: HashMap<String, HashSet<String>> =
+            let mut known_versions_by_extension_id: HashMap<String, Vec<String>> =
                 HashMap::default();
             let mut rows = extension_version::Entity::find().stream(&*tx).await?;
             while let Some(row) = rows.next().await {
@@ -52,10 +72,12 @@ impl Database {
                     continue;
                 };
 
-                known_versions_by_extension_id
+                let versions = known_versions_by_extension_id
                     .entry(extension_id.clone())
-                    .or_default()
-                    .insert(row.version);
+                    .or_default();
+                if let Err(ix) = versions.binary_search(&row.version) {
+                    versions.insert(ix, row.version);
+                }
             }
             drop(rows);
 
@@ -69,7 +91,6 @@ impl Database {
         versions_by_extension_id: &HashMap<&str, Vec<NewExtensionVersion>>,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            let mut extension_ids = Vec::new();
             for (external_id, versions) in versions_by_extension_id {
                 if versions.is_empty() {
                     continue;
@@ -80,7 +101,7 @@ impl Database {
                     .max_by_key(|version| &version.version)
                     .unwrap();
 
-                let mut extension = extension::Entity::insert(extension::ActiveModel {
+                let insert = extension::Entity::insert(extension::ActiveModel {
                     name: ActiveValue::Set(latest_version.name.clone()),
                     external_id: ActiveValue::Set(external_id.to_string()),
                     id: ActiveValue::NotSet,
@@ -88,13 +109,22 @@ impl Database {
                     total_download_count: ActiveValue::NotSet,
                 })
                 .on_conflict(
-                    OnConflict::new()
+                    OnConflict::columns([extension::Column::ExternalId])
                         .update_column(extension::Column::ExternalId)
                         .to_owned(),
-                )
-                .exec_with_returning(&*tx)
-                .await?;
-                extension_ids.push(extension.id);
+                );
+
+                let extension = if tx.support_returning() {
+                    insert.exec_with_returning(&*tx).await?
+                } else {
+                    // Sqlite
+                    insert.exec_without_returning(&*tx).await?;
+                    extension::Entity::find()
+                        .filter(extension::Column::ExternalId.eq(*external_id))
+                        .one(&*tx)
+                        .await?
+                        .ok_or_else(|| anyhow!("failed to insert extension"))?
+                };
 
                 extension_version::Entity::insert_many(versions.iter().map(|version| {
                     extension_version::ActiveModel {
@@ -108,7 +138,7 @@ impl Database {
                     }
                 }))
                 .on_conflict(OnConflict::new().do_nothing().to_owned())
-                .exec(&*tx)
+                .exec_without_returning(&*tx)
                 .await?;
 
                 if let Ok(db_version) = semver::Version::parse(&extension.latest_version) {
@@ -117,14 +147,58 @@ impl Database {
                     }
                 }
 
-                extension.latest_version = latest_version.version.to_string();
-                extension.name = latest_version.name.clone();
-                extension::Entity::update(extension.into_active_model())
-                    .exec(&*tx)
-                    .await?;
+                let mut extension = extension.into_active_model();
+                extension.latest_version = ActiveValue::Set(latest_version.version.to_string());
+                extension.name = ActiveValue::set(latest_version.name.clone());
+                extension::Entity::update(extension).exec(&*tx).await?;
             }
 
             Ok(())
+        })
+        .await
+    }
+
+    pub async fn record_extension_download(&self, extension: &str, version: &str) -> Result<bool> {
+        self.transaction(|tx| async move {
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryId {
+                Id,
+            }
+
+            let extension_id: Option<ExtensionId> = extension::Entity::find()
+                .filter(extension::Column::ExternalId.eq(extension))
+                .select_only()
+                .column(extension::Column::Id)
+                .into_values::<_, QueryId>()
+                .one(&*tx)
+                .await?;
+            let Some(extension_id) = extension_id else {
+                return Ok(false);
+            };
+
+            extension_version::Entity::update_many()
+                .col_expr(
+                    extension_version::Column::DownloadCount,
+                    extension_version::Column::DownloadCount.into_expr().add(1),
+                )
+                .filter(
+                    extension_version::Column::ExtensionId
+                        .eq(extension_id)
+                        .and(extension_version::Column::Version.eq(version)),
+                )
+                .exec(&*tx)
+                .await?;
+
+            extension::Entity::update_many()
+                .col_expr(
+                    extension::Column::TotalDownloadCount,
+                    extension::Column::TotalDownloadCount.into_expr().add(1),
+                )
+                .filter(extension::Column::Id.eq(extension_id))
+                .exec(&*tx)
+                .await?;
+
+            Ok(true)
         })
         .await
     }

@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tower::ServiceBuilder;
 use tracing::instrument;
 
-pub use extensions::fetch_extensions_periodically;
+pub use extensions::fetch_extensions_from_blob_store_periodically;
 
 pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()

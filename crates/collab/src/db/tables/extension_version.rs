@@ -22,6 +22,7 @@ pub enum Relation {
         belongs_to = "super::extension::Entity",
         from = "Column::ExtensionId",
         to = "super::extension::Column::Id"
+        on_condition = r#"super::extension::Column::LatestVersion.into_expr().eq(Column::Version.into_expr())"#
     )]
     Extension,
 }
