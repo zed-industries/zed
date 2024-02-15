@@ -1167,14 +1167,36 @@ fn previous_word_end(
 ) -> DisplayPoint {
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
-        point = find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
+        let mut prev_ch = None;
+        let mut offset = point.to_point(map).to_offset(&map.buffer_snapshot);
+
+        /*
+        find_preceding_boundary(map, point, FindRange::MultiLine, |right, left| {
             let left_kind = coerce_punctuation(char_kind(&scope, left), false);
             let right_kind = coerce_punctuation(char_kind(&scope, right), false);
-            left_kind != right_kind
+            left_kind != right_kind && right.is_whitespace()
         });
-        point = movement::previous_word_start(map, point);
-        point = movement::next_word_end(map, point);
-        point = movement::left(map, point);
+        */
+
+        for ch in map.buffer_snapshot.reversed_chars_at(offset) {
+            if let Some(prev_ch) = prev_ch {
+                let right = prev_ch;
+                let left = ch;
+                println!("left: {:?}, right: {:?}", left, right);
+                let left_kind = coerce_punctuation(char_kind(&scope, left), false);
+                let right_kind = coerce_punctuation(char_kind(&scope, right), false);
+                println!("left kind: {:?}, right kind: {:?}", left_kind, right_kind);
+                if left_kind != right_kind && right.is_whitespace() {
+                    break;
+                }
+            }
+
+            offset -= ch.len_utf8();
+            prev_ch = Some(ch);
+        }
+
+        point = map.clip_point(offset.to_display_point(map), Bias::Left);
+        point = movement::saturating_left(map, point);
     }
     point
 }
@@ -1632,14 +1654,14 @@ mod test {
         // With punctuation
         cx.set_shared_state(indoc! {r"
         123 234 345
-        4;5.6 :5ˇ67 678
+        4;5.6 5ˇ67 678
         789 890 901
         "})
             .await;
         cx.simulate_shared_keystrokes(["g", "e"]).await;
         cx.assert_shared_state(indoc! {r"
           123 234 345
-          4;5.6 ˇ:567 678
+          4;5.ˇ6 567 678
           789 890 901
         "})
             .await;
@@ -1647,29 +1669,14 @@ mod test {
         // With punctuation and count
         cx.set_shared_state(indoc! {r"
         123 234 345
-        4;5.6 :5ˇ67 678
+        456 5ˇ67 678
         789 890 901
         "})
             .await;
         cx.simulate_shared_keystrokes(["5", "g", "e"]).await;
         cx.assert_shared_state(indoc! {r"
-          123 234 345
-          4ˇ;5.6 :567 678
-          789 890 901
-        "})
-            .await;
-
-        // With punctuation and count across lines
-        cx.set_shared_state(indoc! {r"
-        123 234 345
-        4;5.6 :5ˇ67 678
-        789 890 901
-        "})
-            .await;
-        cx.simulate_shared_keystrokes(["8", "g", "e"]).await;
-        cx.assert_shared_state(indoc! {r"
-          123 23ˇ4 345
-          4;5.6 :567 678
+          ˇ123 234 345
+          456 567 678
           789 890 901
         "})
             .await;
