@@ -289,6 +289,7 @@ fn show_hover(
             })?;
 
             let hover_result = hover_request.await.ok().flatten();
+            let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
             let hover_popover = match hover_result {
                 Some(hover_result) if !hover_result.is_empty() => {
                     // Create symbol range of anchors for highlighting and filtering of future requests.
