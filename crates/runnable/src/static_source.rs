@@ -106,7 +106,7 @@ impl Source for StaticSource {
         &mut self,
         _: &std::path::Path,
         cx: &mut ModelContext<Box<dyn Source>>,
-    ) -> anyhow::Result<Vec<Token>> {
+    ) -> Vec<Token> {
         let mut known_definitions: HashMap<String, _> = self
             .definitions
             .read(cx)
@@ -126,7 +126,7 @@ impl Source for StaticSource {
         for (_, meta) in known_definitions {
             self.runnables.push(Self::token_from_definition(meta, cx));
         }
-        Ok(self.runnables.clone())
+        self.runnables.clone()
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {

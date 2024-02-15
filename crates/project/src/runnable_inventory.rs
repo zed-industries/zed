@@ -17,6 +17,7 @@ impl Inventory {
     pub(crate) fn new(cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|_| Self { sources: vec![] })
     }
+
     pub fn add_source(&mut self, source: Model<Box<dyn Source>>, cx: &mut ModelContext<Self>) {
         let _subscription = cx.observe(&source, |_, _, cx| {
             cx.notify();
@@ -30,15 +31,14 @@ impl Inventory {
     }
 
     pub fn list_runnables(&self, path: &Path, cx: &mut AppContext) -> Vec<Token> {
-        let mut runnables = vec![];
+        let mut runnables = Vec::with_capacity(self.sources.len());
         for source in &self.sources {
             runnables.extend(
                 source
                     .source
-                    .update(cx, |this, cx| this.runnables_for_path(path, cx).unwrap()),
+                    .update(cx, |this, cx| this.runnables_for_path(path, cx)),
             );
         }
-
         runnables
     }
 }

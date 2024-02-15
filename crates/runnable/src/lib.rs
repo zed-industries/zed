@@ -113,7 +113,7 @@ pub trait Source: Any {
         &mut self,
         path: &Path,
         cx: &mut ModelContext<Box<dyn Source>>,
-    ) -> anyhow::Result<Vec<Token>>;
+    ) -> Vec<Token>;
 }
 
 #[derive(PartialEq)]

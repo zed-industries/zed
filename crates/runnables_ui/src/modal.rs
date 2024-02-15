@@ -159,6 +159,9 @@ impl PickerDelegate for RunnablesModalDelegate {
                     this.delegate
                         .candidates
                         .retain(|runnable| !runnable.was_scheduled(cx));
+                    this.delegate.candidates.sort_by(|a, b| {
+                        a.metadata().display_name().cmp(b.metadata().display_name())
+                    });
 
                     this.delegate
                         .candidates
@@ -188,11 +191,12 @@ impl PickerDelegate for RunnablesModalDelegate {
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
+
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
                     } else {
                         delegate.selected_index =
-                            core::cmp::min(delegate.selected_index, delegate.matches.len() - 1);
+                            delegate.selected_index.min(delegate.matches.len() - 1);
                     }
                 })
                 .log_err();
