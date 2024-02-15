@@ -31,3 +31,4 @@ brackets = [
   { start = "'", end = "'", close = true, newline = false, not_in = ["comment", "string"] },
 ]
 collapsed_placeholder = "# ..."
+word_characters = ["_", "$", "=", "@", "!", ":", "?"]
