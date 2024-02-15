@@ -1,8 +1,7 @@
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use parking_lot::Mutex;
-use xcb::{x, Xid};
+use xcb::{x, Xid as _};
 
 use collections::HashMap;
 
@@ -10,7 +9,9 @@ use crate::platform::linux::client::Client;
 use crate::platform::{
     LinuxPlatformInner, PlatformWindow, X11Display, X11Window, X11WindowState, XcbAtoms,
 };
-use crate::{AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, Point, Size, WindowOptions};
+use crate::{
+    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, Size, WindowOptions,
+};
 
 pub(crate) struct X11ClientState {
     pub(crate) windows: HashMap<x::Window, Rc<X11WindowState>>,
@@ -91,6 +92,36 @@ impl Client for X11Client {
                     window.request_refresh();
                 }
                 xcb::Event::Present(xcb::present::Event::IdleNotify(_ev)) => {}
+                xcb::Event::X(x::Event::ButtonPress(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    let position =
+                        Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
+                    if let Some(button) = super::button_of_key(ev.detail()) {
+                        window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count: 1,
+                        }))
+                    } else {
+                        log::warn!("Unknown button press: {ev:?}");
+                    }
+                }
+                xcb::Event::X(x::Event::ButtonRelease(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    let position =
+                        Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
+                    if let Some(button) = super::button_of_key(ev.detail()) {
+                        window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count: 1,
+                        }))
+                    }
+                }
                 _ => {}
             }
 
