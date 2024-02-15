@@ -103,6 +103,30 @@ impl LspAdapter for JavaLspAdapter {
                     });
                 }
             }
+            Some(lsp::CompletionItemKind::ENUM_MEMBER) => {
+                if let Some((name, detail)) = completion.label.split_once(" : ") {
+                    let property_highlight_id =
+                        language.grammar()?.highlight_id_for_name("property")?;
+                    let type_highlight_id = language.grammar()?.highlight_id_for_name("type")?;
+                    let mut label = CodeLabel::plain(format!("{detail}.{name}"), Some(name));
+                    let mut next_start = 0;
+
+                    for identifier in detail.split('.') {
+                        label
+                            .runs
+                            .push((next_start..next_start + identifier.len(), type_highlight_id));
+
+                        next_start += identifier.len() + 1;
+                    }
+
+                    label.runs.push((
+                        detail.len() + 1..detail.len() + 1 + name.len(),
+                        property_highlight_id,
+                    ));
+
+                    return Some(label);
+                }
+            }
             Some(
                 lsp::CompletionItemKind::CLASS
                 | lsp::CompletionItemKind::INTERFACE
