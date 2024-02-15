@@ -16,7 +16,7 @@ impl Database {
             let extensions = extension::Entity::find()
                 .filter(condition)
                 .order_by_desc(extension::Column::TotalDownloadCount)
-                .order_by_asc(extension::Column::Id)
+                .order_by_asc(extension::Column::Name)
                 .limit(Some(limit as u64))
                 .filter(
                     extension::Column::LatestVersion
