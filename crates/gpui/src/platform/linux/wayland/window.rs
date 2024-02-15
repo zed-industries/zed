@@ -18,8 +18,8 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
-    WindowAppearance, WindowBounds, WindowOptions,
+    px, Bounds, KeyDownEvent, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
+    PromptLevel, Size, WindowAppearance, WindowBounds, WindowOptions,
 };
 
 #[derive(Default)]
@@ -38,6 +38,7 @@ pub(crate) struct Callbacks {
 struct WaylandWindowInner {
     renderer: BladeRenderer,
     bounds: Bounds<i32>,
+    input_handler: Option<PlatformInputHandler>,
 }
 
 struct RawWindow {
@@ -91,6 +92,7 @@ impl WaylandWindowInner {
         Self {
             renderer: BladeRenderer::new(gpu, extent),
             bounds,
+            input_handler: None,
         }
     }
 }
@@ -178,6 +180,46 @@ impl WaylandWindowState {
         }
         self.toplevel.destroy();
     }
+
+    pub(crate) fn handle_event(&self, event: PlatformInput) {
+        if let Some(ref mut input) = self.callbacks.lock().input {
+            let handled = input(event.clone());
+            if !handled {
+                if let PlatformInput::KeyDown(event) = event {
+                    let mut lock = self.inner.lock();
+                    if let Some(mut input_handler) = lock.input_handler.take() {
+                        drop(lock);
+                        let key = if event.keystroke.key == "space" {
+                            " "
+                        } else {
+                            &event.keystroke.key
+                        };
+                        input_handler.replace_text_in_range(None, key);
+                        self.inner.lock().input_handler = Some(input_handler);
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn handle_key(&self, event: KeyDownEvent, key: &str) {
+        if let Some(ref mut input) = self.callbacks.lock().input {
+            let handled = input(PlatformInput::KeyDown(event.clone()));
+            if !handled {
+                let mut lock = self.inner.lock();
+                if let Some(mut input_handler) = lock.input_handler.take() {
+                    drop(lock);
+                    let key = if event.keystroke.key == "space" {
+                        " "
+                    } else {
+                        key
+                    };
+                    input_handler.replace_text_in_range(None, key);
+                    self.inner.lock().input_handler = Some(input_handler);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -246,12 +288,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        //todo!(linux)
+        self.0.inner.lock().input_handler = Some(input_handler);
     }
 
     //todo!(linux)
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        None
+        self.0.inner.lock().input_handler.take()
     }
 
     //todo!(linux)
@@ -298,7 +340,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        //todo!(linux)
+        self.0.callbacks.lock().input = Some(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
