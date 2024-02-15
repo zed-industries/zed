@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ use xkbcommon::xkb::{Keycode, KEYMAP_COMPILE_NO_FLAGS};
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::PlatformInput::KeyDown;
 use crate::ScrollDelta::Lines;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
@@ -355,20 +357,29 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
             let keymap = state.keymap.as_ref().unwrap();
             let keymap_state = state.keymap_state.as_ref().unwrap();
             let key_string = keymap_state.key_get_utf8(Keycode::from(key + 8));
-            let key =
+            let key_name =
                 xkb::keysym_get_name(keymap.key_get_syms_by_level(Keycode::from(key + 8), 0, 0)[0])
                     .to_lowercase();
 
+            let key = if matches!(
+                key_name.as_str(),
+                "backspace" | "left" | "right" | "down" | "up" | "super_l" | "super_r"
+            ) {
+                key_name.clone()
+            } else {
+                key_string.clone()
+            };
+
             match key_state {
                 wl_keyboard::KeyState::Pressed => {
-                    if key.starts_with("shift") {
+                    if key_name.starts_with("shift") {
                         state.modifiers.shift = true;
-                    } else if key.starts_with("control") {
+                    } else if key_name.starts_with("control") {
                         state.modifiers.control = true;
-                    } else if key.starts_with("alt") {
+                    } else if key_name.starts_with("alt") {
                         state.modifiers.alt = true;
                     } else if state.focused_window.is_some() {
-                        state.focused_window.as_ref().unwrap().handle_key(
+                        state.focused_window.as_ref().unwrap().handle_input(KeyDown(
                             KeyDownEvent {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers.clone(),
@@ -377,26 +388,25 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                 },
                                 is_held: true,
                             },
-                            key_string.as_ref(),
-                        );
+                        ));
                     }
                 }
                 wl_keyboard::KeyState::Released => {
-                    if key.starts_with("shift") {
+                    if key_name.starts_with("shift") {
                         state.modifiers.shift = false;
-                    } else if key.starts_with("control") {
+                    } else if key_name.starts_with("control") {
                         state.modifiers.control = false;
                         state.modifiers.command = false;
-                    } else if key.starts_with("alt") {
+                    } else if key_name.starts_with("alt") {
                         state.modifiers.alt = false;
-                    } else if key.starts_with("super") {
+                    } else if key_name.starts_with("super") {
                         state.modifiers.command = false;
                     } else if state.focused_window.is_some() {
                         state
                             .focused_window
                             .as_ref()
                             .unwrap()
-                            .handle_event(PlatformInput::KeyUp(KeyUpEvent {
+                            .handle_input(PlatformInput::KeyUp(KeyUpEvent {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers.clone(),
                                     key: key.clone(),
@@ -471,7 +481,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 .focused_window
                 .as_ref()
                 .unwrap()
-                .handle_event(PlatformInput::MouseMove(MouseMoveEvent {
+                .handle_input(PlatformInput::MouseMove(MouseMoveEvent {
                     position: state.mouse_location.unwrap(),
                     pressed_button: state.button_pressed,
                     modifiers: state.modifiers.clone(),
@@ -489,7 +499,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         .focused_window
                         .as_ref()
                         .unwrap()
-                        .handle_event(PlatformInput::MouseDown(MouseDownEvent {
+                        .handle_input(PlatformInput::MouseDown(MouseDownEvent {
                             button: linux_button_to_gpui(button),
                             position: state.mouse_location.unwrap(),
                             modifiers: state.modifiers.clone(),
@@ -502,7 +512,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         .focused_window
                         .as_ref()
                         .unwrap()
-                        .handle_event(PlatformInput::MouseUp(MouseUpEvent {
+                        .handle_input(PlatformInput::MouseUp(MouseUpEvent {
                             button: linux_button_to_gpui(button),
                             position: state.mouse_location.unwrap(),
                             modifiers: Modifiers {
@@ -539,7 +549,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 .focused_window
                 .as_ref()
                 .unwrap()
-                .handle_event(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                .handle_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
                     position: state.mouse_location.unwrap(),
                     delta: match axis {
                         wl_pointer::Axis::VerticalScroll => Lines(Point::new(0.0, value as f32)),

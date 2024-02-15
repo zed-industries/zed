@@ -18,8 +18,8 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, Bounds, KeyDownEvent, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
-    PromptLevel, Size, WindowAppearance, WindowBounds, WindowOptions,
+    px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
+    WindowAppearance, WindowBounds, WindowOptions,
 };
 
 #[derive(Default)]
@@ -181,42 +181,16 @@ impl WaylandWindowState {
         self.toplevel.destroy();
     }
 
-    pub(crate) fn handle_event(&self, event: PlatformInput) {
-        if let Some(ref mut input) = self.callbacks.lock().input {
-            let handled = input(event.clone());
-            if !handled {
-                if let PlatformInput::KeyDown(event) = event {
-                    let mut lock = self.inner.lock();
-                    if let Some(mut input_handler) = lock.input_handler.take() {
-                        drop(lock);
-                        let key = if event.keystroke.key == "space" {
-                            " "
-                        } else {
-                            &event.keystroke.key
-                        };
-                        input_handler.replace_text_in_range(None, key);
-                        self.inner.lock().input_handler = Some(input_handler);
-                    }
-                }
+    pub fn handle_input(&self, input: PlatformInput) {
+        if let Some(ref mut fun) = self.callbacks.lock().input {
+            if fun(input.clone()) {
+                return;
             }
         }
-    }
-
-    pub(crate) fn handle_key(&self, event: KeyDownEvent, key: &str) {
-        if let Some(ref mut input) = self.callbacks.lock().input {
-            let handled = input(PlatformInput::KeyDown(event.clone()));
-            if !handled {
-                let mut lock = self.inner.lock();
-                if let Some(mut input_handler) = lock.input_handler.take() {
-                    drop(lock);
-                    let key = if event.keystroke.key == "space" {
-                        " "
-                    } else {
-                        key
-                    };
-                    input_handler.replace_text_in_range(None, key);
-                    self.inner.lock().input_handler = Some(input_handler);
-                }
+        if let PlatformInput::KeyDown(event) = input {
+            let mut inner = self.inner.lock();
+            if let Some(ref mut input_handler) = inner.input_handler {
+                input_handler.replace_text_in_range(None, &event.keystroke.key);
             }
         }
     }
