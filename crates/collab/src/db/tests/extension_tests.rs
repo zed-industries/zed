@@ -205,7 +205,7 @@ async fn test_extensions(db: &Arc<Database>) {
                 name: "Extension Two".into(),
                 version: "0.2.0".into(),
                 authors: vec!["marshall".into()],
-                description: "an old extension".into(),
+                description: "a great extension".into(),
                 repository: "ext2/repo".into(),
                 published_at: t0,
                 download_count: 7
