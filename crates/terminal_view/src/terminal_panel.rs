@@ -1,6 +1,7 @@
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
+use collections::HashSet;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
@@ -291,7 +292,6 @@ impl TerminalPanel {
         };
         let working_directory = action.cwd.clone();
         // TODO kb this will add an extra initial terminal (see `set_active`) if focuses the terminal panel for the first time
-        // TODO kb this also will leave terminal panes that will be restored on restart, which is bad — ignore those instead
         let Some(terminal_panel) = workspace.focus_panel::<Self>(cx) else {
             return;
         };
@@ -359,17 +359,33 @@ impl TerminalPanel {
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let mut items_to_serialize = HashSet::default();
         let items = self
             .pane
             .read(cx)
             .items()
-            .map(|item| item.item_id().as_u64())
+            .filter_map(|item| {
+                let terminal_view = item.act_as::<TerminalView>(cx)?;
+                if terminal_view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .belongs_to_external_process()
+                {
+                    None
+                } else {
+                    let id = item.item_id().as_u64();
+                    items_to_serialize.insert(id);
+                    Some(id)
+                }
+            })
             .collect::<Vec<_>>();
         let active_item_id = self
             .pane
             .read(cx)
             .active_item()
-            .map(|item| item.item_id().as_u64());
+            .map(|item| item.item_id().as_u64())
+            .filter(|active_id| items_to_serialize.contains(active_id));
         let height = self.height;
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(

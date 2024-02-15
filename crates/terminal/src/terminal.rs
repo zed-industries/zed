@@ -1390,6 +1390,10 @@ impl Terminal {
     pub fn can_navigate_to_selected_word(&self) -> bool {
         self.cmd_pressed && self.hovered_word
     }
+
+    pub fn belongs_to_external_process(&self) -> bool {
+        self.external_task_completion_tx.is_some()
+    }
 }
 
 impl Drop for Terminal {

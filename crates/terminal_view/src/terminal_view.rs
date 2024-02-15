@@ -160,19 +160,22 @@ impl TerminalView {
 
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
-                if let Some(foreground_info) = &this.terminal().read(cx).foreground_process_info {
-                    let cwd = foreground_info.cwd.clone();
+                let terminal = this.terminal().read(cx);
+                if !terminal.belongs_to_external_process() {
+                    if let Some(foreground_info) = &terminal.foreground_process_info {
+                        let cwd = foreground_info.cwd.clone();
 
-                    let item_id = cx.entity_id();
-                    let workspace_id = this.workspace_id;
-                    cx.background_executor()
-                        .spawn(async move {
-                            TERMINAL_DB
-                                .save_working_directory(item_id.as_u64(), workspace_id, cwd)
-                                .await
-                                .log_err();
-                        })
-                        .detach();
+                        let item_id = cx.entity_id();
+                        let workspace_id = this.workspace_id;
+                        cx.background_executor()
+                            .spawn(async move {
+                                TERMINAL_DB
+                                    .save_working_directory(item_id.as_u64(), workspace_id, cwd)
+                                    .await
+                                    .log_err();
+                            })
+                            .detach();
+                    }
                 }
             }
 
@@ -854,14 +857,16 @@ impl Item for TerminalView {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        cx.background_executor()
-            .spawn(TERMINAL_DB.update_workspace_id(
-                workspace.database_id(),
-                self.workspace_id,
-                cx.entity_id().as_u64(),
-            ))
-            .detach();
-        self.workspace_id = workspace.database_id();
+        if !self.terminal().read(cx).belongs_to_external_process() {
+            cx.background_executor()
+                .spawn(TERMINAL_DB.update_workspace_id(
+                    workspace.database_id(),
+                    self.workspace_id,
+                    cx.entity_id().as_u64(),
+                ))
+                .detach();
+            self.workspace_id = workspace.database_id();
+        }
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
