@@ -39,7 +39,6 @@ pub(crate) struct WaylandClientState {
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
     platform_inner: Rc<LinuxPlatformInner>,
     wl_seat: Option<wl_seat::WlSeat>,
-    keymap: Option<xkb::Keymap>,
     keymap_state: Option<xkb::State>,
     modifiers: Modifiers,
     scroll_direction: f64,
@@ -65,7 +64,6 @@ impl WaylandClient {
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
             wl_seat: None,
-            keymap: None,
             keymap_state: None,
             modifiers: Modifiers {
                 shift: false,
@@ -342,7 +340,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 }
                 .unwrap();
                 state.keymap_state = Some(xkb::State::new(&keymap));
-                state.keymap = Some(keymap);
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 for window in &state.windows {
@@ -372,7 +369,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 state: WEnum::Value(key_state),
                 ..
             } => {
-                let keymap = state.keymap.as_ref().unwrap();
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
                 let key_sym = keymap_state.key_get_one_sym(Keycode::from(key + MIN_KEYCODE));
