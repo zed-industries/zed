@@ -30,6 +30,11 @@ impl OpenAiCompletionProvider {
         }
     }
 
+    pub fn update(&mut self, default_model: OpenAiModel, api_url: String) {
+        self.default_model = default_model;
+        self.api_url = api_url;
+    }
+
     pub fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
@@ -98,7 +103,7 @@ impl OpenAiCompletionProvider {
     }
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct OpenAiRequest {
     pub model: OpenAiModel,
     pub messages: Vec<OpenAiRequestMessage>,

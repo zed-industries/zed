@@ -3433,7 +3433,11 @@ fn report_assistant_event(
 
     let conversation_id = conversation.and_then(|conversation| conversation.id.clone());
     let model_id = conversation
-        .map(|c| c.model.id())
-        .unwrap_or_else(|| CompletionProvider::global(cx).default_model().id());
+        .map(|c| c.model.telemetry_id())
+        .unwrap_or_else(|| {
+            CompletionProvider::global(cx)
+                .default_model()
+                .telemetry_id()
+        });
     telemetry.report_assistant_event(conversation_id, assistant_kind, model_id)
 }

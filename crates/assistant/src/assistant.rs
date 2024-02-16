@@ -8,7 +8,7 @@ mod streaming_diff;
 
 use anyhow::Result;
 pub use assistant_panel::AssistantPanel;
-use assistant_settings::{AssistantSettings, OpenAiModel};
+use assistant_settings::{AssistantSettings, OpenAiModel, ZedDotDevModel};
 use chrono::{DateTime, Local};
 use client::Client;
 pub(crate) use completion_provider::*;
@@ -74,6 +74,7 @@ impl Display for Role {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum LanguageModel {
     OpenAi(OpenAiModel),
+    ZedDotDev(ZedDotDevModel),
 }
 
 impl Default for LanguageModel {
@@ -83,21 +84,24 @@ impl Default for LanguageModel {
 }
 
 impl LanguageModel {
-    pub fn id(&self) -> String {
+    pub fn telemetry_id(&self) -> String {
         match self {
             LanguageModel::OpenAi(model) => format!("openai/{}", model.id()),
+            LanguageModel::ZedDotDev(model) => format!("zed.dev/{}", model.id()),
         }
     }
 
     pub fn display_name(&self) -> String {
         match self {
             LanguageModel::OpenAi(model) => format!("openai/{}", model.display_name()),
+            LanguageModel::ZedDotDev(model) => format!("zed.dev/{}", model.display_name()),
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
             LanguageModel::OpenAi(model) => tiktoken_rs::model::get_context_size(model.id()),
+            LanguageModel::ZedDotDev(_) => 100,
         }
     }
 
@@ -106,12 +110,14 @@ impl LanguageModel {
             LanguageModel::OpenAi(model) => {
                 tiktoken_rs::num_tokens_from_messages(&model.id(), &messages)
             }
+            LanguageModel::ZedDotDev(_) => Ok(10),
         }
     }
 
     pub fn cycle(&self) -> Self {
         match self {
             LanguageModel::OpenAi(model) => LanguageModel::OpenAi(model.cycle()),
+            LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(model.cycle()),
         }
     }
 }

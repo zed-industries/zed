@@ -3,7 +3,10 @@ mod fake;
 mod open_ai;
 mod zed_dot_dev;
 
-use crate::{assistant_settings::AssistantSettings, LanguageModel, LanguageModelRequest};
+use crate::{
+    assistant_settings::{AssistantProvider, AssistantSettings},
+    LanguageModel, LanguageModelRequest,
+};
 use anyhow::Result;
 use client::Client;
 #[cfg(test)]
@@ -16,15 +19,11 @@ use std::sync::Arc;
 use zed_dot_dev::*;
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    register_completion_provider(cx);
-    cx.observe_global::<SettingsStore>(register_completion_provider)
-        .detach();
-}
-
-fn register_completion_provider(cx: &mut AppContext) {
     let provider = match &AssistantSettings::get_global(cx).provider {
-        crate::assistant_settings::AssistantProvider::ZedDotDev { default_model } => todo!(),
-        crate::assistant_settings::AssistantProvider::OpenAi {
+        AssistantProvider::ZedDotDev { default_model } => CompletionProvider::ZedDotDev(
+            ZedDotDevCompletionProvider::new(default_model.clone(), client.clone(), cx),
+        ),
+        AssistantProvider::OpenAi {
             default_model,
             api_url,
         } => CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
@@ -34,6 +33,51 @@ fn register_completion_provider(cx: &mut AppContext) {
         )),
     };
     cx.set_global(provider);
+
+    cx.observe_global::<SettingsStore>(move |cx| {
+        cx.update_global::<CompletionProvider, _>(|provider, cx| {
+            match (&mut *provider, &AssistantSettings::get_global(cx).provider) {
+                (
+                    CompletionProvider::OpenAi(provider),
+                    AssistantProvider::OpenAi {
+                        default_model,
+                        api_url,
+                    },
+                ) => {
+                    provider.update(default_model.clone(), api_url.clone());
+                }
+                (
+                    CompletionProvider::ZedDotDev(provider),
+                    AssistantProvider::ZedDotDev { default_model },
+                ) => {
+                    provider.update(default_model.clone());
+                }
+                (CompletionProvider::OpenAi(_), AssistantProvider::ZedDotDev { default_model }) => {
+                    *provider = CompletionProvider::ZedDotDev(ZedDotDevCompletionProvider::new(
+                        default_model.clone(),
+                        client.clone(),
+                        cx,
+                    ));
+                }
+                (
+                    CompletionProvider::ZedDotDev(_),
+                    AssistantProvider::OpenAi {
+                        default_model,
+                        api_url,
+                    },
+                ) => {
+                    *provider = CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
+                        default_model.clone(),
+                        api_url.clone(),
+                        cx,
+                    ));
+                }
+                #[cfg(test)]
+                (CompletionProvider::Fake(_), _) => unimplemented!(),
+            }
+        })
+    })
+    .detach();
 }
 
 pub enum CompletionProvider {
@@ -71,7 +115,9 @@ impl CompletionProvider {
     pub fn default_model(&self) -> LanguageModel {
         match self {
             CompletionProvider::OpenAi(provider) => LanguageModel::OpenAi(provider.default_model()),
-            CompletionProvider::ZedDotDev(provider) => todo!(),
+            CompletionProvider::ZedDotDev(provider) => {
+                LanguageModel::ZedDotDev(provider.default_model())
+            }
             #[cfg(test)]
             CompletionProvider::Fake(_) => unimplemented!(),
         }

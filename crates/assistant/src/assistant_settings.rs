@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum OpenAiModel {
     #[serde(rename = "gpt-3.5-turbo-0613")]
     ThreePointFiveTurbo,
@@ -17,58 +17,105 @@ pub enum OpenAiModel {
 impl OpenAiModel {
     pub fn id(&self) -> &'static str {
         match self {
-            OpenAiModel::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
-            OpenAiModel::Four => "gpt-4-0613",
-            OpenAiModel::FourTurbo => "gpt-4-1106-preview",
+            Self::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
+            Self::Four => "gpt-4-0613",
+            Self::FourTurbo => "gpt-4-1106-preview",
         }
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            OpenAiModel::ThreePointFiveTurbo => "gpt-3.5-turbo",
-            OpenAiModel::Four => "gpt-4",
-            OpenAiModel::FourTurbo => "gpt-4-turbo",
+            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
+            Self::Four => "gpt-4",
+            Self::FourTurbo => "gpt-4-turbo",
         }
     }
 
     pub fn cycle(&self) -> Self {
         match self {
-            OpenAiModel::ThreePointFiveTurbo => OpenAiModel::Four,
-            OpenAiModel::Four => OpenAiModel::FourTurbo,
-            OpenAiModel::FourTurbo => OpenAiModel::ThreePointFiveTurbo,
+            Self::ThreePointFiveTurbo => Self::Four,
+            Self::Four => Self::FourTurbo,
+            Self::FourTurbo => Self::ThreePointFiveTurbo,
         }
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub enum ZedDotDevModel {
+    #[serde(rename = "gpt-3.5-turbo-0613")]
+    GptThreePointFiveTurbo,
+    #[serde(rename = "gpt-4-0613")]
+    GptFour,
+    #[serde(rename = "gpt-4-1106-preview")]
+    #[default]
+    GptFourTurbo,
+}
+
+impl ZedDotDevModel {
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::GptThreePointFiveTurbo => "gpt-3.5-turbo-0613",
+            Self::GptFour => "gpt-4-0613",
+            Self::GptFourTurbo => "gpt-4-1106-preview",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::GptThreePointFiveTurbo => "gpt-3.5-turbo",
+            Self::GptFour => "gpt-4",
+            Self::GptFourTurbo => "gpt-4-turbo",
+        }
+    }
+
+    pub fn cycle(&self) -> Self {
+        match self {
+            Self::GptThreePointFiveTurbo => Self::GptFour,
+            Self::GptFour => Self::GptFourTurbo,
+            Self::GptFourTurbo => Self::GptThreePointFiveTurbo,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssistantDockPosition {
     Left,
+    #[default]
     Right,
     Bottom,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "name", rename_all = "snake_case")]
 pub enum AssistantProvider {
     #[serde(rename = "zed.dev")]
-    ZedDotDev { default_model: OpenAiModel },
+    ZedDotDev {
+        #[serde(default)]
+        default_model: ZedDotDevModel,
+    },
     #[serde(rename = "openai")]
     OpenAi {
+        #[serde(default)]
         default_model: OpenAiModel,
+        #[serde(default = "open_ai_url")]
         api_url: String,
     },
 }
 
 impl Default for AssistantProvider {
     fn default() -> Self {
-        AssistantProvider::ZedDotDev {
-            default_model: OpenAiModel::default(),
+        Self::ZedDotDev {
+            default_model: ZedDotDevModel::default(),
         }
     }
 }
 
-#[derive(Deserialize, Serialize)]
+fn open_ai_url() -> String {
+    "https://api.openai.com/v1".into()
+}
+
+#[derive(Default, Deserialize, Serialize)]
 pub struct AssistantSettings {
     pub button: bool,
     pub dock: AssistantDockPosition,
@@ -113,6 +160,55 @@ impl Settings for AssistantSettings {
         user_values: &[&Self::FileContent],
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        let mut settings = AssistantSettings::default();
+
+        for value in [default_value].iter().chain(user_values) {
+            merge(&mut settings.button, value.button);
+            merge(&mut settings.dock, value.dock);
+            merge(
+                &mut settings.default_width,
+                value.default_width.map(Into::into),
+            );
+            merge(
+                &mut settings.default_height,
+                value.default_height.map(Into::into),
+            );
+            if let Some(provider) = value.provider.clone() {
+                match (&mut settings.provider, provider) {
+                    (
+                        AssistantProvider::ZedDotDev { default_model },
+                        AssistantProvider::ZedDotDev {
+                            default_model: default_model_override,
+                        },
+                    ) => {
+                        *default_model = default_model_override;
+                    }
+                    (
+                        AssistantProvider::OpenAi {
+                            default_model,
+                            api_url,
+                        },
+                        AssistantProvider::OpenAi {
+                            default_model: default_model_override,
+                            api_url: api_url_override,
+                        },
+                    ) => {
+                        *default_model = default_model_override;
+                        *api_url = api_url_override;
+                    }
+                    (merged, provider_override) => {
+                        *merged = provider_override;
+                    }
+                }
+            }
+        }
+
+        Ok(settings)
+    }
+}
+
+fn merge<T: Copy>(target: &mut T, value: Option<T>) {
+    if let Some(value) = value {
+        *target = value;
     }
 }
