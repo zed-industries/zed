@@ -26,7 +26,7 @@ use std::{
     pin::Pin,
     time::{Duration, SystemTime},
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
 use util::ResultExt;
 
@@ -66,6 +66,7 @@ pub trait Fs: Send + Sync {
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>>;
     fn is_fake(&self) -> bool;
+    async fn is_case_sensitive(&self) -> Result<bool>;
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs;
 }
@@ -339,6 +340,44 @@ impl Fs for RealFs {
     fn is_fake(&self) -> bool {
         false
     }
+
+    /// Checks whether the file system is case sensitive by attempting to create two files
+    /// that have the same name except for the casing.
+    ///
+    /// It creates both files in a temporary directory it removes at the end.
+    async fn is_case_sensitive(&self) -> Result<bool> {
+        let temp_dir = TempDir::new()?;
+        let test_file_1 = temp_dir.path().join("case_sensitivity_test.tmp");
+        let test_file_2 = temp_dir.path().join("CASE_SENSITIVITY_TEST.TMP");
+
+        let create_opts = CreateOptions {
+            overwrite: false,
+            ignore_if_exists: false,
+        };
+
+        // Create file1
+        self.create_file(&test_file_1, create_opts).await?;
+
+        // Now check whether it's possible to create file2
+        let case_sensitive = match self.create_file(&test_file_2, create_opts).await {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                if let Some(io_error) = e.downcast_ref::<io::Error>() {
+                    if io_error.kind() == io::ErrorKind::AlreadyExists {
+                        Ok(false)
+                    } else {
+                        Err(e)
+                    }
+                } else {
+                    Err(e)
+                }
+            }
+        };
+
+        temp_dir.close()?;
+        case_sensitive
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs {
         panic!("called `RealFs::as_fake`")
@@ -1184,6 +1223,10 @@ impl Fs for FakeFs {
 
     fn is_fake(&self) -> bool {
         true
+    }
+
+    async fn is_case_sensitive(&self) -> Result<bool> {
+        Ok(true)
     }
 
     #[cfg(any(test, feature = "test-support"))]

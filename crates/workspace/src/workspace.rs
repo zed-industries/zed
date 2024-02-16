@@ -12,7 +12,7 @@ mod toolbar;
 mod workspace_settings;
 
 use anyhow::{anyhow, Context as _, Result};
-use call::ActiveCall;
+use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
     Client, ErrorExt, Status, TypedEnvelope, UserStore,
@@ -3998,6 +3998,8 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
 
+actions!(collab, [OpenChannelNotes]);
+
 async fn join_channel_internal(
     channel_id: u64,
     app_state: &Arc<AppState>,
@@ -4099,6 +4101,36 @@ async fn join_channel_internal(
             return Some(join_remote_project(project, host, app_state.clone(), cx));
         }
 
+        // if you are the first to join a channel, share your project
+        if room.remote_participants().len() == 0 && !room.local_participant_is_guest() {
+            if let Some(workspace) = requesting_window {
+                let project = workspace.update(cx, |workspace, cx| {
+                    if !CallSettings::get_global(cx).share_on_join {
+                        return None;
+                    }
+                    let project = workspace.project.read(cx);
+                    if project.is_local()
+                        && project.visible_worktrees(cx).any(|tree| {
+                            tree.read(cx)
+                                .root_entry()
+                                .map_or(false, |entry| entry.is_dir())
+                        })
+                    {
+                        Some(workspace.project.clone())
+                    } else {
+                        None
+                    }
+                });
+                if let Ok(Some(project)) = project {
+                    return Some(cx.spawn(|room, mut cx| async move {
+                        room.update(&mut cx, |room, cx| room.share_project(project, cx))?
+                            .await?;
+                        Ok(())
+                    }));
+                }
+            }
+        }
+
         None
     })?;
     if let Some(task) = task {
@@ -4108,7 +4140,7 @@ async fn join_channel_internal(
     anyhow::Ok(false)
 }
 
-pub fn open_channel(
+pub fn join_channel(
     channel_id: u64,
     app_state: Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
@@ -4141,6 +4173,12 @@ pub fn open_channel(
                 })?
                 .await?;
 
+            if result.is_ok() {
+                cx.update(|cx| {
+                    cx.dispatch_action(&OpenChannelNotes);
+                }).log_err();
+            }
+
             active_window = Some(window_handle);
         }
 
@@ -4163,7 +4201,6 @@ pub fn open_channel(
                                 "This channel is private, and you do not have access. Please ask someone to add you and try again.".into()
                             },
                             ErrorCode::Disconnected => "Please check your internet connection and try again.".into(),
-                            ErrorCode::WrongReleaseChannel => format!("Others in the channel are using the {} release of Zed. Please switch to join this call.", err.error_tag("required").unwrap_or("other")).into(),
                             _ => format!("{}\n\nPlease try again.", err).into(),
                         };
                         cx.prompt(

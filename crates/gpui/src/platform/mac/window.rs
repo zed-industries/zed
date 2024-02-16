@@ -40,7 +40,7 @@ use raw_window_handle::{
 use smallvec::SmallVec;
 use std::{
     any::Any,
-    cell::{Cell, RefCell},
+    cell::Cell,
     ffi::{c_void, CStr},
     mem,
     ops::Range,
@@ -348,6 +348,12 @@ struct MacWindowState {
 impl MacWindowState {
     fn move_traffic_light(&self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
+            if self.is_fullscreen() {
+                // Moving traffic lights while fullscreen doesn't work,
+                // see https://github.com/zed-industries/zed/issues/4712
+                return;
+            }
+
             let titlebar_height = self.titlebar_height();
 
             unsafe {
@@ -1080,7 +1086,7 @@ unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {
 
 unsafe fn drop_window_state(object: &Object) {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-    Rc::from_raw(raw as *mut RefCell<MacWindowState>);
+    Arc::from_raw(raw as *mut Mutex<MacWindowState>);
 }
 
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {

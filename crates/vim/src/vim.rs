@@ -198,7 +198,7 @@ impl Vim {
     }
 
     fn activate_editor(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
-        if editor.read(cx).mode() != EditorMode::Full {
+        if !editor.read(cx).use_modal_editing() {
             return;
         }
 
@@ -575,8 +575,11 @@ impl Vim {
             editor.set_input_enabled(!state.vim_controlled());
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
-            let context_layer = state.keymap_context_layer();
-            editor.set_keymap_context_layer::<Self>(context_layer, cx);
+            if editor.is_focused(cx) {
+                editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
+            } else {
+                editor.remove_keymap_context_layer::<Self>(cx);
+            }
         });
     }
 

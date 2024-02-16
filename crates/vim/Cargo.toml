@@ -20,13 +20,16 @@ collections.workspace = true
 command_palette.workspace = true
 # HACK: We're only depending on `copilot` here for `CommandPaletteFilter`.  See the attached comment on that type.
 copilot.workspace = true
+project_panel.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 gpui.workspace = true
 itertools = "0.10"
 language.workspace = true
 log.workspace = true
-nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
+nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = [
+    "use_tokio",
+], optional = true }
 regex.workspace = true
 search.workspace = true
 serde.workspace = true

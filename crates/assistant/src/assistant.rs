@@ -68,6 +68,7 @@ struct SavedConversation {
     messages: Vec<SavedMessage>,
     message_metadata: HashMap<MessageId, MessageMetadata>,
     summary: String,
+    api_url: Option<String>,
     model: OpenAiModel,
 }
 

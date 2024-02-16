@@ -1,6 +1,8 @@
 use editor::{
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
-    movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails},
+    movement::{
+        self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
+    },
     Bias, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
@@ -27,6 +29,7 @@ pub enum Motion {
     NextWordStart { ignore_punctuation: bool },
     NextWordEnd { ignore_punctuation: bool },
     PreviousWordStart { ignore_punctuation: bool },
+    PreviousWordEnd { ignore_punctuation: bool },
     FirstNonWhitespace { display_lines: bool },
     CurrentLine,
     StartOfLine { display_lines: bool },
@@ -66,6 +69,13 @@ struct NextWordEnd {
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct PreviousWordStart {
+    #[serde(default)]
+    ignore_punctuation: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct PreviousWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
@@ -114,6 +124,7 @@ impl_actions!(
         Down,
         Up,
         PreviousWordStart,
+        PreviousWordEnd,
         NextWordEnd,
         NextWordStart
     ]
@@ -263,6 +274,11 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, &WindowBottom, cx: _| {
         motion(Motion::WindowBottom, cx)
     });
+    workspace.register_action(
+        |_: &mut Workspace, &PreviousWordEnd { ignore_punctuation }, cx: _| {
+            motion(Motion::PreviousWordEnd { ignore_punctuation }, cx)
+        },
+    );
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
@@ -315,6 +331,7 @@ impl Motion {
             | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
+            | PreviousWordEnd { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
             | RepeatFind { .. }
@@ -351,6 +368,7 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | PreviousWordEnd { .. }
             | NextLineStart => false,
         }
     }
@@ -371,6 +389,7 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | PreviousWordEnd { .. }
             | NextLineStart => true,
             Left
             | Backspace
@@ -429,6 +448,10 @@ impl Motion {
             ),
             PreviousWordStart { ignore_punctuation } => (
                 previous_word_start(map, point, *ignore_punctuation, times),
+                SelectionGoal::None,
+            ),
+            PreviousWordEnd { ignore_punctuation } => (
+                previous_word_end(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
             ),
             FirstNonWhitespace { display_lines } => (
@@ -840,13 +863,17 @@ fn previous_word_start(
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
-        let new_point =
-            movement::find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
+        let new_point = movement::find_preceding_boundary_display_point(
+            map,
+            point,
+            FindRange::MultiLine,
+            |left, right| {
                 let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
                 let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
                 (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
-            });
+            },
+        );
         if point == new_point {
             break;
         }
@@ -1023,7 +1050,9 @@ fn find_backward(
 
     for _ in 0..times {
         let new_to =
-            find_preceding_boundary(map, to, FindRange::SingleLine, |_, right| right == target);
+            find_preceding_boundary_display_point(map, to, FindRange::SingleLine, |_, right| {
+                right == target
+            });
         if to == new_to {
             break;
         }
@@ -1145,6 +1174,44 @@ fn window_bottom(
     } else {
         (point, SelectionGoal::None)
     }
+}
+
+fn previous_word_end(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    ignore_punctuation: bool,
+    times: usize,
+) -> DisplayPoint {
+    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let mut point = point.to_point(map);
+
+    if point.column < map.buffer_snapshot.line_len(point.row) {
+        point.column += 1;
+    }
+    for _ in 0..times {
+        let new_point = movement::find_preceding_boundary_point(
+            &map.buffer_snapshot,
+            point,
+            FindRange::MultiLine,
+            |left, right| {
+                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                match (left_kind, right_kind) {
+                    (CharKind::Punctuation, CharKind::Whitespace)
+                    | (CharKind::Punctuation, CharKind::Word)
+                    | (CharKind::Word, CharKind::Whitespace)
+                    | (CharKind::Word, CharKind::Punctuation) => true,
+                    (CharKind::Whitespace, CharKind::Whitespace) => left == '\n' && right == '\n',
+                    _ => false,
+                }
+            },
+        );
+        if new_point == point {
+            break;
+        }
+        point = new_point;
+    }
+    movement::saturating_left(map, point.to_display_point(map))
 }
 
 #[cfg(test)]
@@ -1562,6 +1629,100 @@ mod test {
           4 5 6
           7 8 9
           "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_previous_word_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {r"
+        456 5ˇ67 678
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+        45ˇ6 567 678
+        "})
+            .await;
+
+        // Test times
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        456 5ˇ67 678
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["4", "g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+        12ˇ3 234 345
+        456 567 678
+        "})
+            .await;
+
+        // With punctuation
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        4;5.6 5ˇ67 678
+        789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 234 345
+          4;5.ˇ6 567 678
+          789 890 901
+        "})
+            .await;
+
+        // With punctuation and count
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        4;5.6 5ˇ67 678
+        789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["5", "g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 234 345
+          ˇ4;5.6 567 678
+          789 890 901
+        "})
+            .await;
+
+        // newlines
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+
+        78ˇ9 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 234 345
+          ˇ
+          789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["g", "e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 234 34ˇ5
+
+          789 890 901
+        "})
+            .await;
+
+        // With punctuation
+        cx.set_shared_state(indoc! {r"
+        123 234 345
+        4;5.ˇ6 567 678
+        789 890 901
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["g", "shift-e"]).await;
+        cx.assert_shared_state(indoc! {r"
+          123 234 34ˇ5
+          4;5.6 567 678
+          789 890 901
+        "})
             .await;
     }
 }

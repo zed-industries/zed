@@ -35,6 +35,9 @@ jobs:
                   submodules: "recursive"
                   fetch-depth: 0
 
+            - name: Remove untracked files
+              run: git clean -df
+
             - name: Set up default .cargo/config.toml
               run: cp ./.cargo/ci-config.toml ~/.cargo/config.toml
 
@@ -125,18 +128,20 @@ jobs:
             - name: Build Zed
               run: cargo build -p zed
     bundle:
-        name: Bundle app
+        name: Bundle macOS app
         runs-on:
             - self-hosted
             - bundle
         if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-build-dmg') }}
-        needs: [macos_tests, linux_tests]
+        needs: [macos_tests]
         env:
             MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
             MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
             APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
             APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
             ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+            DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+            DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
         steps:
             - name: Install Node
               uses: actions/setup-node@v4

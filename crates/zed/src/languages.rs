@@ -9,6 +9,7 @@ use util::asset_str;
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
+mod astro;
 mod c;
 mod clojure;
 mod csharp;
@@ -65,6 +66,7 @@ pub fn init(
     DenoSettings::register(cx);
 
     languages.register_native_grammars([
+        ("astro", tree_sitter_astro::language()),
         ("bash", tree_sitter_bash::language()),
         ("beancount", tree_sitter_beancount::language()),
         ("c", tree_sitter_c::language()),
@@ -130,6 +132,13 @@ pub fn init(
         )
     };
 
+    language(
+        "astro",
+        vec![
+            Arc::new(astro::AstroLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
+    );
     language("bash", vec![]);
     language("beancount", vec![]);
     language("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);

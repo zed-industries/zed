@@ -104,8 +104,10 @@
   "show_whitespaces": "selection",
   // Settings related to calls in Zed
   "calls": {
-    // Join calls with the microphone muted by default
-    "mute_on_join": false
+    // Join calls with the microphone live by default
+    "mute_on_join": false,
+    // Share your project when you are the first to join a channel
+    "share_on_join": true
   },
   // Toolbar related settings
   "toolbar": {
@@ -212,6 +214,8 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
+    // The default OpenAI API endpoint to use when starting new conversations.
+    "openai_api_url": "https://api.openai.com/v1",
     // The default OpenAI model to use when starting new conversations. This
     // setting can take three values:
     //
@@ -478,6 +482,7 @@
   "deno": {
     "enable": false
   },
+  "code_actions_on_format": {},
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {
@@ -488,7 +493,10 @@
     },
     "Go": {
       "tab_size": 4,
-      "hard_tabs": true
+      "hard_tabs": true,
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
     },
     "Markdown": {
       "soft_wrap": "preferred_line_length"
