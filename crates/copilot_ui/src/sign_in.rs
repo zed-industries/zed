@@ -116,6 +116,11 @@ impl CopilotCodeVerification {
                     .full_width()
                     .style(ButtonStyle::Filled),
             )
+            .child(
+                Button::new("copilot-enable-cancel-button", "Cancel")
+                    .full_width()
+                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
+            )
     }
     fn render_enabled_modal(cx: &mut ViewContext<Self>) -> impl Element {
         v_flex()
@@ -131,7 +136,7 @@ impl CopilotCodeVerification {
             )
     }
 
-    fn render_unauthorized_modal() -> impl Element {
+    fn render_unauthorized_modal(cx: &mut ViewContext<Self>) -> impl Element {
         v_flex()
             .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
 
@@ -142,6 +147,11 @@ impl CopilotCodeVerification {
                 Button::new("copilot-subscribe-button", "Subscribe on GitHub")
                     .full_width()
                     .on_click(|_, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
+            )
+            .child(
+                Button::new("copilot-subscribe-cancel-button", "Cancel")
+                    .full_width()
+                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
             )
     }
 
@@ -160,7 +170,7 @@ impl Render for CopilotCodeVerification {
             } => Self::render_prompting_modal(self.connect_clicked, &prompt, cx).into_any_element(),
             Status::Unauthorized => {
                 self.connect_clicked = false;
-                Self::render_unauthorized_modal().into_any_element()
+                Self::render_unauthorized_modal(cx).into_any_element()
             }
             Status::Authorized => {
                 self.connect_clicked = false;
