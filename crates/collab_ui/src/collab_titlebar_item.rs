@@ -566,10 +566,7 @@ impl CollabTitlebarItem {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
                 .detach_and_log_err(cx);
-            return;
-        }
-
-        if cx.active_window().is_none() {
+        } else if cx.active_window().is_none() {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(None, cx))
                 .detach_and_log_err(cx);
