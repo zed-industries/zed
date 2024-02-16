@@ -200,6 +200,8 @@ impl ExtensionsPage {
         }
         .color(Color::Accent);
 
+        let repository_url = extension.repository.clone();
+
         div().w_full().child(
             v_flex()
                 .w_full()
@@ -262,7 +264,18 @@ impl ExtensionsPage {
                             Label::new(description.clone())
                                 .size(LabelSize::Small)
                                 .color(Color::Default)
-                        })),
+                        }))
+                        .child(
+                            IconButton::new(
+                                SharedString::from(format!("repository-{}", extension.id)),
+                                IconName::Github,
+                            )
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(move |_, _, cx| {
+                                cx.open_url(&repository_url);
+                            })),
+                        ),
                 ),
         )
     }
