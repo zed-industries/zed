@@ -3,6 +3,9 @@
     "TOML": {
       "formatter": "prettier",
       "format_on_save": "off"
+    },
+    "YAML": {
+      "formatter": "prettier"
     }
   },
   "formatter": "auto"
