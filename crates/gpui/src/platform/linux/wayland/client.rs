@@ -1,7 +1,6 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use etagere::euclid::default;
 use parking_lot::Mutex;
 use wayland_backend::protocol::WEnum;
 use wayland_client::protocol::wl_callback::WlCallback;
