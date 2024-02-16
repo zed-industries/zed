@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.123.0"
+version = "0.124.0"
 publish = false
 license = "GPL-3.0-or-later"
 
@@ -23,7 +23,7 @@ assets.workspace = true
 assistant.workspace = true
 async-compression.workspace = true
 async-recursion = "0.3"
-async-tar = "0.4.2"
+async-tar.workspace = true
 async-trait.workspace = true
 audio.workspace = true
 auto_update.workspace = true
@@ -45,6 +45,7 @@ diagnostics.workspace = true
 editor.workspace = true
 env_logger.workspace = true
 extension.workspace = true
+extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true

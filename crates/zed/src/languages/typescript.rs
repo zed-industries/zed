@@ -160,6 +160,16 @@ impl LspAdapter for TypeScriptLspAdapter {
             "tsserver": {
                 "path": "node_modules/typescript/lib",
             },
+            "preferences": {
+                "includeInlayParameterNameHints": "all",
+                "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
+                "includeInlayFunctionParameterTypeHints": true,
+                "includeInlayVariableTypeHints": true,
+                "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
+                "includeInlayPropertyDeclarationTypeHints": true,
+                "includeInlayFunctionLikeReturnTypeHints": true,
+                "includeInlayEnumMemberValueHints": true,
+            }
         }))
     }
 

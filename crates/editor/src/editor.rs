@@ -399,6 +399,7 @@ pub struct Editor {
     workspace: Option<(WeakView<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
+    use_modal_editing: bool,
     read_only: bool,
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
@@ -1016,12 +1017,53 @@ impl CompletionsMenu {
 
         let completions = self.completions.read();
         matches.sort_unstable_by_key(|mat| {
+            // We do want to strike a balance here between what the language server tells us
+            // to sort by (the sort_text) and what are "obvious" good matches (i.e. when you type
+            // `Creat` and there is a local variable called `CreateComponent`).
+            // So what we do is: we bucket all matches into two buckets
+            // - Strong matches
+            // - Weak matches
+            // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
+            // and the Weak matches are the rest.
+            //
+            // For the strong matches, we sort by the language-servers score first and for the weak
+            // matches, we prefer our fuzzy finder first.
+            //
+            // The thinking behind that: it's useless to take the sort_text the language-server gives
+            // us into account when it's obviously a bad match.
+
+            #[derive(PartialEq, Eq, PartialOrd, Ord)]
+            enum MatchScore<'a> {
+                Strong {
+                    sort_text: Option<&'a str>,
+                    score: Reverse<OrderedFloat<f64>>,
+                    sort_key: (usize, &'a str),
+                },
+                Weak {
+                    score: Reverse<OrderedFloat<f64>>,
+                    sort_text: Option<&'a str>,
+                    sort_key: (usize, &'a str),
+                },
+            }
+
             let completion = &completions[mat.candidate_id];
-            (
-                completion.lsp_completion.sort_text.as_ref(),
-                Reverse(OrderedFloat(mat.score)),
-                completion.sort_key(),
-            )
+            let sort_key = completion.sort_key();
+            let sort_text = completion.lsp_completion.sort_text.as_deref();
+            let score = Reverse(OrderedFloat(mat.score));
+
+            if mat.score >= 0.2 {
+                MatchScore::Strong {
+                    sort_text,
+                    score,
+                    sort_key,
+                }
+            } else {
+                MatchScore::Weak {
+                    score,
+                    sort_text,
+                    sort_key,
+                }
+            }
         });
 
         for mat in &mut matches {
@@ -1482,6 +1524,7 @@ impl Editor {
             workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
+            use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
             leader_peer_id: None,
@@ -1780,6 +1823,14 @@ impl Editor {
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
         self.show_copilot_suggestions = show_copilot_suggestions;
+    }
+
+    pub fn set_use_modal_editing(&mut self, to: bool) {
+        self.use_modal_editing = to;
+    }
+
+    pub fn use_modal_editing(&self) -> bool {
+        self.use_modal_editing
     }
 
     fn selections_did_change(
@@ -7609,8 +7660,9 @@ impl Editor {
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
-            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
+            project.prepare_rename(cursor_buffer.clone(), cursor_buffer_offset, cx)
         });
+        drop(snapshot);
 
         Some(cx.spawn(|this, mut cx| async move {
             let rename_range = if let Some(range) = prepare_rename.await? {
@@ -7630,11 +7682,12 @@ impl Editor {
                 })?
             };
             if let Some(rename_range) = rename_range {
-                let rename_buffer_range = rename_range.to_offset(&snapshot);
-                let cursor_offset_in_rename_range =
-                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-
                 this.update(&mut cx, |this, cx| {
+                    let snapshot = cursor_buffer.read(cx).snapshot();
+                    let rename_buffer_range = rename_range.to_offset(&snapshot);
+                    let cursor_offset_in_rename_range =
+                        cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+
                     this.take_rename(false, cx);
                     let buffer = this.buffer.read(cx).read(cx);
                     let cursor_offset = selection.head().to_offset(&buffer);
@@ -7836,7 +7889,6 @@ impl Editor {
         Some(rename)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
     }
@@ -8505,6 +8557,17 @@ impl Editor {
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
+        let snapshot = self.snapshot(cx);
+        // this is to try and catch a panic sooner
+        for range in &ranges {
+            snapshot
+                .buffer_snapshot
+                .summary_for_anchor::<usize>(&range.start);
+            snapshot
+                .buffer_snapshot
+                .summary_for_anchor::<usize>(&range.end);
+        }
+
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, ranges));
         cx.notify();
