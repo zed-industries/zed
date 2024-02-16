@@ -189,16 +189,9 @@ impl AssistantPanel {
             .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
         cx.notify();
         if self.focus_handle.is_focused(cx) {
-            todo!()
-            // if self.has_credentials() {
-            //     if let Some(editor) = self.active_editor() {
-            //         cx.focus_view(editor);
-            //     }
-            // }
-
-            // if let Some(api_key_editor) = self.api_key_editor.as_ref() {
-            //     cx.focus_view(api_key_editor);
-            // }
+            if let Some(editor) = self.active_editor() {
+                cx.focus_view(editor);
+            }
         }
     }
 

@@ -56,7 +56,7 @@ impl CompletionProvider {
             CompletionProvider::OpenAi(provider) => provider.default_model(),
             CompletionProvider::ZedDotDev(provider) => provider.default_model(),
             #[cfg(test)]
-            CompletionProvider::Fake(_) => todo!(),
+            CompletionProvider::Fake(_) => unimplemented!(),
         }
     }
 
@@ -68,7 +68,7 @@ impl CompletionProvider {
             CompletionProvider::OpenAi(provider) => provider.complete(request),
             CompletionProvider::ZedDotDev(_) => todo!(),
             #[cfg(test)]
-            CompletionProvider::Fake(_) => todo!(),
+            CompletionProvider::Fake(provider) => provider.complete(),
         }
     }
 
@@ -76,7 +76,7 @@ impl CompletionProvider {
     pub fn as_fake(&self) -> &fake::FakeCompletionProvider {
         match self {
             CompletionProvider::Fake(provider) => provider,
-            _ => panic!(),
+            _ => unimplemented!(),
         }
     }
 }

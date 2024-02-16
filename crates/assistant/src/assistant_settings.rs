@@ -18,16 +18,22 @@ impl Default for LanguageModel {
 }
 
 impl LanguageModel {
-    pub fn id(&self) -> &'static str {
-        todo!()
+    pub fn id(&self) -> String {
+        match self {
+            LanguageModel::OpenAi(model) => format!("openai/{}", model.full_name()),
+        }
     }
 
-    pub fn display_name(&self) -> &'static str {
-        todo!()
+    pub fn display_name(&self) -> String {
+        match self {
+            LanguageModel::OpenAi(model) => format!("openai/{}", model.short_name()),
+        }
     }
 
     pub fn max_token_count(&self) -> usize {
-        todo!()
+        match self {
+            LanguageModel::OpenAi(model) => tiktoken_rs::model::get_context_size(model.full_name()),
+        }
     }
 
     pub fn count_tokens(&self, messages: &[ChatCompletionRequestMessage]) -> Result<usize> {

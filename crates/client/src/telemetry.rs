@@ -99,7 +99,7 @@ pub enum Event {
     Assistant {
         conversation_id: Option<String>,
         kind: AssistantKind,
-        model: &'static str,
+        model: String,
         milliseconds_since_first_event: i64,
     },
     Cpu {
@@ -343,7 +343,7 @@ impl Telemetry {
         self: &Arc<Self>,
         conversation_id: Option<String>,
         kind: AssistantKind,
-        model: &'static str,
+        model: String,
     ) {
         let event = Event::Assistant {
             conversation_id,
