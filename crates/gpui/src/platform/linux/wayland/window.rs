@@ -38,6 +38,7 @@ pub(crate) struct Callbacks {
 struct WaylandWindowInner {
     renderer: BladeRenderer,
     bounds: Bounds<i32>,
+    input_handler: Option<PlatformInputHandler>,
 }
 
 struct RawWindow {
@@ -91,6 +92,7 @@ impl WaylandWindowInner {
         Self {
             renderer: BladeRenderer::new(gpu, extent),
             bounds,
+            input_handler: None,
         }
     }
 }
@@ -176,6 +178,20 @@ impl WaylandWindowState {
         }
         self.toplevel.destroy();
     }
+
+    pub fn handle_input(&self, input: PlatformInput) {
+        if let Some(ref mut fun) = self.callbacks.lock().input {
+            if fun(input.clone()) {
+                return;
+            }
+        }
+        if let PlatformInput::KeyDown(event) = input {
+            let mut inner = self.inner.lock();
+            if let Some(ref mut input_handler) = inner.input_handler {
+                input_handler.replace_text_in_range(None, &event.keystroke.key);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -244,12 +260,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        //todo!(linux)
+        self.0.inner.lock().input_handler = Some(input_handler);
     }
 
     //todo!(linux)
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        None
+        self.0.inner.lock().input_handler.take()
     }
 
     //todo!(linux)
@@ -296,7 +312,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        //todo!(linux)
+        self.0.callbacks.lock().input = Some(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
