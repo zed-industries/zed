@@ -31,7 +31,7 @@ impl Runnable for StaticRunner {
         };
         let spawn_task = SpawnTaskInTerminal {
             task_id: id,
-            reuse_terminal: false,
+            use_new_terminal: self.runnable.spawn_in_new_terminal,
             label: self.runnable.label.clone(),
             command: self.runnable.command.clone(),
             args: self.runnable.args.clone(),

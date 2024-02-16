@@ -302,7 +302,7 @@ impl TerminalPanel {
             return;
         };
 
-        if action.reuse_terminal {
+        if !action.use_new_terminal {
             if let Some((item_index, existing_terminal_view)) =
                 terminal_panel.update(cx, |terminal_panel, cx| {
                     terminal_panel.find_terminal_for_external_task(action.task_id, cx)

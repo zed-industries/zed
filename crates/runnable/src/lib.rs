@@ -21,7 +21,7 @@ impl_actions!(runnable, [SpawnTaskInTerminal]);
 #[derive(Debug, Default, Clone)]
 pub struct SpawnTaskInTerminal {
     pub task_id: usize,
-    pub reuse_terminal: bool,
+    pub use_new_terminal: bool,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -33,7 +33,7 @@ pub struct SpawnTaskInTerminal {
 impl PartialEq for SpawnTaskInTerminal {
     fn eq(&self, other: &Self) -> bool {
         self.task_id.eq(&other.task_id)
-            && self.reuse_terminal.eq(&other.reuse_terminal)
+            && self.use_new_terminal.eq(&other.use_new_terminal)
             && self.label.eq(&other.label)
             && self.command.eq(&other.command)
             && self.args.eq(&other.args)
@@ -48,7 +48,7 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
     {
         Ok(Self {
             task_id: 0,
-            reuse_terminal: false,
+            use_new_terminal: false,
             label: String::new(),
             command: String::new(),
             args: Vec::new(),
@@ -138,11 +138,7 @@ impl Token {
             RunState::NotScheduled(runnable) => {
                 let (handle, spawn_in_terminal) = runnable.exec(self.id(), cwd);
                 let runnable = Arc::clone(runnable);
-                let mut spawn_in_terminal_to_return = spawn_in_terminal.clone();
-                if let Some(spawn_task_in_terminal) = &mut spawn_in_terminal_to_return {
-                    spawn_task_in_terminal.reuse_terminal = true;
-                }
-
+                let spawn_in_terminal_to_return = spawn_in_terminal.clone();
                 let task_handle = handle.clone();
                 let completion_task = cx
                     .spawn(move |state, mut cx| async move {
