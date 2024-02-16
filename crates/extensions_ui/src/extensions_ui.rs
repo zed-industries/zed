@@ -270,6 +270,7 @@ impl ExtensionsPage {
                                 SharedString::from(format!("repository-{}", extension.id)),
                                 IconName::Github,
                             )
+                            .icon_color(Color::Accent)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Filled)
                             .on_click(cx.listener(move |_, _, cx| {
