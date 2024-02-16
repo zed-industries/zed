@@ -1,7 +1,9 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use log::kv::Key;
 use parking_lot::Mutex;
+use taffy::geometry::MinMax;
 use wayland_backend::protocol::WEnum;
 use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
@@ -351,6 +353,22 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                     }
                 }
             }
+            wl_keyboard::Event::Modifiers {
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+                ..
+            } => {
+                state.keymap_state.as_mut().unwrap().update_mask(
+                    mods_depressed,
+                    mods_latched,
+                    mods_locked,
+                    0,
+                    0,
+                    group,
+                );
+            }
             wl_keyboard::Event::Key {
                 key,
                 state: WEnum::Value(key_state),
@@ -359,8 +377,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let keymap = state.keymap.as_ref().unwrap();
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
-                let key_sym =
-                    keymap.key_get_syms_by_level(Keycode::from(key + MIN_KEYCODE), 0, 0)[0];
+                let key_sym = keymap_state.key_get_one_sym(Keycode::from(key + MIN_KEYCODE));
 
                 let key = if matches!(
                     key_sym,
