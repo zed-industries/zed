@@ -232,7 +232,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .selected(selected)
                 .child(
                     v_flex()
-                        .flex_1()
                         .child(highlighted_location.names)
                         .when(self.render_paths, |this| {
                             this.children(highlighted_location.paths)
