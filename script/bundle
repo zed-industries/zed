@@ -135,24 +135,24 @@ echo "Bundled ${app_path}"
 
 if [ "$local_arch" = false ]; then
     echo "Uploading dSYMs"
-    dsymutil --flat target/aarch64-apple-darwin/release/Zed
-    dsymutil --flat target/x86_64-apple-darwin/release/Zed
+    dsymutil --flat target/aarch64-apple-darwin/${target_dir}/Zed
+    dsymutil --flat target/x86_64-apple-darwin/${target_dir}/Zed
     version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
     if [ "$channel" == "nightly" ]; then
         version="$version-$(git rev-parse --short HEAD)"
     fi
 
     echo "Removing existing gzipped dSYMs"
-    rm -f target/aarch64-apple-darwin/release/Zed.dwarf.gz
-    rm -f target/x86_64-apple-darwin/release/Zed.dwarf.gz
+    rm -f target/aarch64-apple-darwin/${target_dir}/Zed.dwarf.gz
+    rm -f target/x86_64-apple-darwin/${target_dir}/Zed.dwarf.gz
 
     echo "Gzipping dSYMs"
-    gzip target/aarch64-apple-darwin/release/Zed.dwarf
-    gzip target/x86_64-apple-darwin/release/Zed.dwarf
+    gzip target/aarch64-apple-darwin/${target_dir}/Zed.dwarf
+    gzip target/x86_64-apple-darwin/${target_dir}/Zed.dwarf
 
     echo "Uploading dSYMs"
-    uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-aarch64-apple-darwin.dwarf.gz"
-    uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-x86_64-apple-darwin.dwarf.gz"
+    uploadDsym target/aarch64-apple-darwin/${target_dir}/Zed.dwarf.gz "$channel/Zed-$version-aarch64-apple-darwin.dwarf.gz"
+    uploadDsym target/x86_64-apple-darwin/${target_dir}/Zed.dwarf.gz "$channel/Zed-$version-x86_64-apple-darwin.dwarf.gz"
 
     echo "Creating fat binaries"
     lipo \

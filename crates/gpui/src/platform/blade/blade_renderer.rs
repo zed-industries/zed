@@ -1,22 +1,79 @@
 // Doing `if let` gives you nice scoping with passes/encoders
 #![allow(irrefutable_let_patterns)]
 
-use super::{BladeBelt, BladeBeltDescriptor};
+use super::{BladeAtlas, BladeBelt, BladeBeltDescriptor, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, BladeAtlas, Bounds, ContentMask, Hsla, MonochromeSprite, Path,
-    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
-    Underline, PATH_TEXTURE_FORMAT,
+    AtlasTextureKind, AtlasTile, Bounds, ContentMask, Hsla, MonochromeSprite, Path, PathId,
+    PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    Underline,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
+#[cfg(target_os = "macos")]
+use std::ffi::c_void;
 
 use blade_graphics as gpu;
 use std::{mem, sync::Arc};
 
 const SURFACE_FRAME_COUNT: u32 = 3;
 const MAX_FRAME_TIME_MS: u32 = 1000;
+
+pub type Context = ();
+pub type Renderer = BladeRenderer;
+
+#[cfg(target_os = "macos")]
+pub unsafe fn new_renderer(
+    _context: self::Context,
+    native_window: *mut c_void,
+    native_view: *mut c_void,
+    bounds: crate::Size<f32>,
+) -> Renderer {
+    struct RawWindow {
+        window: *mut c_void,
+        view: *mut c_void,
+    }
+
+    unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
+        fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
+            let mut wh = blade_rwh::AppKitWindowHandle::empty();
+            wh.ns_window = self.window;
+            wh.ns_view = self.view;
+            wh.into()
+        }
+    }
+
+    unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
+        fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
+            let dh = blade_rwh::AppKitDisplayHandle::empty();
+            dh.into()
+        }
+    }
+
+    let gpu = Arc::new(
+        gpu::Context::init_windowed(
+            &RawWindow {
+                window: native_window as *mut _,
+                view: native_view as *mut _,
+            },
+            gpu::ContextDesc {
+                validation: cfg!(debug_assertions),
+                capture: false,
+            },
+        )
+        .unwrap(),
+    );
+
+    BladeRenderer::new(
+        gpu,
+        gpu::Extent {
+            width: bounds.width as u32,
+            height: bounds.height as u32,
+            depth: 1,
+        },
+    )
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -354,17 +411,18 @@ impl BladeRenderer {
         }
     }
 
-    pub fn destroy(&mut self) {
-        self.wait_for_gpu();
-        self.atlas.destroy();
-        self.instance_belt.destroy(&self.gpu);
-        self.gpu.destroy_command_encoder(&mut self.command_encoder);
-    }
+    pub fn update_drawable_size(&mut self, size: Size<f64>) {
+        let gpu_size = gpu::Extent {
+            width: size.width as u32,
+            height: size.height as u32,
+            depth: 1,
+        };
 
-    pub fn resize(&mut self, size: gpu::Extent) {
-        self.wait_for_gpu();
-        self.gpu.resize(Self::make_surface_config(size));
-        self.viewport_size = size;
+        if gpu_size != self.viewport_size() {
+            self.wait_for_gpu();
+            self.gpu.resize(Self::make_surface_config(gpu_size));
+            self.viewport_size = gpu_size;
+        }
     }
 
     pub fn viewport_size(&self) -> gpu::Extent {
@@ -378,6 +436,12 @@ impl BladeRenderer {
     #[cfg(target_os = "macos")]
     pub fn layer(&self) -> metal::MetalLayer {
         self.gpu.metal_layer().unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn layer_ptr(&self) -> *mut metal::CAMetalLayer {
+        use metal::foreign_types::ForeignType as _;
+        self.gpu.metal_layer().unwrap().as_ptr()
     }
 
     fn rasterize_paths(&mut self, paths: &[Path<ScaledPixels>]) {
@@ -430,6 +494,13 @@ impl BladeRenderer {
             );
             encoder.draw(0, vertices.len() as u32, 0, 1);
         }
+    }
+
+    pub fn destroy(&mut self) {
+        self.wait_for_gpu();
+        self.atlas.destroy();
+        self.instance_belt.destroy(&self.gpu);
+        self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
 
     pub fn draw(&mut self, scene: &Scene) {
