@@ -77,6 +77,7 @@ use language::{
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
+use crate::git::permalink::{build_permalink, BuildPermalinkParams};
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
@@ -349,10 +350,16 @@ type CompletionId = usize;
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
 type InlayBackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<InlayHighlight>);
 
+/// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
+///
+/// See the [module level documentation](self) for more information.
 pub struct Editor {
     handle: WeakView<Self>,
     focus_handle: FocusHandle,
+    /// The text buffer being edited
     buffer: Model<MultiBuffer>,
+    /// Map of how text in the buffer should be displayed.
+    /// Handles soft wraps, folds, fake inlay text insertions, etc.
     display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,

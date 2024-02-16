@@ -1,3 +1,7 @@
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures
 rustflags = ["-C", "symbol-mangling-version=v0"]
+
+# Shows private items in the generated documentation when running `cargo doc`
+# Makes rustdoc more useful for understanding the codebase, not just the public api surface
+rustdocflags = ["--document-private-items"]

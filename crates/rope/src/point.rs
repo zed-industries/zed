@@ -3,6 +3,7 @@ use std::{
     ops::{Add, AddAssign, Sub},
 };
 
+/// A zero-indexed point in a text buffer consisting of a row and column.
 #[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
 pub struct Point {
     pub row: u32,
