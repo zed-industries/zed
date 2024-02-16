@@ -10611,6 +10611,7 @@ dependencies = [
  "project_panel",
  "regex",
  "release_channel",
+ "schemars",
  "search",
  "serde",
  "serde_derive",

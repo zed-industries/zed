@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp};
+use std::cmp;
 
 use editor::{
     display_map::ToDisplayPoint, movement, scroll::Autoscroll, ClipboardSelection, DisplayPoint,
@@ -6,9 +6,10 @@ use editor::{
 use gpui::{impl_actions, ViewContext};
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
+use settings::Settings;
 use workspace::Workspace;
 
-use crate::{state::Mode, utils::copy_selections_content, Vim};
+use crate::{state::Mode, utils::copy_selections_content, UseSystemClipboard, Vim, VimSettings};
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -28,30 +29,43 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let Some(item) = cx.read_from_clipboard() else {
-                    return;
-                };
-                let clipboard_text = Cow::Borrowed(item.text());
+                let (clipboard_text, clipboard_selections): (String, Option<_>) =
+                    if VimSettings::get_global(cx).use_system_clipboard == UseSystemClipboard::Never
+                    {
+                        (
+                            vim.workspace_state
+                                .registers
+                                .get("\"")
+                                .cloned()
+                                .unwrap_or_else(|| "".to_string()),
+                            None,
+                        )
+                    } else {
+                        if let Some(item) = cx.read_from_clipboard() {
+                            let clipboard_selections = item
+                                .metadata::<Vec<ClipboardSelection>>()
+                                .filter(|clipboard_selections| {
+                                    clipboard_selections.len() > 1
+                                        && vim.state().mode != Mode::VisualLine
+                                });
+                            (item.text().clone(), clipboard_selections)
+                        } else {
+                            ("".into(), None)
+                        }
+                    };
+
                 if clipboard_text.is_empty() {
                     return;
                 }
 
                 if !action.preserve_clipboard && vim.state().mode.is_visual() {
-                    copy_selections_content(editor, vim.state().mode == Mode::VisualLine, cx);
+                    copy_selections_content(vim, editor, vim.state().mode == Mode::VisualLine, cx);
                 }
-
-                // if we are copying from multi-cursor (of visual block mode), we want
-                // to
-                let clipboard_selections =
-                    item.metadata::<Vec<ClipboardSelection>>()
-                        .filter(|clipboard_selections| {
-                            clipboard_selections.len() > 1 && vim.state().mode != Mode::VisualLine
-                        });
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
 
