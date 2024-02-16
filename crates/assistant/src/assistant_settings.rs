@@ -1,8 +1,9 @@
-use anyhow;
+use anyhow::Result;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use tiktoken_rs::ChatCompletionRequestMessage;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(untagged)]
@@ -13,6 +14,34 @@ pub enum LanguageModel {
 impl Default for LanguageModel {
     fn default() -> Self {
         LanguageModel::OpenAi(OpenAiModel::ThreePointFiveTurbo)
+    }
+}
+
+impl LanguageModel {
+    pub fn id(&self) -> &'static str {
+        todo!()
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        todo!()
+    }
+
+    pub fn max_token_count(&self) -> usize {
+        todo!()
+    }
+
+    pub fn count_tokens(&self, messages: &[ChatCompletionRequestMessage]) -> Result<usize> {
+        match self {
+            LanguageModel::OpenAi(model) => {
+                tiktoken_rs::num_tokens_from_messages(&model.full_name(), &messages)
+            }
+        }
+    }
+
+    pub fn cycle(&self) -> Self {
+        match self {
+            LanguageModel::OpenAi(model) => LanguageModel::OpenAi(model.cycle()),
+        }
     }
 }
 

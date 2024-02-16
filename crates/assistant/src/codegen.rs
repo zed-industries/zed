@@ -22,7 +22,6 @@ pub enum CodegenKind {
 }
 
 pub struct Codegen {
-    provider: CompletionProvider,
     buffer: Model<MultiBuffer>,
     snapshot: MultiBufferSnapshot,
     kind: CodegenKind,
@@ -37,15 +36,9 @@ pub struct Codegen {
 impl EventEmitter<Event> for Codegen {}
 
 impl Codegen {
-    pub fn new(
-        buffer: Model<MultiBuffer>,
-        kind: CodegenKind,
-        provider: CompletionProvider,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    pub fn new(buffer: Model<MultiBuffer>, kind: CodegenKind, cx: &mut ModelContext<Self>) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
         Self {
-            provider,
             buffer: buffer.clone(),
             snapshot,
             kind,
@@ -110,7 +103,7 @@ impl Codegen {
             .next()
             .unwrap_or_else(|| snapshot.indent_size_for_line(selection_start.row));
 
-        let response = self.provider.complete(prompt);
+        let response = CompletionProvider::global(cx).complete(prompt);
         self.generation = cx.spawn(|this, mut cx| {
             async move {
                 let generate = async {
@@ -381,7 +374,9 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
+        let provider = CompletionProvider::fake();
         cx.set_global(cx.update(SettingsStore::test));
+        cx.set_global(provider.clone());
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -400,15 +395,8 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
-        let provider = CompletionProvider::fake();
-        let codegen = cx.new_model(|cx| {
-            Codegen::new(
-                buffer.clone(),
-                CodegenKind::Transform { range },
-                provider.clone(),
-                cx,
-            )
-        });
+        let codegen =
+            cx.new_model(|cx| Codegen::new(buffer.clone(), CodegenKind::Transform { range }, cx));
 
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
@@ -448,7 +436,9 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
+        let provider = CompletionProvider::fake();
         cx.set_global(cx.update(SettingsStore::test));
+        cx.set_global(provider.clone());
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -464,15 +454,8 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))
         });
-        let provider = CompletionProvider::fake();
-        let codegen = cx.new_model(|cx| {
-            Codegen::new(
-                buffer.clone(),
-                CodegenKind::Generate { position },
-                provider.clone(),
-                cx,
-            )
-        });
+        let codegen =
+            cx.new_model(|cx| Codegen::new(buffer.clone(), CodegenKind::Generate { position }, cx));
 
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
@@ -512,7 +495,9 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
+        let provider = CompletionProvider::fake();
         cx.set_global(cx.update(SettingsStore::test));
+        cx.set_global(provider.clone());
         cx.update(language_settings::init);
 
         let text = concat!(
@@ -528,15 +513,8 @@ mod tests {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))
         });
-        let provider = CompletionProvider::fake();
-        let codegen = cx.new_model(|cx| {
-            Codegen::new(
-                buffer.clone(),
-                CodegenKind::Generate { position },
-                provider.clone(),
-                cx,
-            )
-        });
+        let codegen =
+            cx.new_model(|cx| Codegen::new(buffer.clone(), CodegenKind::Generate { position }, cx));
 
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));

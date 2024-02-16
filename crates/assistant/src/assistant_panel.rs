@@ -1,5 +1,5 @@
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAiModel},
+    assistant_settings::{AssistantDockPosition, AssistantSettings, LanguageModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModelRequest,
@@ -88,7 +88,6 @@ pub struct AssistantPanel {
     zoomed: bool,
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
-    completion_provider: CompletionProvider,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
@@ -166,7 +165,6 @@ impl AssistantPanel {
                         zoomed: false,
                         focus_handle,
                         toolbar,
-                        completion_provider: CompletionProvider::from_settings(cx),
                         languages: workspace.app_state().languages.clone(),
                         fs: workspace.app_state().fs.clone(),
                         width: None,
@@ -228,7 +226,7 @@ impl AssistantPanel {
         };
         let project = workspace.project().clone();
 
-        if assistant.update(cx, |assistant, _| assistant.is_authenticated()) {
+        if assistant.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
             assistant.update(cx, |assistant, cx| {
                 assistant.new_inline_assist(&active_editor, cx, &project)
             });
@@ -237,8 +235,8 @@ impl AssistantPanel {
             cx.spawn(|workspace, mut cx| async move {
                 assistant
                     .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
-                    .await;
-                if assistant.update(&mut cx, |assistant, _| assistant.is_authenticated())? {
+                    .await?;
+                if assistant.update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))? {
                     assistant.update(&mut cx, |assistant, cx| {
                         assistant.new_inline_assist(&active_editor, cx, &project)
                     })?;
@@ -289,11 +287,9 @@ impl AssistantPanel {
         };
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
-        let provider = self.completion_provider.clone();
 
-        let codegen = cx.new_model(|cx| {
-            Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
-        });
+        let codegen =
+            cx.new_model(|cx| Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, cx));
 
         if let Some(semantic_index) = self.semantic_index.clone() {
             let project = project.clone();
@@ -633,23 +629,12 @@ impl AssistantPanel {
 
         let user_prompt = user_prompt.to_string();
 
-        let mut model = AssistantSettings::get_global(cx)
-            .default_open_ai_model
-            .clone();
-        let model_name = model.full_name();
-
         let prompt = cx.background_executor().spawn(async move {
             let language_name = language_name.as_deref();
-            generate_content_prompt(
-                user_prompt,
-                language_name,
-                buffer,
-                range,
-                model_name,
-                project_name,
-            )
+            generate_content_prompt(user_prompt, language_name, buffer, range, project_name)
         });
 
+        let mut model = None;
         let mut messages = Vec::new();
         if let Some(conversation) = conversation {
             let conversation = conversation.read(cx);
@@ -659,7 +644,7 @@ impl AssistantPanel {
                     .messages(cx)
                     .map(|message| message.to_open_ai_message(buffer)),
             );
-            model = conversation.model.clone();
+            model = Some(conversation.model.clone());
         }
 
         cx.spawn(|_, mut cx| async move {
@@ -672,7 +657,7 @@ impl AssistantPanel {
             });
 
             let request = LanguageModelRequest {
-                model: model.full_name().into(),
+                model,
                 messages,
                 stream: true,
                 stop: vec!["|END|>".to_string()],
@@ -734,7 +719,6 @@ impl AssistantPanel {
     fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
-                self.completion_provider.clone(),
                 self.languages.clone(),
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -843,40 +827,6 @@ impl AssistantPanel {
 
     fn active_editor(&self) -> Option<&View<ConversationEditor>> {
         self.editors.get(self.active_editor_index?)
-    }
-
-    fn render_api_key_editor(
-        &self,
-        editor: &View<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: if editor.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
-            } else {
-                cx.theme().colors().text
-            },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
-            font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
-        };
-        EditorElement::new(
-            &editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
     }
 
     fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1002,18 +952,11 @@ impl AssistantPanel {
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
         let languages = self.languages.clone();
-        let completion_provider = self.completion_provider.clone();
         cx.spawn(|this, mut cx| async move {
-            let saved_conversation = fs.load(&path).await?;
-            let saved_conversation = serde_json::from_str(&saved_conversation)?;
-            let conversation = Conversation::deserialize(
-                saved_conversation,
-                path.clone(),
-                languages,
-                completion_provider,
-                &mut cx,
-            )
-            .await?;
+            let saved_conversation = SavedConversation::load(&path, fs.as_ref()).await?;
+            let conversation =
+                Conversation::deserialize(saved_conversation, path.clone(), languages, &mut cx)
+                    .await?;
 
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
@@ -1037,12 +980,12 @@ impl AssistantPanel {
             .position(|editor| editor.read(cx).conversation.read(cx).path.as_deref() == Some(path))
     }
 
-    fn is_authenticated(&mut self) -> bool {
-        self.completion_provider.is_authenticated()
+    fn is_authenticated(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        CompletionProvider::global(cx).is_authenticated()
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        self.completion_provider.authenticate(cx)
+        CompletionProvider::global(cx).authenticate(cx)
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1141,7 +1084,7 @@ impl AssistantPanel {
     }
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        match &self.completion_provider {
+        match CompletionProvider::global(cx) {
             CompletionProvider::OpenAi(_) => v_flex().gap_6().p_4().child(Label::new(
                 "Please assign an OPENAI_API_KEY environment variable, then restart Zed.",
             )),
@@ -1158,8 +1101,8 @@ impl AssistantPanel {
                                 .icon_position(IconPosition::Start)
                                 .style(ButtonStyle::Filled)
                                 .full_width()
-                                .on_click(cx.listener(|this, _, cx| {
-                                    this.completion_provider
+                                .on_click(cx.listener(|_, _, cx| {
+                                    CompletionProvider::global(cx)
                                         .authenticate(cx)
                                         .detach_and_log_err(cx);
                                 })),
@@ -1179,17 +1122,9 @@ impl AssistantPanel {
     }
 }
 
-fn build_api_key_editor(cx: &mut WindowContext) -> View<Editor> {
-    cx.new_view(|cx| {
-        let mut editor = Editor::single_line(cx);
-        editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
-        editor
-    })
-}
-
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if self.completion_provider.is_authenticated() {
+        if CompletionProvider::global(cx).is_authenticated() {
             self.render_signed_in(cx).into_any_element()
         } else {
             self.render_signed_out(cx).into_any_element()
@@ -1256,9 +1191,9 @@ impl Panel for AssistantPanel {
         if active {
             let load_credentials = self.authenticate(cx);
             cx.spawn(|this, mut cx| async move {
-                load_credentials.await;
+                load_credentials.await?;
                 this.update(&mut cx, |this, cx| {
-                    if this.is_authenticated() && this.editors.is_empty() {
+                    if this.is_authenticated(cx) && this.editors.is_empty() {
                         this.new_conversation(cx);
                     }
                 })
@@ -1310,25 +1245,18 @@ struct Conversation {
     pending_summary: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    model: OpenAiModel,
-    api_url: Option<String>,
+    model: LanguageModel,
     token_count: Option<usize>,
-    max_token_count: usize,
     pending_token_count: Task<Option<()>>,
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
-    completion_provider: CompletionProvider,
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
 
 impl Conversation {
-    fn new(
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<Self>,
-        completion_provider: CompletionProvider,
-    ) -> Self {
+    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ModelContext<Self>) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "");
@@ -1344,10 +1272,6 @@ impl Conversation {
             buffer
         });
 
-        let settings = AssistantSettings::get_global(cx);
-        let model = settings.default_open_ai_model.clone();
-        let api_url = settings.openai_api_url.clone();
-
         let mut this = Self {
             id: Some(Uuid::new_v4().to_string()),
             message_anchors: Default::default(),
@@ -1358,15 +1282,12 @@ impl Conversation {
             completion_count: Default::default(),
             pending_completions: Default::default(),
             token_count: None,
-            max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
             pending_token_count: Task::ready(None),
-            api_url: Some(api_url),
-            model: model.clone(),
+            model: CompletionProvider::global(cx).default_model(),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
-            completion_provider,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1406,7 +1327,6 @@ impl Conversation {
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
             model: self.model.clone(),
-            api_url: self.api_url.clone(),
         }
     }
 
@@ -1414,7 +1334,6 @@ impl Conversation {
         saved_conversation: SavedConversation,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
-        completion_provider: CompletionProvider,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
         let id = match saved_conversation.id {
@@ -1422,7 +1341,6 @@ impl Conversation {
             None => Some(Uuid::new_v4().to_string()),
         };
         let model = saved_conversation.model;
-        let api_url = saved_conversation.api_url;
 
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
@@ -1466,15 +1384,12 @@ impl Conversation {
                 completion_count: Default::default(),
                 pending_completions: Default::default(),
                 token_count: None,
-                max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
                 pending_token_count: Task::ready(None),
-                api_url,
                 model,
                 _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
-                completion_provider,
             };
             this.count_remaining_tokens(cx);
             this
@@ -1526,14 +1441,10 @@ impl Conversation {
                     .await;
                 let token_count = cx
                     .background_executor()
-                    .spawn(async move {
-                        tiktoken_rs::num_tokens_from_messages(&model.full_name(), &messages)
-                    })
+                    .spawn(async move { model.count_tokens(&messages) })
                     .await?;
 
                 this.update(&mut cx, |this, cx| {
-                    this.max_token_count =
-                        tiktoken_rs::model::get_context_size(&this.model.full_name());
                     this.token_count = Some(token_count);
                     cx.notify()
                 })?;
@@ -1544,10 +1455,10 @@ impl Conversation {
     }
 
     fn remaining_tokens(&self) -> Option<isize> {
-        Some(self.max_token_count as isize - self.token_count? as isize)
+        Some(self.model.max_token_count() as isize - self.token_count? as isize)
     }
 
-    fn set_model(&mut self, model: OpenAiModel, cx: &mut ModelContext<Self>) {
+    fn set_model(&mut self, model: LanguageModel, cx: &mut ModelContext<Self>) {
         self.model = model;
         self.count_remaining_tokens(cx);
         cx.notify();
@@ -1596,13 +1507,13 @@ impl Conversation {
         }
 
         if should_assist {
-            if !self.completion_provider.is_authenticated() {
+            if !CompletionProvider::global(cx).is_authenticated() {
                 log::info!("completion provider has no credentials");
                 return Default::default();
             }
 
             let request = LanguageModelRequest {
-                model: self.model.full_name().to_string(),
+                model: Some(self.model.clone()),
                 messages: self
                     .messages(cx)
                     .filter(|message| matches!(message.status, MessageStatus::Done))
@@ -1613,7 +1524,7 @@ impl Conversation {
                 temperature: 1.0,
             };
 
-            let stream = self.completion_provider.complete(request);
+            let stream = CompletionProvider::global(cx).complete(request);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
                 .unwrap();
@@ -1871,7 +1782,7 @@ impl Conversation {
 
     fn summarize(&mut self, cx: &mut ModelContext<Self>) {
         if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            if !self.completion_provider.is_authenticated() {
+            if !CompletionProvider::global(cx).is_authenticated() {
                 return;
             }
 
@@ -1885,14 +1796,14 @@ impl Conversation {
                         .into(),
                 }));
             let request = LanguageModelRequest {
-                model: self.model.full_name().to_string(),
+                model: Some(self.model.clone()),
                 messages: messages.collect(),
                 stream: true,
                 stop: vec![],
                 temperature: 1.0,
             };
 
-            let stream = self.completion_provider.complete(request);
+            let stream = CompletionProvider::global(cx).complete(request);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
                     let mut messages = stream.await?;
@@ -2079,14 +1990,12 @@ struct ConversationEditor {
 
 impl ConversationEditor {
     fn new(
-        completion_provider: CompletionProvider,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let conversation =
-            cx.new_model(|cx| Conversation::new(language_registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(language_registry, cx));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2124,12 +2033,14 @@ impl ConversationEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        report_assistant_event(
-            self.workspace.clone(),
-            self.conversation.read(cx).id.clone(),
-            AssistantKind::Panel,
-            cx,
-        );
+        self.conversation.update(cx, |conversation, cx| {
+            report_assistant_event(
+                self.workspace.clone(),
+                Some(conversation),
+                AssistantKind::Panel,
+                cx,
+            )
+        });
 
         let cursors = self.cursors(cx);
 
@@ -2493,7 +2404,7 @@ impl ConversationEditor {
     fn render_current_model(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         Button::new(
             "current_model",
-            self.conversation.read(cx).model.short_name(),
+            self.conversation.read(cx).model.display_name(),
         )
         .style(ButtonStyle::Filled)
         .tooltip(move |cx| Tooltip::text("Change Model", cx))
@@ -3129,12 +3040,12 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
+        cx.set_global(CompletionProvider::fake());
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
 
-        let completion_provider = CompletionProvider::fake();
-        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3261,11 +3172,11 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        cx.set_global(CompletionProvider::fake());
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = CompletionProvider::fake();
 
-        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3359,11 +3270,11 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
+        cx.set_global(CompletionProvider::fake());
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = CompletionProvider::fake();
-        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3444,11 +3355,10 @@ mod tests {
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
+        cx.set_global(CompletionProvider::fake());
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test());
-        let completion_provider = CompletionProvider::fake();
-        let conversation =
-            cx.new_model(|cx| Conversation::new(registry.clone(), cx, completion_provider.clone()));
+        let conversation = cx.new_model(|cx| Conversation::new(registry.clone(), cx));
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
             conversation.read_with(cx, |conversation, _| conversation.message_anchors[0].id);
@@ -3486,7 +3396,6 @@ mod tests {
             conversation.read_with(cx, |conversation, cx| conversation.serialize(cx)),
             Default::default(),
             registry.clone(),
-            completion_provider.clone(),
             &mut cx.to_async(),
         )
         .await
@@ -3521,9 +3430,9 @@ mod tests {
 
 fn report_assistant_event(
     workspace: WeakView<Workspace>,
-    conversation_id: Option<String>,
+    conversation: Option<&Conversation>,
     assistant_kind: AssistantKind,
-    cx: &AppContext,
+    cx: &mut AppContext,
 ) {
     let Some(workspace) = workspace.upgrade() else {
         return;
@@ -3532,9 +3441,9 @@ fn report_assistant_event(
     let client = workspace.read(cx).project().read(cx).client();
     let telemetry = client.telemetry();
 
-    let model = AssistantSettings::get_global(cx)
-        .default_open_ai_model
-        .clone();
-
-    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name())
+    let conversation_id = conversation.and_then(|conversation| conversation.id.clone());
+    let model_id = conversation
+        .map(|c| c.model.id())
+        .unwrap_or_else(|| CompletionProvider::global(cx).default_model().id());
+    telemetry.report_assistant_event(conversation_id, assistant_kind, model_id)
 }

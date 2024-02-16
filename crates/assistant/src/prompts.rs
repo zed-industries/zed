@@ -114,12 +114,11 @@ fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> S
 }
 
 pub fn generate_content_prompt(
-    user_prompt: String,
-    language_name: Option<&str>,
-    buffer: BufferSnapshot,
-    range: Range<usize>,
-    model: &str,
-    project_name: Option<String>,
+    _user_prompt: String,
+    _language_name: Option<&str>,
+    _buffer: BufferSnapshot,
+    _range: Range<usize>,
+    _project_name: Option<String>,
 ) -> anyhow::Result<String> {
     todo!()
 

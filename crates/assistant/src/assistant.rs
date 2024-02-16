@@ -3,27 +3,17 @@ mod assistant_settings;
 mod codegen;
 mod completion_provider;
 mod prompts;
+mod saved_conversation;
 mod streaming_diff;
 
-use anyhow::Result;
 pub use assistant_panel::AssistantPanel;
-use assistant_settings::OpenAiModel;
+use assistant_settings::LanguageModel;
 use chrono::{DateTime, Local};
-use collections::HashMap;
 pub(crate) use completion_provider::*;
-use fs::Fs;
-use futures::StreamExt;
 use gpui::{actions, AppContext, SharedString};
-use regex::Regex;
+pub(crate) use saved_conversation::*;
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Reverse,
-    ffi::OsStr,
-    fmt::{self, Display},
-    path::PathBuf,
-    sync::Arc,
-};
-use util::paths::CONVERSATIONS_DIR;
+use std::fmt::{self, Display};
 
 actions!(
     assistant,
@@ -82,7 +72,7 @@ pub struct LanguageModelRequestMessage {
 
 #[derive(Debug, Default, Serialize)]
 pub struct LanguageModelRequest {
-    pub model: String,
+    pub model: Option<LanguageModel>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stream: bool,
     pub stop: Vec<String>,
@@ -121,70 +111,6 @@ enum MessageStatus {
     Pending,
     Done,
     Error(SharedString),
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedMessage {
-    id: MessageId,
-    start: usize,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedConversation {
-    id: Option<String>,
-    zed: String,
-    version: String,
-    text: String,
-    messages: Vec<SavedMessage>,
-    message_metadata: HashMap<MessageId, MessageMetadata>,
-    summary: String,
-    api_url: Option<String>,
-    model: OpenAiModel,
-}
-
-impl SavedConversation {
-    const VERSION: &'static str = "0.1.0";
-}
-
-struct SavedConversationMetadata {
-    title: String,
-    path: PathBuf,
-    mtime: chrono::DateTime<chrono::Local>,
-}
-
-impl SavedConversationMetadata {
-    pub async fn list(fs: Arc<dyn Fs>) -> Result<Vec<Self>> {
-        fs.create_dir(&CONVERSATIONS_DIR).await?;
-
-        let mut paths = fs.read_dir(&CONVERSATIONS_DIR).await?;
-        let mut conversations = Vec::<SavedConversationMetadata>::new();
-        while let Some(path) = paths.next().await {
-            let path = path?;
-            if path.extension() != Some(OsStr::new("json")) {
-                continue;
-            }
-
-            let pattern = r" - \d+.zed.json$";
-            let re = Regex::new(pattern).unwrap();
-
-            let metadata = fs.metadata(&path).await?;
-            if let Some((file_name, metadata)) = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .zip(metadata)
-            {
-                let title = re.replace(file_name, "");
-                conversations.push(Self {
-                    title: title.into_owned(),
-                    path,
-                    mtime: metadata.mtime.into(),
-                });
-            }
-        }
-        conversations.sort_unstable_by_key(|conversation| Reverse(conversation.mtime));
-
-        Ok(conversations)
-    }
 }
 
 pub fn init(cx: &mut AppContext) {

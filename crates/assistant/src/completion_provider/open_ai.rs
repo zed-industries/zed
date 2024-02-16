@@ -1,4 +1,7 @@
-use crate::{LanguageModelChoiceDelta, LanguageModelRequest, LanguageModelUsage};
+use crate::{
+    assistant_settings::{LanguageModel, OpenAiModel},
+    LanguageModelChoiceDelta, LanguageModelRequest, LanguageModelUsage,
+};
 use anyhow::{anyhow, Result};
 use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
@@ -15,7 +18,6 @@ pub const OPEN_AI_API_URL: &'static str = "https://api.openai.com/v1";
 #[derive(Clone)]
 pub struct OpenAiCompletionProvider {
     api_key: Arc<Mutex<Option<String>>>,
-    // todo!("move api_key_editor here")
     executor: BackgroundExecutor,
 }
 
@@ -24,7 +26,7 @@ impl OpenAiCompletionProvider {
         self.api_key.lock().is_some()
     }
 
-    pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    pub fn authenticate(&self, _cx: &AppContext) -> Task<Result<()>> {
         if let Ok(api_key) = env::var("OPENAI_API_KEY") {
             *self.api_key.lock() = Some(api_key);
             Task::ready(Ok(()))
@@ -33,6 +35,10 @@ impl OpenAiCompletionProvider {
                 "OPENAI_API_KEY environment variable not found"
             )))
         }
+    }
+
+    pub fn default_model(&self) -> LanguageModel {
+        LanguageModel::OpenAi(OpenAiModel::ThreePointFiveTurbo)
     }
 
     pub fn complete(

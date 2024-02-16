@@ -5,13 +5,11 @@ mod zed_dot_dev;
 
 use anyhow::Result;
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AppContext, AsyncWindowContext, Task};
+use gpui::{AppContext, Task};
 use open_ai::*;
-use settings::Settings;
-use util::ResultExt;
 use zed_dot_dev::*;
 
-use crate::{assistant_settings::AssistantSettings, LanguageModelRequest};
+use crate::{assistant_settings::LanguageModel, LanguageModelRequest};
 
 #[derive(Clone)]
 pub enum CompletionProvider {
@@ -50,6 +48,15 @@ impl CompletionProvider {
             CompletionProvider::ZedDotDev(provider) => provider.authenticate(cx),
             #[cfg(test)]
             CompletionProvider::Fake(_) => Task::ready(Ok(())),
+        }
+    }
+
+    pub fn default_model(&self) -> LanguageModel {
+        match self {
+            CompletionProvider::OpenAi(provider) => provider.default_model(),
+            CompletionProvider::ZedDotDev(provider) => provider.default_model(),
+            #[cfg(test)]
+            CompletionProvider::Fake(_) => todo!(),
         }
     }
 
