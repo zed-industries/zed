@@ -44,7 +44,8 @@ pub(crate) struct WaylandClientState {
     scroll_direction: f64,
     mouse_location: Option<Point<Pixels>>,
     button_pressed: Option<MouseButton>,
-    focused_window: Option<Rc<WaylandWindowState>>,
+    mouse_focused_window: Option<Rc<WaylandWindowState>>,
+    keyboard_focused_window: Option<Rc<WaylandWindowState>>,
 }
 
 pub(crate) struct WaylandClient {
@@ -75,7 +76,8 @@ impl WaylandClient {
             scroll_direction: -1.0,
             mouse_location: None,
             button_pressed: None,
-            focused_window: None,
+            mouse_focused_window: None,
+            keyboard_focused_window: None,
         };
         let event_queue: EventQueue<WaylandClientState> = conn.new_event_queue();
         let qh = event_queue.handle();
@@ -344,7 +346,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
             wl_keyboard::Event::Enter { surface, .. } => {
                 for window in &state.windows {
                     if window.1.surface.id() == surface.id() {
-                        state.focused_window = Some(Rc::clone(&window.1));
+                        state.keyboard_focused_window = Some(Rc::clone(&window.1));
                     }
                 }
             }
@@ -388,49 +390,52 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                     key_utf8.clone()
                 };
 
-                match key_state {
-                    wl_keyboard::KeyState::Pressed => {
-                        let focused_window = &state.focused_window;
-                        if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
-                            state.modifiers.shift = true;
-                        } else if key_sym == xkb::Keysym::Control_L
-                            || key_sym == xkb::Keysym::Control_R
-                        {
-                            state.modifiers.control = true;
-                        } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R {
-                            state.modifiers.alt = true;
-                        } else if let Some(focused_window) = focused_window {
-                            focused_window.handle_input(KeyDown(KeyDownEvent {
-                                keystroke: Keystroke {
-                                    modifiers: state.modifiers.clone(),
-                                    key: key,
-                                    ime_key: None,
-                                },
-                                is_held: false,  // todo!(linux)
-                            }));
+                let focused_window = &state.keyboard_focused_window;
+                if let Some(focused_window) = focused_window {
+                    match key_state {
+                        wl_keyboard::KeyState::Pressed => {
+                            if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
+                                state.modifiers.shift = true;
+                            } else if key_sym == xkb::Keysym::Control_L
+                                || key_sym == xkb::Keysym::Control_R
+                            {
+                                state.modifiers.control = true;
+                            } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R
+                            {
+                                state.modifiers.alt = true;
+                            } else {
+                                focused_window.handle_input(KeyDown(KeyDownEvent {
+                                    keystroke: Keystroke {
+                                        modifiers: state.modifiers.clone(),
+                                        key: key,
+                                        ime_key: None,
+                                    },
+                                    is_held: false, // todo!(linux)
+                                }));
+                            }
                         }
-                    }
-                    wl_keyboard::KeyState::Released => {
-                        let focused_window = &state.focused_window;
-                        if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
-                            state.modifiers.shift = false;
-                        } else if key_sym == xkb::Keysym::Control_L
-                            || key_sym == xkb::Keysym::Control_R
-                        {
-                            state.modifiers.control = false;
-                        } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R {
-                            state.modifiers.alt = false;
-                        } else if let Some(focused_window) = focused_window {
-                            focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                                keystroke: Keystroke {
-                                    modifiers: state.modifiers.clone(),
-                                    key: key,
-                                    ime_key: None,
-                                },
-                            }));
+                        wl_keyboard::KeyState::Released => {
+                            if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
+                                state.modifiers.shift = false;
+                            } else if key_sym == xkb::Keysym::Control_L
+                                || key_sym == xkb::Keysym::Control_R
+                            {
+                                state.modifiers.control = false;
+                            } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R
+                            {
+                                state.modifiers.alt = false;
+                            } else {
+                                focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
+                                    keystroke: Keystroke {
+                                        modifiers: state.modifiers.clone(),
+                                        key: key,
+                                        ime_key: None,
+                                    },
+                                }));
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
             wl_keyboard::Event::Leave { .. } => {
@@ -474,7 +479,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
             } => {
                 for window in &state.windows {
                     if window.1.surface.id() == surface.id() {
-                        state.focused_window = Some(Rc::clone(&window.1));
+                        state.mouse_focused_window = Some(Rc::clone(&window.1));
                     }
                 }
                 state.mouse_location = Some(Point {
@@ -488,7 +493,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 surface_y,
                 ..
             } => {
-                let focused_window = &state.focused_window;
+                let focused_window = &state.mouse_focused_window;
                 if let Some(focused_window) = focused_window {
                     state.mouse_location = Some(Point {
                         x: Pixels::from(surface_x),
@@ -506,7 +511,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 state: WEnum::Value(button_state),
                 ..
             } => {
-                let focused_window = &state.focused_window;
+                let focused_window = &state.mouse_focused_window;
                 let mouse_location = &state.mouse_location;
                 if let (Some(focused_window), Some(mouse_location)) =
                     (focused_window, mouse_location)
@@ -556,7 +561,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 value,
                 ..
             } => {
-                let focused_window = &state.focused_window;
+                let focused_window = &state.mouse_focused_window;
                 let mouse_location = &state.mouse_location;
                 if let (Some(focused_window), Some(mouse_location)) =
                     (focused_window, mouse_location)
@@ -580,7 +585,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
             }
             wl_pointer::Event::Leave { surface, .. } => {
                 state.mouse_location = None;
-                state.focused_window = None;
+                state.mouse_focused_window = None;
             }
             _ => {}
         }
