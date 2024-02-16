@@ -3,8 +3,6 @@
 
 use std::path::PathBuf;
 
-use gpui::EntityId;
-
 use crate::{static_runnable_file::Definition, Handle, Runnable, SpawnTaskInTerminal};
 
 /// [`StaticRunner`] is a [`Runnable`] defined in .json file.
@@ -24,7 +22,7 @@ impl Runnable for StaticRunner {
         Box::new(self.clone())
     }
 
-    fn exec(&self, id: EntityId, cwd: Option<PathBuf>) -> (Handle, Option<SpawnTaskInTerminal>) {
+    fn exec(&self, id: usize, cwd: Option<PathBuf>) -> (Handle, Option<SpawnTaskInTerminal>) {
         let (completion_tx, completion_rx) = smol::channel::bounded(2);
         let (cancelation_tx, cancellation_rx) = smol::channel::bounded(2);
         let handle = Handle {

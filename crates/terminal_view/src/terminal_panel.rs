@@ -4,9 +4,9 @@ use crate::TerminalView;
 use collections::HashSet;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, AppContext, AsyncWindowContext, Entity, EntityId, EventEmitter, ExternalPaths,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
+    FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
@@ -346,7 +346,7 @@ impl TerminalPanel {
 
     fn find_terminal_for_external_task(
         &self,
-        task_id: EntityId,
+        task_id: usize,
         cx: &mut ViewContext<Self>,
     ) -> Option<(usize, View<TerminalView>)> {
         self.pane

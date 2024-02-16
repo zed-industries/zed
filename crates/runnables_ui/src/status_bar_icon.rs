@@ -55,13 +55,12 @@ impl StatusIconTracker {
                 loop {
                     select_biased! {
                         new_handle = rx.next() => {
-                            if let Some(new_handle) = new_handle {
+                            if let Some(mut new_handle) = new_handle {
                                 this.update(&mut cx, |this: &mut Self, _cx| {
                                     this.current_status.take();
                                 }).ok();
-                                let mut handle_completion = new_handle.completion_rx().clone();
                                 futures.push(async move {
-                                    handle_completion.next().await
+                                    new_handle.completion_rx.next().await
                                 });
                             }
 

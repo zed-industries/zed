@@ -67,7 +67,8 @@ impl StaticSource {
                 let runnables = new_definitions.read(cx).get().runnables.clone();
                 let runnables = runnables
                     .into_iter()
-                    .map(|runnable| Self::token_from_definition(runnable, cx))
+                    .enumerate()
+                    .map(|(id, runnable)| Self::token_from_definition(id, runnable, cx))
                     .collect();
                 let this: Option<&mut Self> = this.as_any().downcast_mut();
 
@@ -85,6 +86,7 @@ impl StaticSource {
     }
 
     fn token_from_definition(
+        id: usize,
         runnable: Definition,
         cx: &mut ModelContext<Box<dyn Source>>,
     ) -> Token {
@@ -93,6 +95,7 @@ impl StaticSource {
         let source = cx.weak_model();
         let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
         Token {
+            id,
             metadata: Arc::new(crate::Metadata {
                 source,
                 display_name,
@@ -115,7 +118,8 @@ impl Source for StaticSource {
             .runnables
             .iter()
             .cloned()
-            .map(|meta| (meta.label.clone(), meta))
+            .enumerate()
+            .map(|(i, meta)| (meta.label.clone(), (i, meta)))
             .collect();
 
         // Refill runnables.
@@ -124,8 +128,9 @@ impl Source for StaticSource {
                 known_definitions.remove(runnable.metadata.display_name());
             }
         }
-        for (_, meta) in known_definitions {
-            self.runnables.push(Self::token_from_definition(meta, cx));
+        for (_, (id, meta)) in known_definitions {
+            self.runnables
+                .push(Self::token_from_definition(id, meta, cx));
         }
         self.runnables.clone()
     }

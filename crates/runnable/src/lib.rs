@@ -7,7 +7,7 @@ mod static_source;
 use anyhow::Result;
 use futures::future::Shared;
 use futures::FutureExt;
-use gpui::{impl_actions, AppContext, EntityId, Model, ModelContext, Task, WeakModel};
+use gpui::{impl_actions, AppContext, Model, ModelContext, Task, WeakModel};
 use serde::Deserialize;
 use smol::channel::{Receiver, Sender};
 pub use static_runner::StaticRunner;
@@ -20,7 +20,7 @@ impl_actions!(runnable, [SpawnTaskInTerminal]);
 
 #[derive(Debug, Default, Clone)]
 pub struct SpawnTaskInTerminal {
-    pub task_id: EntityId,
+    pub task_id: usize,
     pub reuse_terminal: bool,
     pub label: String,
     pub command: String,
@@ -47,7 +47,7 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
         D: serde::Deserializer<'de>,
     {
         Ok(Self {
-            task_id: EntityId::default(),
+            task_id: 0,
             reuse_terminal: false,
             label: String::new(),
             command: String::new(),
@@ -63,7 +63,7 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
 /// is to get spawned.
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(&self, id: EntityId, cwd: Option<PathBuf>) -> (Handle, Option<SpawnTaskInTerminal>);
+    fn exec(&self, id: usize, cwd: Option<PathBuf>) -> (Handle, Option<SpawnTaskInTerminal>);
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
@@ -81,10 +81,6 @@ impl Handle {
 
     pub fn cancel(&self) {
         self.cancelation_tx.try_send(()).ok();
-    }
-
-    pub fn completion_rx(&self) -> &Receiver<bool> {
-        &self.completion_rx
     }
 }
 
@@ -116,6 +112,7 @@ impl Metadata {
 /// Represents a runnable that might or might not be already running.
 #[derive(Clone)]
 pub struct Token {
+    id: usize,
     metadata: Arc<Metadata>,
     state: Model<RunState>,
 }
@@ -189,7 +186,7 @@ impl Token {
         &self.metadata
     }
 
-    pub fn id(&self) -> EntityId {
-        self.state.entity_id()
+    pub fn id(&self) -> usize {
+        self.id
     }
 }

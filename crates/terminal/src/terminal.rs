@@ -54,9 +54,9 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EntityId, EventEmitter,
-    Hsla, Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
+    actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
+    Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -282,7 +282,7 @@ impl Display for TerminalError {
 }
 
 pub struct ExternalTask {
-    pub id: EntityId,
+    pub id: usize,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -604,7 +604,7 @@ pub struct Terminal {
 }
 
 pub struct ExternalTaskState {
-    pub task_id: EntityId,
+    pub task_id: usize,
     pub completion_tx: Sender<bool>,
     pub label: String,
 }
