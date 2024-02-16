@@ -406,7 +406,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                     key: key,
                                     ime_key: None,
                                 },
-                                is_held: true,
+                                is_held: false,  // todo!(linux)
                             }));
                         }
                     }
