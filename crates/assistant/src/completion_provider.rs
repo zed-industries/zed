@@ -129,7 +129,7 @@ impl CompletionProvider {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match self {
             CompletionProvider::OpenAi(provider) => provider.complete(request),
-            CompletionProvider::ZedDotDev(_) => todo!(),
+            CompletionProvider::ZedDotDev(provider) => provider.complete(request),
             #[cfg(test)]
             CompletionProvider::Fake(provider) => provider.complete(),
         }

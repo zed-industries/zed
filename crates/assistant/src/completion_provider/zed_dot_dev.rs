@@ -1,10 +1,10 @@
 use anyhow::Result;
 use client::Client;
-use futures::StreamExt;
+use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
 use gpui::{AppContext, Task};
 use std::sync::Arc;
 
-use crate::{assistant_settings::ZedDotDevModel, CompletionProvider};
+use crate::{assistant_settings::ZedDotDevModel, CompletionProvider, LanguageModelRequest};
 
 pub struct ZedDotDevCompletionProvider {
     client: Arc<Client>,
@@ -51,5 +51,12 @@ impl ZedDotDevCompletionProvider {
     pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
+    }
+
+    pub fn complete(
+        &self,
+        request: LanguageModelRequest,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        self.client.request_stream(request)
     }
 }

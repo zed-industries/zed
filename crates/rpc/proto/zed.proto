@@ -18,7 +18,7 @@ message Envelope {
         Error error = 6;
         Ping ping = 7;
         Test test = 8;
-        EndStream end_stream = 162; // current max
+        EndStream end_stream = 162;
 
         CreateRoom create_room = 9;
         CreateRoomResponse create_room_response = 10;
@@ -185,6 +185,8 @@ message Envelope {
         SetRoomParticipantRole set_room_participant_role = 156;
 
         UpdateUserChannels update_user_channels = 157;
+
+        GetLanguageModelCompletion get_language_model_completion = 163; // current max
     }
 
     reserved 158 to 161;
@@ -1673,4 +1675,42 @@ message SetRoomParticipantRole {
     uint64 room_id = 1;
     uint64 user_id = 2;
     ChannelRole role = 3;
+}
+
+message RequestLanguageModelCompletion {
+    string model = 1;
+    repeated LanguageModelRequestMessage messages = 2;
+    repeated string stop = 3;
+    float temperature = 4;
+}
+
+message LanguageModelRequestMessage {
+    string role = 1;
+    string body = 2;
+}
+
+message OpenAiResponseStreamEvent {
+    string id = 1;
+    string object = 2;
+    uint32 created = 3;
+    string model = 4;
+    repeated LanguageModelChoiceDelta choices = 5;
+    LanguageModelUsage usage = 6;
+}
+
+message LanguageModelResponseMessage {
+    string role = 1;
+    string content = 2;
+}
+
+message LanguageModelChoiceDelta {
+    uint32 index = 1;
+    LanguageModelResponseMessage delta = 2;
+    string finish_reason = 3;
+}
+
+message LanguageModelUsage {
+    uint32 prompt_tokens = 1;
+    uint32 completion_tokens = 2;
+    uint32 total_tokens = 3;
 }
