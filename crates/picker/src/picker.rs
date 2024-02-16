@@ -1,8 +1,8 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
-    View, ViewContext, WindowContext,
+    div, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, Length, Render, Task, UniformListScrollHandle, View, ViewContext,
+    WindowContext,
 };
 use std::sync::Arc;
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
@@ -279,40 +279,48 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                 "candidates",
                                 self.delegate.match_count(),
                                 {
-                                    let separators_after_indices = self.delegate.separators_after_indices();
+                                    let separators_after_indices =
+                                        self.delegate.separators_after_indices();
                                     let selected_index = self.delegate.selected_index();
                                     move |picker, visible_range, cx| {
                                         visible_range
                                             .map(|ix| {
                                                 div()
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        cx.listener(move |this, event: &MouseDownEvent, cx| {
+                                                    .id(("item", ix))
+                                                    .on_click(cx.listener(
+                                                        move |this, event: &ClickEvent, cx| {
                                                             this.handle_click(
                                                                 ix,
-                                                                event.modifiers.command,
+                                                                event.down.modifiers.command,
                                                                 cx,
                                                             )
-                                                        }),
-                                                    )
+                                                        },
+                                                    ))
                                                     .children(picker.delegate.render_match(
                                                         ix,
                                                         ix == selected_index,
                                                         cx,
-                                                    )).when(separators_after_indices.contains(&ix), |picker| {
-                                                        picker
-                                                            .border_color(cx.theme().colors().border_variant)
-                                                            .border_b_1()
-                                                            .pb(px(-1.0))
-                                                    })
+                                                    ))
+                                                    .when(
+                                                        separators_after_indices.contains(&ix),
+                                                        |picker| {
+                                                            picker
+                                                                .border_color(
+                                                                    cx.theme()
+                                                                        .colors()
+                                                                        .border_variant,
+                                                                )
+                                                                .border_b_1()
+                                                                .pb(px(-1.0))
+                                                        },
+                                                    )
                                             })
                                             .collect()
                                     }
                                 },
                             )
-                            .track_scroll(self.scroll_handle.clone())
-                        )
-
+                            .track_scroll(self.scroll_handle.clone()),
+                        ),
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {
