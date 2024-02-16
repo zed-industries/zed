@@ -75,6 +75,7 @@
         "ldf": "storage",
         "lock": "lock",
         "log": "log",
+        "lua": "lua",
         "m4a": "audio",
         "m4v": "video",
         "md": "document",
@@ -210,8 +211,11 @@
         "log": {
             "icon": "icons/file_icons/info.svg"
         },
+        "lua": {
+            "icon": "icons/file_icons/lua.svg"
+        },
         "ocaml": {
-          "icon": "icons/file_icons/ocaml.svg"
+            "icon": "icons/file_icons/ocaml.svg"
         },
         "phoenix": {
             "icon": "icons/file_icons/phoenix.svg"
