@@ -73,13 +73,13 @@ impl Display for Role {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum LanguageModel {
-    OpenAi(OpenAiModel),
     ZedDotDev(ZedDotDevModel),
+    OpenAi(OpenAiModel),
 }
 
 impl Default for LanguageModel {
     fn default() -> Self {
-        LanguageModel::OpenAi(OpenAiModel::ThreePointFiveTurbo)
+        LanguageModel::ZedDotDev(ZedDotDevModel::default())
     }
 }
 

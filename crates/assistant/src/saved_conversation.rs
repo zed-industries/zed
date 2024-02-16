@@ -1,4 +1,4 @@
-use crate::{assistant_settings::OpenAiModel, LanguageModel, MessageId, MessageMetadata};
+use crate::{assistant_settings::OpenAiModel, MessageId, MessageMetadata};
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use fs::Fs;
@@ -28,7 +28,6 @@ pub struct SavedConversation {
     pub messages: Vec<SavedMessage>,
     pub message_metadata: HashMap<MessageId, MessageMetadata>,
     pub summary: String,
-    pub model: LanguageModel,
 }
 
 impl SavedConversation {
@@ -55,7 +54,6 @@ impl SavedConversation {
                         messages: saved_conversation.messages,
                         message_metadata: saved_conversation.message_metadata,
                         summary: saved_conversation.summary,
-                        model: LanguageModel::OpenAi(saved_conversation.model),
                     })
                 }
                 _ => Err(anyhow!(
