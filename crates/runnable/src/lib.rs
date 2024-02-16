@@ -120,10 +120,6 @@ impl Token {
         })
     }
 
-    pub fn was_scheduled(&self, cx: &AppContext) -> bool {
-        matches!(self.state.read(cx), RunState::Scheduled { .. })
-    }
-
     pub fn metadata(&self) -> &Metadata {
         &self.metadata
     }
