@@ -290,6 +290,7 @@ impl TerminalPanel {
             return;
         };
         let external_task = ExternalTask {
+            id: action.task_id,
             label: action.label.clone(),
             command: action.command.clone(),
             args: action.args.clone(),

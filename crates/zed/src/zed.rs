@@ -390,9 +390,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
                     // TODO kb: has to receive some applicable path + has to spawn the terminal with the output stream
                     // same as the .spawn does in the runnables_ui's modal.rs::confirm
-                    let handle = runnable.schedule(None, cx);
+                    let (mut handle, _) = runnable.schedule(None, cx);
                     cx.spawn(|_, _| async move {
-                        let _ = dbg!(handle.completion_rx().clone().next().await);
+                        let _ = dbg!(handle.completion_rx.next().await);
                     })
                     .detach();
                 });

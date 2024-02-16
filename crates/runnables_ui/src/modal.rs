@@ -214,14 +214,14 @@ impl PickerDelegate for RunnablesModalDelegate {
             return;
         };
 
-        let mut handle = self.candidates[ix].schedule(cwd, cx);
+        let (handle, spawn_in_terminal) = self.candidates[ix].schedule(cwd, cx);
         self.workspace
             .update(cx, |workspace, cx| {
                 let Some(panel) = workspace.panel::<RunnablesPanel>(cx) else {
                     return;
                 };
-                if let Some(spawn_action) = handle.take_spawn_action() {
-                    cx.dispatch_action(spawn_action.boxed_clone());
+                if let Some(spawn_in_terminal) = spawn_in_terminal {
+                    cx.dispatch_action(spawn_in_terminal.boxed_clone());
                 }
                 panel.update(cx, |this, cx| {
                     if let Some(tracker) = this.status_bar_tracker.as_ref() {

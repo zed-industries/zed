@@ -43,7 +43,7 @@ impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
                         };
                     })?;
                 }
-                Result::<_, anyhow::Error>::Ok(())
+                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
             Self {
@@ -83,15 +83,16 @@ impl StaticSource {
             })
         })
     }
+
     fn token_from_definition(
         runnable: Definition,
         cx: &mut ModelContext<Box<dyn Source>>,
-    ) -> crate::Token {
+    ) -> Token {
         let runner = StaticRunner::new(runnable.clone());
         let display_name = runner.name();
         let source = cx.weak_model();
         let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
-        crate::Token {
+        Token {
             metadata: Arc::new(crate::Metadata {
                 source,
                 display_name,
