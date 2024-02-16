@@ -3,8 +3,6 @@ use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
 use crate::prelude::*;
 use crate::{Color, Icon, IconName, Selection};
 
-pub type CheckHandler = Box<dyn Fn(&Selection, &mut WindowContext) + 'static>;
-
 /// # Checkbox
 ///
 /// Checkboxes are used for multiple choices, not for mutually exclusive choices.
@@ -15,7 +13,7 @@ pub struct Checkbox {
     id: ElementId,
     checked: Selection,
     disabled: bool,
-    on_click: Option<CheckHandler>,
+    on_click: Option<Box<dyn Fn(&Selection, &mut WindowContext) + 'static>>,
 }
 
 impl Checkbox {
@@ -33,10 +31,7 @@ impl Checkbox {
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl 'static + Fn(&Selection, &mut WindowContext) + Send + Sync,
-    ) -> Self {
+    pub fn on_click(mut self, handler: impl Fn(&Selection, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
