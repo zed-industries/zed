@@ -433,8 +433,21 @@ impl TerminalBuilder {
         if let Some(cancellation_rx) = cancellation_rx {
             cx.spawn(|terminal, mut cx| async move {
                 if let Ok(()) = cancellation_rx.recv().await {
-                    terminal.update(&mut cx, |terminal, cx| {
-                        terminal.process_event(&AlacTermEvent::Exit, cx);
+                    terminal.update(&mut cx, |terminal, _| {
+                        if let Some(external_task_state) = &terminal.external_task {
+                            terminal.pty_tx.0.send(Msg::Shutdown).ok();
+                            let successful =
+                                terminal
+                                    .foreground_process_info
+                                    .as_ref()
+                                    .map_or(false, |info| {
+                                        matches!(
+                                            info.status,
+                                            LocalProcessStatus::Dead | LocalProcessStatus::Stop
+                                        )
+                                    });
+                            external_task_state.completion_tx.try_send(successful).ok();
+                        }
                     })?;
                 }
                 anyhow::Ok(())
@@ -626,18 +639,7 @@ impl Terminal {
                 cx.emit(Event::Bell);
             }
             AlacTermEvent::Exit => {
-                if let Some(external_task_state) = &self.external_task {
-                    if matches!(event, AlacTermEvent::Exit) {
-                        let successful =
-                            self.foreground_process_info.as_ref().map_or(false, |info| {
-                                matches!(
-                                    info.status,
-                                    LocalProcessStatus::Dead | LocalProcessStatus::Stop
-                                )
-                            });
-                        external_task_state.completion_tx.try_send(successful).ok();
-                    }
-                } else {
+                if self.external_task.is_none() {
                     cx.emit(Event::CloseTerminal)
                 }
             }

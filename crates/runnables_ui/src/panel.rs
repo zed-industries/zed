@@ -155,7 +155,9 @@ impl RunnablesPanel {
         );
     }
 }
+
 actions!(runnables_panel, [ToggleFocus]);
+
 impl FocusableView for RunnablesPanel {
     fn focus_handle(&self, _cx: &gpui::AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
