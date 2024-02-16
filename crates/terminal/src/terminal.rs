@@ -31,13 +31,10 @@ use mappings::mouse::{
 };
 
 use collections::{HashMap, VecDeque};
-use procinfo::{LocalProcessInfo, LocalProcessStatus};
+use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::{
-    channel::{Receiver, Sender},
-    stream::StreamExt,
-};
+use smol::stream::StreamExt;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -286,8 +283,6 @@ pub struct ExternalTask {
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
-    pub cancellation_rx: Receiver<()>,
-    pub completion_tx: Sender<bool>,
 }
 
 pub struct TerminalBuilder {
@@ -425,36 +420,7 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(
-        mut self,
-        cancellation_rx: Option<Receiver<()>>,
-        cx: &mut ModelContext<Terminal>,
-    ) -> Terminal {
-        if let Some(cancellation_rx) = cancellation_rx {
-            cx.spawn(|terminal, mut cx| async move {
-                if let Ok(()) = cancellation_rx.recv().await {
-                    terminal.update(&mut cx, |terminal, _| {
-                        if let Some(external_task_state) = &terminal.external_task {
-                            terminal.pty_tx.0.send(Msg::Shutdown).ok();
-                            let successful =
-                                terminal
-                                    .foreground_process_info
-                                    .as_ref()
-                                    .map_or(false, |info| {
-                                        matches!(
-                                            info.status,
-                                            LocalProcessStatus::Dead | LocalProcessStatus::Stop
-                                        )
-                                    });
-                            external_task_state.completion_tx.try_send(successful).ok();
-                        }
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-        }
-
+    pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
             while let Some(event) = self.events_rx.next().await {
@@ -605,7 +571,6 @@ pub struct Terminal {
 
 pub struct ExternalTaskState {
     pub task_id: usize,
-    pub completion_tx: Sender<bool>,
     pub label: String,
 }
 
@@ -1362,6 +1327,7 @@ impl Terminal {
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
         match &self.external_task {
+            // TODO kb alter icon if the task failed/completed
             Some(external_task) => truncate_and_trailoff(&external_task.label, MAX_CHARS),
             None => self
                 .foreground_process_info

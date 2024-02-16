@@ -13,8 +13,6 @@ use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::RunnablesPanel;
-
 actions!(runnables, [Spawn]);
 
 /// A modal used to spawn new runnables.
@@ -215,21 +213,12 @@ impl PickerDelegate for RunnablesModalDelegate {
             return;
         };
 
-        let (handle, spawn_in_terminal) = self.candidates[ix].schedule(cwd, cx);
+        let spawn_in_terminal = self.candidates[ix].schedule(cwd, cx);
         self.workspace
-            .update(cx, |workspace, cx| {
-                let Some(panel) = workspace.panel::<RunnablesPanel>(cx) else {
-                    return;
-                };
+            .update(cx, |_, cx| {
                 if let Some(spawn_in_terminal) = spawn_in_terminal {
                     cx.dispatch_action(spawn_in_terminal.boxed_clone());
                 }
-                panel.update(cx, |this, cx| {
-                    if let Some(tracker) = this.status_bar_tracker.as_ref() {
-                        tracker.update(cx, |this, cx| this.push(handle, cx));
-                        cx.notify();
-                    }
-                });
             })
             .ok();
         cx.emit(DismissEvent);

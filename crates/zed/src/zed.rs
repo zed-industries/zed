@@ -23,7 +23,6 @@ use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use runnable::static_runnable_file::RunnableProvider;
-use runnables_ui::RunnablesPanel;
 use search::project_search::ProjectSearchBar;
 use serde_derive::{Deserialize, Serialize};
 use settings::{
@@ -192,7 +191,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace_handle.clone(),
                 cx.clone(),
             );
-            let runnables_panel = RunnablesPanel::load(workspace_handle.clone(), cx.clone());
             let (
                 project_panel,
                 terminal_panel,
@@ -200,7 +198,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 channels_panel,
                 chat_panel,
                 notification_panel,
-                runnables_panel,
             ) = futures::try_join!(
                 project_panel,
                 terminal_panel,
@@ -208,7 +205,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 channels_panel,
                 chat_panel,
                 notification_panel,
-                runnables_panel,
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
@@ -218,7 +214,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
-                workspace.add_panel(runnables_panel, cx);
                 cx.focus_self();
             })
         })
@@ -390,11 +385,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
                     // TODO kb: has to receive some applicable path + has to spawn the terminal with the output stream
                     // same as the .spawn does in the runnables_ui's modal.rs::confirm
-                    let (mut handle, _) = runnable.schedule(None, cx);
-                    cx.spawn(|_, _| async move {
-                        let _ = dbg!(handle.completion_rx.next().await);
-                    })
-                    .detach();
+                    let _ = runnable.schedule(None, cx);
                 });
             });
 

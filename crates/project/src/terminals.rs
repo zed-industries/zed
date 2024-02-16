@@ -29,23 +29,20 @@ impl Project {
 
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
-        let (external_task_cancellation_rx, external_task, shell) =
-            if let Some(external_task) = external_task {
-                (
-                    Some(external_task.cancellation_rx),
-                    Some(ExternalTaskState {
-                        task_id: external_task.id,
-                        label: external_task.label,
-                        completion_tx: external_task.completion_tx,
-                    }),
-                    Shell::WithArguments {
-                        program: external_task.command,
-                        args: external_task.args,
-                    },
-                )
-            } else {
-                (None, None, settings.shell.clone())
-            };
+        let (external_task, shell) = if let Some(external_task) = external_task {
+            (
+                Some(ExternalTaskState {
+                    task_id: external_task.id,
+                    label: external_task.label,
+                }),
+                Shell::WithArguments {
+                    program: external_task.command,
+                    args: external_task.args,
+                },
+            )
+        } else {
+            (None, settings.shell.clone())
+        };
 
         let terminal = TerminalBuilder::new(
             working_directory.clone(),
@@ -57,8 +54,7 @@ impl Project {
             window,
         )
         .map(|builder| {
-            let terminal_handle =
-                cx.new_model(|cx| builder.subscribe(external_task_cancellation_rx, cx));
+            let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
 
             self.terminals
                 .local_handles

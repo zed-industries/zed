@@ -5,11 +5,8 @@ mod static_runner;
 mod static_source;
 
 use anyhow::Result;
-use futures::future::Shared;
-use futures::FutureExt;
-use gpui::{impl_actions, AppContext, Model, ModelContext, Task, WeakModel};
+use gpui::{impl_actions, AppContext, Model, ModelContext, WeakModel};
 use serde::Deserialize;
-use smol::channel::{Receiver, Sender};
 pub use static_runner::StaticRunner;
 pub use static_source::{StaticSource, TrackedFile};
 use std::any::Any;
@@ -26,8 +23,6 @@ pub struct SpawnTaskInTerminal {
     pub command: String,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
-    pub cancellation_rx: Option<Receiver<()>>,
-    pub completion_tx: Option<Sender<bool>>,
 }
 
 impl PartialEq for SpawnTaskInTerminal {
@@ -53,8 +48,6 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
             command: String::new(),
             args: Vec::new(),
             cwd: None,
-            cancellation_rx: None,
-            completion_tx: None,
         })
     }
 }
@@ -63,25 +56,8 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
 /// is to get spawned.
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(&self, id: usize, cwd: Option<PathBuf>) -> (Handle, Option<SpawnTaskInTerminal>);
+    fn exec(&self, id: usize, cwd: Option<PathBuf>) -> Option<SpawnTaskInTerminal>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
-}
-
-/// Represents a runnable that's already underway. That runnable can be cancelled at any time.
-#[derive(Clone)]
-pub struct Handle {
-    pub completion_rx: Receiver<bool>,
-    pub cancelation_tx: Sender<()>,
-}
-
-impl Handle {
-    pub fn has_succeeded(&self) -> Option<bool> {
-        self.completion_rx.try_recv().ok()
-    }
-
-    pub fn cancel(&self) {
-        self.cancelation_tx.try_send(()).ok();
-    }
 }
 
 /// [`Source`] produces runnables that can be scheduled.
@@ -121,57 +97,27 @@ pub struct Token {
 pub(crate) enum RunState {
     NotScheduled(Arc<dyn Runnable>),
     Scheduled {
-        handle: Handle,
         spawn_in_terminal: Option<SpawnTaskInTerminal>,
-        _completion_task: Shared<Task<()>>,
     },
 }
 
 impl Token {
-    /// Schedules a runnable or returns a handle to it if it's already running.
     pub fn schedule(
         &self,
         cwd: Option<PathBuf>,
         cx: &mut AppContext,
-    ) -> (Handle, Option<SpawnTaskInTerminal>) {
-        self.state.update(cx, |run_state, cx| match run_state {
+    ) -> Option<SpawnTaskInTerminal> {
+        self.state.update(cx, |run_state, _| match run_state {
             RunState::NotScheduled(runnable) => {
-                let (handle, spawn_in_terminal) = runnable.exec(self.id(), cwd);
-                let runnable = Arc::clone(runnable);
+                let spawn_in_terminal = runnable.exec(self.id(), cwd);
                 let spawn_in_terminal_to_return = spawn_in_terminal.clone();
-                let task_handle = handle.clone();
-                let completion_task = cx
-                    .spawn(move |state, mut cx| async move {
-                        let _ = task_handle.completion_rx.recv().await.ok();
-                        state
-                            .update(&mut cx, |state, _| {
-                                *state = RunState::NotScheduled(runnable);
-                            })
-                            .ok();
-                    })
-                    .shared();
-                *run_state = RunState::Scheduled {
-                    handle: handle.clone(),
-                    spawn_in_terminal,
-                    _completion_task: completion_task,
-                };
-                (handle, spawn_in_terminal_to_return)
+                *run_state = RunState::Scheduled { spawn_in_terminal };
+                spawn_in_terminal_to_return
             }
             RunState::Scheduled {
-                handle,
-                spawn_in_terminal,
-                ..
-            } => (handle.clone(), spawn_in_terminal.clone()),
+                spawn_in_terminal, ..
+            } => spawn_in_terminal.clone(),
         })
-    }
-
-    pub fn handle(&self, cx: &AppContext) -> Option<Handle> {
-        let state = self.state.read(cx);
-        if let RunState::Scheduled { handle, .. } = state {
-            Some(handle.clone())
-        } else {
-            None
-        }
     }
 
     pub fn was_scheduled(&self, cx: &AppContext) -> bool {
