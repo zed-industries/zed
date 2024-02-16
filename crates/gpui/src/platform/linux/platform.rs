@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
@@ -214,7 +215,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn open_url(&self, url: &str) {
-        unimplemented!()
+        open::that(url);
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -225,15 +226,75 @@ impl Platform for LinuxPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
-        unimplemented!()
+        let (done_tx, done_rx) = oneshot::channel();
+        self.foreground_executor()
+            .spawn(async move {
+                let title = if options.multiple {
+                    if !options.files {
+                        "Open folders"
+                    } else {
+                        "Open files"
+                    }
+                } else {
+                    if !options.files {
+                        "Open folder"
+                    } else {
+                        "Open file"
+                    }
+                };
+
+                let result = OpenFileRequest::default()
+                    .modal(true)
+                    .title(title)
+                    .accept_label("Select")
+                    .multiple(options.multiple)
+                    .directory(options.directories)
+                    .send()
+                    .await
+                    .ok()
+                    .and_then(|request| request.response().ok())
+                    .and_then(|response| {
+                        response
+                            .uris()
+                            .iter()
+                            .map(|uri| uri.to_file_path().ok())
+                            .collect()
+                    });
+
+                done_tx.send(result);
+            })
+            .detach();
+        done_rx
     }
 
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
-        unimplemented!()
+        let (done_tx, done_rx) = oneshot::channel();
+        let directory = directory.to_owned();
+        self.foreground_executor()
+            .spawn(async move {
+                let result = SaveFileRequest::default()
+                    .modal(true)
+                    .title("Select new path")
+                    .accept_label("Accept")
+                    .send()
+                    .await
+                    .ok()
+                    .and_then(|request| request.response().ok())
+                    .and_then(|response| {
+                        response
+                            .uris()
+                            .first()
+                            .and_then(|uri| uri.to_file_path().ok())
+                    });
+
+                done_tx.send(result);
+            })
+            .detach();
+        done_rx
     }
 
     fn reveal_path(&self, path: &Path) {
-        unimplemented!()
+        open::that(path);
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
