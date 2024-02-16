@@ -2036,7 +2036,7 @@ impl CollabPanel {
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
         v_flex()
             .size_full()
-            .child(list(self.list_state.clone()).full())
+            .child(list(self.list_state.clone()).size_full())
             .child(
                 v_flex()
                     .child(div().mx_2().border_primary(cx).border_t())
