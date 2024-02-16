@@ -84,6 +84,7 @@ pub fn init(
         ("gleam", tree_sitter_gleam::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
+        ("graphql", tree_sitter_graphql::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
         ("haskell", tree_sitter_haskell::language()),
@@ -177,6 +178,7 @@ pub fn init(
     language("go", vec![Arc::new(go::GoLspAdapter)]);
     language("gomod", vec![]);
     language("gowork", vec![]);
+    language("graphql", vec![]);
     language("zig", vec![Arc::new(zig::ZlsAdapter)]);
     language(
         "heex",

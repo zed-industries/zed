@@ -1,0 +1,12 @@
+name = "GraphQL"
+grammar = "graphql"
+path_suffixes = ["graphql"]
+line_comments = ["# "]
+autoclose_before = "}])"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = true },
+]
+prettier_parser_name = "graphql"
