@@ -318,117 +318,120 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Keymap {
-            format: WEnum::Value(format),
-            fd,
-            size,
-            ..
-        } = event
-        {
-            assert_eq!(
-                format,
-                wl_keyboard::KeymapFormat::XkbV1,
-                "Unsupported keymap format"
-            );
-            let keymap = unsafe {
-                xkb::Keymap::new_from_fd(
-                    &xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
-                    fd,
-                    size as usize,
-                    XKB_KEYMAP_FORMAT_TEXT_V1,
-                    KEYMAP_COMPILE_NO_FLAGS,
-                )
-                .unwrap()
+        match event {
+            wl_keyboard::Event::Keymap {
+                format: WEnum::Value(format),
+                fd,
+                size,
+                ..
+            } => {
+                assert_eq!(
+                    format,
+                    wl_keyboard::KeymapFormat::XkbV1,
+                    "Unsupported keymap format"
+                );
+                let keymap = unsafe {
+                    xkb::Keymap::new_from_fd(
+                        &xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
+                        fd,
+                        size as usize,
+                        XKB_KEYMAP_FORMAT_TEXT_V1,
+                        KEYMAP_COMPILE_NO_FLAGS,
+                    )
+                    .unwrap()
+                }
+                .unwrap();
+                state.keymap_state = Some(xkb::State::new(&keymap));
+                state.keymap = Some(keymap);
             }
-            .unwrap();
-            state.keymap_state = Some(xkb::State::new(&keymap));
-            state.keymap = Some(keymap);
-        } else if let wl_keyboard::Event::Enter { surface, .. } = event {
-            for window in &state.windows {
-                if window.1.surface.id() == surface.id() {
-                    state.focused_window = Some(Rc::clone(&window.1));
+            wl_keyboard::Event::Enter { surface, .. } => {
+                for window in &state.windows {
+                    if window.1.surface.id() == surface.id() {
+                        state.focused_window = Some(Rc::clone(&window.1));
+                    }
                 }
             }
-        } else if let wl_keyboard::Event::Key {
-            key,
-            state: WEnum::Value(key_state),
-            ..
-        } = event
-        {
-            let keymap = state.keymap.as_ref().unwrap();
-            let keymap_state = state.keymap_state.as_ref().unwrap();
-            let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
-            let key_sym = keymap.key_get_syms_by_level(Keycode::from(key + MIN_KEYCODE), 0, 0)[0];
+            wl_keyboard::Event::Key {
+                key,
+                state: WEnum::Value(key_state),
+                ..
+            } => {
+                let keymap = state.keymap.as_ref().unwrap();
+                let keymap_state = state.keymap_state.as_ref().unwrap();
+                let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
+                let key_sym =
+                    keymap.key_get_syms_by_level(Keycode::from(key + MIN_KEYCODE), 0, 0)[0];
 
-            let key = if matches!(
-                key_sym,
-                xkb::Keysym::BackSpace
-                    | xkb::Keysym::Left
-                    | xkb::Keysym::Right
-                    | xkb::Keysym::Down
-                    | xkb::Keysym::Up
-                    | xkb::Keysym::Super_L
-                    | xkb::Keysym::Super_R
-            ) {
-                xkb::keysym_get_name(key_sym.clone()).to_lowercase()
-            } else {
-                key_utf8.clone()
-            };
+                let key = if matches!(
+                    key_sym,
+                    xkb::Keysym::BackSpace
+                        | xkb::Keysym::Left
+                        | xkb::Keysym::Right
+                        | xkb::Keysym::Down
+                        | xkb::Keysym::Up
+                        | xkb::Keysym::Super_L
+                        | xkb::Keysym::Super_R
+                ) {
+                    xkb::keysym_get_name(key_sym.clone()).to_lowercase()
+                } else {
+                    key_utf8.clone()
+                };
 
-            match key_state {
-                wl_keyboard::KeyState::Pressed => {
-                    if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
-                        state.modifiers.shift = true;
-                    } else if key_sym == xkb::Keysym::Control_L || key_sym == xkb::Keysym::Control_R
-                    {
-                        state.modifiers.control = true;
-                    } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R {
-                        state.modifiers.alt = true;
-                    } else if state.focused_window.is_some() {
-                        state.focused_window.as_ref().unwrap().handle_input(KeyDown(
-                            KeyDownEvent {
+                match key_state {
+                    wl_keyboard::KeyState::Pressed => {
+                        let focused_window = &state.focused_window;
+                        if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
+                            state.modifiers.shift = true;
+                        } else if key_sym == xkb::Keysym::Control_L
+                            || key_sym == xkb::Keysym::Control_R
+                        {
+                            state.modifiers.control = true;
+                        } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R {
+                            state.modifiers.alt = true;
+                        } else if let Some(focused_window) = focused_window {
+                            focused_window.handle_input(KeyDown(KeyDownEvent {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers.clone(),
                                     key: key,
                                     ime_key: None,
                                 },
                                 is_held: true,
-                            },
-                        ));
+                            }));
+                        }
                     }
-                }
-                wl_keyboard::KeyState::Released => {
-                    if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
-                        state.modifiers.shift = false;
-                    } else if key_sym == xkb::Keysym::Control_L || key_sym == xkb::Keysym::Control_R
-                    {
-                        state.modifiers.control = false;
-                    } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R {
-                        state.modifiers.alt = false;
-                    } else if state.focused_window.is_some() {
-                        state
-                            .focused_window
-                            .as_ref()
-                            .unwrap()
-                            .handle_input(PlatformInput::KeyUp(KeyUpEvent {
+                    wl_keyboard::KeyState::Released => {
+                        let focused_window = &state.focused_window;
+                        if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
+                            state.modifiers.shift = false;
+                        } else if key_sym == xkb::Keysym::Control_L
+                            || key_sym == xkb::Keysym::Control_R
+                        {
+                            state.modifiers.control = false;
+                        } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R {
+                            state.modifiers.alt = false;
+                        } else if let Some(focused_window) = focused_window {
+                            focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers.clone(),
                                     key: key,
                                     ime_key: None,
                                 },
                             }));
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
-        } else if let wl_keyboard::Event::Leave { .. } = event {
-            state.modifiers = Modifiers {
-                control: false,
-                alt: false,
-                shift: false,
-                command: false,
-                function: false,
-            };
+            wl_keyboard::Event::Leave { .. } => {
+                state.modifiers = Modifiers {
+                    control: false,
+                    alt: false,
+                    shift: false,
+                    command: false,
+                    function: false,
+                };
+            }
+            _ => {}
         }
     }
 }
@@ -451,121 +454,124 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_pointer::Event::Enter {
-            surface,
-            surface_x,
-            surface_y,
-            ..
-        } = event
-        {
-            for window in &state.windows {
-                if window.1.surface.id() == surface.id() {
-                    state.focused_window = Some(Rc::clone(&window.1));
+        match event {
+            wl_pointer::Event::Enter {
+                surface,
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                for window in &state.windows {
+                    if window.1.surface.id() == surface.id() {
+                        state.focused_window = Some(Rc::clone(&window.1));
+                    }
+                }
+                state.mouse_location = Some(Point {
+                    x: Pixels::from(surface_x),
+                    y: Pixels::from(surface_y),
+                });
+            }
+            wl_pointer::Event::Motion {
+                time,
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                let focused_window = &state.focused_window;
+                if let Some(focused_window) = focused_window {
+                    state.mouse_location = Some(Point {
+                        x: Pixels::from(surface_x),
+                        y: Pixels::from(surface_y),
+                    });
+                    focused_window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
+                        position: state.mouse_location.unwrap(),
+                        pressed_button: state.button_pressed,
+                        modifiers: state.modifiers.clone(),
+                    }))
                 }
             }
-
-            state.mouse_location = Some(Point {
-                x: Pixels::from(surface_x),
-                y: Pixels::from(surface_y),
-            });
-        } else if state.focused_window.is_none() {
-            return;
-        } else if let wl_pointer::Event::Motion {
-            time,
-            surface_x,
-            surface_y,
-            ..
-        } = event
-        {
-            state.mouse_location = Some(Point {
-                x: Pixels::from(surface_x),
-                y: Pixels::from(surface_y),
-            });
-            state
-                .focused_window
-                .as_ref()
-                .unwrap()
-                .handle_input(PlatformInput::MouseMove(MouseMoveEvent {
-                    position: state.mouse_location.unwrap(),
-                    pressed_button: state.button_pressed,
-                    modifiers: state.modifiers.clone(),
-                }))
-        } else if let wl_pointer::Event::Button {
-            button,
-            state: WEnum::Value(button_state),
-            ..
-        } = event
-        {
-            match button_state {
-                wl_pointer::ButtonState::Pressed => {
-                    state.button_pressed = Some(linux_button_to_gpui(button));
-                    state
-                        .focused_window
-                        .as_ref()
-                        .unwrap()
-                        .handle_input(PlatformInput::MouseDown(MouseDownEvent {
-                            button: linux_button_to_gpui(button),
-                            position: state.mouse_location.unwrap(),
-                            modifiers: state.modifiers.clone(),
-                            click_count: 1,
-                        }));
+            wl_pointer::Event::Button {
+                button,
+                state: WEnum::Value(button_state),
+                ..
+            } => {
+                let focused_window = &state.focused_window;
+                let mouse_location = &state.mouse_location;
+                if let (Some(focused_window), Some(mouse_location)) =
+                    (focused_window, mouse_location)
+                {
+                    match button_state {
+                        wl_pointer::ButtonState::Pressed => {
+                            state.button_pressed = Some(linux_button_to_gpui(button));
+                            focused_window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
+                                button: linux_button_to_gpui(button),
+                                position: mouse_location.clone(),
+                                modifiers: state.modifiers.clone(),
+                                click_count: 1,
+                            }));
+                        }
+                        wl_pointer::ButtonState::Released => {
+                            state.button_pressed = None;
+                            focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
+                                button: linux_button_to_gpui(button),
+                                position: mouse_location.clone(),
+                                modifiers: Modifiers {
+                                    shift: false,
+                                    control: false,
+                                    alt: false,
+                                    function: false,
+                                    command: false,
+                                },
+                                click_count: 1,
+                            }));
+                        }
+                        _ => {}
+                    }
                 }
-                wl_pointer::ButtonState::Released => {
-                    state.button_pressed = None;
-                    state
-                        .focused_window
-                        .as_ref()
-                        .unwrap()
-                        .handle_input(PlatformInput::MouseUp(MouseUpEvent {
-                            button: linux_button_to_gpui(button),
-                            position: state.mouse_location.unwrap(),
-                            modifiers: Modifiers {
-                                shift: false,
-                                control: false,
-                                alt: false,
-                                function: false,
-                                command: false,
-                            },
-                            click_count: 1,
-                        }));
+            }
+            wl_pointer::Event::AxisRelativeDirection {
+                direction: WEnum::Value(direction),
+                ..
+            } => {
+                state.scroll_direction = match direction {
+                    AxisRelativeDirection::Identical => -1.0,
+                    AxisRelativeDirection::Inverted => 1.0,
+                    _ => -1.0,
                 }
-                _ => {}
             }
-        } else if let wl_pointer::Event::AxisRelativeDirection {
-            direction: WEnum::Value(direction),
-            ..
-        } = event
-        {
-            state.scroll_direction = match direction {
-                AxisRelativeDirection::Identical => -1.0,
-                AxisRelativeDirection::Inverted => 1.0,
-                _ => -1.0,
+            wl_pointer::Event::Axis {
+                time,
+                axis: WEnum::Value(axis),
+                value,
+                ..
+            } => {
+                let focused_window = &state.focused_window;
+                let mouse_location = &state.mouse_location;
+                if let (Some(focused_window), Some(mouse_location)) =
+                    (focused_window, mouse_location)
+                {
+                    let value = value * state.scroll_direction;
+                    focused_window.handle_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position: mouse_location.clone(),
+                        delta: match axis {
+                            wl_pointer::Axis::VerticalScroll => {
+                                Lines(Point::new(0.0, value as f32))
+                            }
+                            wl_pointer::Axis::HorizontalScroll => {
+                                Lines(Point::new(value as f32, 0.0))
+                            }
+                            _ => unimplemented!(),
+                        },
+                        modifiers: state.modifiers.clone(),
+                        touch_phase: TouchPhase::Started,
+                    }))
+                }
             }
-        } else if let wl_pointer::Event::Axis {
-            time,
-            axis: WEnum::Value(axis),
-            value,
-            ..
-        } = event
-        {
-            let value = value * state.scroll_direction;
-            state
-                .focused_window
-                .as_ref()
-                .unwrap()
-                .handle_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                    position: state.mouse_location.unwrap(),
-                    delta: match axis {
-                        wl_pointer::Axis::VerticalScroll => Lines(Point::new(0.0, value as f32)),
-                        wl_pointer::Axis::HorizontalScroll => Lines(Point::new(value as f32, 0.0)),
-                        _ => unimplemented!(), // todo!(linux)
-                    },
-                    modifiers: state.modifiers.clone(),
-                    touch_phase: TouchPhase::Started,
-                }))
-        } else if let wl_pointer::Event::Leave { surface, .. } = event {
-            state.mouse_location = None;
-            state.focused_window = None;
+            wl_pointer::Event::Leave { surface, .. } => {
+                state.mouse_location = None;
+                state.focused_window = None;
+            }
+            _ => {}
         }
     }
 }
