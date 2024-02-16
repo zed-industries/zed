@@ -1,9 +1,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use log::kv::Key;
 use parking_lot::Mutex;
-use taffy::geometry::MinMax;
 use wayland_backend::protocol::WEnum;
 use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
@@ -25,7 +23,7 @@ use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::PlatformInput::KeyDown;
-use crate::ScrollDelta::Lines;
+use crate::ScrollDelta;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -572,10 +570,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         position: mouse_location.clone(),
                         delta: match axis {
                             wl_pointer::Axis::VerticalScroll => {
-                                Lines(Point::new(0.0, value as f32))
+                                ScrollDelta::Pixels(Point::new(Pixels(0.0), Pixels(value as f32)))
                             }
                             wl_pointer::Axis::HorizontalScroll => {
-                                Lines(Point::new(value as f32, 0.0))
+                                ScrollDelta::Pixels(Point::new(Pixels(value as f32), Pixels(0.0)))
                             }
                             _ => unimplemented!(),
                         },
