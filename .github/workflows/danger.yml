@@ -1,35 +1,35 @@
 name: Danger
 
 on:
-    pull_request:
-        branches: [main]
-        types:
-            - opened
-            - synchronize
-            - reopened
-            - edited
+  pull_request:
+    branches: [main]
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
 
 jobs:
-    danger:
-        runs-on: ubuntu-latest
+  danger:
+    runs-on: ubuntu-latest
 
-        steps:
-            - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-            - uses: pnpm/action-setup@v3
-              with:
-                  version: 8
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 8
 
-            - name: Setup Node
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "20"
-                  cache: "pnpm"
-                  cache-dependency-path: "script/danger/pnpm-lock.yaml"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: "script/danger/pnpm-lock.yaml"
 
-            - run: pnpm install --dir script/danger
+      - run: pnpm install --dir script/danger
 
-            - name: Run Danger
-              run: pnpm run --dir script/danger danger ci
-              env:
-                  GITHUB_TOKEN: ${{ github.token }}
+      - name: Run Danger
+        run: pnpm run --dir script/danger danger ci
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

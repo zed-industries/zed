@@ -3,7 +3,8 @@ use std::fs;
 
 pub fn load_dotenv() -> anyhow::Result<()> {
     let env: toml::map::Map<String, toml::Value> = toml::de::from_str(
-        &fs::read_to_string("./.env.toml").map_err(|_| anyhow!("no .env.toml file found"))?,
+        &fs::read_to_string("./crates/collab/.env.toml")
+            .map_err(|_| anyhow!("no .env.toml file found"))?,
     )?;
 
     for (key, value) in env {

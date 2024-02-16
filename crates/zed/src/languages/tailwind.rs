@@ -114,6 +114,7 @@ impl LspAdapter for TailwindLspAdapter {
 
     fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([
+            ("Astro".to_string(), "astro".to_string()),
             ("HTML".to_string(), "html".to_string()),
             ("CSS".to_string(), "css".to_string()),
             ("JavaScript".to_string(), "javascript".to_string()),

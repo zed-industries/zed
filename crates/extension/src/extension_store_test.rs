@@ -5,18 +5,32 @@ use fs::FakeFs;
 use gpui::{Context, TestAppContext};
 use language::{LanguageMatcher, LanguageRegistry};
 use serde_json::json;
+use settings::SettingsStore;
 use std::{path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
+use util::http::FakeHttpClient;
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
     let fs = FakeFs::new(cx.executor());
+    let http_client = FakeHttpClient::with_200_response();
 
     fs.insert_tree(
         "/the-extension-dir",
         json!({
             "installed": {
                 "zed-monokai": {
+                    "extension.json": r#"{
+                        "id": "zed-monokai",
+                        "name": "Zed Monokai",
+                        "version": "2.0.0"
+                    }"#,
                     "themes": {
                         "monokai.json": r#"{
                             "name": "Monokai",
@@ -53,6 +67,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     }
                 },
                 "zed-ruby": {
+                    "extension.json": r#"{
+                        "id": "zed-ruby",
+                        "name": "Zed Ruby",
+                        "version": "1.0.0"
+                    }"#,
                     "grammars": {
                         "ruby.wasm": "",
                         "embedded_template.wasm": "",
@@ -82,6 +101,12 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     .await;
 
     let mut expected_manifest = Manifest {
+        extensions: [
+            ("zed-ruby".into(), "1.0.0".into()),
+            ("zed-monokai".into(), "2.0.0".into()),
+        ]
+        .into_iter()
+        .collect(),
         grammars: [
             (
                 "embedded_template".into(),
@@ -169,6 +194,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             fs.clone(),
+            http_client.clone(),
             language_registry.clone(),
             theme_registry.clone(),
             cx,
@@ -201,6 +227,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     fs.insert_tree(
         "/the-extension-dir/installed/zed-gruvbox",
         json!({
+            "extension.json": r#"{
+                "id": "zed-gruvbox",
+                "name": "Zed Gruvbox",
+                "version": "1.0.0"
+            }"#,
             "themes": {
                 "gruvbox.json": r#"{
                     "name": "Gruvbox",
@@ -226,10 +257,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         },
     );
 
-    store
-        .update(cx, |store, cx| store.reload(cx))
-        .await
-        .unwrap();
+    store.update(cx, |store, cx| store.reload(cx));
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {
@@ -260,6 +288,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             fs.clone(),
+            http_client.clone(),
             language_registry.clone(),
             theme_registry.clone(),
             cx,
@@ -278,6 +307,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ["ERB", "Plain Text", "Ruby"]
         );
         assert_eq!(
+            language_registry.grammar_names(),
+            ["embedded_template".into(), "ruby".into()]
+        );
+        assert_eq!(
             theme_registry.list_names(false),
             [
                 "Gruvbox",
@@ -293,5 +326,26 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         // on startup.
         assert_eq!(fs.read_dir_call_count(), prev_fs_read_dir_call_count);
         assert_eq!(fs.metadata_call_count(), prev_fs_metadata_call_count + 2);
+    });
+
+    store.update(cx, |store, cx| {
+        store.uninstall_extension("zed-ruby".into(), cx)
+    });
+
+    cx.executor().run_until_parked();
+    expected_manifest.extensions.remove("zed-ruby");
+    expected_manifest.languages.remove("Ruby");
+    expected_manifest.languages.remove("ERB");
+    expected_manifest.grammars.remove("ruby");
+    expected_manifest.grammars.remove("embedded_template");
+
+    store.read_with(cx, |store, _| {
+        let manifest = store.manifest.read();
+        assert_eq!(manifest.grammars, expected_manifest.grammars);
+        assert_eq!(manifest.languages, expected_manifest.languages);
+        assert_eq!(manifest.themes, expected_manifest.themes);
+
+        assert_eq!(language_registry.language_names(), ["Plain Text"]);
+        assert_eq!(language_registry.grammar_names(), []);
     });
 }

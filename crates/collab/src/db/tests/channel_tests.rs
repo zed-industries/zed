@@ -1,6 +1,6 @@
 use crate::{
     db::{
-        tests::{channel_tree, new_test_connection, new_test_user, TEST_RELEASE_CHANNEL},
+        tests::{channel_tree, new_test_connection, new_test_user},
         Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId,
     },
     test_both_dbs,
@@ -135,13 +135,7 @@ async fn test_joining_channels(db: &Arc<Database>) {
 
     // can join a room with membership to its channel
     let (joined_room, _, _) = db
-        .join_channel(
-            channel_1,
-            user_1,
-            false,
-            ConnectionId { owner_id, id: 1 },
-            TEST_RELEASE_CHANNEL,
-        )
+        .join_channel(channel_1, user_1, ConnectionId { owner_id, id: 1 })
         .await
         .unwrap();
     assert_eq!(joined_room.room.participants.len(), 1);
@@ -150,12 +144,7 @@ async fn test_joining_channels(db: &Arc<Database>) {
     drop(joined_room);
     // cannot join a room without membership to its channel
     assert!(db
-        .join_room(
-            room_id,
-            user_2,
-            ConnectionId { owner_id, id: 1 },
-            TEST_RELEASE_CHANNEL
-        )
+        .join_room(room_id, user_2, ConnectionId { owner_id, id: 1 },)
         .await
         .is_err());
 }
@@ -733,15 +722,9 @@ async fn test_guest_access(db: &Arc<Database>) {
         .await
         .is_err());
 
-    db.join_channel(
-        zed_channel,
-        guest,
-        false,
-        guest_connection,
-        TEST_RELEASE_CHANNEL,
-    )
-    .await
-    .unwrap();
+    db.join_channel(zed_channel, guest, guest_connection)
+        .await
+        .unwrap();
 
     assert!(db
         .join_channel_chat(zed_channel, guest_connection, guest)

@@ -200,7 +200,7 @@ impl BladeAtlasState {
     }
 
     fn upload_texture(&mut self, id: AtlasTextureId, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
-        let data = self.upload_belt.alloc_data(bytes, &self.gpu);
+        let data = unsafe { self.upload_belt.alloc_data(bytes, &self.gpu) };
         self.uploads.push(PendingUpload { id, bounds, data });
     }
 

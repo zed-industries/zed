@@ -1,6 +1,7 @@
-use crate::{insert::NormalBefore, Vim};
+use crate::{insert::NormalBefore, Vim, VimModeSetting};
 use editor::{Editor, EditorEvent};
 use gpui::{Action, AppContext, Entity, EntityId, View, ViewContext, WindowContext};
+use settings::{Settings, SettingsStore};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|_, cx: &mut ViewContext<Editor>| {
@@ -12,6 +13,17 @@ pub fn init(cx: &mut AppContext) {
         })
         .detach();
 
+        let mut enabled = VimModeSetting::get_global(cx).0;
+        cx.observe_global::<SettingsStore>(move |editor, cx| {
+            if VimModeSetting::get_global(cx).0 != enabled {
+                enabled = VimModeSetting::get_global(cx).0;
+                if !enabled {
+                    Vim::unhook_vim_settings(editor, cx);
+                }
+            }
+        })
+        .detach();
+
         let id = cx.view().entity_id();
         cx.on_release(move |_, _, cx| released(id, cx)).detach();
     })
@@ -19,34 +31,26 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn focused(editor: View<Editor>, cx: &mut WindowContext) {
-    if Vim::read(cx).active_editor.clone().is_some() {
-        Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |previously_active_editor, cx| {
-                vim.unhook_vim_settings(previously_active_editor, cx)
-            });
-        });
-    }
-
     Vim::update(cx, |vim, cx| {
-        vim.set_active_editor(editor.clone(), cx);
+        if !vim.enabled {
+            return;
+        }
+        vim.activate_editor(editor.clone(), cx);
     });
 }
 
 fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        vim.stop_recording_immediately(NormalBefore.boxed_clone());
         if let Some(previous_editor) = vim.active_editor.clone() {
+            vim.stop_recording_immediately(NormalBefore.boxed_clone());
             if previous_editor
                 .upgrade()
                 .is_some_and(|previous| previous == editor.clone())
             {
+                vim.sync_vim_settings(cx);
                 vim.clear_operator(cx);
-                vim.active_editor = None;
-                vim.editor_subscription = None;
             }
         }
-
-        editor.update(cx, |editor, cx| vim.unhook_vim_settings(editor, cx))
     });
 }
 

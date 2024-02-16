@@ -39,10 +39,10 @@ postage.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9.3"
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+[target.'cfg(all(not(target_os = "macos")))'.dependencies]
 async-trait = { workspace = true }
-collections = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
+collections = { workspace = true }
+gpui = { workspace = true }
 live_kit_server.workspace = true
 nanoid = "0.4"
 

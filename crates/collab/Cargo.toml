@@ -17,6 +17,8 @@ required-features = ["seed-support"]
 [dependencies]
 anyhow.workspace = true
 async-tungstenite = "0.16"
+aws-config = { version = "1.1.5" }
+aws-sdk-s3 = { version = "1.15.0" }
 axum = { version = "0.5", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.3", features = ["erased-json"] }
 base64 = "0.13"
@@ -41,6 +43,7 @@ reqwest = { version = "0.11", features = ["json"], optional = true }
 rpc.workspace = true
 scrypt = "0.7"
 sea-orm = { version = "0.12.x", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
+semver.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
@@ -61,7 +64,6 @@ util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-release_channel.workspace = true
 async-trait.workspace = true
 audio.workspace = true
 call = { workspace = true, features = ["test-support"] }
@@ -86,6 +88,7 @@ node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
 serde_json.workspace = true

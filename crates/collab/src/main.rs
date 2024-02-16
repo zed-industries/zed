@@ -1,6 +1,9 @@
 use anyhow::anyhow;
 use axum::{routing::get, Extension, Router};
-use collab::{db, env, executor::Executor, AppState, Config, MigrateConfig, Result};
+use collab::{
+    api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
+    Config, MigrateConfig, Result,
+};
 use db::Database;
 use std::{
     env::args,
@@ -49,6 +52,8 @@ async fn main() -> Result<()> {
                 .await?;
             let rpc_server = collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
             rpc_server.start().await?;
+
+            fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
 
             let app = collab::api::routes(rpc_server.clone(), state.clone())
                 .merge(collab::rpc::routes(rpc_server.clone()))
