@@ -30,6 +30,29 @@ Options:
   "
 }
 
+function uploadDsym
+{
+  SPACE="zed-debug-symbols"
+  REGION="nyc3"
+  file_to_upload="$1"
+  file_name="$2"
+  date=$(date +"%a, %d %b %Y %T %z")
+  acl="x-amz-acl:public-read"
+  content_type="application/octet-stream"
+  storage_type="x-amz-storage-class:STANDARD"
+  string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${file_name}"
+  signature=$(echo -en "${string}" | openssl sha1 -hmac "${DIGITALOCEAN_SPACES_SECRET_KEY}" -binary | base64)
+
+  curl --fail -vv -s -X PUT -T "$file_to_upload" \
+    -H "Host: ${SPACE}.${REGION}.digitaloceanspaces.com" \
+    -H "Date: $date" \
+    -H "Content-Type: $content_type" \
+    -H "$storage_type" \
+    -H "$acl" \
+    -H "Authorization: AWS ${DIGITALOCEAN_SPACES_ACCESS_KEY}:$signature" \
+    "https://${SPACE}.${REGION}.digitaloceanspaces.com/${file_name}"
+}
+
 while getopts 'dlfoh' flag
 do
     case "${flag}" in
@@ -111,6 +134,26 @@ popd
 echo "Bundled ${app_path}"
 
 if [ "$local_arch" = false ]; then
+    echo "Uploading dSYMs"
+    dsymutil --flat target/aarch64-apple-darwin/release/Zed
+    dsymutil --flat target/x86_64-apple-darwin/release/Zed
+    version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
+    if [ "$channel" == "nightly" ]; then
+        version="$version-$(git rev-parse --short HEAD)"
+    fi
+
+    echo "Removing existing gzipped dSYMs"
+    rm -f target/aarch64-apple-darwin/release/Zed.dwarf.gz
+    rm -f target/x86_64-apple-darwin/release/Zed.dwarf.gz
+
+    echo "Gzipping dSYMs"
+    gzip target/aarch64-apple-darwin/release/Zed.dwarf
+    gzip target/x86_64-apple-darwin/release/Zed.dwarf
+
+    echo "Uploading dSYMs"
+    uploadDsym target/aarch64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-aarch64-apple-darwin.dwarf.gz"
+    uploadDsym target/x86_64-apple-darwin/release/Zed.dwarf.gz "$channel/Zed-$version-x86_64-apple-darwin.dwarf.gz"
+
     echo "Creating fat binaries"
     lipo \
         -create \
@@ -183,17 +226,17 @@ if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
     exit 0
 fi
 
-if [ "$local_only" = true ]; then
-    # If bundle_name is not set or empty, use the basename of $app_path
-    if [ -z "$bundle_name" ]; then
-        bundle_name=$(basename "$app_path")
-    else
-        # If bundle_name doesn't end in .app, append it
-        if [[ "$bundle_name" != *.app ]]; then
-            bundle_name="$bundle_name.app"
-        fi
+# If bundle_name is not set or empty, use the basename of $app_path
+if [ -z "$bundle_name" ]; then
+    bundle_name=$(basename "$app_path")
+else
+    # If bundle_name doesn't end in .app, append it
+    if [[ "$bundle_name" != *.app ]]; then
+        bundle_name="$bundle_name.app"
     fi
+fi
 
+if [ "$local_only" = true ]; then
     if [ "$overwrite_local_app" = true ]; then
         rm -rf "/Applications/$bundle_name"
     fi
@@ -206,19 +249,38 @@ if [ "$local_only" = true ]; then
         echo "/Applications/$bundle_name"
     fi
 else
-    echo "Creating DMG"
     dmg_target_directory="target/${target_dir}"
     dmg_source_directory="${dmg_target_directory}/dmg"
     dmg_file_path="${dmg_target_directory}/Zed.dmg"
+    xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
 
     rm -rf ${dmg_source_directory}
     mkdir -p ${dmg_source_directory}
     mv "${app_path}" "${dmg_source_directory}"
 
+    if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
+        echo "Creating temporary DMG at ${dmg_file_path} using ${dmg_source_directory} to notarize app bundle"
+        hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+
+        echo "Notarizing DMG with Apple"
+        "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+
+        echo "Removing temporary DMG (used only for notarization)"
+        rm "${dmg_file_path}"
+
+        echo "Stapling notarization ticket to ${dmg_source_directory}/${bundle_name}"
+        "${xcode_bin_dir_path}/stapler" staple "${dmg_source_directory}/${bundle_name}"
+    fi
+
+    echo "Adding symlink to /Applications to ${dmg_source_directory}"
     ln -s /Applications ${dmg_source_directory}
+
+    echo "Creating final DMG at ${dmg_file_path} using ${dmg_source_directory}"
     hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+
     # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
     # This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
+    echo "Removing symlink to /Applications from ${dmg_source_directory}"
     rm ${dmg_source_directory}/Applications
 
     echo "Adding license agreement to DMG"
@@ -227,7 +289,8 @@ else
 
     if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
         echo "Notarizing DMG with Apple"
-        "$(xcode-select -p)/usr/bin/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+        "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+        "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
     fi
 
     if [ "$open_result" = true ]; then

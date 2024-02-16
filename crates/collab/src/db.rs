@@ -1,12 +1,8 @@
-#[cfg(test)]
-pub mod tests;
-
-#[cfg(test)]
-pub use tests::TestDb;
-
 mod ids;
 mod queries;
 mod tables;
+#[cfg(test)]
+pub mod tests;
 
 use crate::{executor::Executor, Error, Result};
 use anyhow::anyhow;
@@ -25,7 +21,7 @@ use sea_orm::{
     FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
     TransactionTrait,
 };
-use serde::{Deserialize, Serialize};
+use serde::{ser::Error as _, Deserialize, Serialize, Serializer};
 use sqlx::{
     migrate::{Migrate, Migration, MigrationSource},
     Connection,
@@ -40,13 +36,17 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-pub use tables::*;
+use time::{format_description::well_known::iso8601, PrimitiveDateTime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
+
+#[cfg(test)]
+pub use tests::TestDb;
 
 pub use ids::*;
 pub use queries::contributors::ContributorSelector;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
+pub use tables::*;
 
 /// Database gives you a handle that lets you access the database.
 /// It handles pooling internally.
@@ -716,4 +716,44 @@ pub struct Worktree {
 pub struct WorktreeSettingsFile {
     pub path: String,
     pub content: String,
+}
+
+pub struct NewExtensionVersion {
+    pub name: String,
+    pub version: semver::Version,
+    pub description: String,
+    pub authors: Vec<String>,
+    pub repository: String,
+    pub published_at: PrimitiveDateTime,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ExtensionMetadata {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub authors: Vec<String>,
+    pub description: String,
+    pub repository: String,
+    #[serde(serialize_with = "serialize_iso8601")]
+    pub published_at: PrimitiveDateTime,
+    pub download_count: u64,
+}
+
+pub fn serialize_iso8601<S: Serializer>(
+    datetime: &PrimitiveDateTime,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    const SERDE_CONFIG: iso8601::EncodedConfig = iso8601::Config::DEFAULT
+        .set_year_is_six_digits(false)
+        .set_time_precision(iso8601::TimePrecision::Second {
+            decimal_digits: None,
+        })
+        .encode();
+
+    datetime
+        .assume_utc()
+        .format(&time::format_description::well_known::Iso8601::<SERDE_CONFIG>)
+        .map_err(S::Error::custom)?
+        .serialize(serializer)
 }

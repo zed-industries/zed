@@ -1,6 +1,12 @@
 {
-  "JSON": {
-    "tab_size": 4
+  "languages": {
+    "TOML": {
+      "formatter": "prettier",
+      "format_on_save": "off"
+    },
+    "YAML": {
+      "formatter": "prettier"
+    }
   },
   "formatter": "auto"
 }

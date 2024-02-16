@@ -5,12 +5,8 @@
 .DS_Store
 /plugins/bin
 /script/node_modules
-/styles/node_modules
-/styles/src/types/zed.ts
 /crates/theme/schemas/theme.json
-/crates/collab/static/styles.css
 /crates/collab/.admins.json
-/vendor/bin
 /assets/*licenses.md
 **/venv
 .build
@@ -25,3 +21,4 @@ DerivedData/
 **/*.db
 .pytest_cache
 .venv
+.blob_store

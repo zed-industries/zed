@@ -10,6 +10,8 @@ pub mod channel_message;
 pub mod channel_message_mention;
 pub mod contact;
 pub mod contributor;
+pub mod extension;
+pub mod extension_version;
 pub mod feature_flag;
 pub mod follower;
 pub mod language_server;

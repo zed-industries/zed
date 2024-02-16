@@ -211,7 +211,7 @@ fn in_word(
     let scope = map
         .buffer_snapshot
         .language_scope_at(relative_to.to_point(map));
-    let start = movement::find_preceding_boundary(
+    let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
@@ -281,7 +281,7 @@ fn around_next_word(
         .buffer_snapshot
         .language_scope_at(relative_to.to_point(map));
     // Get the start of the word
-    let start = movement::find_preceding_boundary(
+    let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
         FindRange::SingleLine,
