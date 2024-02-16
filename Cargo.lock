@@ -1396,7 +1396,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=c4f951a88b345724cb952e920ad30e39851f7760#c4f951a88b345724cb952e920ad30e39851f7760"
+source = "git+https://github.com/kvark/blade?rev=e9d93a4d41f3946a03ffb76136290d6ccf7f2b80#e9d93a4d41f3946a03ffb76136290d6ccf7f2b80"
 dependencies = [
  "ash",
  "ash-window",
@@ -1413,7 +1413,7 @@ dependencies = [
  "khronos-egl",
  "libloading 0.8.0",
  "log",
- "metal 0.25.0",
+ "metal",
  "mint",
  "naga",
  "objc",
@@ -1426,7 +1426,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=c4f951a88b345724cb952e920ad30e39851f7760#c4f951a88b345724cb952e920ad30e39851f7760"
+source = "git+https://github.com/kvark/blade?rev=e9d93a4d41f3946a03ffb76136290d6ccf7f2b80#e9d93a4d41f3946a03ffb76136290d6ccf7f2b80"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2359,13 +2359,13 @@ dependencies = [
 
 [[package]]
 name = "core-text"
-version = "19.2.0"
+version = "20.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99d74ada66e07c1cefa18f8abfba765b486f250de2e4a999e5727fc0dd4b4a25"
+checksum = "c9d2790b5c08465d49f8dc05c8bcae9fea467855947db39b0f8145c091aaced5"
 dependencies = [
  "core-foundation",
- "core-graphics 0.22.3",
- "foreign-types 0.3.2",
+ "core-graphics 0.23.1",
+ "foreign-types 0.5.0",
  "libc",
 ]
 
@@ -3511,12 +3511,12 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "font-kit"
 version = "0.11.0"
-source = "git+https://github.com/zed-industries/font-kit?rev=d97147f#d97147ff11a9024b9707d9c9c7e3a0bdaba048ac"
+source = "git+https://github.com/zed-industries/font-kit?rev=5a5c4d4#5a5c4d4ca395c74eb0abde38508e170ce0fd761a"
 dependencies = [
  "bitflags 1.3.2",
  "byteorder",
  "core-foundation",
- "core-graphics 0.22.3",
+ "core-graphics 0.23.1",
  "core-text",
  "dirs-next",
  "dwrote",
@@ -4085,7 +4085,7 @@ dependencies = [
  "cocoa",
  "collections",
  "core-foundation",
- "core-graphics 0.22.3",
+ "core-graphics 0.23.1",
  "core-text",
  "cosmic-text",
  "ctor",
@@ -4095,7 +4095,7 @@ dependencies = [
  "etagere",
  "flume",
  "font-kit",
- "foreign-types 0.3.2",
+ "foreign-types 0.5.0",
  "futures 0.3.28",
  "gpui_macros",
  "image",
@@ -4104,7 +4104,7 @@ dependencies = [
  "linkme",
  "log",
  "media",
- "metal 0.21.0",
+ "metal",
  "num_cpus",
  "objc",
  "open",
@@ -5350,8 +5350,8 @@ dependencies = [
  "block",
  "bytes 1.5.0",
  "core-foundation",
- "foreign-types 0.3.2",
- "metal 0.21.0",
+ "foreign-types 0.5.0",
+ "metal",
  "objc",
 ]
 
@@ -5421,20 +5421,6 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "serde",
-]
-
-[[package]]
-name = "metal"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4598d719460ade24c7d91f335daf055bf2a7eec030728ce751814c50cdd6a26c"
-dependencies = [
- "bitflags 1.3.2",
- "block",
- "cocoa-foundation",
- "foreign-types 0.3.2",
- "log",
- "objc",
 ]
 
 [[package]]

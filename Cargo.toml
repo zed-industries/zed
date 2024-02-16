@@ -181,6 +181,9 @@ anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-tar = "0.4.2"
 async-trait = "0.1"
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
+blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
 ctor = "0.2.6"
 derive_more = "0.99.17"
