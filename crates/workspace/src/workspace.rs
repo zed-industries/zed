@@ -2917,7 +2917,6 @@ impl Workspace {
     pub fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
-
         if cx.is_window_active() {
             if let Some(item) = self.active_item(cx) {
                 if item.focus_handle(cx).contains_focused(cx) {
