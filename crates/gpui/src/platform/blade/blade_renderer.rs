@@ -637,7 +637,7 @@ impl BladeRenderer {
                         encoder.draw(0, 4, 0, sprites.len() as u32);
                     }
                     PrimitiveBatch::Surfaces(surfaces) => {
-                        let _encoder = pass.with(&self.pipelines.surfaces);
+                        let mut _encoder = pass.with(&self.pipelines.surfaces);
 
                         for surface in surfaces {
                             #[cfg(not(target_os = "macos"))]
@@ -699,8 +699,8 @@ impl BladeRenderer {
                                             bounds: surface.bounds.into(),
                                             content_mask: surface.content_mask.bounds.into(),
                                         },
-                                        t_y: _t_y,
-                                        t_cb_cr: _t_cb_cr,
+                                        t_y,
+                                        t_cb_cr,
                                         s_surface: self.atlas_sampler,
                                     },
                                 );
