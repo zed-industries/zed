@@ -6,14 +6,21 @@ mod prompts;
 mod saved_conversation;
 mod streaming_diff;
 
+use anyhow::Result;
 pub use assistant_panel::AssistantPanel;
-use assistant_settings::LanguageModel;
+use assistant_settings::{AssistantSettings, OpenAiModel};
 use chrono::{DateTime, Local};
+use client::Client;
 pub(crate) use completion_provider::*;
 use gpui::{actions, AppContext, SharedString};
 pub(crate) use saved_conversation::*;
 use serde::{Deserialize, Serialize};
-use std::fmt::{self, Display};
+use settings::Settings;
+use std::{
+    fmt::{self, Display},
+    sync::Arc,
+};
+use tiktoken_rs::ChatCompletionRequestMessage;
 
 actions!(
     assistant,
@@ -60,6 +67,51 @@ impl Display for Role {
             Role::User => write!(f, "User"),
             Role::Assistant => write!(f, "Assistant"),
             Role::System => write!(f, "System"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum LanguageModel {
+    OpenAi(OpenAiModel),
+}
+
+impl Default for LanguageModel {
+    fn default() -> Self {
+        LanguageModel::OpenAi(OpenAiModel::ThreePointFiveTurbo)
+    }
+}
+
+impl LanguageModel {
+    pub fn id(&self) -> String {
+        match self {
+            LanguageModel::OpenAi(model) => format!("openai/{}", model.id()),
+        }
+    }
+
+    pub fn display_name(&self) -> String {
+        match self {
+            LanguageModel::OpenAi(model) => format!("openai/{}", model.display_name()),
+        }
+    }
+
+    pub fn max_token_count(&self) -> usize {
+        match self {
+            LanguageModel::OpenAi(model) => tiktoken_rs::model::get_context_size(model.id()),
+        }
+    }
+
+    pub fn count_tokens(&self, messages: &[ChatCompletionRequestMessage]) -> Result<usize> {
+        match self {
+            LanguageModel::OpenAi(model) => {
+                tiktoken_rs::num_tokens_from_messages(&model.id(), &messages)
+            }
+        }
+    }
+
+    pub fn cycle(&self) -> Self {
+        match self {
+            LanguageModel::OpenAi(model) => LanguageModel::OpenAi(model.cycle()),
         }
     }
 }
@@ -113,7 +165,9 @@ enum MessageStatus {
     Error(SharedString),
 }
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+    AssistantSettings::register(cx);
+    completion_provider::init(client, cx);
     assistant_panel::init(cx);
 }
 

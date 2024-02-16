@@ -3,13 +3,36 @@ mod fake;
 mod open_ai;
 mod zed_dot_dev;
 
+use crate::{assistant_settings::AssistantSettings, LanguageModel, LanguageModelRequest};
 use anyhow::Result;
+use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AppContext, Task};
 use open_ai::*;
+use settings::{Settings, SettingsStore};
+use std::sync::Arc;
 use zed_dot_dev::*;
 
-use crate::{assistant_settings::LanguageModel, LanguageModelRequest};
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+    register_completion_provider(cx);
+    cx.observe_global::<SettingsStore>(register_completion_provider)
+        .detach();
+}
+
+fn register_completion_provider(cx: &mut AppContext) {
+    let provider = match &AssistantSettings::get_global(cx).provider {
+        crate::assistant_settings::AssistantProvider::ZedDotDev { default_model } => todo!(),
+        crate::assistant_settings::AssistantProvider::OpenAi {
+            default_model,
+            api_url,
+        } => CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
+            default_model.clone(),
+            api_url.clone(),
+            cx,
+        )),
+    };
+    cx.set_global(provider);
+}
 
 #[derive(Clone)]
 pub enum CompletionProvider {
@@ -53,8 +76,8 @@ impl CompletionProvider {
 
     pub fn default_model(&self) -> LanguageModel {
         match self {
-            CompletionProvider::OpenAi(provider) => provider.default_model(),
-            CompletionProvider::ZedDotDev(provider) => provider.default_model(),
+            CompletionProvider::OpenAi(provider) => LanguageModel::OpenAi(provider.default_model()),
+            CompletionProvider::ZedDotDev(provider) => todo!(),
             #[cfg(test)]
             CompletionProvider::Fake(_) => unimplemented!(),
         }

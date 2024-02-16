@@ -1,7 +1,4 @@
-use crate::{
-    assistant_settings::{LanguageModel, OpenAiModel},
-    MessageId, MessageMetadata,
-};
+use crate::{assistant_settings::OpenAiModel, LanguageModel, MessageId, MessageMetadata};
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use fs::Fs;

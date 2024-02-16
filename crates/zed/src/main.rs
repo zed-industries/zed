@@ -171,7 +171,7 @@ fn main() {
             node_runtime.clone(),
             cx,
         );
-        assistant::init(cx);
+        assistant::init(client.clone(), cx);
 
         extension::init(
             fs.clone(),

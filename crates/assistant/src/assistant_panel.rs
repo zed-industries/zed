@@ -1,11 +1,11 @@
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings, LanguageModel},
+    assistant_settings::{AssistantDockPosition, AssistantSettings},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
-    Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModelRequest,
-    LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus, NewConversation,
-    QuoteSelection, Role, SavedConversation, SavedConversationMetadata, SavedMessage, Split,
-    ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
+    Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
+    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
+    NewConversation, QuoteSelection, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -61,7 +61,6 @@ use workspace::{
 };
 
 pub fn init(cx: &mut AppContext) {
-    AssistantSettings::register(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
@@ -109,10 +108,7 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            let (fs, client) = workspace.update(&mut cx, |workspace, _| {
-                let app_state = workspace.app_state();
-                (app_state.fs.clone(), app_state.client.clone())
-            })?;
+            let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
             let saved_conversations = SavedConversationMetadata::list(fs.clone())
                 .await
                 .log_err()
@@ -1583,7 +1579,7 @@ impl Conversation {
                                     ));
                                 }
                             }
-                            cx.notify();
+                            cx.emit(ConversationEvent::MessagesEdited);
                         }
                     })
                     .ok();

@@ -1,55 +1,7 @@
-use anyhow::Result;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use tiktoken_rs::ChatCompletionRequestMessage;
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(untagged)]
-pub enum LanguageModel {
-    OpenAi(OpenAiModel),
-}
-
-impl Default for LanguageModel {
-    fn default() -> Self {
-        LanguageModel::OpenAi(OpenAiModel::ThreePointFiveTurbo)
-    }
-}
-
-impl LanguageModel {
-    pub fn id(&self) -> String {
-        match self {
-            LanguageModel::OpenAi(model) => format!("openai/{}", model.full_name()),
-        }
-    }
-
-    pub fn display_name(&self) -> String {
-        match self {
-            LanguageModel::OpenAi(model) => format!("openai/{}", model.short_name()),
-        }
-    }
-
-    pub fn max_token_count(&self) -> usize {
-        match self {
-            LanguageModel::OpenAi(model) => tiktoken_rs::model::get_context_size(model.full_name()),
-        }
-    }
-
-    pub fn count_tokens(&self, messages: &[ChatCompletionRequestMessage]) -> Result<usize> {
-        match self {
-            LanguageModel::OpenAi(model) => {
-                tiktoken_rs::num_tokens_from_messages(&model.full_name(), &messages)
-            }
-        }
-    }
-
-    pub fn cycle(&self) -> Self {
-        match self {
-            LanguageModel::OpenAi(model) => LanguageModel::OpenAi(model.cycle()),
-        }
-    }
-}
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum OpenAiModel {
@@ -63,7 +15,7 @@ pub enum OpenAiModel {
 }
 
 impl OpenAiModel {
-    pub fn full_name(&self) -> &'static str {
+    pub fn id(&self) -> &'static str {
         match self {
             OpenAiModel::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
             OpenAiModel::Four => "gpt-4-0613",
@@ -71,7 +23,7 @@ impl OpenAiModel {
         }
     }
 
-    pub fn short_name(&self) -> &'static str {
+    pub fn display_name(&self) -> &'static str {
         match self {
             OpenAiModel::ThreePointFiveTurbo => "gpt-3.5-turbo",
             OpenAiModel::Four => "gpt-4",
@@ -97,10 +49,11 @@ pub enum AssistantDockPosition {
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum AssistantProvider {
-    ZedDotDev {
-        default_model: LanguageModel,
-    },
+    #[serde(rename = "zed.dev")]
+    ZedDotDev { default_model: OpenAiModel },
+    #[serde(rename = "openai")]
     OpenAi {
         default_model: OpenAiModel,
         api_url: String,
@@ -110,7 +63,7 @@ pub enum AssistantProvider {
 impl Default for AssistantProvider {
     fn default() -> Self {
         AssistantProvider::ZedDotDev {
-            default_model: LanguageModel::default(),
+            default_model: OpenAiModel::default(),
         }
     }
 }
@@ -143,19 +96,11 @@ pub struct AssistantSettingsContent {
     ///
     /// Default: 320
     pub default_height: Option<f32>,
-
-    provider: AssistantProvider,
-}
-
-/// Assistant panel settings
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct AssistantSettingsContentV0 {
-    pub button: Option<bool>,
-    pub dock: Option<AssistantDockPosition>,
-    pub default_width: Option<f32>,
-    pub default_height: Option<f32>,
-    pub default_open_ai_model: Option<OpenAiModel>,
-    pub openai_api_url: Option<String>,
+    /// The provider of the assistant service.
+    ///
+    /// This can either be the internal `zed.dev` service or an external `openai` service,
+    /// each with their respective default models and configurations.
+    pub provider: Option<AssistantProvider>,
 }
 
 impl Settings for AssistantSettings {

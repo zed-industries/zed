@@ -1,6 +1,6 @@
 use crate::{
-    assistant_settings::{LanguageModel, OpenAiModel},
-    LanguageModelChoiceDelta, LanguageModelRequest, LanguageModelUsage,
+    assistant_settings::OpenAiModel, LanguageModel, LanguageModelChoiceDelta, LanguageModelRequest,
+    LanguageModelUsage, Role,
 };
 use anyhow::{anyhow, Result};
 use futures::{
@@ -9,26 +9,36 @@ use futures::{
 };
 use gpui::{AppContext, BackgroundExecutor, Task};
 use isahc::{http::StatusCode, Request, RequestExt};
-use parking_lot::Mutex;
-use serde::Deserialize;
-use std::{env, io, sync::Arc};
-
-pub const OPEN_AI_API_URL: &'static str = "https://api.openai.com/v1";
+use serde::{Deserialize, Serialize};
+use std::{env, io};
+use util::ResultExt;
 
 #[derive(Clone)]
 pub struct OpenAiCompletionProvider {
-    api_key: Arc<Mutex<Option<String>>>,
+    api_key: Option<String>,
+    api_url: String,
+    default_model: OpenAiModel,
     executor: BackgroundExecutor,
 }
 
 impl OpenAiCompletionProvider {
+    pub fn new(default_model: OpenAiModel, api_url: String, cx: &AppContext) -> Self {
+        Self {
+            api_key: env::var("OPENAI_API_KEY").log_err(),
+            api_url,
+            default_model,
+            executor: cx.background_executor().clone(),
+        }
+    }
+
     pub fn is_authenticated(&self) -> bool {
-        self.api_key.lock().is_some()
+        self.api_key.is_some()
     }
 
     pub fn authenticate(&self, _cx: &AppContext) -> Task<Result<()>> {
-        if let Ok(api_key) = env::var("OPENAI_API_KEY") {
-            *self.api_key.lock() = Some(api_key);
+        // todo!("validate api key")
+
+        if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
             Task::ready(Err(anyhow!(
@@ -37,19 +47,22 @@ impl OpenAiCompletionProvider {
         }
     }
 
-    pub fn default_model(&self) -> LanguageModel {
-        LanguageModel::OpenAi(OpenAiModel::ThreePointFiveTurbo)
+    pub fn default_model(&self) -> OpenAiModel {
+        self.default_model.clone()
     }
 
     pub fn complete(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let api_key = self.api_key.lock().clone();
+        let request = self.to_open_ai_request(request);
+
+        let api_key = self.api_key.clone();
+        let api_url = self.api_url.clone();
         let executor = self.executor.clone();
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(api_key, executor, request);
+            let request = stream_completion(&api_key, &api_url, executor, request);
             let response = request.await?;
             let stream = response
                 .filter_map(|response| async move {
@@ -63,10 +76,46 @@ impl OpenAiCompletionProvider {
         }
         .boxed()
     }
+
+    fn to_open_ai_request(&self, request: LanguageModelRequest) -> OpenAiRequest {
+        let model = match request.model {
+            Some(LanguageModel::OpenAi(model)) => model,
+            _ => self.default_model(),
+        };
+        OpenAiRequest {
+            model,
+            messages: request
+                .messages
+                .into_iter()
+                .map(|msg| OpenAiRequestMessage {
+                    role: msg.role,
+                    content: msg.content,
+                })
+                .collect(),
+            stream: request.stream,
+            stop: request.stop,
+            temperature: request.temperature,
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct OpenAiRequest {
+    pub model: OpenAiModel,
+    pub messages: Vec<OpenAiRequestMessage>,
+    pub stream: bool,
+    pub stop: Vec<String>,
+    pub temperature: f32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct OpenAiRequestMessage {
+    pub role: Role,
+    pub content: String,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct OpenAiResponseStreamEvent {
+struct OpenAiResponseStreamEvent {
     pub id: Option<String>,
     pub object: String,
     pub created: u32,
@@ -75,17 +124,18 @@ pub struct OpenAiResponseStreamEvent {
     pub usage: Option<LanguageModelUsage>,
 }
 
-pub async fn stream_completion(
-    api_key: String,
+async fn stream_completion(
+    api_key: &str,
+    api_url: &str,
     executor: BackgroundExecutor,
-    request: LanguageModelRequest,
+    request: OpenAiRequest,
 ) -> Result<impl Stream<Item = Result<OpenAiResponseStreamEvent>>> {
     let (tx, rx) = futures::channel::mpsc::unbounded::<Result<OpenAiResponseStreamEvent>>();
 
-    let mut response = Request::post(format!("{OPEN_AI_API_URL}/chat/completions"))
+    let mut response = Request::post(format!("{api_url}/chat/completions"))
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
-        .body(serde_json::to_string(&request).unwrap())?
+        .body(dbg!(serde_json::to_string(&request).unwrap()))?
         .send_async()
         .await?;
 
