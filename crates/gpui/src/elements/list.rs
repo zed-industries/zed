@@ -15,6 +15,7 @@ use collections::VecDeque;
 use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
+use taffy::style::Overflow;
 
 /// Construct a new list element
 pub fn list(state: ListState) -> List {
@@ -488,6 +489,7 @@ impl Element for List {
         cx: &mut crate::ElementContext,
     ) -> (crate::LayoutId, Self::State) {
         let mut style = Style::default();
+        style.overflow.y = Overflow::Scroll;
         style.refine(&self.style);
 
         let layout_id = cx.with_text_style(style.text_style().cloned(), |cx| {
