@@ -6,7 +6,7 @@ use editor::{
     Bias, DisplayPoint,
 };
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
-use language::{char_kind, CharKind, Selection};
+use language::{char_kind, CharKind, Point, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -456,12 +456,6 @@ fn expand_to_include_whitespace(
     range
 }
 
-#[derive(Debug)]
-enum LineEnd {
-    Break(DisplayPoint),
-    EndOfFile(DisplayPoint),
-}
-
 /// If not `around` (i.e. inner), returns a range that surrounds the paragraph
 /// where `relative_to` is in. If `around`, principally returns the range ending
 /// at the end of the next paragraph.
@@ -482,128 +476,35 @@ fn paragraph(
     relative_to: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    let mut backward_iter = map.reverse_chars_at(relative_to);
-    let (is_empty_backward, previous_line_end) = is_empty_to_line_break(&mut backward_iter);
+    let mut paragraph_start = movement::start_of_paragraph(map, relative_to, true, 1);
+    let mut paragraph_end = movement::end_of_paragraph(map, relative_to, true, 1);
 
-    let mut forward_iter = map.chars_at(relative_to);
-    let (is_empty_forward, line_end) = is_empty_to_line_end(&mut forward_iter);
-    let line_end = line_end.unwrap_or(LineEnd::EndOfFile(relative_to));
-    let is_current_line_empty = is_empty_forward && is_empty_backward;
-
-    let mut previous_paragraph_end = previous_line_end;
-    let mut paragraph_end = line_end;
-
-    while previous_paragraph_end.is_some() {
-        let (is_empty_backward, previous_line_end) = is_empty_to_line_break(&mut backward_iter);
-        if is_empty_backward != is_current_line_empty {
-            break;
-        }
-        previous_paragraph_end = previous_line_end;
-    }
-    let paragraph_start = previous_paragraph_end
-        .map(|point| DisplayPoint::new(point.row() + 1, 0))
-        .unwrap_or(DisplayPoint::zero());
-
-    let mut following_line_end = None;
-    while let LineEnd::Break(point) = paragraph_end {
-        let (is_empty_forward, line_end) = is_empty_to_line_end(&mut forward_iter);
-        if is_empty_forward != is_current_line_empty {
-            following_line_end = line_end;
-            break;
-        }
-        paragraph_end = line_end.unwrap_or(
-            // EOF after line break
-            LineEnd::EndOfFile(DisplayPoint::new(point.row() + 1, 0)),
-        );
-    }
+    let paragraph_end_row = paragraph_end.row();
+    let paragraph_ends_with_eof = paragraph_end_row == map.max_buffer_row();
+    let point = relative_to.to_point(map);
+    let current_line_is_empty = map.buffer_snapshot.is_line_blank(point.row);
 
     if around {
-        // When selection only contains trailing newline paragraph,
-        // regard it as an error and cancel the operation.
-        if let LineEnd::EndOfFile(_) = paragraph_end {
-            if is_current_line_empty {
+        if paragraph_ends_with_eof {
+            if current_line_is_empty {
                 return None;
             }
-        }
 
-        if let LineEnd::Break(point) = paragraph_end {
-            paragraph_end = following_line_end.unwrap_or(
-                // EOF after line break
-                LineEnd::EndOfFile(DisplayPoint::new(point.row() + 1, 0)),
-            );
-        }
-
-        while let LineEnd::Break(point) = paragraph_end {
-            let (is_empty_forward, line_end) = is_empty_to_line_end(&mut forward_iter);
-            if is_empty_forward == is_current_line_empty {
-                break;
+            let paragraph_start_row = paragraph_start.row();
+            if paragraph_start_row != 0 {
+                let previous_paragraph_last_line_start =
+                    Point::new(paragraph_start_row - 1, 0).to_display_point(map);
+                paragraph_start =
+                    movement::start_of_paragraph(map, previous_paragraph_last_line_start, true, 1);
             }
-            paragraph_end = line_end.unwrap_or(
-                // EOF after line break
-                LineEnd::EndOfFile(DisplayPoint::new(point.row() + 1, 0)),
-            );
+        } else {
+            let next_paragraph_start = Point::new(paragraph_end_row + 1, 0).to_display_point(map);
+            paragraph_end = movement::end_of_paragraph(map, next_paragraph_start, true, 1);
         }
     }
 
-    let paragraph_end = match paragraph_end {
-        LineEnd::Break(point) => point,
-        LineEnd::EndOfFile(point) => point,
-    };
     let range = paragraph_start..paragraph_end;
     Some(range)
-}
-
-const EMPTY_LINE_WHITESPACE: &[char] = &[' ', '\t'];
-
-/// Return whether the line is empty and the position of the line break.
-fn is_empty_to_line_break(
-    iter: &mut impl Iterator<Item = (char, DisplayPoint)>,
-) -> (bool, Option<DisplayPoint>) {
-    let mut is_empty = true;
-
-    loop {
-        let next = iter.next();
-        match next {
-            Some((char, _)) if char != '\n' => {
-                if !EMPTY_LINE_WHITESPACE.contains(&char) {
-                    is_empty = false;
-                }
-            }
-            _ => {
-                let end = next.map(|(_, point)| point);
-                return (is_empty, end);
-            }
-        }
-    }
-}
-
-/// Return whether a line is a empty line and the position of the line break.
-/// If `iter` is already at EOF, return `None`.
-/// If line break is not found, return the position of EOF.
-fn is_empty_to_line_end(
-    iter: &mut impl Iterator<Item = (char, DisplayPoint)>,
-) -> (bool, Option<LineEnd>) {
-    let mut is_empty = true;
-    let mut end = None;
-
-    for (char, point) in iter {
-        end = Some((char, point));
-        if char == '\n' {
-            return (is_empty, Some(LineEnd::Break(point)));
-        }
-
-        if !EMPTY_LINE_WHITESPACE.contains(&char) {
-            is_empty = false;
-        }
-    }
-
-    let end = end.map(|(char, mut end)| {
-        // Set end to the character position after the current display_point.
-        // Since char must not be \n, considering cases where row number changes is unnecessary.
-        *end.column_mut() += char.len_utf8() as u32;
-        LineEnd::EndOfFile(end)
-    });
-    (is_empty, end)
 }
 
 fn surrounding_markers(

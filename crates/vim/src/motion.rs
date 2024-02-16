@@ -443,11 +443,11 @@ impl Motion {
                 (end_of_line(map, *display_lines, point), SelectionGoal::None)
             }
             StartOfParagraph => (
-                movement::start_of_paragraph(map, point, times),
+                movement::start_of_paragraph(map, point, false, times),
                 SelectionGoal::None,
             ),
             EndOfParagraph => (
-                map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
+                map.clip_at_line_end(movement::end_of_paragraph(map, point, false, times)),
                 SelectionGoal::None,
             ),
             CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
