@@ -260,6 +260,8 @@ impl EditorElement {
         register_action(view, cx, Editor::go_to_prev_hunk);
         register_action(view, cx, Editor::go_to_definition);
         register_action(view, cx, Editor::go_to_definition_split);
+        register_action(view, cx, Editor::go_to_implementation);
+        register_action(view, cx, Editor::go_to_implementation_split);
         register_action(view, cx, Editor::go_to_type_definition);
         register_action(view, cx, Editor::go_to_type_definition_split);
         register_action(view, cx, Editor::open_url);
