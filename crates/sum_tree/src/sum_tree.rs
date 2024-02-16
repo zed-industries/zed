@@ -151,7 +151,7 @@ impl Bias {
     }
 }
 
-/// A binary tree where each leaf node contains an [`Item`] of type `T`,
+/// A B-tree where each leaf node contains an [`Item`] of type `T`,
 /// and each internal node contains a [`Summary`] of the items in its subtree.
 ///
 /// Any [`Dimension`] supported by the [`Summary`] type can be used to seek to a specific location in the tree.
