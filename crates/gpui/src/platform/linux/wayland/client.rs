@@ -301,10 +301,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientState {
         } = event
         {
             if capabilities.contains(wl_seat::Capability::Keyboard) {
-                seat.get_keyboard(&qh, ());
+                seat.get_keyboard(qh, ());
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
-                seat.get_pointer(&qh, ());
+                seat.get_pointer(qh, ());
             }
         }
     }
@@ -386,7 +386,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                         | xkb::Keysym::Super_L
                         | xkb::Keysym::Super_R
                 ) {
-                    xkb::keysym_get_name(key_sym.clone()).to_lowercase()
+                    xkb::keysym_get_name(key_sym).to_lowercase()
                 } else {
                     key_utf8.clone()
                 };
@@ -407,8 +407,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             } else {
                                 focused_window.handle_input(KeyDown(KeyDownEvent {
                                     keystroke: Keystroke {
-                                        modifiers: state.modifiers.clone(),
-                                        key: key,
+                                        modifiers: state.modifiers,
+                                        key,
                                         ime_key: None,
                                     },
                                     is_held: false, // todo!(linux)
@@ -428,8 +428,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             } else {
                                 focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
                                     keystroke: Keystroke {
-                                        modifiers: state.modifiers.clone(),
-                                        key: key,
+                                        modifiers: state.modifiers,
+                                        key,
                                         ime_key: None,
                                     },
                                 }));
@@ -503,7 +503,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                     focused_window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
                         position: state.mouse_location.unwrap(),
                         pressed_button: state.button_pressed,
-                        modifiers: state.modifiers.clone(),
+                        modifiers: state.modifiers,
                     }))
                 }
             }
@@ -522,8 +522,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                             state.button_pressed = Some(linux_button_to_gpui(button));
                             focused_window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
                                 button: linux_button_to_gpui(button),
-                                position: mouse_location.clone(),
-                                modifiers: state.modifiers.clone(),
+                                position: *mouse_location,
+                                modifiers: state.modifiers,
                                 click_count: 1,
                             }));
                         }
@@ -531,7 +531,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                             state.button_pressed = None;
                             focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
                                 button: linux_button_to_gpui(button),
-                                position: mouse_location.clone(),
+                                position: *mouse_location,
                                 modifiers: Modifiers {
                                     shift: false,
                                     control: false,
@@ -569,7 +569,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 {
                     let value = value * state.scroll_direction;
                     focused_window.handle_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                        position: mouse_location.clone(),
+                        position: *mouse_location,
                         delta: match axis {
                             wl_pointer::Axis::VerticalScroll => {
                                 ScrollDelta::Pixels(Point::new(Pixels(0.0), Pixels(value as f32)))
@@ -579,7 +579,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                             }
                             _ => unimplemented!(),
                         },
-                        modifiers: state.modifiers.clone(),
+                        modifiers: state.modifiers,
                         touch_phase: TouchPhase::Started,
                     }))
                 }
@@ -587,13 +587,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
             wl_pointer::Event::Leave { surface, .. } => {
                 let focused_window = &state.mouse_focused_window;
                 if let Some(focused_window) = focused_window {
-                    focused_window.handle_input(PlatformInput::MouseMove(
-                        MouseMoveEvent {
-                            position: Point::<Pixels>::default(),
-                            pressed_button: None,
-                            modifiers: Modifiers::default()
-                        }
-                    ));
+                    focused_window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
+                        position: Point::<Pixels>::default(),
+                        pressed_button: None,
+                        modifiers: Modifiers::default(),
+                    }));
                 }
                 state.mouse_focused_window = None;
                 state.mouse_location = None;
