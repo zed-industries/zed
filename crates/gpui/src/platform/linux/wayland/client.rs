@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -30,6 +29,8 @@ use crate::{
     KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformDisplay, PlatformInput, Point, ScrollWheelEvent, TouchPhase, WindowOptions,
 };
+
+const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
 
 pub(crate) struct WaylandClientState {
     compositor: Option<wl_compositor::WlCompositor>,
@@ -356,34 +357,39 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
         {
             let keymap = state.keymap.as_ref().unwrap();
             let keymap_state = state.keymap_state.as_ref().unwrap();
-            let key_string = keymap_state.key_get_utf8(Keycode::from(key + 8));
-            let key_name =
-                xkb::keysym_get_name(keymap.key_get_syms_by_level(Keycode::from(key + 8), 0, 0)[0])
-                    .to_lowercase();
+            let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
+            let key_sym = keymap.key_get_syms_by_level(Keycode::from(key + MIN_KEYCODE), 0, 0)[0];
 
             let key = if matches!(
-                key_name.as_str(),
-                "backspace" | "left" | "right" | "down" | "up" | "super_l" | "super_r"
+                key_sym,
+                xkb::Keysym::BackSpace
+                    | xkb::Keysym::Left
+                    | xkb::Keysym::Right
+                    | xkb::Keysym::Down
+                    | xkb::Keysym::Up
+                    | xkb::Keysym::Super_L
+                    | xkb::Keysym::Super_R
             ) {
-                key_name.clone()
+                xkb::keysym_get_name(key_sym.clone()).to_lowercase()
             } else {
-                key_string.clone()
+                key_utf8.clone()
             };
 
             match key_state {
                 wl_keyboard::KeyState::Pressed => {
-                    if key_name.starts_with("shift") {
+                    if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
                         state.modifiers.shift = true;
-                    } else if key_name.starts_with("control") {
+                    } else if key_sym == xkb::Keysym::Control_L || key_sym == xkb::Keysym::Control_R
+                    {
                         state.modifiers.control = true;
-                    } else if key_name.starts_with("alt") {
+                    } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R {
                         state.modifiers.alt = true;
                     } else if state.focused_window.is_some() {
                         state.focused_window.as_ref().unwrap().handle_input(KeyDown(
                             KeyDownEvent {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers.clone(),
-                                    key: key.clone(),
+                                    key: key,
                                     ime_key: None,
                                 },
                                 is_held: true,
@@ -392,15 +398,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                     }
                 }
                 wl_keyboard::KeyState::Released => {
-                    if key_name.starts_with("shift") {
+                    if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
                         state.modifiers.shift = false;
-                    } else if key_name.starts_with("control") {
+                    } else if key_sym == xkb::Keysym::Control_L || key_sym == xkb::Keysym::Control_R
+                    {
                         state.modifiers.control = false;
-                        state.modifiers.command = false;
-                    } else if key_name.starts_with("alt") {
+                    } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R {
                         state.modifiers.alt = false;
-                    } else if key_name.starts_with("super") {
-                        state.modifiers.command = false;
                     } else if state.focused_window.is_some() {
                         state
                             .focused_window
@@ -409,7 +413,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             .handle_input(PlatformInput::KeyUp(KeyUpEvent {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers.clone(),
-                                    key: key.clone(),
+                                    key: key,
                                     ime_key: None,
                                 },
                             }));
