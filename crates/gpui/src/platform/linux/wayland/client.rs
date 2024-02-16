@@ -1,6 +1,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use etagere::euclid::default;
 use parking_lot::Mutex;
 use wayland_backend::protocol::WEnum;
 use wayland_client::protocol::wl_callback::WlCallback;
@@ -584,8 +585,18 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 }
             }
             wl_pointer::Event::Leave { surface, .. } => {
-                state.mouse_location = None;
+                let focused_window = &state.mouse_focused_window;
+                if let Some(focused_window) = focused_window {
+                    focused_window.handle_input(PlatformInput::MouseMove(
+                        MouseMoveEvent {
+                            position: Point::<Pixels>::default(),
+                            pressed_button: None,
+                            modifiers: Modifiers::default()
+                        }
+                    ));
+                }
                 state.mouse_focused_window = None;
+                state.mouse_location = None;
             }
             _ => {}
         }
