@@ -238,7 +238,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         }),
                 )
                 .end_slot(
-                    IconButton::new("delete", IconName::Delete)
+                    IconButton::new("delete", IconName::Close)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click(cx.listener(move |this, _event, cx| {
