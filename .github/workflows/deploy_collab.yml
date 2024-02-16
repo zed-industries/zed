@@ -45,8 +45,18 @@ jobs:
           submodules: "recursive"
           fetch-depth: 0
 
+      - name: Install cargo nextest
+        shell: bash -euxo pipefail {0}
+        run: |
+          cargo install cargo-nextest
+
+      - name: Limit target directory size
+        shell: bash -euxo pipefail {0}
+        run: script/clear-target-dir-if-larger-than 100
+
       - name: Run tests
-        uses: ./.github/actions/run_tests
+        shell: bash -euxo pipefail {0}
+        run: cargo nextest run --package collab --no-fail-fast
 
   publish:
     name: Publish collab server image
@@ -90,22 +100,26 @@ jobs:
       - name: Sign into Kubernetes
         run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
 
-      - name: Determine namespace
+      - name: Start rollout
         run: |
           set -eu
           if [[ $GITHUB_REF_NAME = "collab-production" ]]; then
-            echo "Deploying collab:$GITHUB_SHA to production"
-            echo "KUBE_NAMESPACE=production" >> $GITHUB_ENV
+            export ZED_KUBE_NAMESPACE=production
           elif [[ $GITHUB_REF_NAME = "collab-staging" ]]; then
-            echo "Deploying collab:$GITHUB_SHA to staging"
-            echo "KUBE_NAMESPACE=staging" >> $GITHUB_ENV
+            export ZED_KUBE_NAMESPACE=staging
           else
             echo "cowardly refusing to deploy from an unknown branch"
             exit 1
           fi
 
-      - name: Start rollout
-        run: kubectl -n "$KUBE_NAMESPACE" set image deployment/collab collab=registry.digitalocean.com/zed/collab:${GITHUB_SHA}
+          echo "Deploying collab:$GITHUB_SHA to $ZED_KUBE_NAMESPACE"
 
-      - name: Wait for rollout to finish
-        run: kubectl -n "$KUBE_NAMESPACE" rollout status deployment/collab
+          source script/lib/deploy-helpers.sh
+          export_vars_for_environment $ZED_KUBE_NAMESPACE
+
+          export ZED_DO_CERTIFICATE_ID=$(doctl compute certificate list --format ID --no-header)
+          export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
+
+          envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
+          kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/collab --watch
+          echo "deployed collab.template.yml to ${ZED_KUBE_NAMESPACE}"

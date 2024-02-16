@@ -236,18 +236,24 @@ impl ExtensionsPage {
                         ),
                 )
                 .child(
-                    h_flex().justify_between().child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
-                    ),
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        )
+                        .child(
+                            Label::new(format!("Downloads: {}", extension.download_count))
+                                .size(LabelSize::Small),
+                        ),
                 )
                 .child(
                     h_flex()

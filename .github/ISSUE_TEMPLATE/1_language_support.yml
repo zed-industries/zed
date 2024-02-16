@@ -8,7 +8,7 @@ labels:
         "enhancement",
         "language",
         "unsupported language",
-        "potential plugin",
+        "potential extension",
     ]
 body:
     - type: checkboxes

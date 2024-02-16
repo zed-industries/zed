@@ -1,4 +1,7 @@
 contact_links:
+    - name: Theme Request
+      url: https://github.com/zed-industries/extensions/issues/new/choose
+      about: Request a theme in the extensions repository
     - name: Top-Ranking Issues
       url: https://github.com/zed-industries/zed/issues/5393
       about: See an overview of the most popular Zed issues

@@ -26,12 +26,12 @@ pub(crate) struct WaylandClientState {
     compositor: Option<wl_compositor::WlCompositor>,
     buffer: Option<wl_buffer::WlBuffer>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
-    windows: Vec<(xdg_surface::XdgSurface, Arc<WaylandWindowState>)>,
-    platform_inner: Arc<LinuxPlatformInner>,
+    windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
+    platform_inner: Rc<LinuxPlatformInner>,
 }
 
 pub(crate) struct WaylandClient {
-    platform_inner: Arc<LinuxPlatformInner>,
+    platform_inner: Rc<LinuxPlatformInner>,
     conn: Arc<Connection>,
     state: Mutex<WaylandClientState>,
     event_queue: Mutex<EventQueue<WaylandClientState>>,
@@ -39,16 +39,13 @@ pub(crate) struct WaylandClient {
 }
 
 impl WaylandClient {
-    pub(crate) fn new(
-        linux_platform_inner: Arc<LinuxPlatformInner>,
-        conn: Arc<Connection>,
-    ) -> Self {
+    pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>, conn: Arc<Connection>) -> Self {
         let state = WaylandClientState {
             compositor: None,
             buffer: None,
             wm_base: None,
             windows: Vec::new(),
-            platform_inner: Arc::clone(&linux_platform_inner),
+            platform_inner: Rc::clone(&linux_platform_inner),
         };
         let event_queue: EventQueue<WaylandClientState> = conn.new_event_queue();
         let qh = event_queue.handle();
@@ -109,14 +106,14 @@ impl Client for WaylandClient {
         wl_surface.frame(&self.qh, wl_surface.clone());
         wl_surface.commit();
 
-        let window_state: Arc<WaylandWindowState> = Arc::new(WaylandWindowState::new(
+        let window_state = Rc::new(WaylandWindowState::new(
             &self.conn,
             wl_surface.clone(),
             Arc::new(toplevel),
             options,
         ));
 
-        state.windows.push((xdg_surface, Arc::clone(&window_state)));
+        state.windows.push((xdg_surface, Rc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
     }
 }

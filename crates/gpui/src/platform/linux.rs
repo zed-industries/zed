@@ -1,6 +1,3 @@
-//todo!(linux): remove this
-#![allow(unused_variables)]
-
 mod blade_atlas;
 mod blade_belt;
 mod blade_renderer;

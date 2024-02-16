@@ -12,6 +12,7 @@ if [[ -n $apt ]]; then
     libfontconfig-dev
     vulkan-validationlayers*
     libwayland-dev
+    libxkbcommon-x11-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -26,6 +27,7 @@ if [[ -n $dnf ]]; then
     fontconfig-devel
     vulkan-validation-layers
     wayland-devel
+    libxkbcommon-x11-devel
   )
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
@@ -40,6 +42,7 @@ if [[ -n $pacman ]]; then
     fontconfig
     vulkan-validation-layers
     wayland
+    libxkbcommon-x11
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0

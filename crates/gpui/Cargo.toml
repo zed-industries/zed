@@ -60,7 +60,7 @@ slotmap = "1.0.6"
 smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
-taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023eaa518aa7b8a34c769bd1b" }
+taffy = "0.4"
 thiserror.workspace = true
 time.workspace = true
 tiny-skia = "0.5"
@@ -98,7 +98,8 @@ objc = "0.2"
 flume = "0.11"
 open = "5.0.1"
 rfd = { version = "0.13.0", default-features = false, features = ["xdg-portal", "async-std"] }
-xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr"] }
+# todo!(linux) - Technically do not use `randr`, but it doesn't compile otherwise
+xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr", "xkb"] }
 wayland-client= { version = "0.31.2" }
 wayland-protocols = { version = "0.31.2", features = ["client"] }
 wayland-backend = { version = "0.3.3", features = ["client_system"] }
@@ -108,3 +109,4 @@ blade-graphics = { git = "https://github.com/kvark/blade", rev = "c4f951a88b3457
 blade-macros = { git = "https://github.com/kvark/blade", rev = "c4f951a88b345724cb952e920ad30e39851f7760" }
 bytemuck = "1"
 cosmic-text = "0.10.0"
+xkbcommon = { version = "0.7", features = ["x11"] }

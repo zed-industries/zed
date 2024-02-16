@@ -118,30 +118,34 @@ impl ThemeRegistry {
                 AppearanceContent::Dark => PlayerColors::dark(),
             };
             if !user_theme.style.players.is_empty() {
-                player_colors = PlayerColors(
-                    user_theme
-                        .style
-                        .players
-                        .into_iter()
-                        .map(|player| PlayerColor {
-                            cursor: player
-                                .cursor
-                                .as_ref()
-                                .and_then(|color| try_parse_color(&color).ok())
-                                .unwrap_or_default(),
-                            background: player
-                                .background
-                                .as_ref()
-                                .and_then(|color| try_parse_color(&color).ok())
-                                .unwrap_or_default(),
-                            selection: player
-                                .selection
-                                .as_ref()
-                                .and_then(|color| try_parse_color(&color).ok())
-                                .unwrap_or_default(),
-                        })
-                        .collect(),
-                );
+                for (idx, player) in user_theme.style.players.clone().into_iter().enumerate() {
+                    let cursor = player
+                        .cursor
+                        .as_ref()
+                        .and_then(|color| try_parse_color(&color).ok());
+                    let background = player
+                        .background
+                        .as_ref()
+                        .and_then(|color| try_parse_color(&color).ok());
+                    let selection = player
+                        .selection
+                        .as_ref()
+                        .and_then(|color| try_parse_color(&color).ok());
+
+                    if let Some(player_color) = player_colors.0.get_mut(idx) {
+                        *player_color = PlayerColor {
+                            cursor: cursor.unwrap_or(player_color.cursor),
+                            background: background.unwrap_or(player_color.background),
+                            selection: selection.unwrap_or(player_color.selection),
+                        };
+                    } else {
+                        player_colors.0.push(PlayerColor {
+                            cursor: cursor.unwrap_or_default(),
+                            background: background.unwrap_or_default(),
+                            selection: selection.unwrap_or_default(),
+                        });
+                    }
+                }
             }
 
             let mut syntax_colors = match user_theme.appearance {

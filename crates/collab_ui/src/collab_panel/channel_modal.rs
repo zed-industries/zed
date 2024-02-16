@@ -11,7 +11,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Avatar, Checkbox, ContextMenu, ListItem, ListItemSpacing};
+use ui::{prelude::*, Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
 use workspace::{notifications::DetachAndPromptErr, ModalView};
 
@@ -177,22 +177,16 @@ impl Render for ChannelModal {
                             .h(rems(22. / 16.))
                             .justify_between()
                             .line_height(rems(1.25))
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Checkbox::new(
-                                            "is-public",
-                                            if visibility == ChannelVisibility::Public {
-                                                ui::Selection::Selected
-                                            } else {
-                                                ui::Selection::Unselected
-                                            },
-                                        )
-                                        .on_click(cx.listener(Self::set_channel_visibility)),
-                                    )
-                                    .child(Label::new("Public").size(LabelSize::Small)),
-                            )
+                            .child(CheckboxWithLabel::new(
+                                "is-public",
+                                Label::new("Public").size(LabelSize::Small),
+                                if visibility == ChannelVisibility::Public {
+                                    ui::Selection::Selected
+                                } else {
+                                    ui::Selection::Unselected
+                                },
+                                cx.listener(Self::set_channel_visibility),
+                            ))
                             .children(
                                 Some(
                                     Button::new("copy-link", "Copy Link")

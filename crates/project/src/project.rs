@@ -4150,10 +4150,11 @@ impl Project {
                     let buffer = buffer_handle.read(cx);
                     let file = File::from_dyn(buffer.file())?;
                     let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
-                    let server = self
+                    let (adapter, server) = self
                         .primary_language_server_for_buffer(buffer, cx)
-                        .map(|s| s.1.clone());
-                    Some((buffer_handle, buffer_abs_path, server))
+                        .map(|(a, s)| (Some(a.clone()), Some(s.clone())))
+                        .unwrap_or((None, None));
+                    Some((buffer_handle, buffer_abs_path, adapter, server))
                 })
                 .collect::<Vec<_>>();
 
@@ -4161,7 +4162,7 @@ impl Project {
                 // Do not allow multiple concurrent formatting requests for the
                 // same buffer.
                 project.update(&mut cx, |this, cx| {
-                    buffers_with_paths_and_servers.retain(|(buffer, _, _)| {
+                    buffers_with_paths_and_servers.retain(|(buffer, _, _, _)| {
                         this.buffers_being_formatted
                             .insert(buffer.read(cx).remote_id())
                     });
@@ -4173,7 +4174,7 @@ impl Project {
                     let buffers = &buffers_with_paths_and_servers;
                     move || {
                         this.update(&mut cx, |this, cx| {
-                            for (buffer, _, _) in buffers {
+                            for (buffer, _, _, _) in buffers {
                                 this.buffers_being_formatted
                                     .remove(&buffer.read(cx).remote_id());
                             }
@@ -4183,7 +4184,9 @@ impl Project {
                 });
 
                 let mut project_transaction = ProjectTransaction::default();
-                for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
+                for (buffer, buffer_abs_path, lsp_adapter, language_server) in
+                    &buffers_with_paths_and_servers
+                {
                     let settings = buffer.update(&mut cx, |buffer, cx| {
                         language_settings(buffer.language(), buffer.file(), cx).clone()
                     })?;
@@ -4213,6 +4216,88 @@ impl Project {
                         }
                         buffer.end_transaction(cx)
                     })?;
+
+                    if let (Some(lsp_adapter), Some(language_server)) =
+                        (lsp_adapter, language_server)
+                    {
+                        // Apply the code actions on
+                        let code_actions: Vec<lsp::CodeActionKind> = settings
+                            .code_actions_on_format
+                            .iter()
+                            .flat_map(|(kind, enabled)| {
+                                if *enabled {
+                                    Some(kind.clone().into())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+
+                        if !code_actions.is_empty()
+                            && !(trigger == FormatTrigger::Save
+                                && settings.format_on_save == FormatOnSave::Off)
+                        {
+                            let actions = project
+                                .update(&mut cx, |this, cx| {
+                                    this.request_lsp(
+                                        buffer.clone(),
+                                        LanguageServerToQuery::Other(language_server.server_id()),
+                                        GetCodeActions {
+                                            range: text::Anchor::MIN..text::Anchor::MAX,
+                                            kinds: Some(code_actions),
+                                        },
+                                        cx,
+                                    )
+                                })?
+                                .await?;
+
+                            for action in actions {
+                                if let Some(edit) = action.lsp_action.edit {
+                                    if edit.changes.is_none() && edit.document_changes.is_none() {
+                                        continue;
+                                    }
+                                    let new = Self::deserialize_workspace_edit(
+                                        project
+                                            .upgrade()
+                                            .ok_or_else(|| anyhow!("project dropped"))?,
+                                        edit,
+                                        push_to_history,
+                                        lsp_adapter.clone(),
+                                        language_server.clone(),
+                                        &mut cx,
+                                    )
+                                    .await?;
+                                    project_transaction.0.extend(new.0);
+                                }
+
+                                if let Some(command) = action.lsp_action.command {
+                                    project.update(&mut cx, |this, _| {
+                                        this.last_workspace_edits_by_language_server
+                                            .remove(&language_server.server_id());
+                                    })?;
+
+                                    language_server
+                                        .request::<lsp::request::ExecuteCommand>(
+                                            lsp::ExecuteCommandParams {
+                                                command: command.command,
+                                                arguments: command.arguments.unwrap_or_default(),
+                                                ..Default::default()
+                                            },
+                                        )
+                                        .await?;
+
+                                    project.update(&mut cx, |this, _| {
+                                        project_transaction.0.extend(
+                                            this.last_workspace_edits_by_language_server
+                                                .remove(&language_server.server_id())
+                                                .unwrap_or_default()
+                                                .0,
+                                        )
+                                    })?;
+                                }
+                            }
+                        }
+                    }
 
                     // Apply language-specific formatting using either a language server
                     // or external command.
@@ -4323,6 +4408,8 @@ impl Project {
 
                             if let Some(transaction_id) = whitespace_transaction_id {
                                 b.group_until_transaction(transaction_id);
+                            } else if let Some(transaction) = project_transaction.0.get(buffer) {
+                                b.group_until_transaction(transaction.id)
                             }
                         }
 
@@ -5162,7 +5249,7 @@ impl Project {
         self.request_lsp(
             buffer_handle.clone(),
             LanguageServerToQuery::Primary,
-            GetCodeActions { range },
+            GetCodeActions { range, kinds: None },
             cx,
         )
     }
@@ -5176,6 +5263,103 @@ impl Project {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.code_actions_impl(buffer_handle, range, cx)
+    }
+
+    pub fn apply_code_actions_on_save(
+        &self,
+        buffers: HashSet<Model<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ProjectTransaction>> {
+        if !self.is_local() {
+            return Task::ready(Ok(Default::default()));
+        }
+
+        let buffers_with_adapters_and_servers = buffers
+            .into_iter()
+            .filter_map(|buffer_handle| {
+                let buffer = buffer_handle.read(cx);
+                self.primary_language_server_for_buffer(buffer, cx)
+                    .map(|(a, s)| (buffer_handle, a.clone(), s.clone()))
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(move |this, mut cx| async move {
+            for (buffer_handle, lsp_adapter, lang_server) in buffers_with_adapters_and_servers {
+                let actions = this
+                    .update(&mut cx, |this, cx| {
+                        let buffer = buffer_handle.read(cx);
+                        let kinds: Vec<lsp::CodeActionKind> =
+                            language_settings(buffer.language(), buffer.file(), cx)
+                                .code_actions_on_format
+                                .iter()
+                                .flat_map(|(kind, enabled)| {
+                                    if *enabled {
+                                        Some(kind.clone().into())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                        if kinds.is_empty() {
+                            return Task::ready(Ok(vec![]));
+                        }
+
+                        this.request_lsp(
+                            buffer_handle.clone(),
+                            LanguageServerToQuery::Other(lang_server.server_id()),
+                            GetCodeActions {
+                                range: text::Anchor::MIN..text::Anchor::MAX,
+                                kinds: Some(kinds),
+                            },
+                            cx,
+                        )
+                    })?
+                    .await?;
+
+                for action in actions {
+                    if let Some(edit) = action.lsp_action.edit {
+                        if edit.changes.is_some() || edit.document_changes.is_some() {
+                            return Self::deserialize_workspace_edit(
+                                this.upgrade().ok_or_else(|| anyhow!("no app present"))?,
+                                edit,
+                                true,
+                                lsp_adapter.clone(),
+                                lang_server.clone(),
+                                &mut cx,
+                            )
+                            .await;
+                        }
+                    }
+
+                    if let Some(command) = action.lsp_action.command {
+                        this.update(&mut cx, |this, _| {
+                            this.last_workspace_edits_by_language_server
+                                .remove(&lang_server.server_id());
+                        })?;
+
+                        let result = lang_server
+                            .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
+                                command: command.command,
+                                arguments: command.arguments.unwrap_or_default(),
+                                ..Default::default()
+                            })
+                            .await;
+
+                        if let Err(err) = result {
+                            // TODO: LSP ERROR
+                            return Err(err);
+                        }
+
+                        return Ok(this.update(&mut cx, |this, _| {
+                            this.last_workspace_edits_by_language_server
+                                .remove(&lang_server.server_id())
+                                .unwrap_or_default()
+                        })?);
+                    }
+                }
+            }
+            Ok(ProjectTransaction::default())
+        })
     }
 
     pub fn apply_code_action(

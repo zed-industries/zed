@@ -1,8 +1,8 @@
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use parking_lot::Mutex;
-use xcb::{x, Xid};
+use xcb::{x, Xid as _};
+use xkbcommon::xkb;
 
 use collections::HashMap;
 
@@ -10,14 +10,17 @@ use crate::platform::linux::client::Client;
 use crate::platform::{
     LinuxPlatformInner, PlatformWindow, X11Display, X11Window, X11WindowState, XcbAtoms,
 };
-use crate::{AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, Point, Size, WindowOptions};
+use crate::{
+    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, Size, WindowOptions,
+};
 
 pub(crate) struct X11ClientState {
     pub(crate) windows: HashMap<x::Window, Rc<X11WindowState>>,
+    xkb: xkbcommon::xkb::State,
 }
 
 pub(crate) struct X11Client {
-    platform_inner: Arc<LinuxPlatformInner>,
+    platform_inner: Rc<LinuxPlatformInner>,
     xcb_connection: Arc<xcb::Connection>,
     x_root_index: i32,
     atoms: XcbAtoms,
@@ -26,11 +29,22 @@ pub(crate) struct X11Client {
 
 impl X11Client {
     pub(crate) fn new(
-        inner: Arc<LinuxPlatformInner>,
+        inner: Rc<LinuxPlatformInner>,
         xcb_connection: Arc<xcb::Connection>,
         x_root_index: i32,
         atoms: XcbAtoms,
     ) -> Self {
+        let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let xkb_device_id = xkb::x11::get_core_keyboard_device_id(&xcb_connection);
+        let xkb_keymap = xkb::x11::keymap_new_from_device(
+            &xkb_context,
+            &xcb_connection,
+            xkb_device_id,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        );
+        let xkb_state =
+            xkb::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id);
+
         Self {
             platform_inner: inner,
             xcb_connection,
@@ -38,6 +52,7 @@ impl X11Client {
             atoms,
             state: Mutex::new(X11ClientState {
                 windows: HashMap::default(),
+                xkb: xkb_state,
             }),
         }
     }
@@ -91,6 +106,97 @@ impl Client for X11Client {
                     window.request_refresh();
                 }
                 xcb::Event::Present(xcb::present::Event::IdleNotify(_ev)) => {}
+                xcb::Event::X(x::Event::KeyPress(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    let key = {
+                        let code = ev.detail().into();
+                        let mut state = self.state.lock();
+                        let key = state.xkb.key_get_utf8(code);
+                        state.xkb.update_key(code, xkb::KeyDirection::Down);
+                        key
+                    };
+                    window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
+                        keystroke: crate::Keystroke {
+                            modifiers,
+                            key,
+                            ime_key: None,
+                        },
+                        is_held: false,
+                    }));
+                }
+                xcb::Event::X(x::Event::KeyRelease(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    let key = {
+                        let code = ev.detail().into();
+                        let mut state = self.state.lock();
+                        let key = state.xkb.key_get_utf8(code);
+                        state.xkb.update_key(code, xkb::KeyDirection::Up);
+                        key
+                    };
+                    window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent {
+                        keystroke: crate::Keystroke {
+                            modifiers,
+                            key,
+                            ime_key: None,
+                        },
+                    }));
+                }
+                xcb::Event::X(x::Event::ButtonPress(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    let position =
+                        Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
+                    if let Some(button) = super::button_of_key(ev.detail()) {
+                        window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count: 1,
+                        }));
+                    } else {
+                        log::warn!("Unknown button press: {ev:?}");
+                    }
+                }
+                xcb::Event::X(x::Event::ButtonRelease(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    let position =
+                        Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
+                    if let Some(button) = super::button_of_key(ev.detail()) {
+                        window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count: 1,
+                        }));
+                    }
+                }
+                xcb::Event::X(x::Event::MotionNotify(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let pressed_button = super::button_from_state(ev.state());
+                    let position =
+                        Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
+                        pressed_button,
+                        position,
+                        modifiers,
+                    }));
+                }
+                xcb::Event::X(x::Event::LeaveNotify(ev)) => {
+                    let window = self.get_window(ev.event());
+                    let pressed_button = super::button_from_state(ev.state());
+                    let position =
+                        Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
+                    let modifiers = super::modifiers_from_state(ev.state());
+                    window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
+                        pressed_button,
+                        position,
+                        modifiers,
+                    }));
+                }
                 _ => {}
             }
 

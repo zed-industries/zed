@@ -181,7 +181,7 @@ impl WaylandWindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct WaylandWindow(pub(crate) Arc<WaylandWindowState>);
+pub(crate) struct WaylandWindow(pub(crate) Rc<WaylandWindowState>);
 
 impl HasWindowHandle for WaylandWindow {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
@@ -212,7 +212,7 @@ impl PlatformWindow for WaylandWindow {
 
     // todo!(linux)
     fn scale_factor(&self) -> f32 {
-        return 1f32;
+        1f32
     }
 
     //todo!(linux)

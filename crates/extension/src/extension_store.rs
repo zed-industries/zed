@@ -42,6 +42,7 @@ pub struct Extension {
     pub description: Option<String>,
     pub authors: Vec<String>,
     pub repository: String,
+    pub download_count: usize,
 }
 
 #[derive(Clone)]
