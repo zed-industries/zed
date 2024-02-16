@@ -297,8 +297,7 @@ pub(crate) trait PlatformAtlas: Send + Sync {
     ) -> Result<AtlasTile>;
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Zeroable)]
 #[repr(C)]
 pub(crate) struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
@@ -307,8 +306,7 @@ pub(crate) struct AtlasTile {
     pub(crate) bounds: Bounds<DevicePixels>,
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Zeroable)]
 #[repr(C)]
 pub(crate) struct AtlasTextureId {
     // We use u32 instead of usize for Metal Shader Language compatibility
@@ -324,11 +322,9 @@ pub(crate) enum AtlasTextureKind {
     Path = 2,
 }
 
-#[cfg(target_os = "linux")]
 unsafe impl Zeroable for AtlasTextureKind {}
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Zeroable)]
 #[repr(C)]
 pub(crate) struct TileId(pub(crate) u32);
 

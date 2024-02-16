@@ -71,8 +71,7 @@ struct ShaderPolySpritesData {
     b_poly_sprites: gpu::BufferPiece,
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Zeroable)]
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,

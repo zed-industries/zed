@@ -75,10 +75,7 @@ impl BladeBelt {
         chunk.into()
     }
 
-    pub fn alloc_data<
-        #[cfg(target_os = "linux")] T: bytemuck::Zeroable,
-        #[cfg(not(target_os = "linux"))] T,
-    >(
+    pub fn alloc_data<T: bytemuck::Zeroable>(
         &mut self,
         data: &[T],
         gpu: &gpu::Context,

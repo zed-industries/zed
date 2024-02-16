@@ -12,8 +12,7 @@ pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 pub(crate) type LayerId = u32;
 pub(crate) type DrawOrder = u32;
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash, Zeroable)]
 #[repr(C)]
 pub(crate) struct ViewId {
     low_bits: u32,
@@ -503,8 +502,7 @@ pub(crate) enum PrimitiveBatch<'a> {
     Surfaces(&'a [Surface]),
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Default, Debug, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Clone, Eq, PartialEq, Zeroable)]
 #[repr(C)]
 pub(crate) struct Quad {
     pub view_id: ViewId,
@@ -536,8 +534,7 @@ impl From<Quad> for Primitive {
     }
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Zeroable)]
 #[repr(C)]
 pub(crate) struct Underline {
     pub view_id: ViewId,
@@ -568,8 +565,7 @@ impl From<Underline> for Primitive {
     }
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Zeroable)]
 #[repr(C)]
 pub(crate) struct Shadow {
     pub view_id: ViewId,
@@ -601,8 +597,7 @@ impl From<Shadow> for Primitive {
     }
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Zeroable)]
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
     pub view_id: ViewId,
@@ -635,8 +630,7 @@ impl From<MonochromeSprite> for Primitive {
     }
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Zeroable)]
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
     pub view_id: ViewId,
@@ -854,8 +848,7 @@ impl From<Path<ScaledPixels>> for Primitive {
     }
 }
 
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroable)]
 #[repr(C)]
 pub(crate) struct PathVertex<P: Clone + Default + Debug> {
     pub(crate) xy_position: Point<P>,

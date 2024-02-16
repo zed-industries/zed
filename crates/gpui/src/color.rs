@@ -175,8 +175,7 @@ impl TryFrom<&'_ str> for Rgba {
 }
 
 /// An HSLA color
-#[cfg_attr(target_os = "linux", derive(Zeroable))]
-#[derive(Default, Copy, Clone, Debug)]
+#[derive(Default, Copy, Clone, Debug, Zeroable)]
 #[repr(C)]
 pub struct Hsla {
     /// Hue, in a range from 0 to 1
