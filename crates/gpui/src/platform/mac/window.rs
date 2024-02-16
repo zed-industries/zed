@@ -1,4 +1,4 @@
-use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, NSRange, renderer};
+use super::{global_bounds_from_ns_rect, ns_string, renderer, MacDisplay, NSRange};
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
     Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
@@ -477,7 +477,6 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
@@ -556,7 +555,10 @@ impl MacWindow {
                     WindowBounds::Fixed(bounds) => global_bounds_to_ns_rect(bounds),
                 };
                 let scale = get_scale_factor(native_window);
-                size(bounds.size.width as f32 * scale, bounds.size.height as f32 * scale)
+                size(
+                    bounds.size.width as f32 * scale,
+                    bounds.size.height as f32 * scale,
+                )
             };
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -565,7 +567,12 @@ impl MacWindow {
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
                 display_link: None,
-                renderer: renderer::new_renderer(renderer_context, native_window as *mut _, native_view as *mut _, window_size),
+                renderer: renderer::new_renderer(
+                    renderer_context,
+                    native_window as *mut _,
+                    native_view as *mut _,
+                    window_size,
+                ),
                 kind: options.kind,
                 request_frame_callback: None,
                 event_callback: None,
@@ -1062,10 +1069,10 @@ impl PlatformWindow for MacWindow {
                 );
                 let _: () = msg_send![layer, setDeveloperHUDProperties: hud_properties];
             } else {
-                let _: () = msg_send![layer, setDeveloperHUDProperties: NSDictionary::dictionary(nil)];
+                let _: () =
+                    msg_send![layer, setDeveloperHUDProperties: NSDictionary::dictionary(nil)];
             }
         }
-
     }
 }
 

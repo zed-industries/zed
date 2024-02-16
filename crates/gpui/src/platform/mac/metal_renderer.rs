@@ -1,13 +1,13 @@
-use crate::{
-    platform::mac::ns_string, point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds,
-    ContentMask, DevicePixels, Hsla, MonochromeSprite, Path, PathId, PathVertex,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
-};
 use super::metal_atlas::MetalAtlas;
+use crate::{
+    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
+    Hsla, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Surface, Underline,
+};
 use block::ConcreteBlock;
 use cocoa::{
-    base::{nil, NO, YES},
-    foundation::{NSDictionary, NSUInteger},
+    base::{NO, YES},
+    foundation::NSUInteger,
     quartzcore::AutoresizingMask,
 };
 use collections::HashMap;
