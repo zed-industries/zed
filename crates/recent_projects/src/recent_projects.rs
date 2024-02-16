@@ -30,7 +30,14 @@ impl ModalView for RecentProjects {}
 
 impl RecentProjects {
     fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.new_view(|cx| Picker::list(delegate, cx));
+        let picker = cx.new_view(|cx| {
+            // We want to use a list when we render paths, because the items can have different heights (multiple paths).
+            if delegate.render_paths {
+                Picker::list(delegate, cx)
+            } else {
+                Picker::uniform_list(delegate, cx)
+            }
+        });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
@@ -82,7 +89,7 @@ impl RecentProjects {
                 workspace.toggle_modal(cx, |cx| {
                     let delegate = RecentProjectsDelegate::new(weak_workspace, true);
 
-                    let modal = RecentProjects::new(delegate, 34., cx);
+                    let modal = Self::new(delegate, 34., cx);
                     modal
                 });
             })?;
