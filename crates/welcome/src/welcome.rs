@@ -10,7 +10,7 @@ use gpui::{
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, Checkbox};
+use ui::{prelude::*, CheckboxWithLabel};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -144,7 +144,7 @@ impl Render for WelcomePage {
                             .border_1()
                             .border_color(cx.theme().colors().border)
                             .rounded_md()
-                            .child(LabelledCheckbox::new(
+                            .child(CheckboxWithLabel::new(
                                 "enable-vim",
                                 Label::new("Enable vim mode"),
                                 if VimModeSetting::get_global(cx).0 {
@@ -162,7 +162,7 @@ impl Render for WelcomePage {
                                     );
                                 }),
                             ))
-                            .child(LabelledCheckbox::new(
+                            .child(CheckboxWithLabel::new(
                                 "enable-telemetry",
                                 Label::new("Send anonymous usage data"),
                                 if TelemetrySettings::get_global(cx).metrics {
@@ -188,7 +188,7 @@ impl Render for WelcomePage {
                                     });
                                 }),
                             ))
-                            .child(LabelledCheckbox::new(
+                            .child(CheckboxWithLabel::new(
                                 "enable-crash",
                                 Label::new("Send crash reports"),
                                 if TelemetrySettings::get_global(cx).diagnostics {
@@ -306,50 +306,5 @@ impl Item for WelcomePage {
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
-    }
-}
-
-#[derive(IntoElement)]
-struct LabelledCheckbox {
-    id: ElementId,
-    label: Label,
-    checked: Selection,
-    on_click: Arc<dyn Fn(&Selection, &mut WindowContext) + 'static>,
-}
-
-impl LabelledCheckbox {
-    pub fn new(
-        id: impl Into<ElementId>,
-        label: Label,
-        checked: Selection,
-        on_click: impl Fn(&Selection, &mut WindowContext) + 'static,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label,
-            checked,
-            on_click: Arc::new(on_click),
-        }
-    }
-}
-
-impl RenderOnce for LabelledCheckbox {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        h_flex()
-            .gap_2()
-            .child(Checkbox::new(self.id.clone(), self.checked).on_click({
-                let on_click = self.on_click.clone();
-                move |checked, cx| {
-                    (on_click)(checked, cx);
-                }
-            }))
-            .child(
-                div()
-                    .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click(move |_event, cx| {
-                        (self.on_click)(&self.checked.inverse(), cx);
-                    })
-                    .child(self.label),
-            )
     }
 }
