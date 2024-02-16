@@ -1,8 +1,4 @@
-#[cfg(not(feature = "macos-blade"))]
-use super::MetalRenderer;
-use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, NSRange};
-#[cfg(feature = "macos-blade")]
-use crate::BladeRenderer;
+use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, NSRange, renderer};
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
     Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
@@ -11,8 +7,6 @@ use crate::{
     PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
     WindowOptions,
 };
-#[cfg(feature = "macos-blade")]
-use blade_graphics as gpu;
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -327,10 +321,7 @@ struct MacWindowState {
     native_window: id,
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
-    #[cfg(not(feature = "macos-blade"))]
-    renderer: MetalRenderer,
-    #[cfg(feature = "macos-blade")]
-    renderer: BladeRenderer,
+    renderer: renderer::Renderer,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
@@ -459,24 +450,10 @@ impl MacWindowState {
     }
 
     fn update_drawable_size(&mut self, drawable_size: NSSize) {
-        #[cfg(not(feature = "macos-blade"))]
-        unsafe {
-            let _: () = msg_send![
-                self.renderer.layer(),
-                setDrawableSize: drawable_size
-            ];
-        }
-        #[cfg(feature = "macos-blade")]
-        {
-            let gpu_size = gpu::Extent {
-                width: drawable_size.width as u32,
-                height: drawable_size.height as u32,
-                depth: 1,
-            };
-            if gpu_size != self.renderer.viewport_size() {
-                self.renderer.resize(gpu_size);
-            }
-        }
+        self.renderer.update_drawable_size(Size {
+            width: drawable_size.width,
+            height: drawable_size.height,
+        })
     }
 
     fn titlebar_height(&self) -> Pixels {
@@ -500,27 +477,6 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-#[cfg(feature = "macos-blade")]
-struct RawWindow {
-    window: *mut c_void,
-    view: *mut c_void,
-}
-#[cfg(feature = "macos-blade")]
-unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
-    fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
-        let mut wh = blade_rwh::AppKitWindowHandle::empty();
-        wh.ns_window = self.window;
-        wh.ns_view = self.view;
-        wh.into()
-    }
-}
-#[cfg(feature = "macos-blade")]
-unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
-    fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
-        let dh = blade_rwh::AppKitDisplayHandle::empty();
-        dh.into()
-    }
-}
 
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
@@ -529,7 +485,7 @@ impl MacWindow {
         handle: AnyWindowHandle,
         options: WindowOptions,
         executor: ForegroundExecutor,
-        #[cfg(not(feature = "macos-blade"))] instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
+        renderer_context: renderer::Context,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -592,22 +548,7 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            #[cfg(feature = "macos-blade")]
-            let gpu = Arc::new(
-                gpu::Context::init_windowed(
-                    &RawWindow {
-                        window: native_window as *mut _,
-                        view: native_view as *mut _,
-                    },
-                    gpu::ContextDesc {
-                        validation: cfg!(debug_assertions),
-                        capture: false,
-                    },
-                )
-                .unwrap(),
-            );
-            #[cfg(feature = "macos-blade")]
-            let gpu_size = {
+            let window_size = {
                 let bounds = match options.bounds {
                     WindowBounds::Fullscreen | WindowBounds::Maximized => {
                         native_window.screen().visibleFrame()
@@ -615,11 +556,7 @@ impl MacWindow {
                     WindowBounds::Fixed(bounds) => global_bounds_to_ns_rect(bounds),
                 };
                 let scale = get_scale_factor(native_window);
-                gpu::Extent {
-                    width: (bounds.size.width as f32 * scale) as u32,
-                    height: (bounds.size.height as f32 * scale) as u32,
-                    depth: 1,
-                }
+                size(bounds.size.width as f32 * scale, bounds.size.height as f32 * scale)
             };
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -628,10 +565,7 @@ impl MacWindow {
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
                 display_link: None,
-                #[cfg(not(feature = "macos-blade"))]
-                renderer: MetalRenderer::new(instance_buffer_pool),
-                #[cfg(feature = "macos-blade")]
-                renderer: BladeRenderer::new(gpu, gpu_size),
+                renderer: renderer::new_renderer(renderer_context, native_window as *mut _, native_view as *mut _, window_size),
                 kind: options.kind,
                 request_frame_callback: None,
                 event_callback: None,
@@ -665,23 +599,6 @@ impl MacWindow {
                 WINDOW_STATE_IVAR,
                 Arc::into_raw(window.0.clone()) as *const c_void,
             );
-
-            #[cfg(feature = "macos-blade")]
-            if false {
-                //TODO
-                // Hook up resize notification
-                let notification_center: id =
-                    msg_send![class!(NSNotificationCenter), defaultCenter];
-                let frame_did_change_notification_name =
-                    NSString::alloc(nil).init_str("NSViewFrameDidChangeNotification");
-                let _: () = msg_send![
-                    notification_center,
-                    addObserver: native_view
-                    selector: sel!(frameDidChange:)
-                    name: &*frame_did_change_notification_name
-                    object: native_view
-                ];
-            }
 
             if let Some(title) = options
                 .titlebar
@@ -805,7 +722,6 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
-        #[cfg(feature = "macos-blade")]
         this.renderer.destroy();
         let window = this.native_window;
         this.display_link.take();
@@ -1134,10 +1050,22 @@ impl PlatformWindow for MacWindow {
     /// Enables or disables the Metal HUD for debugging purposes. Note that this only works
     /// when the app is bundled and it has the `MetalHudEnabled` key set to true in Info.plist.
     fn set_graphics_profiler_enabled(&self, enabled: bool) {
-        #[cfg(not(feature = "macos-blade"))]
-        self.0.lock().renderer.set_hud_enabled(enabled);
-        #[cfg(feature = "macos-blade")]
-        let _ = enabled;
+        let this_lock = self.0.lock();
+        let layer = this_lock.renderer.layer();
+
+        unsafe {
+            if enabled {
+                let hud_properties = NSDictionary::dictionaryWithObject_forKey_(
+                    nil,
+                    ns_string("default"),
+                    ns_string("mode"),
+                );
+                let _: () = msg_send![layer, setDeveloperHUDProperties: hud_properties];
+            } else {
+                let _: () = msg_send![layer, setDeveloperHUDProperties: NSDictionary::dictionary(nil)];
+            }
+        }
+
     }
 }
 
@@ -1591,14 +1519,9 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 }
 
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
-    #[cfg(not(feature = "macos-blade"))]
-    use foreign_types::ForeignTypeRef as _;
-    #[cfg(feature = "macos-blade")]
-    use metal::foreign_types::ForeignType as _;
-
     let window_state = unsafe { get_window_state(this) };
     let window_state = window_state.as_ref().lock();
-    window_state.renderer.layer().as_ptr() as id
+    window_state.renderer.layer_ptr() as id
 }
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {

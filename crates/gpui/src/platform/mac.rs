@@ -4,10 +4,18 @@ mod dispatcher;
 mod display;
 mod display_link;
 mod events;
+
 #[cfg(not(feature = "macos-blade"))]
 mod metal_atlas;
 #[cfg(not(feature = "macos-blade"))]
-mod metal_renderer;
+pub mod metal_renderer;
+
+#[cfg(not(feature = "macos-blade"))]
+use metal_renderer as renderer;
+
+#[cfg(feature = "macos-blade")]
+use crate::platform::blade as renderer;
+
 mod open_type;
 mod platform;
 mod text_system;
@@ -19,16 +27,13 @@ use cocoa::{
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger},
 };
-#[cfg(not(feature = "macos-blade"))]
-use metal_renderer::*;
+
 use objc::runtime::{BOOL, NO, YES};
 use std::ops::Range;
 
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
-#[cfg(not(feature = "macos-blade"))]
-pub(crate) use metal_atlas::*;
 pub(crate) use platform::*;
 pub(crate) use text_system::*;
 pub(crate) use window::*;
