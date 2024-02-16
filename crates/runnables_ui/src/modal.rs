@@ -32,8 +32,8 @@ impl RunnablesModalDelegate {
         Self {
             inventory,
             workspace,
-            candidates: vec![],
-            matches: vec![],
+            candidates: Vec::new(),
+            matches: Vec::new(),
             selected_index: 0,
             placeholder_text: Arc::from("Select runnable..."),
         }
@@ -81,6 +81,7 @@ impl RunnablesModalDelegate {
         Ok(cwd.map(|path| path.to_path_buf()))
     }
 }
+
 pub(crate) struct RunnablesModal {
     picker: View<Picker<RunnablesModalDelegate>>,
     _subscription: Subscription,
@@ -231,6 +232,7 @@ impl PickerDelegate for RunnablesModalDelegate {
                 });
             })
             .ok();
+        cx.emit(DismissEvent);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {

@@ -302,11 +302,12 @@ impl TerminalPanel {
             return;
         };
 
-        // TODO kb not working always: try `cargo check`, `cargo clean` and `cargo check` again
         if action.reuse_terminal {
-            if let Some(existing_terminal_view) = terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.find_terminal_for_external_task(action.task_id, cx)
-            }) {
+            if let Some((item_index, existing_terminal_view)) =
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.find_terminal_for_external_task(action.task_id, cx)
+                })
+            {
                 let window = cx.window_handle();
                 if let Some(new_terminal) = workspace.project().update(cx, |project, cx| {
                     project
@@ -315,7 +316,9 @@ impl TerminalPanel {
                 }) {
                     existing_terminal_view.update(cx, |existing_terminal_view, cx| {
                         existing_terminal_view.set_terminal(new_terminal, cx);
-                        cx.notify();
+                    });
+                    terminal_panel.update(cx, |terminal_panel, cx| {
+                        terminal_panel.activate_terminal_view(item_index, cx)
                     });
                 }
                 return;
@@ -345,19 +348,26 @@ impl TerminalPanel {
         &self,
         task_id: EntityId,
         cx: &mut ViewContext<Self>,
-    ) -> Option<View<TerminalView>> {
+    ) -> Option<(usize, View<TerminalView>)> {
         self.pane
             .read(cx)
             .items()
-            .filter_map(|item| item.act_as::<TerminalView>(cx))
-            .find_map(|terminal_view| {
+            .enumerate()
+            .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
+            .find_map(|(index, terminal_view)| {
                 let task_state = terminal_view.read(cx).terminal().read(cx).external_task()?;
                 if task_state.task_id == task_id {
-                    Some(terminal_view)
+                    Some((index, terminal_view))
                 } else {
                     None
                 }
             })
+    }
+
+    fn activate_terminal_view(&self, item_index: usize, cx: &mut ViewContext<Self>) {
+        self.pane.update(cx, |pane, cx| {
+            pane.activate_item(item_index, true, true, cx)
+        })
     }
 
     fn add_terminal(
