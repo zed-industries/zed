@@ -90,8 +90,8 @@ pub enum CompletionProvider {
 impl gpui::Global for CompletionProvider {}
 
 impl CompletionProvider {
-    pub fn global<'a>(cx: &'a mut AppContext) -> &'a mut Self {
-        cx.global_mut::<Self>()
+    pub fn global<'a>(cx: &'a AppContext) -> &'a Self {
+        cx.global::<Self>()
     }
 
     pub fn is_authenticated(&self) -> bool {

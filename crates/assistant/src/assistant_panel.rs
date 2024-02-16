@@ -151,7 +151,7 @@ impl AssistantPanel {
                     let subscriptions = vec![
                         cx.on_focus_in(&focus_handle, Self::focus_in),
                         cx.on_focus_out(&focus_handle, Self::focus_out),
-                        cx.observe_global::<CompletionProvider>(|_, cx| cx.notify()),
+                        cx.observe_global::<CompletionProvider>(Self::completion_provider_changed),
                     ];
 
                     Self {
@@ -198,6 +198,13 @@ impl AssistantPanel {
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
         cx.notify();
+    }
+
+    fn completion_provider_changed(&mut self, cx: &mut ViewContext<Self>) {
+        if self.is_authenticated(cx) && self.editors.is_empty() {
+            self.new_conversation(cx);
+        }
+        cx.notify()
     }
 
     pub fn inline_assist(
