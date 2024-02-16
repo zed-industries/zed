@@ -75,7 +75,7 @@ impl BladeBelt {
         chunk.into()
     }
 
-    pub fn alloc_data<T: bytemuck::Zeroable>(
+    pub fn alloc_data<T: bytemuck::Zeroable + bytemuck::Pod>(
         &mut self,
         data: &[T],
         gpu: &gpu::Context,

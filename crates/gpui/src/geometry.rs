@@ -2,7 +2,7 @@
 //! can be used to describe common units, concepts, and the relationships
 //! between them.
 
-use bytemuck::Zeroable;
+use bytemuck::{Pod, Zeroable};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
@@ -67,6 +67,8 @@ pub struct Point<T: Default + Clone + Debug> {
     /// The y coordinate of the point.
     pub y: T,
 }
+
+unsafe impl<T: Copy + Default + Debug + Zeroable + 'static> Pod for Point<T> {}
 
 /// Constructs a new `Point<T>` with the given x and y coordinates.
 ///
@@ -358,6 +360,8 @@ pub struct Size<T: Clone + Default + Debug> {
     /// The height component of the size.
     pub height: T,
 }
+
+unsafe impl<T: Copy + Default + Debug + Zeroable + 'static> Pod for Size<T> {}
 
 /// Constructs a new `Size<T>` with the provided width and height.
 ///
@@ -659,13 +663,15 @@ impl Size<Length> {
 /// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Zeroable)]
 #[refineable(Debug)]
-#[repr(C)]
+#[repr(C, align(4))]
 pub struct Bounds<T: Clone + Default + Debug> {
     /// The origin point of this area.
     pub origin: Point<T>,
     /// The size of the rectangle.
     pub size: Size<T>,
 }
+
+unsafe impl<T: Copy + Default + Debug + Zeroable + 'static> Pod for Bounds<T> {}
 
 impl<T> Bounds<T>
 where
@@ -1225,6 +1231,8 @@ pub struct Edges<T: Clone + Default + Debug> {
     pub left: T,
 }
 
+unsafe impl<T: Copy + Default + Debug + Zeroable + 'static> Pod for Edges<T> {}
+
 impl<T> Mul for Edges<T>
 where
     T: Mul<Output = T> + Clone + Default + Debug,
@@ -1637,6 +1645,8 @@ pub struct Corners<T: Clone + Default + Debug> {
     pub bottom_left: T,
 }
 
+unsafe impl<T: Copy + Default + Debug + Zeroable + 'static> Pod for Corners<T> {}
+
 impl<T> Corners<T>
 where
     T: Clone + Default + Debug,
@@ -1910,6 +1920,7 @@ impl From<Pixels> for Corners<Pixels> {
     Serialize,
     Deserialize,
     Zeroable,
+    Pod,
 )]
 #[repr(transparent)]
 pub struct Pixels(pub f32);
@@ -2150,6 +2161,7 @@ impl From<usize> for Pixels {
     Sub,
     SubAssign,
     Zeroable,
+    Pod,
 )]
 #[repr(transparent)]
 pub struct DevicePixels(pub(crate) i32);
@@ -2244,7 +2256,7 @@ impl From<usize> for DevicePixels {
 /// dimensions and positions can be specified in a way that scales appropriately across different
 /// display resolutions.
 #[derive(
-    Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd, Zeroable,
+    Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd, Zeroable, Pod,
 )]
 #[repr(transparent)]
 pub struct ScaledPixels(pub(crate) f32);
@@ -2302,7 +2314,7 @@ impl From<ScaledPixels> for f64 {
 /// positioning and measurements need to be consistent and relative to a "global" origin point
 /// rather than being relative to any individual display.
 #[derive(
-    Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd, Zeroable,
+    Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd, Zeroable, Pod,
 )]
 #[repr(transparent)]
 pub struct GlobalPixels(pub(crate) f32);

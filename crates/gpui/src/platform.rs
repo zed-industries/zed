@@ -18,7 +18,7 @@ use crate::{
 };
 use anyhow::Result;
 use async_task::Runnable;
-use bytemuck::Zeroable;
+use bytemuck::{Pod, Zeroable};
 use futures::channel::oneshot;
 use parking::Unparker;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -297,7 +297,7 @@ pub(crate) trait PlatformAtlas: Send + Sync {
     ) -> Result<AtlasTile>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
@@ -306,7 +306,7 @@ pub(crate) struct AtlasTile {
     pub(crate) bounds: Bounds<DevicePixels>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct AtlasTextureId {
     // We use u32 instead of usize for Metal Shader Language compatibility
@@ -323,8 +323,9 @@ pub(crate) enum AtlasTextureKind {
 }
 
 unsafe impl Zeroable for AtlasTextureKind {}
+unsafe impl Pod for AtlasTextureKind {}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct TileId(pub(crate) u32);
 

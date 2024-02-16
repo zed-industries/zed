@@ -17,7 +17,7 @@ const SURFACE_FRAME_COUNT: u32 = 3;
 const MAX_FRAME_TIME_MS: u32 = 1000;
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct GlobalParams {
     viewport_size: [f32; 2],
     pad: [u32; 2],
@@ -71,7 +71,7 @@ struct ShaderPolySpritesData {
     b_poly_sprites: gpu::BufferPiece,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Zeroable)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Zeroable, Pod)]
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,

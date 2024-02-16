@@ -1,5 +1,5 @@
 use anyhow::bail;
-use bytemuck::Zeroable;
+use bytemuck::{Pod, Zeroable};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
 
@@ -175,7 +175,7 @@ impl TryFrom<&'_ str> for Rgba {
 }
 
 /// An HSLA color
-#[derive(Default, Copy, Clone, Debug, Zeroable)]
+#[derive(Default, Copy, Clone, Debug, Zeroable, Pod)]
 #[repr(C)]
 pub struct Hsla {
     /// Hue, in a range from 0 to 1

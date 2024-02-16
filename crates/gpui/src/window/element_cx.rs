@@ -755,7 +755,7 @@ impl<'a> ElementContext<'a> {
                 content_mask: content_mask.scale(scale_factor),
                 color: style.color.unwrap_or_default(),
                 thickness: style.thickness.scale(scale_factor),
-                wavy: style.wavy,
+                wavy: u32::from(style.wavy),
             },
         );
     }
@@ -787,7 +787,7 @@ impl<'a> ElementContext<'a> {
                 content_mask: content_mask.scale(scale_factor),
                 thickness: style.thickness.scale(scale_factor),
                 color: style.color.unwrap_or_default(),
-                wavy: false,
+                wavy: u32::from(false),
             },
         );
     }
@@ -905,8 +905,7 @@ impl<'a> ElementContext<'a> {
                     corner_radii: Default::default(),
                     content_mask,
                     tile,
-                    grayscale: false,
-                    pad: 0,
+                    grayscale: u32::from(false),
                 },
             );
         }
@@ -990,8 +989,7 @@ impl<'a> ElementContext<'a> {
                 content_mask,
                 corner_radii,
                 tile,
-                grayscale,
-                pad: 0,
+                grayscale: u32::from(grayscale),
             },
         );
         Ok(())

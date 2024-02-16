@@ -2,7 +2,7 @@ use crate::{
     point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, EntityId, Hsla, Pixels,
     Point, ScaledPixels, StackingOrder,
 };
-use bytemuck::Zeroable;
+use bytemuck::{Pod, Zeroable};
 use collections::{BTreeMap, FxHashSet};
 use std::{fmt::Debug, iter::Peekable, slice};
 
@@ -12,7 +12,7 @@ pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 pub(crate) type LayerId = u32;
 pub(crate) type DrawOrder = u32;
 
-#[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash, Zeroable)]
+#[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct ViewId {
     low_bits: u32,
@@ -502,7 +502,7 @@ pub(crate) enum PrimitiveBatch<'a> {
     Surfaces(&'a [Surface]),
 }
 
-#[derive(Default, Debug, Clone, Eq, PartialEq, Zeroable)]
+#[derive(Default, Debug, Clone, Copy, Eq, PartialEq, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct Quad {
     pub view_id: ViewId,
@@ -534,7 +534,7 @@ impl From<Quad> for Primitive {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Zeroable)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct Underline {
     pub view_id: ViewId,
@@ -544,7 +544,11 @@ pub(crate) struct Underline {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub thickness: ScaledPixels,
-    pub wavy: bool,
+    // wavy is a member to be used as a bool, but Pod does not support bool
+    // and the struct must be aligned to a 4 byte boundary to maintain size
+    // equivalence between type and type without padding as a requirement
+    // of the Pod trait, so it is set to u32.
+    pub wavy: u32,
 }
 
 impl Ord for Underline {
@@ -565,7 +569,7 @@ impl From<Underline> for Primitive {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Zeroable)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct Shadow {
     pub view_id: ViewId,
@@ -597,7 +601,7 @@ impl From<Shadow> for Primitive {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Zeroable)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
     pub view_id: ViewId,
@@ -630,7 +634,7 @@ impl From<MonochromeSprite> for Primitive {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Zeroable)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
     pub view_id: ViewId,
@@ -640,8 +644,11 @@ pub(crate) struct PolychromeSprite {
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
-    pub grayscale: bool,
-    pub pad: u32, // align to 8 bytes
+    // grayscale is a member to be used as a bool, but Pod does not support bool
+    // and the struct must be aligned to a 4 byte boundary to maintain size
+    // equivalence between type and type without padding as a requirement
+    // of the Pod trait, so it is set to u32.
+    pub grayscale: u32,
 }
 
 impl Ord for PolychromeSprite {
@@ -848,13 +855,15 @@ impl From<Path<ScaledPixels>> for Primitive {
     }
 }
 
-#[derive(Clone, Debug, Zeroable)]
+#[derive(Clone, Copy, Debug, Zeroable)]
 #[repr(C)]
 pub(crate) struct PathVertex<P: Clone + Default + Debug> {
     pub(crate) xy_position: Point<P>,
     pub(crate) st_position: Point<f32>,
     pub(crate) content_mask: ContentMask<P>,
 }
+
+unsafe impl<T: Copy + Default + Debug + Zeroable + 'static> Pod for PathVertex<T> {}
 
 impl PathVertex<Pixels> {
     pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {

@@ -10,7 +10,7 @@ use crate::{
     WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
-use bytemuck::Zeroable;
+use bytemuck::{Pod, Zeroable};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
@@ -478,12 +478,14 @@ impl Window {
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
 /// rendered. Currently, only rectangular content masks are supported, but we give the mask its own type
 /// to leave room to support more complex shapes in the future.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Zeroable)]
 #[repr(C)]
 pub struct ContentMask<P: Clone + Default + Debug> {
     /// The bounds
     pub bounds: Bounds<P>,
 }
+
+unsafe impl<T: Copy + Default + Debug + Zeroable + 'static> Pod for ContentMask<T> {}
 
 impl ContentMask<Pixels> {
     /// Scale the content mask's pixel units by the given scaling factor.
