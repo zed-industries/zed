@@ -118,7 +118,6 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let completion_provider = CompletionProvider::from_settings(&mut cx).await;
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -167,7 +166,7 @@ impl AssistantPanel {
                         zoomed: false,
                         focus_handle,
                         toolbar,
-                        completion_provider,
+                        completion_provider: CompletionProvider::from_settings(cx),
                         languages: workspace.app_state().languages.clone(),
                         fs: workspace.app_state().fs.clone(),
                         width: None,

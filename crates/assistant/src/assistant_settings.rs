@@ -5,12 +5,25 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(untagged)]
+pub enum LanguageModel {
+    OpenAi(OpenAiModel),
+}
+
+impl Default for LanguageModel {
+    fn default() -> Self {
+        LanguageModel::OpenAi(OpenAiModel::ThreePointFiveTurbo)
+    }
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum OpenAiModel {
     #[serde(rename = "gpt-3.5-turbo-0613")]
     ThreePointFiveTurbo,
     #[serde(rename = "gpt-4-0613")]
     Four,
     #[serde(rename = "gpt-4-1106-preview")]
+    #[default]
     FourTurbo,
 }
 
@@ -48,9 +61,10 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub enum AssistantProvider {
     ZedDotDev {
-        default_model: ZedModel,
+        default_model: LanguageModel,
     },
     OpenAi {
         default_model: OpenAiModel,
@@ -58,41 +72,21 @@ pub enum AssistantProvider {
     },
 }
 
+impl Default for AssistantProvider {
+    fn default() -> Self {
+        AssistantProvider::ZedDotDev {
+            default_model: LanguageModel::default(),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct AssistantSettings {
     pub button: bool,
     pub dock: AssistantDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub provider: AssistantProvider,
-}
-
-/// Assistant panel settings
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct AssistantSettingsContentV0 {
-    /// Whether to show the assistant panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Where to dock the assistant.
-    ///
-    /// Default: right
-    pub dock: Option<AssistantDockPosition>,
-    /// Default width in pixels when the assistant is docked to the left or right.
-    ///
-    /// Default: 640
-    pub default_width: Option<f32>,
-    /// Default height in pixels when the assistant is docked to the bottom.
-    ///
-    /// Default: 320
-    pub default_height: Option<f32>,
-    /// The default OpenAI model to use when starting new conversations.
-    ///
-    /// Default: gpt-4-1106-preview
-    pub default_open_ai_model: Option<OpenAiModel>,
-    /// OpenAI API base URL to use when starting new conversations.
-    ///
-    /// Default: https://api.openai.com/v1
-    pub openai_api_url: Option<String>,
 }
 
 /// Assistant panel settings
@@ -114,13 +108,18 @@ pub struct AssistantSettingsContent {
     ///
     /// Default: 320
     pub default_height: Option<f32>,
-    /// The default OpenAI model to use when starting new conversations.
-    ///
-    /// Default: gpt-4-1106-preview
+
+    provider: AssistantProvider,
+}
+
+/// Assistant panel settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct AssistantSettingsContentV0 {
+    pub button: Option<bool>,
+    pub dock: Option<AssistantDockPosition>,
+    pub default_width: Option<f32>,
+    pub default_height: Option<f32>,
     pub default_open_ai_model: Option<OpenAiModel>,
-    /// OpenAI API base URL to use when starting new conversations.
-    ///
-    /// Default: https://api.openai.com/v1
     pub openai_api_url: Option<String>,
 }
 

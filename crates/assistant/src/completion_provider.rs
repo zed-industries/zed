@@ -21,30 +21,18 @@ pub enum CompletionProvider {
     Fake(fake::FakeCompletionProvider),
 }
 
+impl gpui::Global for CompletionProvider {}
+
 impl CompletionProvider {
     #[cfg(test)]
     pub fn fake() -> Self {
         Self::Fake(fake::FakeCompletionProvider::default())
     }
 
-    pub fn from_settings(cx: &mut AppContext) -> Self {
-        let settings = AssistantSettings::get_global(cx);
-        // match settings.
+    pub fn global(cx: &mut AppContext) -> Self {
+        if !cx.has_global::<Self>() {}
 
-        // Self::OpenAi(OpenAiCompletionProvider::from_settings(se))
-
-        let (api_url, model_name) = cx
-            .update(|cx| {
-                let settings = AssistantSettings::get_global(cx);
-                (
-                    settings.openai_api_url.clone(),
-                    settings.default_open_ai_model.full_name().to_string(),
-                )
-            })
-            .log_err()
-            .unwrap();
-
-        todo!()
+        cx.global::<Self>().clone()
     }
 
     pub fn is_authenticated(&self) -> bool {
