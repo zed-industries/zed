@@ -2743,7 +2743,6 @@ impl Workspace {
 
         cx.notify();
 
-        self.last_active_view_id = active_view_id.clone();
         proto::FollowResponse {
             active_view_id,
             views: self
