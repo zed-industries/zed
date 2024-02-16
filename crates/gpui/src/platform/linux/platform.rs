@@ -8,13 +8,13 @@ use std::{
     time::Duration,
 };
 
+use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use wayland_client::Connection;
-use rfd::AsyncFileDialog;
 
 use crate::platform::linux::client::Client;
 use crate::platform::linux::client_dispatcher::ClientDispatcher;
@@ -229,37 +229,37 @@ impl Platform for LinuxPlatform {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-
-                let dialog = AsyncFileDialog::new()
-                    .set_directory("./");
-
-                // XXX: Can options.files and options.directories both be true? RFD doesn't seem to
-                // support that.
-                if options.directories && options.files {
-                    unimplemented!();
-                }
-
-                let result: Option<Vec<PathBuf>> = if options.directories {
-                    if options.multiple {
-                        dialog.pick_folders().await.map(|handles|
-                            handles.into_iter().map(|handle| handle.path().to_path_buf()).collect()
-                        )
+                let title = if options.multiple {
+                    if !options.files {
+                        "Open folders"
                     } else {
-                        dialog.pick_folder().await.map(|handle|
-                            vec![handle.path().to_path_buf()]
-                        )
+                        "Open files"
                     }
                 } else {
-                    if options.multiple {
-                        dialog.pick_files().await.map(|handles|
-                            handles.into_iter().map(|handle| handle.path().to_path_buf()).collect()
-                        )
+                    if !options.files {
+                        "Open folder"
                     } else {
-                        dialog.pick_file().await.map(|handle|
-                            vec![handle.path().to_path_buf()]
-                        )
+                        "Open file"
                     }
                 };
+
+                let result = OpenFileRequest::default()
+                    .modal(true)
+                    .title(title)
+                    .accept_label("Select")
+                    .multiple(options.multiple)
+                    .directory(options.directories)
+                    .send()
+                    .await
+                    .ok()
+                    .and_then(|request| request.response().ok())
+                    .and_then(|response| {
+                        response
+                            .uris()
+                            .into_iter()
+                            .map(|uri| uri.to_file_path().ok())
+                            .collect()
+                    });
 
                 done_tx.send(result);
             })
@@ -272,14 +272,21 @@ impl Platform for LinuxPlatform {
         let directory = directory.to_owned();
         self.foreground_executor()
             .spawn(async move {
-                let result = AsyncFileDialog::new()
-                    .set_directory(directory)
-                    .pick_file()
-                    .await;
+                let result = SaveFileRequest::default()
+                    .modal(true)
+                    .title("Select new path")
+                    .accept_label("Accept")
+                    .send()
+                    .await
+                    .ok()
+                    .and_then(|request| request.response().ok())
+                    .and_then(|response| {
+                        response
+                            .uris()
+                            .get(0)
+                            .and_then(|uri| uri.to_file_path().ok())
+                    });
 
-                let result: Option<PathBuf> = result.map(|file|
-                    file.path().to_path_buf()
-                );
 
                 done_tx.send(result);
             })
