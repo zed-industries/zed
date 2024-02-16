@@ -34,6 +34,7 @@ impl Project {
                 (
                     Some(external_task.cancellation_rx),
                     Some(ExternalTaskState {
+                        task_id: external_task.id,
                         label: external_task.label,
                         completion_tx: external_task.completion_tx,
                     }),

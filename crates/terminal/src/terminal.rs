@@ -591,6 +591,7 @@ pub struct Terminal {
 }
 
 pub struct ExternalTaskState {
+    pub task_id: EntityId,
     pub completion_tx: Sender<bool>,
     pub label: String,
 }
@@ -1396,8 +1397,8 @@ impl Terminal {
         self.cmd_pressed && self.hovered_word
     }
 
-    pub fn created_for_external_task(&self) -> bool {
-        self.external_task.is_some()
+    pub fn external_task(&self) -> Option<&ExternalTaskState> {
+        self.external_task.as_ref()
     }
 }
 

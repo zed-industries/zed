@@ -4,9 +4,9 @@ use crate::TerminalView;
 use collections::HashSet;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
-    FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    actions, AppContext, AsyncWindowContext, Entity, EntityId, EventEmitter, ExternalPaths,
+    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
@@ -301,6 +301,27 @@ impl TerminalPanel {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
+
+        // TODO kb not working always: try `cargo check`, `cargo clean` and `cargo check` again
+        if action.reuse_terminal {
+            if let Some(existing_terminal_view) = terminal_panel.update(cx, |terminal_panel, cx| {
+                terminal_panel.find_terminal_for_external_task(action.task_id, cx)
+            }) {
+                let window = cx.window_handle();
+                if let Some(new_terminal) = workspace.project().update(cx, |project, cx| {
+                    project
+                        .create_terminal(working_directory, Some(external_task), window, cx)
+                        .log_err()
+                }) {
+                    existing_terminal_view.update(cx, |existing_terminal_view, cx| {
+                        existing_terminal_view.set_terminal(new_terminal, cx);
+                        cx.notify();
+                    });
+                }
+                return;
+            }
+        }
+
         terminal_panel.update(cx, |terminal_panel, cx| {
             terminal_panel.add_terminal(working_directory, Some(external_task), cx)
         });
@@ -318,6 +339,25 @@ impl TerminalPanel {
         };
 
         this.update(cx, |this, cx| this.add_terminal(None, None, cx))
+    }
+
+    fn find_terminal_for_external_task(
+        &self,
+        task_id: EntityId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<TerminalView>> {
+        self.pane
+            .read(cx)
+            .items()
+            .filter_map(|item| item.act_as::<TerminalView>(cx))
+            .find_map(|terminal_view| {
+                let task_state = terminal_view.read(cx).terminal().read(cx).external_task()?;
+                if task_state.task_id == task_id {
+                    Some(terminal_view)
+                } else {
+                    None
+                }
+            })
     }
 
     fn add_terminal(
@@ -380,7 +420,8 @@ impl TerminalPanel {
                     .read(cx)
                     .terminal()
                     .read(cx)
-                    .created_for_external_task()
+                    .external_task()
+                    .is_some()
                 {
                     None
                 } else {
