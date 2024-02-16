@@ -13,12 +13,13 @@ use raw_window_handle::{
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
+use crate::platform::blade::BladeRenderer;
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, BladeRenderer, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
-    PromptLevel, Size, WindowAppearance, WindowBounds, WindowOptions,
+    px, size, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
+    WindowAppearance, WindowBounds, WindowOptions,
 };
 
 #[derive(Default)]
@@ -149,11 +150,9 @@ impl WaylandWindowState {
             let mut inner = self.inner.lock();
             inner.bounds.size.width = width;
             inner.bounds.size.height = height;
-            inner.renderer.resize(gpu::Extent {
-                width: width as u32,
-                height: height as u32,
-                depth: 1,
-            });
+            inner
+                .renderer
+                .update_drawable_size(size(width as f64, height as f64));
         }
         let mut callbacks = self.callbacks.lock();
         if let Some(ref mut fun) = callbacks.resize {

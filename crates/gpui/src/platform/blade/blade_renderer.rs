@@ -637,76 +637,76 @@ impl BladeRenderer {
                         encoder.draw(0, 4, 0, sprites.len() as u32);
                     }
                     PrimitiveBatch::Surfaces(surfaces) => {
-                        let mut encoder = pass.with(&self.pipelines.surfaces);
+                        let _encoder = pass.with(&self.pipelines.surfaces);
 
                         for surface in surfaces {
                             #[cfg(not(target_os = "macos"))]
-                            let (t_y, t_cb_cr) = {
+                            {
                                 let _ = surface;
                                 continue;
                             };
-                            #[cfg(target_os = "macos")]
-                            let (t_y, t_cb_cr) = {
-                                use core_foundation::base::TCFType as _;
-                                use std::ptr;
 
-                                assert_eq!(
+                            #[cfg(target_os = "macos")]
+                            {
+                                let (t_y, t_cb_cr) = {
+                                    use core_foundation::base::TCFType as _;
+                                    use std::ptr;
+
+                                    assert_eq!(
                                     surface.image_buffer.pixel_format_type(),
                                     media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                                 );
 
-                                let y_texture = unsafe {
-                                    self.core_video_texture_cache
-                                        .create_texture_from_image(
-                                            surface.image_buffer.as_concrete_TypeRef(),
-                                            ptr::null(),
-                                            metal::MTLPixelFormat::R8Unorm,
-                                            surface.image_buffer.plane_width(0),
-                                            surface.image_buffer.plane_height(0),
-                                            0,
-                                        )
-                                        .unwrap()
+                                    let y_texture = unsafe {
+                                        self.core_video_texture_cache
+                                            .create_texture_from_image(
+                                                surface.image_buffer.as_concrete_TypeRef(),
+                                                ptr::null(),
+                                                metal::MTLPixelFormat::R8Unorm,
+                                                surface.image_buffer.plane_width(0),
+                                                surface.image_buffer.plane_height(0),
+                                                0,
+                                            )
+                                            .unwrap()
+                                    };
+                                    let cb_cr_texture = unsafe {
+                                        self.core_video_texture_cache
+                                            .create_texture_from_image(
+                                                surface.image_buffer.as_concrete_TypeRef(),
+                                                ptr::null(),
+                                                metal::MTLPixelFormat::RG8Unorm,
+                                                surface.image_buffer.plane_width(1),
+                                                surface.image_buffer.plane_height(1),
+                                                1,
+                                            )
+                                            .unwrap()
+                                    };
+                                    (
+                                        gpu::TextureView::from_metal_texture(
+                                            y_texture.as_texture_ref(),
+                                        ),
+                                        gpu::TextureView::from_metal_texture(
+                                            cb_cr_texture.as_texture_ref(),
+                                        ),
+                                    )
                                 };
-                                let cb_cr_texture = unsafe {
-                                    self.core_video_texture_cache
-                                        .create_texture_from_image(
-                                            surface.image_buffer.as_concrete_TypeRef(),
-                                            ptr::null(),
-                                            metal::MTLPixelFormat::RG8Unorm,
-                                            surface.image_buffer.plane_width(1),
-                                            surface.image_buffer.plane_height(1),
-                                            1,
-                                        )
-                                        .unwrap()
-                                };
-                                (
-                                    gpu::TextureView::from_metal_texture(
-                                        y_texture.as_texture_ref(),
-                                    ),
-                                    gpu::TextureView::from_metal_texture(
-                                        cb_cr_texture.as_texture_ref(),
-                                    ),
-                                )
-                            };
 
-                            #[cfg_attr(
-                                any(not(target_os = "macos"), feature = "macos-blade"),
-                                allow(unreachable_code)
-                            )]
-                            encoder.bind(
-                                0,
-                                &ShaderSurfacesData {
-                                    globals,
-                                    surface_locals: SurfaceParams {
-                                        bounds: surface.bounds.into(),
-                                        content_mask: surface.content_mask.bounds.into(),
+                                _encoder.bind(
+                                    0,
+                                    &ShaderSurfacesData {
+                                        globals,
+                                        surface_locals: SurfaceParams {
+                                            bounds: surface.bounds.into(),
+                                            content_mask: surface.content_mask.bounds.into(),
+                                        },
+                                        t_y: _t_y,
+                                        t_cb_cr: _t_cb_cr,
+                                        s_surface: self.atlas_sampler,
                                     },
-                                    t_y,
-                                    t_cb_cr,
-                                    s_surface: self.atlas_sampler,
-                                },
-                            );
-                            encoder.draw(0, 4, 0, 1);
+                                );
+
+                                _encoder.draw(0, 4, 0, 1);
+                            }
                         }
                     }
                 }
