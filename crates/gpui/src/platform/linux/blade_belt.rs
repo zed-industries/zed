@@ -76,7 +76,7 @@ impl BladeBelt {
     }
 
     // SAFETY: T should be zeroable and ordinary data, no references, pointers, cells or other complicated data type.
-    pub fn alloc_data<T>(&mut self, data: &[T], gpu: &gpu::Context) -> gpu::BufferPiece {
+    pub unsafe fn alloc_data<T>(&mut self, data: &[T], gpu: &gpu::Context) -> gpu::BufferPiece {
         assert!(!data.is_empty());
         let type_alignment = mem::align_of::<T>() as u64;
         debug_assert_eq!(

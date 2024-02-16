@@ -340,7 +340,7 @@ impl BladeRenderer {
                 pad: [0; 2],
             };
 
-            let vertex_buf = self.instance_belt.alloc_data(&vertices, &self.gpu);
+            let vertex_buf = unsafe { self.instance_belt.alloc_data(&vertices, &self.gpu) };
             let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
                     view: tex_info.raw_view,
@@ -389,7 +389,8 @@ impl BladeRenderer {
             for batch in scene.batches() {
                 match batch {
                     PrimitiveBatch::Quads(quads) => {
-                        let instance_buf = self.instance_belt.alloc_data(quads, &self.gpu);
+                        let instance_buf =
+                            unsafe { self.instance_belt.alloc_data(quads, &self.gpu) };
                         let mut encoder = pass.with(&self.pipelines.quads);
                         encoder.bind(
                             0,
@@ -401,7 +402,8 @@ impl BladeRenderer {
                         encoder.draw(0, 4, 0, quads.len() as u32);
                     }
                     PrimitiveBatch::Shadows(shadows) => {
-                        let instance_buf = self.instance_belt.alloc_data(shadows, &self.gpu);
+                        let instance_buf =
+                            unsafe { self.instance_belt.alloc_data(shadows, &self.gpu) };
                         let mut encoder = pass.with(&self.pipelines.shadows);
                         encoder.bind(
                             0,
@@ -428,7 +430,8 @@ impl BladeRenderer {
                                 tile: (*tile).clone(),
                             }];
 
-                            let instance_buf = self.instance_belt.alloc_data(&sprites, &self.gpu);
+                            let instance_buf =
+                                unsafe { self.instance_belt.alloc_data(&sprites, &self.gpu) };
                             encoder.bind(
                                 0,
                                 &ShaderPathsData {
@@ -442,7 +445,8 @@ impl BladeRenderer {
                         }
                     }
                     PrimitiveBatch::Underlines(underlines) => {
-                        let instance_buf = self.instance_belt.alloc_data(underlines, &self.gpu);
+                        let instance_buf =
+                            unsafe { self.instance_belt.alloc_data(underlines, &self.gpu) };
                         let mut encoder = pass.with(&self.pipelines.underlines);
                         encoder.bind(
                             0,
@@ -458,7 +462,8 @@ impl BladeRenderer {
                         sprites,
                     } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
-                        let instance_buf = self.instance_belt.alloc_data(sprites, &self.gpu);
+                        let instance_buf =
+                            unsafe { self.instance_belt.alloc_data(sprites, &self.gpu) };
                         let mut encoder = pass.with(&self.pipelines.mono_sprites);
                         encoder.bind(
                             0,
@@ -476,7 +481,8 @@ impl BladeRenderer {
                         sprites,
                     } => {
                         let tex_info = self.atlas.get_texture_info(texture_id);
-                        let instance_buf = self.instance_belt.alloc_data(sprites, &self.gpu);
+                        let instance_buf =
+                            unsafe { self.instance_belt.alloc_data(sprites, &self.gpu) };
                         let mut encoder = pass.with(&self.pipelines.poly_sprites);
                         encoder.bind(
                             0,
