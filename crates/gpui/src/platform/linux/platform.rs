@@ -8,13 +8,13 @@ use std::{
     time::Duration,
 };
 
+use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use wayland_client::Connection;
-use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 
 use crate::platform::linux::client::Client;
 use crate::platform::linux::client_dispatcher::ClientDispatcher;
@@ -256,7 +256,7 @@ impl Platform for LinuxPlatform {
                     .and_then(|response| {
                         response
                             .uris()
-                            .into_iter()
+                            .iter()
                             .map(|uri| uri.to_file_path().ok())
                             .collect()
                     });
@@ -283,10 +283,9 @@ impl Platform for LinuxPlatform {
                     .and_then(|response| {
                         response
                             .uris()
-                            .get(0)
+                            .first()
                             .and_then(|uri| uri.to_file_path().ok())
                     });
-
 
                 done_tx.send(result);
             })
