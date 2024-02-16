@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::{env, io};
 use util::ResultExt;
 
-#[derive(Clone)]
 pub struct OpenAiCompletionProvider {
     api_key: Option<String>,
     api_url: String,

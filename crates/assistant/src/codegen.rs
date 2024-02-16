@@ -355,6 +355,8 @@ fn strip_invalid_spans_from_codeblock(
 mod tests {
     use std::sync::Arc;
 
+    use crate::FakeCompletionProvider;
+
     use super::*;
     use futures::stream::{self};
     use gpui::{Context, TestAppContext};
@@ -374,9 +376,9 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
-        let provider = CompletionProvider::fake();
+        let provider = FakeCompletionProvider::default();
         cx.set_global(cx.update(SettingsStore::test));
-        cx.set_global(provider.clone());
+        cx.set_global(CompletionProvider::Fake(provider.clone()));
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -411,11 +413,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.as_fake().send_completion(chunk.into());
+            provider.send_completion(chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.as_fake().finish_completion();
+        provider.finish_completion();
         cx.background_executor.run_until_parked();
 
         assert_eq!(
@@ -436,9 +438,9 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        let provider = CompletionProvider::fake();
+        let provider = FakeCompletionProvider::default();
+        cx.set_global(CompletionProvider::Fake(provider.clone()));
         cx.set_global(cx.update(SettingsStore::test));
-        cx.set_global(provider.clone());
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -470,11 +472,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.as_fake().send_completion(chunk.into());
+            provider.send_completion(chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.as_fake().finish_completion();
+        provider.finish_completion();
         cx.background_executor.run_until_parked();
 
         assert_eq!(
@@ -495,9 +497,9 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        let provider = CompletionProvider::fake();
+        let provider = FakeCompletionProvider::default();
+        cx.set_global(CompletionProvider::Fake(provider.clone()));
         cx.set_global(cx.update(SettingsStore::test));
-        cx.set_global(provider.clone());
         cx.update(language_settings::init);
 
         let text = concat!(
@@ -529,11 +531,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.as_fake().send_completion(chunk.into());
+            provider.send_completion(chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.as_fake().finish_completion();
+        provider.finish_completion();
         cx.background_executor.run_until_parked();
 
         assert_eq!(

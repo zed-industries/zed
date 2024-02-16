@@ -148,8 +148,11 @@ impl AssistantPanel {
                     let semantic_index = SemanticIndex::global(cx);
 
                     let focus_handle = cx.focus_handle();
-                    cx.on_focus_in(&focus_handle, Self::focus_in).detach();
-                    cx.on_focus_out(&focus_handle, Self::focus_out).detach();
+                    let subscriptions = vec![
+                        cx.on_focus_in(&focus_handle, Self::focus_in),
+                        cx.on_focus_out(&focus_handle, Self::focus_out),
+                        cx.observe_global::<CompletionProvider>(|_, cx| cx.notify()),
+                    ];
 
                     Self {
                         workspace: workspace_handle,
@@ -165,7 +168,7 @@ impl AssistantPanel {
                         fs: workspace.app_state().fs.clone(),
                         width: None,
                         height: None,
-                        subscriptions: Default::default(),
+                        subscriptions,
                         next_inline_assist_id: 0,
                         pending_inline_assists: Default::default(),
                         pending_inline_assist_ids_by_editor: Default::default(),
@@ -974,7 +977,7 @@ impl AssistantPanel {
     }
 
     fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        CompletionProvider::global(cx).authenticate(cx)
+        cx.update_global::<CompletionProvider, _>(|provider, cx| provider.authenticate(cx))
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -1090,10 +1093,8 @@ impl AssistantPanel {
                                 .icon_position(IconPosition::Start)
                                 .style(ButtonStyle::Filled)
                                 .full_width()
-                                .on_click(cx.listener(|_, _, cx| {
-                                    CompletionProvider::global(cx)
-                                        .authenticate(cx)
-                                        .detach_and_log_err(cx);
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.authenticate(cx).detach_and_log_err(cx)
                                 })),
                         )
                         .child(
@@ -3022,14 +3023,14 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MessageId;
+    use crate::{FakeCompletionProvider, MessageId};
     use gpui::{AppContext, TestAppContext};
     use settings::SettingsStore;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        cx.set_global(CompletionProvider::fake());
+        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
@@ -3161,7 +3162,7 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::fake());
+        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
 
@@ -3259,7 +3260,7 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        cx.set_global(CompletionProvider::fake());
+        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
@@ -3344,7 +3345,7 @@ mod tests {
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::fake());
+        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test());
         let conversation = cx.new_model(|cx| Conversation::new(registry.clone(), cx));

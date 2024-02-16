@@ -6,6 +6,8 @@ mod zed_dot_dev;
 use crate::{assistant_settings::AssistantSettings, LanguageModel, LanguageModelRequest};
 use anyhow::Result;
 use client::Client;
+#[cfg(test)]
+pub use fake::*;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AppContext, Task};
 use open_ai::*;
@@ -34,26 +36,18 @@ fn register_completion_provider(cx: &mut AppContext) {
     cx.set_global(provider);
 }
 
-#[derive(Clone)]
 pub enum CompletionProvider {
     OpenAi(OpenAiCompletionProvider),
     ZedDotDev(ZedDotDevCompletionProvider),
     #[cfg(test)]
-    Fake(fake::FakeCompletionProvider),
+    Fake(FakeCompletionProvider),
 }
 
 impl gpui::Global for CompletionProvider {}
 
 impl CompletionProvider {
-    #[cfg(test)]
-    pub fn fake() -> Self {
-        Self::Fake(fake::FakeCompletionProvider::default())
-    }
-
-    pub fn global(cx: &mut AppContext) -> Self {
-        if !cx.has_global::<Self>() {}
-
-        cx.global::<Self>().clone()
+    pub fn global<'a>(cx: &'a mut AppContext) -> &'a mut Self {
+        cx.global_mut::<Self>()
     }
 
     pub fn is_authenticated(&self) -> bool {
@@ -92,14 +86,6 @@ impl CompletionProvider {
             CompletionProvider::ZedDotDev(_) => todo!(),
             #[cfg(test)]
             CompletionProvider::Fake(provider) => provider.complete(),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn as_fake(&self) -> &fake::FakeCompletionProvider {
-        match self {
-            CompletionProvider::Fake(provider) => provider,
-            _ => unimplemented!(),
         }
     }
 }

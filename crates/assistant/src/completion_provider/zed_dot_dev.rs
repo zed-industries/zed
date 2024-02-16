@@ -3,7 +3,6 @@ use client::Client;
 use gpui::{AppContext, Task};
 use std::sync::Arc;
 
-#[derive(Clone)]
 pub struct ZedDotDevCompletionProvider {
     client: Arc<Client>,
 }
