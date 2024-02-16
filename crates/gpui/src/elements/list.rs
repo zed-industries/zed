@@ -8,8 +8,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    WindowContext,
+    Element, ElementContext, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
+    StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -70,7 +70,7 @@ pub struct ListScrollEvent {
 #[derive(Clone)]
 enum ListItem {
     Unrendered,
-    Rendered { height: Pixels },
+    Rendered { size: Size<Pixels> },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -242,13 +242,13 @@ impl ListState {
         let scroll_top = cursor.start().1 .0 + scroll_top.offset_in_item;
 
         cursor.seek_forward(&Count(ix), Bias::Right, &());
-        if let Some(&ListItem::Rendered { height }) = cursor.item() {
+        if let Some(&ListItem::Rendered { size }) = cursor.item() {
             let &(Count(count), Height(top)) = cursor.start();
             if count == ix {
                 let top = bounds.top() + top - scroll_top;
                 return Some(Bounds::from_corners(
                     point(bounds.left(), top),
-                    point(bounds.right(), top + height),
+                    point(bounds.right(), top + size.height),
                 ));
             }
         }
@@ -332,15 +332,139 @@ impl StateInner {
         cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right, &());
         cursor.start().height + logical_scroll_top.offset_in_item
     }
+
+    fn layout_items(
+        &mut self,
+        available_width: Option<Pixels>,
+        available_height: Pixels,
+        padding: &Edges<Pixels>,
+        cx: &mut ElementContext,
+    ) -> (Pixels, Size<AvailableSpace>, VecDeque<AnyElement>) {
+        let old_items = self.items.clone();
+        let mut measured_items = VecDeque::new();
+        let mut item_elements = VecDeque::new();
+        let mut rendered_height = padding.top;
+        let mut max_item_width = px(0.);
+        let mut scroll_top = self.logical_scroll_top();
+
+        let available_item_space = size(
+            available_width.map_or(AvailableSpace::MinContent, |width| {
+                AvailableSpace::Definite(width)
+            }),
+            AvailableSpace::MinContent,
+        );
+
+        let mut cursor = old_items.cursor::<Count>();
+
+        // Render items after the scroll top, including those in the trailing overdraw
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+        for (ix, item) in cursor.by_ref().enumerate() {
+            let visible_height = rendered_height - scroll_top.offset_in_item;
+            if visible_height >= available_height + self.overdraw {
+                break;
+            }
+
+            // Use the previously cached height if available
+            let mut size = if let ListItem::Rendered { size } = item {
+                Some(*size)
+            } else {
+                None
+            };
+
+            // If we're within the visible area or the height wasn't cached, render and measure the item's element
+            if visible_height < available_height || size.is_none() {
+                let mut element = (self.render_item)(scroll_top.item_ix + ix, cx);
+                let element_size = element.measure(available_item_space, cx);
+                size = Some(element_size);
+                if visible_height < available_height {
+                    item_elements.push_back(element);
+                }
+            }
+
+            let size = size.unwrap();
+            rendered_height += size.height;
+            max_item_width = max_item_width.max(size.width);
+            measured_items.push_back(ListItem::Rendered { size });
+        }
+        rendered_height += padding.bottom;
+
+        // Prepare to start walking upward from the item at the scroll top.
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+
+        // If the rendered items do not fill the visible region, then adjust
+        // the scroll top upward.
+        if rendered_height - scroll_top.offset_in_item < available_height {
+            while rendered_height < available_height {
+                cursor.prev(&());
+                if cursor.item().is_some() {
+                    let mut element = (self.render_item)(cursor.start().0, cx);
+                    let element_size = element.measure(available_item_space, cx);
+
+                    rendered_height += element_size.height;
+                    measured_items.push_front(ListItem::Rendered { size: element_size });
+                    item_elements.push_front(element)
+                } else {
+                    break;
+                }
+            }
+
+            scroll_top = ListOffset {
+                item_ix: cursor.start().0,
+                offset_in_item: rendered_height - available_height,
+            };
+
+            match self.alignment {
+                ListAlignment::Top => {
+                    scroll_top.offset_in_item = scroll_top.offset_in_item.max(px(0.));
+                    self.logical_scroll_top = Some(scroll_top);
+                }
+                ListAlignment::Bottom => {
+                    scroll_top = ListOffset {
+                        item_ix: cursor.start().0,
+                        offset_in_item: rendered_height - available_height,
+                    };
+                    self.logical_scroll_top = None;
+                }
+            };
+        }
+
+        // Measure items in the leading overdraw
+        let mut leading_overdraw = scroll_top.offset_in_item;
+        while leading_overdraw < self.overdraw {
+            cursor.prev(&());
+            if let Some(item) = cursor.item() {
+                let size = if let ListItem::Rendered { size } = item {
+                    *size
+                } else {
+                    let mut element = (self.render_item)(cursor.start().0, cx);
+                    element.measure(available_item_space, cx)
+                };
+
+                leading_overdraw += size.height;
+                measured_items.push_front(ListItem::Rendered { size });
+            } else {
+                break;
+            }
+        }
+
+        let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());
+        let mut cursor = old_items.cursor::<Count>();
+        let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right, &());
+        new_items.extend(measured_items, &());
+        cursor.seek(&Count(measured_range.end), Bias::Right, &());
+        new_items.append(cursor.suffix(&()), &());
+
+        self.items = new_items;
+
+        (max_item_width, available_item_space, item_elements)
+    }
 }
 
 impl std::fmt::Debug for ListItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unrendered => write!(f, "Unrendered"),
-            Self::Rendered { height, .. } => {
-                f.debug_struct("Rendered").field("height", height).finish()
-            }
+            Self::Rendered { size, .. } => f.debug_struct("Rendered").field("size", size).finish(),
         }
     }
 }
@@ -369,41 +493,43 @@ impl Element for List {
         let layout_id = cx.with_text_style(style.text_style().cloned(), |cx| {
             let state = &mut *self.state.0.borrow_mut();
 
-            let mut all_rendered = true;
-            let mut total_height = px(0.);
-            let mut cursor = state.items.cursor::<Count>();
-            for item in cursor.by_ref() {
-                if let ListItem::Rendered { height } = item {
-                    total_height += *height;
-                } else {
-                    all_rendered = false;
-                    break;
-                }
-            }
-
-            let last_width = state.last_layout_bounds.map(|b| b.size.width);
-
-            if let Some(last_width) = last_width {
-                if all_rendered {
-                    return cx.request_measured_layout(
-                        style,
-                        move |_known_dimensions, available_space, _cx| {
-                            let height = match available_space.height {
-                                AvailableSpace::Definite(height) => total_height.min(height),
-                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                    total_height
-                                }
-                            };
-                            size(last_width, height)
-                        },
-                    );
-                }
-            }
-
-            if state.reset {
-                cx.request_measured_layout(style, move |_, _, _| size(px(0.), px(0.)))
+            let available_height = if let Some(last_bounds) = state.last_layout_bounds {
+                last_bounds.size.height
             } else {
-                cx.request_layout(&style, [])
+                // If we don't have the last layout bounds (first render),
+                // we might just use the overdraw value as the available height to layout enough items.
+                state.overdraw
+            };
+            let padding = style.padding.to_pixels(
+                state.last_layout_bounds.unwrap_or_default().size.into(),
+                cx.rem_size(),
+            );
+
+            let (max_element_width, _, _) =
+                state.layout_items(None, available_height, &padding, cx);
+
+            let summary = state.items.summary();
+            let total_height = summary.height;
+            let all_rendered = summary.unrendered_count == 0;
+
+            if all_rendered {
+                cx.request_measured_layout(style, move |known_dimensions, available_space, _cx| {
+                    let width = known_dimensions
+                        .width
+                        .unwrap_or(match available_space.width {
+                            AvailableSpace::Definite(x) => x,
+                            AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                max_element_width
+                            }
+                        });
+                    let height = match available_space.height {
+                        AvailableSpace::Definite(height) => total_height.min(height),
+                        AvailableSpace::MinContent | AvailableSpace::MaxContent => total_height,
+                    };
+                    size(width, height)
+                })
+            } else {
+                cx.request_layout(&style, None)
             }
         });
         (layout_id, ())
@@ -416,7 +542,6 @@ impl Element for List {
         cx: &mut crate::ElementContext,
     ) {
         let state = &mut *self.state.0.borrow_mut();
-
         state.reset = false;
 
         let mut style = Style::default();
@@ -432,118 +557,10 @@ impl Element for List {
             )
         }
 
-        let old_items = state.items.clone();
-        let mut measured_items = VecDeque::new();
-        let mut item_elements = VecDeque::new();
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let mut rendered_height = padding.top;
-        let mut scroll_top = state.logical_scroll_top();
-
-        let available_item_space = Size {
-            width: AvailableSpace::Definite(bounds.size.width),
-            height: AvailableSpace::MinContent,
-        };
-
-        let mut cursor = old_items.cursor::<Count>();
-
-        // Render items after the scroll top, including those in the trailing overdraw
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
-        for (ix, item) in cursor.by_ref().enumerate() {
-            let visible_height = rendered_height - scroll_top.offset_in_item;
-            if visible_height >= bounds.size.height + state.overdraw {
-                break;
-            }
-
-            // Use the previously cached height if available
-            let mut height = if let ListItem::Rendered { height } = item {
-                Some(*height)
-            } else {
-                None
-            };
-
-            // If we're within the visible area or the height wasn't cached, render and measure the item's element
-            if visible_height < bounds.size.height || height.is_none() {
-                let mut element = (state.render_item)(scroll_top.item_ix + ix, cx);
-                let element_size = element.measure(available_item_space, cx);
-                height = Some(element_size.height);
-                if visible_height < bounds.size.height {
-                    item_elements.push_back(element);
-                }
-            }
-
-            let height = height.unwrap();
-            rendered_height += height;
-            measured_items.push_back(ListItem::Rendered { height });
-        }
-        rendered_height += padding.bottom;
-
-        // Prepare to start walking upward from the item at the scroll top.
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
-
-        // If the rendered items do not fill the visible region, then adjust
-        // the scroll top upward.
-        if rendered_height - scroll_top.offset_in_item < bounds.size.height {
-            while rendered_height < bounds.size.height {
-                cursor.prev(&());
-                if cursor.item().is_some() {
-                    let mut element = (state.render_item)(cursor.start().0, cx);
-                    let element_size = element.measure(available_item_space, cx);
-
-                    rendered_height += element_size.height;
-                    measured_items.push_front(ListItem::Rendered {
-                        height: element_size.height,
-                    });
-                    item_elements.push_front(element)
-                } else {
-                    break;
-                }
-            }
-
-            scroll_top = ListOffset {
-                item_ix: cursor.start().0,
-                offset_in_item: rendered_height - bounds.size.height,
-            };
-
-            match state.alignment {
-                ListAlignment::Top => {
-                    scroll_top.offset_in_item = scroll_top.offset_in_item.max(px(0.));
-                    state.logical_scroll_top = Some(scroll_top);
-                }
-                ListAlignment::Bottom => {
-                    scroll_top = ListOffset {
-                        item_ix: cursor.start().0,
-                        offset_in_item: rendered_height - bounds.size.height,
-                    };
-                    state.logical_scroll_top = None;
-                }
-            };
-        }
-
-        // Measure items in the leading overdraw
-        let mut leading_overdraw = scroll_top.offset_in_item;
-        while leading_overdraw < state.overdraw {
-            cursor.prev(&());
-            if let Some(item) = cursor.item() {
-                let height = if let ListItem::Rendered { height } = item {
-                    *height
-                } else {
-                    let mut element = (state.render_item)(cursor.start().0, cx);
-                    element.measure(available_item_space, cx).height
-                };
-
-                leading_overdraw += height;
-                measured_items.push_front(ListItem::Rendered { height });
-            } else {
-                break;
-            }
-        }
-
-        let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());
-        let mut cursor = old_items.cursor::<Count>();
-        let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right, &());
-        new_items.extend(measured_items, &());
-        cursor.seek(&Count(measured_range.end), Bias::Right, &());
-        new_items.append(cursor.suffix(&()), &());
+        let scroll_top = state.logical_scroll_top();
+        let (_, available_item_space, mut item_elements) =
+            state.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
 
         // Only paint the visible items, if there is actually any space for them (taking padding into account)
         if bounds.size.height > padding.top + padding.bottom {
@@ -559,7 +576,6 @@ impl Element for List {
             });
         }
 
-        state.items = new_items;
         state.last_layout_bounds = Some(bounds);
 
         let list_state = self.state.clone();
@@ -611,11 +627,11 @@ impl sum_tree::Item for ListItem {
                 unrendered_count: 1,
                 height: px(0.),
             },
-            ListItem::Rendered { height } => ListItemSummary {
+            ListItem::Rendered { size } => ListItemSummary {
                 count: 1,
                 rendered_count: 1,
                 unrendered_count: 0,
-                height: *height,
+                height: size.height,
             },
         }
     }

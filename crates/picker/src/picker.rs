@@ -318,16 +318,7 @@ impl<D: PickerDelegate> Picker<D> {
             .py_2()
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
-            ElementContainer::List(state) => div()
-                .size_full()
-                .id("candidates")
-                .child(
-                    list(state.clone())
-                        .w_full()
-                        .py_2()
-                        .max_h(self.max_height.unwrap_or(rems(18.).into())),
-                )
-                .into_any_element(),
+            ElementContainer::List(state) => list(state.clone()).py_2().into_any_element(),
         }
     }
 }
