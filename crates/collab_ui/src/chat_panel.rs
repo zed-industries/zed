@@ -922,7 +922,7 @@ fn is_12_hour_clock(locale: String) -> bool {
         "es-MX", "es-CO", "es-SV", "es-NI",
         "es-HN", // Mexico, Colombia, El Salvador, Nicaragua, Honduras
         "en-US", "en-CA", "en-AU", "en-NZ", // U.S, Canada, Australia, New Zealand
-        "ar-SA", "ar-EG", "ar-JO", // Saudi Arabia, Egypt, Jorda
+        "ar-SA", "ar-EG", "ar-JO", // Saudi Arabia, Egypt, Jordan
         "en-IN", "hi-IN", // India, Hindu
         "en-PK", "ur-PK", // Pakistan, Urdu
         "en-PH", "fil-PH", // Philippines, Filipino
