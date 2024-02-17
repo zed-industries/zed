@@ -77,7 +77,6 @@ use language::{
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
-use crate::git::permalink::{build_permalink, BuildPermalinkParams};
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
@@ -291,7 +290,7 @@ pub enum SelectPhase {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum SelectMode {
+pub enum SelectMode {
     Character,
     Word(Range<Anchor>),
     Line(Range<Anchor>),
