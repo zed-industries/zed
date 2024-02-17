@@ -25,15 +25,7 @@ use futures::{
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
-use gpui::{
-    actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView,
-    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
-    DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
-    ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
-    Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
-};
+use gpui::{actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions, Keystroke, PlatformInput, KeyDownEvent, KeyUpEvent};
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
@@ -157,6 +149,9 @@ pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct SendKeystrokes(pub String);
+
 impl_actions!(
     workspace,
     [
@@ -168,6 +163,7 @@ impl_actions!(
         Save,
         SaveAll,
         SwapPaneInDirection,
+        SendKeystrokes,
     ]
 );
 
@@ -1250,6 +1246,20 @@ impl Workspace {
     fn save_all(&mut self, action: &SaveAll, cx: &mut ViewContext<Self>) {
         self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx)
             .detach_and_log_err(cx);
+    }
+
+    fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
+        let keystrokes: Vec<Keystroke> = action.0.split(" ").flat_map(|k| {
+            Keystroke::parse(k).log_err()
+        }).collect();
+
+        cx.window_context().defer(move |cx| {
+            for keystroke in keystrokes {
+                cx.dispatch_event(PlatformInput::KeyDown(KeyDownEvent{
+                    keystroke: keystroke.clone(), is_held: false}));
+                cx.dispatch_event(PlatformInput::KeyUp(KeyUpEvent{keystroke}));
+            }
+        })
     }
 
     fn save_all_internal(
@@ -3359,6 +3369,7 @@ impl Workspace {
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))
+            .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {

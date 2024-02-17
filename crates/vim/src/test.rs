@@ -884,3 +884,33 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     rename_request.next().await.unwrap();
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
+
+#[gpui::test]
+async fn test_remap(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // test moving the cursor
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g z",
+            workspace::SendKeystrokes("l l l l".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("ˇ123456789", Mode::Normal);
+    cx.simulate_keystrokes(["g", "z"]);
+    cx.assert_state("1234ˇ56789", Mode::Normal);
+
+    // test going into insert mode
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g y",
+            workspace::SendKeystrokes("i 0 escape".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("ˇ123456789", Mode::Normal);
+    cx.simulate_keystrokes(["g", "y"]);
+    // cx.assert_state("1234ˇ056789", Mode::Normal);
+
+}
