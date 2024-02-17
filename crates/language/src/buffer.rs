@@ -758,6 +758,7 @@ impl Buffer {
 
     /// Assign a language to the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+        self.parse_count += 1;
         self.syntax_map.lock().clear();
         self.language = language;
         self.reparse(cx);
@@ -3440,8 +3441,9 @@ impl Completion {
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
         let kind_key = match self.lsp_completion.kind {
-            Some(lsp::CompletionItemKind::VARIABLE) => 0,
-            _ => 1,
+            Some(lsp::CompletionItemKind::KEYWORD) => 0,
+            Some(lsp::CompletionItemKind::VARIABLE) => 1,
+            _ => 2,
         };
         (kind_key, &self.label.text[self.label.filter_range.clone()])
     }

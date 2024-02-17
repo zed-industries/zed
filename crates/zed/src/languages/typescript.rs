@@ -160,6 +160,16 @@ impl LspAdapter for TypeScriptLspAdapter {
             "tsserver": {
                 "path": "node_modules/typescript/lib",
             },
+            "preferences": {
+                "includeInlayParameterNameHints": "all",
+                "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
+                "includeInlayFunctionParameterTypeHints": true,
+                "includeInlayVariableTypeHints": true,
+                "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
+                "includeInlayPropertyDeclarationTypeHints": true,
+                "includeInlayFunctionLikeReturnTypeHints": true,
+                "includeInlayEnumMemberValueHints": true,
+            }
         }))
     }
 
@@ -246,10 +256,15 @@ impl LspAdapter for EsLintLspAdapter {
         // At the time of writing the latest vscode-eslint release was released in 2020 and requires
         // special custom LSP protocol extensions be handled to fully initialize. Download the latest
         // prerelease instead to sidestep this issue
-        let release =
-            latest_github_release("microsoft/vscode-eslint", true, delegate.http_client()).await?;
+        let release = latest_github_release(
+            "microsoft/vscode-eslint",
+            false,
+            false,
+            delegate.http_client(),
+        )
+        .await?;
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: release.tarball_url,
         }))
     }

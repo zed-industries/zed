@@ -163,7 +163,8 @@ CREATE TABLE "room_participants" (
     "calling_connection_id" INTEGER NOT NULL,
     "calling_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE SET NULL,
     "participant_index" INTEGER,
-    "role" TEXT
+    "role" TEXT,
+    "in_call" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");
 CREATE INDEX "index_room_participants_on_room_id" ON "room_participants" ("room_id");
@@ -352,3 +353,25 @@ CREATE TABLE contributors (
     signed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id)
 );
+
+CREATE TABLE extensions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    latest_version TEXT NOT NULL,
+    total_download_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE extension_versions (
+    extension_id INTEGER REFERENCES extensions(id),
+    version TEXT NOT NULL,
+    published_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    authors TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    description TEXT NOT NULL,
+    download_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (extension_id, version)
+);
+
+CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
+CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");

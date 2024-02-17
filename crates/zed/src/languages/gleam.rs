@@ -35,11 +35,11 @@ impl LspAdapter for GleamLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
-            latest_github_release("gleam-lang/gleam", false, delegate.http_client()).await?;
+            latest_github_release("gleam-lang/gleam", true, false, delegate.http_client()).await?;
 
         let asset_name = format!(
             "gleam-{version}-{arch}-apple-darwin.tar.gz",
-            version = release.name,
+            version = release.tag_name,
             arch = std::env::consts::ARCH
         );
         let asset = release
@@ -48,7 +48,7 @@ impl LspAdapter for GleamLspAdapter {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         }))
     }

@@ -444,7 +444,6 @@ impl Copilot {
                         |_, _| { /* Silence the notification */ },
                     )
                     .detach();
-
                 let server = cx.update(|cx| server.initialize(None, cx))?.await?;
 
                 let status = server
@@ -976,9 +975,10 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-        let release = latest_github_release("zed-industries/copilot", false, http.clone()).await?;
+        let release =
+            latest_github_release("zed-industries/copilot", true, false, http.clone()).await?;
 
-        let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.name));
+        let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.tag_name));
 
         fs::create_dir_all(version_dir).await?;
         let server_path = version_dir.join(SERVER_PATH);
@@ -997,7 +997,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
             let mut response = http
                 .get(url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading copilot release: {}", err))?;
+                .context("error downloading copilot release")?;
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(dist_dir).await?;

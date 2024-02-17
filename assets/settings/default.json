@@ -214,6 +214,8 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
+    // The default OpenAI API endpoint to use when starting new conversations.
+    "openai_api_url": "https://api.openai.com/v1",
     // The default OpenAI model to use when starting new conversations. This
     // setting can take three values:
     //
@@ -445,7 +447,7 @@
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
-    // "font_size": "15",
+    // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Mono",
@@ -480,6 +482,7 @@
   "deno": {
     "enable": false
   },
+  "code_actions_on_format": {},
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {
@@ -490,7 +493,10 @@
     },
     "Go": {
       "tab_size": 4,
-      "hard_tabs": true
+      "hard_tabs": true,
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
     },
     "Markdown": {
       "soft_wrap": "preferred_line_length"
@@ -560,7 +566,7 @@
   "stable": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using Zed Stable.
+  // Settings overrides to use when using Zed Dev.
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"

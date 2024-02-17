@@ -118,6 +118,7 @@ actions!(
         ToggleRightDock,
         ToggleBottomDock,
         CloseAllDocks,
+        ToggleGraphicsProfiler,
     ]
 );
 
@@ -569,6 +570,27 @@ impl Workspace {
                 project::Event::Notification(message) => this.show_notification(0, cx, |cx| {
                     cx.new_view(|_| MessageNotification::new(message.clone()))
                 }),
+
+                project::Event::LanguageServerPrompt(request) => {
+                    let request = request.clone();
+
+                    cx.spawn(|_, mut cx| async move {
+                        let messages = request
+                            .actions
+                            .iter()
+                            .map(|action| action.title.as_str())
+                            .collect::<Vec<_>>();
+                        let index = cx
+                            .update(|cx| {
+                                cx.prompt(request.level, "", Some(&request.message), &messages)
+                            })?
+                            .await?;
+                        request.respond(index).await;
+
+                        Result::<(), anyhow::Error>::Ok(())
+                    })
+                    .detach()
+                }
 
                 _ => {}
             }
@@ -2721,7 +2743,6 @@ impl Workspace {
 
         cx.notify();
 
-        self.last_active_view_id = active_view_id.clone();
         proto::FollowResponse {
             active_view_id,
             views: self
@@ -2895,7 +2916,6 @@ impl Workspace {
     pub fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
-
         if cx.is_window_active() {
             if let Some(item) = self.active_item(cx) {
                 if item.focus_handle(cx).contains_focused(cx) {
@@ -3395,6 +3415,7 @@ impl Workspace {
                     workspace.reopen_closed_item(cx).detach();
                 }),
             )
+            .on_action(|_: &ToggleGraphicsProfiler, cx| cx.toggle_graphics_profiler())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -4178,7 +4199,6 @@ pub fn join_channel(
                                 "This channel is private, and you do not have access. Please ask someone to add you and try again.".into()
                             },
                             ErrorCode::Disconnected => "Please check your internet connection and try again.".into(),
-                            ErrorCode::WrongReleaseChannel => format!("Others in the channel are using the {} release of Zed. Please switch to join this call.", err.error_tag("required").unwrap_or("other")).into(),
                             _ => format!("{}\n\nPlease try again.", err).into(),
                         };
                         cx.prompt(

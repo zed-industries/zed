@@ -1,7 +1,8 @@
+use super::metal_atlas::MetalAtlas;
 use crate::{
     point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    Hsla, MetalAtlas, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch,
-    Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
+    Hsla, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -13,11 +14,14 @@ use collections::HashMap;
 use core_foundation::base::TCFType;
 use foreign_types::ForeignType;
 use media::core_video::CVMetalTextureCache;
-use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
+
+// Exported to metal
+pub(crate) type PointF = crate::Point<f32>;
 
 #[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
@@ -26,9 +30,22 @@ const SHADERS_SOURCE_FILE: &'static str =
     include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
 const INSTANCE_BUFFER_SIZE: usize = 2 * 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value (maybe even we could adjust dynamically...)
 
+pub type Context = Arc<Mutex<Vec<metal::Buffer>>>;
+pub type Renderer = MetalRenderer;
+
+pub unsafe fn new_renderer(
+    context: self::Context,
+    _native_window: *mut c_void,
+    _native_view: *mut c_void,
+    _bounds: crate::Size<f32>,
+) -> Renderer {
+    MetalRenderer::new(context)
+}
+
 pub(crate) struct MetalRenderer {
     device: metal::Device,
     layer: metal::MetalLayer,
+    presents_with_transaction: bool,
     command_queue: CommandQueue,
     paths_rasterization_pipeline_state: metal::RenderPipelineState,
     path_sprites_pipeline_state: metal::RenderPipelineState,
@@ -57,8 +74,8 @@ impl MetalRenderer {
         let layer = metal::MetalLayer::new();
         layer.set_device(&device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-        layer.set_presents_with_transaction(true);
         layer.set_opaque(true);
+        layer.set_maximum_drawable_count(3);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
@@ -77,7 +94,7 @@ impl MetalRenderer {
             .new_library_with_data(SHADERS_METALLIB)
             .expect("error building metal library");
 
-        fn to_float2_bits(point: crate::PointF) -> u64 {
+        fn to_float2_bits(point: PointF) -> u64 {
             let mut output = point.y.to_bits() as u64;
             output <<= 32;
             output |= point.x.to_bits() as u64;
@@ -171,6 +188,7 @@ impl MetalRenderer {
         Self {
             device,
             layer,
+            presents_with_transaction: false,
             command_queue,
             paths_rasterization_pipeline_state,
             path_sprites_pipeline_state,
@@ -191,8 +209,31 @@ impl MetalRenderer {
         &self.layer
     }
 
+    pub fn layer_ptr(&self) -> *mut CAMetalLayer {
+        self.layer.as_ptr()
+    }
+
     pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
         &self.sprite_atlas
+    }
+
+    pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
+        self.presents_with_transaction = presents_with_transaction;
+        self.layer
+            .set_presents_with_transaction(presents_with_transaction);
+    }
+
+    pub fn update_drawable_size(&mut self, size: Size<f64>) {
+        unsafe {
+            let _: () = msg_send![
+                self.layer(),
+                setDrawableSize: size
+            ];
+        }
+    }
+
+    pub fn destroy(&mut self) {
+        // nothing to do
     }
 
     pub fn draw(&mut self, scene: &Scene) {
@@ -344,11 +385,17 @@ impl MetalRenderer {
         });
         let block = block.copy();
         command_buffer.add_completed_handler(&block);
-        command_buffer.commit();
+
         self.sprite_atlas.clear_textures(AtlasTextureKind::Path);
 
-        command_buffer.wait_until_scheduled();
-        drawable.present();
+        if self.presents_with_transaction {
+            command_buffer.commit();
+            command_buffer.wait_until_scheduled();
+            drawable.present();
+        } else {
+            command_buffer.present_drawable(drawable);
+            command_buffer.commit();
+        }
     }
 
     fn rasterize_paths(

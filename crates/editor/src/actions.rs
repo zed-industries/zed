@@ -194,6 +194,7 @@ gpui::actions!(
         NewlineBelow,
         NextScreen,
         OpenExcerpts,
+        OpenPermalinkToLine,
         Outdent,
         PageDown,
         PageUp,
@@ -238,5 +239,7 @@ gpui::actions!(
         Undo,
         UndoSelection,
         UnfoldLines,
+        UniqueLinesCaseSensitive,
+        UniqueLinesCaseInsensitive
     ]
 );

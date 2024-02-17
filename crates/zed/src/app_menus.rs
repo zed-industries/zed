@@ -21,6 +21,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                         MenuItem::action("Select Theme", theme_selector::Toggle),
                     ],
                 }),
+                MenuItem::action("Extensions", extensions_ui::Extensions),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 MenuItem::action("Hide Zed", super::Hide),
@@ -155,6 +156,10 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
+                MenuItem::action(
+                    "Toggle Graphics Profiler",
+                    workspace::ToggleGraphicsProfiler,
+                ),
                 MenuItem::separator(),
                 MenuItem::separator(),
                 MenuItem::action(

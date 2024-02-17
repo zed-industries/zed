@@ -399,6 +399,7 @@ pub struct Editor {
     workspace: Option<(WeakView<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
+    use_modal_editing: bool,
     read_only: bool,
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
@@ -1016,12 +1017,53 @@ impl CompletionsMenu {
 
         let completions = self.completions.read();
         matches.sort_unstable_by_key(|mat| {
+            // We do want to strike a balance here between what the language server tells us
+            // to sort by (the sort_text) and what are "obvious" good matches (i.e. when you type
+            // `Creat` and there is a local variable called `CreateComponent`).
+            // So what we do is: we bucket all matches into two buckets
+            // - Strong matches
+            // - Weak matches
+            // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
+            // and the Weak matches are the rest.
+            //
+            // For the strong matches, we sort by the language-servers score first and for the weak
+            // matches, we prefer our fuzzy finder first.
+            //
+            // The thinking behind that: it's useless to take the sort_text the language-server gives
+            // us into account when it's obviously a bad match.
+
+            #[derive(PartialEq, Eq, PartialOrd, Ord)]
+            enum MatchScore<'a> {
+                Strong {
+                    sort_text: Option<&'a str>,
+                    score: Reverse<OrderedFloat<f64>>,
+                    sort_key: (usize, &'a str),
+                },
+                Weak {
+                    score: Reverse<OrderedFloat<f64>>,
+                    sort_text: Option<&'a str>,
+                    sort_key: (usize, &'a str),
+                },
+            }
+
             let completion = &completions[mat.candidate_id];
-            (
-                completion.lsp_completion.sort_text.as_ref(),
-                Reverse(OrderedFloat(mat.score)),
-                completion.sort_key(),
-            )
+            let sort_key = completion.sort_key();
+            let sort_text = completion.lsp_completion.sort_text.as_deref();
+            let score = Reverse(OrderedFloat(mat.score));
+
+            if mat.score >= 0.2 {
+                MatchScore::Strong {
+                    sort_text,
+                    score,
+                    sort_key,
+                }
+            } else {
+                MatchScore::Weak {
+                    score,
+                    sort_text,
+                    sort_key,
+                }
+            }
         });
 
         for mat in &mut matches {
@@ -1222,7 +1264,12 @@ impl CopilotState {
         if completion_range.is_empty()
             && completion_range.start == cursor.text_anchor.to_offset(&completion_buffer)
         {
-            Some(&completion.text[prefix_len..completion.text.len() - suffix_len])
+            let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
+            if completion_text.trim().is_empty() {
+                None
+            } else {
+                Some(completion_text)
+            }
         } else {
             None
         }
@@ -1477,6 +1524,7 @@ impl Editor {
             workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
+            use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
             leader_peer_id: None,
@@ -1775,6 +1823,14 @@ impl Editor {
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
         self.show_copilot_suggestions = show_copilot_suggestions;
+    }
+
+    pub fn set_use_modal_editing(&mut self, to: bool) {
+        self.use_modal_editing = to;
+    }
+
+    pub fn use_modal_editing(&self) -> bool {
+        self.use_modal_editing
     }
 
     fn selections_did_change(
@@ -2490,7 +2546,12 @@ impl Editor {
             let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
-            if !brace_inserted && EditorSettings::get_global(cx).use_on_type_format {
+            if brace_inserted {
+                // If we inserted a brace while composing text (i.e. typing `"` on a
+                // Brazilian keyboard), exit the composing state because most likely
+                // the user wanted to surround the selection.
+                this.unmark_text(cx);
+            } else if EditorSettings::get_global(cx).use_on_type_format {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
@@ -4655,6 +4716,28 @@ impl Editor {
         self.manipulate_lines(cx, |lines| lines.sort_by_key(|line| line.to_lowercase()))
     }
 
+    pub fn unique_lines_case_insensitive(
+        &mut self,
+        _: &UniqueLinesCaseInsensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |lines| {
+            let mut seen = HashSet::default();
+            lines.retain(|line| seen.insert(line.to_lowercase()));
+        })
+    }
+
+    pub fn unique_lines_case_sensitive(
+        &mut self,
+        _: &UniqueLinesCaseSensitive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_lines(cx, |lines| {
+            let mut seen = HashSet::default();
+            lines.retain(|line| seen.insert(*line));
+        })
+    }
+
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
         self.manipulate_lines(cx, |lines| lines.reverse())
     }
@@ -4665,7 +4748,7 @@ impl Editor {
 
     fn manipulate_lines<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
     where
-        Fn: FnMut(&mut [&str]),
+        Fn: FnMut(&mut Vec<&str>),
     {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -4676,6 +4759,8 @@ impl Editor {
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
+        let mut added_lines = 0;
+        let mut removed_lines = 0;
 
         while let Some(selection) = selections.next() {
             let (start_row, end_row) = consume_contiguous_rows(
@@ -4690,36 +4775,54 @@ impl Editor {
             let text = buffer
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
+
             let mut lines = text.split("\n").collect_vec();
 
-            let lines_len = lines.len();
+            let lines_before = lines.len();
             callback(&mut lines);
-
-            // This is a current limitation with selections.
-            // If we wanted to support removing or adding lines, we'd need to fix the logic associated with selections.
-            debug_assert!(
-                lines.len() == lines_len,
-                "callback should not change the number of lines"
-            );
+            let lines_after = lines.len();
 
             edits.push((start_point..end_point, lines.join("\n")));
-            let start_anchor = buffer.anchor_after(start_point);
-            let end_anchor = buffer.anchor_before(end_point);
 
-            // Make selection and push
+            // Selections must change based on added and removed line count
+            let start_row = start_point.row + added_lines as u32 - removed_lines as u32;
+            let end_row = start_row + lines_after.saturating_sub(1) as u32;
             new_selections.push(Selection {
                 id: selection.id,
-                start: start_anchor.to_offset(&buffer),
-                end: end_anchor.to_offset(&buffer),
+                start: start_row,
+                end: end_row,
                 goal: SelectionGoal::None,
                 reversed: selection.reversed,
             });
+
+            if lines_after > lines_before {
+                added_lines += lines_after - lines_before;
+            } else if lines_before > lines_after {
+                removed_lines += lines_before - lines_after;
+            }
         }
 
         self.transact(cx, |this, cx| {
-            this.buffer.update(cx, |buffer, cx| {
+            let buffer = this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, None, cx);
+                buffer.snapshot(cx)
             });
+
+            // Recalculate offsets on newly edited buffer
+            let new_selections = new_selections
+                .iter()
+                .map(|s| {
+                    let start_point = Point::new(s.start, 0);
+                    let end_point = Point::new(s.end, buffer.line_len(s.end));
+                    Selection {
+                        id: s.id,
+                        start: buffer.point_to_offset(start_point),
+                        end: buffer.point_to_offset(end_point),
+                        goal: s.goal,
+                        reversed: s.reversed,
+                    }
+                })
+                .collect();
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
@@ -7557,8 +7660,9 @@ impl Editor {
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
-            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
+            project.prepare_rename(cursor_buffer.clone(), cursor_buffer_offset, cx)
         });
+        drop(snapshot);
 
         Some(cx.spawn(|this, mut cx| async move {
             let rename_range = if let Some(range) = prepare_rename.await? {
@@ -7578,11 +7682,12 @@ impl Editor {
                 })?
             };
             if let Some(rename_range) = rename_range {
-                let rename_buffer_range = rename_range.to_offset(&snapshot);
-                let cursor_offset_in_rename_range =
-                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-
                 this.update(&mut cx, |this, cx| {
+                    let snapshot = cursor_buffer.read(cx).snapshot();
+                    let rename_buffer_range = rename_range.to_offset(&snapshot);
+                    let cursor_offset_in_rename_range =
+                        cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+
                     this.take_rename(false, cx);
                     let buffer = this.buffer.read(cx).read(cx);
                     let cursor_offset = selection.head().to_offset(&buffer);
@@ -7784,7 +7889,6 @@ impl Editor {
         Some(rename)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
     }
@@ -8351,52 +8455,54 @@ impl Editor {
         }
     }
 
-    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
-        let permalink = maybe!({
-            let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
-            let project = project.read(cx);
+        let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
+        let project = project.read(cx);
 
-            let worktree = project
-                .visible_worktrees(cx)
-                .next()
-                .ok_or_else(|| anyhow!("no worktree"))?;
+        let worktree = project
+            .visible_worktrees(cx)
+            .next()
+            .ok_or_else(|| anyhow!("no worktree"))?;
 
-            let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-            cwd.push(".git");
+        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
+        cwd.push(".git");
 
-            const REMOTE_NAME: &'static str = "origin";
-            let repo = project
-                .fs()
-                .open_repo(&cwd)
-                .ok_or_else(|| anyhow!("no Git repo"))?;
-            let origin_url = repo
-                .lock()
-                .remote_url(REMOTE_NAME)
-                .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
-            let sha = repo
-                .lock()
-                .head_sha()
-                .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
+        const REMOTE_NAME: &'static str = "origin";
+        let repo = project
+            .fs()
+            .open_repo(&cwd)
+            .ok_or_else(|| anyhow!("no Git repo"))?;
+        let origin_url = repo
+            .lock()
+            .remote_url(REMOTE_NAME)
+            .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+        let sha = repo
+            .lock()
+            .head_sha()
+            .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
-            let path = maybe!({
-                let buffer = self.buffer().read(cx).as_singleton()?;
-                let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-                file.path().to_str().map(|path| path.to_string())
-            })
-            .ok_or_else(|| anyhow!("failed to determine file path"))?;
+        let path = maybe!({
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
+            file.path().to_str().map(|path| path.to_string())
+        })
+        .ok_or_else(|| anyhow!("failed to determine file path"))?;
 
-            let selections = self.selections.all::<Point>(cx);
-            let selection = selections.iter().peekable().next();
+        let selections = self.selections.all::<Point>(cx);
+        let selection = selections.iter().peekable().next();
 
-            build_permalink(BuildPermalinkParams {
-                remote_url: &origin_url,
-                sha: &sha,
-                path: &path,
-                selection: selection.map(|selection| selection.range()),
-            })
-        });
+        build_permalink(BuildPermalinkParams {
+            remote_url: &origin_url,
+            sha: &sha,
+            path: &path,
+            selection: selection.map(|selection| selection.range()),
+        })
+    }
+
+    pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
+        let permalink = self.get_permalink_to_line(cx);
 
         match permalink {
             Ok(permalink) => {
@@ -8410,6 +8516,27 @@ impl Editor {
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
                         workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                    })
+                }
+            }
+        }
+    }
+
+    pub fn open_permalink_to_line(&mut self, _: &OpenPermalinkToLine, cx: &mut ViewContext<Self>) {
+        let permalink = self.get_permalink_to_line(cx);
+
+        match permalink {
+            Ok(permalink) => {
+                cx.open_url(&permalink.to_string());
+            }
+            Err(err) => {
+                let message = format!("Failed to open permalink: {err}");
+
+                Err::<(), anyhow::Error>(err).log_err();
+
+                if let Some(workspace) = self.workspace() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_toast(Toast::new(0x45a8978, message), cx)
                     })
                 }
             }
@@ -8430,6 +8557,17 @@ impl Editor {
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
+        let snapshot = self.snapshot(cx);
+        // this is to try and catch a panic sooner
+        for range in &ranges {
+            snapshot
+                .buffer_snapshot
+                .summary_for_anchor::<usize>(&range.start);
+            snapshot
+                .buffer_snapshot
+                .summary_for_anchor::<usize>(&range.end);
+        }
+
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, ranges));
         cx.notify();
@@ -8772,6 +8910,10 @@ impl Editor {
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed => cx.emit(EditorEvent::Reparsed),
+            multi_buffer::Event::LanguageChanged => {
+                cx.emit(EditorEvent::Reparsed);
+                cx.notify();
+            }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
             multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
@@ -9626,6 +9768,7 @@ impl ViewInputHandler for Editor {
                 this.change_selections(None, cx, |selections| {
                     selections.select_ranges(new_selected_ranges)
                 });
+                this.backspace(&Default::default(), cx);
             }
 
             this.handle_input(text, cx);
@@ -9728,7 +9871,11 @@ impl ViewInputHandler for Editor {
                 );
             }
 
+            // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
+            let use_autoclose = this.use_autoclose;
+            this.set_use_autoclose(false);
             this.handle_input(text, cx);
+            this.set_use_autoclose(use_autoclose);
 
             if let Some(new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);

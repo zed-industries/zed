@@ -224,8 +224,8 @@ impl ContextMenu {
                     .timer(Duration::from_millis(50))
                     .await;
                 this.update(&mut cx, |this, cx| {
+                    this.cancel(&menu::Cancel, cx);
                     cx.dispatch_action(action);
-                    this.cancel(&menu::Cancel, cx)
                 })
             })
             .detach_and_log_err(cx);

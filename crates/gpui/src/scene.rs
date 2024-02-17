@@ -5,8 +5,6 @@ use crate::{
 use collections::{BTreeMap, FxHashSet};
 use std::{fmt::Debug, iter::Peekable, slice};
 
-// Exported to metal
-pub(crate) type PointF = Point<f32>;
 #[allow(non_camel_case_types, unused)]
 pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 

@@ -1,6 +1,6 @@
 name = "Terraform"
 grammar = "hcl"
-path_suffixes = ["tf", "tfvars"]
+path_suffixes = ["tf"]
 line_comments = ["# ", "// "]
 block_comment = ["/*", "*/"]
 autoclose_before = ",}])"

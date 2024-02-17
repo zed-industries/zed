@@ -1,0 +1,9 @@
+name = "Prisma"
+grammar = "prisma"
+path_suffixes = ["prisma"]
+line_comments = ["// "]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true }
+]
