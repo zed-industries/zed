@@ -60,7 +60,6 @@ use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 
 use rpc::{ErrorCode, ErrorExt as _};
-pub use runnable_inventory::Inventory;
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
@@ -94,6 +93,7 @@ use util::{
 pub use fs::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
+pub use runnable_inventory::Inventory;
 pub use worktree::*;
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
@@ -156,7 +156,7 @@ pub struct Project {
     default_prettier: DefaultPrettier,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
-    runnables: Model<runnable_inventory::Inventory>,
+    runnables: Model<Inventory>,
 }
 
 pub enum LanguageServerToQuery {
@@ -9084,6 +9084,10 @@ impl Project {
         } else {
             Vec::new()
         }
+    }
+
+    pub fn runnables(&self) -> &Model<Inventory> {
+        &self.runnables
     }
 }
 

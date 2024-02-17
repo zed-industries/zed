@@ -10,12 +10,13 @@ use gpui::{
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
+use runnable::RunnableId;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use terminal::{
     terminal_settings::{TerminalDockPosition, TerminalSettings},
-    ExternalTask,
+    SpawnRunnable,
 };
 use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
 use util::{ResultExt, TryFutureExt};
@@ -38,7 +39,7 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
-            workspace.register_action(TerminalPanel::spawn_task_in_terminal);
+            workspace.register_action(TerminalPanel::spawn_runnable_in_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<TerminalPanel>(cx);
             });
@@ -277,16 +278,16 @@ impl TerminalPanel {
         })
     }
 
-    pub fn spawn_task_in_terminal(
+    pub fn spawn_runnable_in_terminal(
         workspace: &mut Workspace,
-        action: &runnable::SpawnTaskInTerminal,
+        action: &runnable::SpawnInTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        if action.task_id.is_empty() || action.label.is_empty() || action.command.is_empty() {
+        if action.label.is_empty() || action.command.is_empty() {
             return;
         };
-        let external_task = ExternalTask {
-            id: action.task_id.clone(),
+        let spawn_runnable = SpawnRunnable {
+            id: action.id.clone(),
             label: action.label.clone(),
             command: action.command.clone(),
             args: action.args.clone(),
@@ -297,15 +298,15 @@ impl TerminalPanel {
         };
 
         if !action.use_new_terminal {
-            if let Some((item_index, existing_terminal_view)) =
-                terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.find_terminal_for_external_task(&action.task_id, cx)
+            if let Some((item_index, existing_terminal_view)) = terminal_panel
+                .update(cx, |terminal_panel, cx| {
+                    terminal_panel.find_terminal_for_runable(&action.id, cx)
                 })
             {
                 let window = cx.window_handle();
                 if let Some(new_terminal) = workspace.project().update(cx, |project, cx| {
                     project
-                        .create_terminal(working_directory, Some(external_task), window, cx)
+                        .create_terminal(working_directory, Some(spawn_runnable), window, cx)
                         .log_err()
                 }) {
                     existing_terminal_view.update(cx, |existing_terminal_view, cx| {
@@ -320,7 +321,7 @@ impl TerminalPanel {
         }
 
         terminal_panel.update(cx, |terminal_panel, cx| {
-            terminal_panel.add_terminal(working_directory, Some(external_task), cx)
+            terminal_panel.add_terminal(working_directory, Some(spawn_runnable), cx)
         });
         workspace.focus_panel::<Self>(cx);
     }
@@ -338,9 +339,9 @@ impl TerminalPanel {
         this.update(cx, |this, cx| this.add_terminal(None, None, cx))
     }
 
-    fn find_terminal_for_external_task(
+    fn find_terminal_for_runable(
         &self,
-        task_id: &str,
+        id: &RunnableId,
         cx: &mut ViewContext<Self>,
     ) -> Option<(usize, View<TerminalView>)> {
         self.pane
@@ -349,8 +350,8 @@ impl TerminalPanel {
             .enumerate()
             .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
             .find_map(|(index, terminal_view)| {
-                let task_state = terminal_view.read(cx).terminal().read(cx).external_task()?;
-                if task_state.task_id == task_id {
+                let runnable_state = terminal_view.read(cx).terminal().read(cx).runnable()?;
+                if &runnable_state.id == id {
                     Some((index, terminal_view))
                 } else {
                     None
@@ -367,7 +368,7 @@ impl TerminalPanel {
     fn add_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        external_task: Option<ExternalTask>,
+        spawn_runnable: Option<SpawnRunnable>,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
@@ -386,7 +387,7 @@ impl TerminalPanel {
                 let window = cx.window_handle();
                 if let Some(terminal) = workspace.project().update(cx, |project, cx| {
                     project
-                        .create_terminal(working_directory, external_task, window, cx)
+                        .create_terminal(working_directory, spawn_runnable, window, cx)
                         .log_err()
                 }) {
                     let terminal = Box::new(cx.new_view(|cx| {
@@ -424,7 +425,7 @@ impl TerminalPanel {
                     .read(cx)
                     .terminal()
                     .read(cx)
-                    .external_task()
+                    .runnable()
                     .is_some()
                 {
                     None

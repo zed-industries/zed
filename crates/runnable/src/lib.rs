@@ -14,11 +14,11 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-impl_actions!(runnable, [SpawnTaskInTerminal]);
+impl_actions!(runnable, [SpawnInTerminal]);
 
-#[derive(Debug, Default, Clone)]
-pub struct SpawnTaskInTerminal {
-    pub task_id: String,
+#[derive(Debug, Clone)]
+pub struct SpawnInTerminal {
+    pub id: RunnableId,
     pub use_new_terminal: bool,
     pub label: String,
     pub command: String,
@@ -26,9 +26,9 @@ pub struct SpawnTaskInTerminal {
     pub cwd: Option<PathBuf>,
 }
 
-impl PartialEq for SpawnTaskInTerminal {
+impl PartialEq for SpawnInTerminal {
     fn eq(&self, other: &Self) -> bool {
-        self.task_id.eq(&other.task_id)
+        self.id.eq(&other.id)
             && self.use_new_terminal.eq(&other.use_new_terminal)
             && self.label.eq(&other.label)
             && self.command.eq(&other.command)
@@ -37,13 +37,13 @@ impl PartialEq for SpawnTaskInTerminal {
     }
 }
 
-impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
+impl<'de> Deserialize<'de> for SpawnInTerminal {
     fn deserialize<D>(_: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         Ok(Self {
-            task_id: String::new(),
+            id: RunnableId(String::new()),
             use_new_terminal: false,
             label: String::new(),
             command: String::new(),
@@ -53,18 +53,21 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnableId(String);
+
 /// Represents a short lived recipe of a runnable, whose main purpose
 /// is to get spawned.
 pub trait Runnable {
-    fn id(&self) -> &str;
+    fn id(&self) -> &RunnableId;
     fn name(&self) -> &str;
-    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnTaskInTerminal>;
+    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
 /// [`Source`] produces runnables that can be scheduled.
 ///
-/// Implementations of this trait could be e.g. [`StaticSource`] that parses tasks from a .json files and provides process templates to be spawned;
+/// Implementations of this trait could be e.g. [`StaticSource`] that parses runnables from a .json files and provides process templates to be spawned;
 /// another one could be a language server providing lenses with tests or build server listing all targets for a given project.
 pub trait Source: Any {
     fn as_any(&mut self) -> &mut dyn Any;

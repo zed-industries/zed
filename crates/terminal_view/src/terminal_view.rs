@@ -441,7 +441,7 @@ fn subscribe_for_terminal_events(
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
                 let terminal = this.terminal().read(cx);
-                if !terminal.external_task().is_some() {
+                if !terminal.runnable().is_some() {
                     if let Some(foreground_info) = &terminal.foreground_process_info {
                         let cwd = foreground_info.cwd.clone();
 
@@ -777,7 +777,7 @@ impl Item for TerminalView {
     ) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let icon = if terminal.external_task().is_some() {
+        let icon = if terminal.runnable().is_some() {
             IconName::Play
         } else {
             IconName::Terminal
@@ -880,7 +880,7 @@ impl Item for TerminalView {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        if !self.terminal().read(cx).external_task().is_some() {
+        if !self.terminal().read(cx).runnable().is_some() {
             cx.background_executor()
                 .spawn(TERMINAL_DB.update_workspace_id(
                     workspace.database_id(),

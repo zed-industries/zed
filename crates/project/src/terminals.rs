@@ -4,7 +4,7 @@ use settings::Settings;
 use std::path::{Path, PathBuf};
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
-    ExternalTask, ExternalTaskState, Terminal, TerminalBuilder,
+    RunableState, SpawnRunnable, Terminal, TerminalBuilder,
 };
 
 // #[cfg(target_os = "macos")]
@@ -18,7 +18,7 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        external_task: Option<ExternalTask>,
+        spawn_runnable: Option<SpawnRunnable>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
@@ -29,15 +29,15 @@ impl Project {
 
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
-        let (external_task, shell) = if let Some(external_task) = external_task {
+        let (spawn_runnable, shell) = if let Some(spawn_runnable) = spawn_runnable {
             (
-                Some(ExternalTaskState {
-                    task_id: external_task.id,
-                    label: external_task.label,
+                Some(RunableState {
+                    id: spawn_runnable.id,
+                    label: spawn_runnable.label,
                 }),
                 Shell::WithArguments {
-                    program: external_task.command,
-                    args: external_task.args,
+                    program: spawn_runnable.command,
+                    args: spawn_runnable.args,
                 },
             )
         } else {
@@ -46,7 +46,7 @@ impl Project {
 
         let terminal = TerminalBuilder::new(
             working_directory.clone(),
-            external_task,
+            spawn_runnable,
             shell,
             settings.env.clone(),
             Some(settings.blinking.clone()),

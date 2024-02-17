@@ -32,6 +32,7 @@ use mappings::mouse::{
 
 use collections::{HashMap, VecDeque};
 use procinfo::LocalProcessInfo;
+use runnable::RunnableId;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::stream::StreamExt;
@@ -278,8 +279,8 @@ impl Display for TerminalError {
     }
 }
 
-pub struct ExternalTask {
-    pub id: String,
+pub struct SpawnRunnable {
+    pub id: RunnableId,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -293,7 +294,7 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        external_task: Option<ExternalTaskState>,
+        runnable: Option<RunableState>,
         shell: Shell,
         env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
@@ -392,7 +393,7 @@ impl TerminalBuilder {
         let word_regex = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
 
         let terminal = Terminal {
-            external_task,
+            runnable,
             pty_tx: Notifier(pty_tx),
             term,
             events: VecDeque::with_capacity(10), //Should never get this high.
@@ -566,11 +567,11 @@ pub struct Terminal {
     hovered_word: bool,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
-    external_task: Option<ExternalTaskState>,
+    runnable: Option<RunableState>,
 }
 
-pub struct ExternalTaskState {
-    pub task_id: String,
+pub struct RunableState {
+    pub id: RunnableId,
     pub label: String,
 }
 
@@ -604,7 +605,7 @@ impl Terminal {
                 cx.emit(Event::Bell);
             }
             AlacTermEvent::Exit => {
-                if self.external_task.is_none() {
+                if self.runnable.is_none() {
                     cx.emit(Event::CloseTerminal)
                 }
             }
@@ -1326,9 +1327,9 @@ impl Terminal {
 
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
-        match &self.external_task {
-            // TODO kb alter icon if the task failed/completed
-            Some(external_task) => truncate_and_trailoff(&external_task.label, MAX_CHARS),
+        match &self.runnable {
+            // TODO kb alter icon if the runnable failed/completed
+            Some(runnable_state) => truncate_and_trailoff(&runnable_state.label, MAX_CHARS),
             None => self
                 .foreground_process_info
                 .as_ref()
@@ -1365,8 +1366,8 @@ impl Terminal {
         self.cmd_pressed && self.hovered_word
     }
 
-    pub fn external_task(&self) -> Option<&ExternalTaskState> {
-        self.external_task.as_ref()
+    pub fn runnable(&self) -> Option<&RunableState> {
+        self.runnable.as_ref()
     }
 }
 

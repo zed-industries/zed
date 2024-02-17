@@ -1,10 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, Action, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
+    actions, rems, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
     ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
@@ -13,7 +13,9 @@ use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-actions!(runnables, [Spawn]);
+use crate::schedule_runnable;
+
+actions!(runnables, [Spawn, Rerun]);
 
 /// A modal used to spawn new runnables.
 pub(crate) struct RunnablesModalDelegate {
@@ -108,11 +110,10 @@ impl PickerDelegate for RunnablesModalDelegate {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |this, cx| {
-                    let path = &PathBuf::new();
                     this.delegate.candidates = this
                         .delegate
                         .inventory
-                        .update(cx, |this, cx| this.list_runnables(path, cx));
+                        .update(cx, |this, cx| this.list_runnables(cx));
                     this.delegate
                         .candidates
                         .sort_by(|a, b| a.name().cmp(&b.name()));
@@ -164,16 +165,10 @@ impl PickerDelegate for RunnablesModalDelegate {
         };
 
         let ix = current_match.candidate_id;
-        let Some(cwd) = runnable_cwd(&self.workspace, cx).log_err() else {
-            return;
-        };
-
-        let spawn_in_terminal = self.candidates[ix].exec(cwd);
+        let runnable = &self.candidates[ix];
         self.workspace
-            .update(cx, |_, cx| {
-                if let Some(spawn_in_terminal) = spawn_in_terminal {
-                    cx.dispatch_action(spawn_in_terminal.boxed_clone());
-                }
+            .update(cx, |workspace, cx| {
+                schedule_runnable(workspace, runnable.as_ref(), cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -200,46 +195,4 @@ impl PickerDelegate for RunnablesModalDelegate {
                 .start_slot(HighlightedLabel::new(hit.string.clone(), highlights)),
         )
     }
-}
-
-fn runnable_cwd(
-    workspace: &WeakView<Workspace>,
-    cx: &mut WindowContext,
-) -> anyhow::Result<Option<PathBuf>> {
-    let cwd = workspace.update(cx, |workspace, cx| {
-        let project = workspace.project().read(cx);
-        let available_worktrees = project
-            .worktrees()
-            .filter(|worktree| {
-                let worktree = worktree.read(cx);
-                worktree.is_visible()
-                    && worktree.is_local()
-                    && worktree.root_entry().map_or(false, |e| e.is_dir())
-            })
-            .collect::<Vec<_>>();
-
-        let cwd = match available_worktrees.len() {
-            0 => None,
-            1 => Some(available_worktrees[0].read(cx).abs_path()),
-            _ => {
-                let cwd_for_active_entry = project.active_entry().and_then(|entry_id| {
-                    available_worktrees.into_iter().find_map(|worktree| {
-                        let worktree = worktree.read(cx);
-                        if worktree.contains_entry(entry_id) {
-                            Some(worktree.abs_path())
-                        } else {
-                            None
-                        }
-                    })
-                });
-                anyhow::ensure!(
-                    cwd_for_active_entry.is_some(),
-                    "Cannot determine runnable cwd for multiple worktrees"
-                );
-                cwd_for_active_entry
-            }
-        };
-        Ok(cwd)
-    })??;
-    Ok(cwd.map(|path| path.to_path_buf()))
 }

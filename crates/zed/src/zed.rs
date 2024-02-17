@@ -9,8 +9,8 @@ use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, impl_actions, point, px, AppContext, Context, FocusableView, PromptLevel,
-    TitlebarOptions, View, ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions, View,
+    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -24,7 +24,6 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use runnable::static_runnable_file::RunnableProvider;
 use search::project_search::ProjectSearchBar;
-use serde_derive::{Deserialize, Serialize};
 use settings::{
     initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
 };
@@ -70,13 +69,6 @@ actions!(
         Zoom,
     ]
 );
-
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
-struct RunActionWithName {
-    name: String,
-}
-
-impl_actions!(zed, [RunActionWithName]);
 
 pub fn init(cx: &mut AppContext) {
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -371,23 +363,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         .detach();
                     }
                 }
-            })
-            // TODO kb is it even needed? We need a task rerun though.
-            .register_action(move |this, action: &RunActionWithName, cx| {
-                this.project().update(cx, |this, cx| {
-                    let Some(runnable) = this.runnable_inventory().update(cx, |this, cx| {
-                        this.list_runnables(&std::path::PathBuf::from(""), cx)
-                            .into_iter()
-                            .find(|runnable| runnable.name() == action.name)
-                    }) else {
-                        dbg!("Could not find a runnable with name", &action.name);
-                        return;
-                    };
-
-                    // TODO kb: has to receive some applicable path + has to spawn the terminal with the output stream
-                    // same as the .spawn does in the runnables_ui's modal.rs::confirm
-                    let _ = runnable.exec(None);
-                });
             });
 
         workspace.focus_handle(cx).focus(cx);
