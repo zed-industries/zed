@@ -144,11 +144,10 @@ impl Client for WaylandClient {
         let toplevel = xdg_surface.get_toplevel(&self.qh, ());
         let wl_surface = Arc::new(wl_surface);
 
-        let viewport = if let Some(viewporter) = &state.viewporter {
-            Some(viewporter.get_viewport(&wl_surface, &self.qh, ()))
-        } else {
-            None
-        };
+        let viewport = state
+            .viewporter
+            .as_ref()
+            .map(|viewporter| viewporter.get_viewport(&wl_surface, &self.qh, ()));
 
         wl_surface.frame(&self.qh, wl_surface.clone());
         wl_surface.commit();
