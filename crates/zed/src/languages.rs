@@ -68,7 +68,6 @@ pub fn init(
     languages.register_native_grammars([
         ("astro", tree_sitter_astro::language()),
         ("bash", tree_sitter_bash::language()),
-        ("beancount", tree_sitter_beancount::language()),
         ("c", tree_sitter_c::language()),
         ("c_sharp", tree_sitter_c_sharp::language()),
         ("clojure", tree_sitter_clojure::language()),
@@ -140,7 +139,6 @@ pub fn init(
         ],
     );
     language("bash", vec![]);
-    language("beancount", vec![]);
     language("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
     language("cpp", vec![Arc::new(c::CLspAdapter)]);
