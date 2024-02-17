@@ -912,5 +912,4 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.set_state("ˇ123456789", Mode::Normal);
     cx.simulate_keystrokes(["g", "y"]);
     // cx.assert_state("1234ˇ056789", Mode::Normal);
-
 }

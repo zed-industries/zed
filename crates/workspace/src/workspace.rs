@@ -25,7 +25,16 @@ use futures::{
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
-use gpui::{actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions, Keystroke, PlatformInput, KeyDownEvent, KeyUpEvent};
+use gpui::{
+    actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView,
+    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
+    DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, KeyDownEvent,
+    KeyUpEvent, Keystroke, LayoutId, ManagedView, Model, ModelContext, ParentElement,
+    PathPromptOptions, Pixels, PlatformInput, Point, PromptLevel, Render, SharedString, Size,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
+    WindowContext, WindowHandle, WindowOptions,
+};
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
@@ -1249,15 +1258,19 @@ impl Workspace {
     }
 
     fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
-        let keystrokes: Vec<Keystroke> = action.0.split(" ").flat_map(|k| {
-            Keystroke::parse(k).log_err()
-        }).collect();
+        let keystrokes: Vec<Keystroke> = action
+            .0
+            .split(" ")
+            .flat_map(|k| Keystroke::parse(k).log_err())
+            .collect();
 
         cx.window_context().defer(move |cx| {
             for keystroke in keystrokes {
-                cx.dispatch_event(PlatformInput::KeyDown(KeyDownEvent{
-                    keystroke: keystroke.clone(), is_held: false}));
-                cx.dispatch_event(PlatformInput::KeyUp(KeyUpEvent{keystroke}));
+                cx.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held: false,
+                }));
+                cx.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
             }
         })
     }
