@@ -2115,6 +2115,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
+ "sys-locale",
  "theme",
  "theme_selector",
  "time",

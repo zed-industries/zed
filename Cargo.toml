@@ -272,6 +272,7 @@ unindent = "0.1.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmtime = "16"
+sys-locale = "0.3.1"
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1d8975319c2d5de1bf710e7e21db25b0eee4bc66" }
