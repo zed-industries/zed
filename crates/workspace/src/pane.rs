@@ -986,6 +986,7 @@ impl Pane {
                         item_ix,
                         &*item,
                         save_intent,
+                        false,
                         &mut cx,
                     )
                     .await?
@@ -1095,6 +1096,7 @@ impl Pane {
         item_ix: usize,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
+        without_formatting: bool,
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
         const CONFLICT_MESSAGE: &str =
@@ -1139,7 +1141,10 @@ impl Pane {
                 )
             })?;
             match answer.await {
-                Ok(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
+                Ok(0) => {
+                    pane.update(cx, |_, cx| item.save(project, without_formatting, cx))?
+                        .await?
+                }
                 Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
                 _ => return Ok(false),
             }
@@ -1171,7 +1176,8 @@ impl Pane {
             }
 
             if can_save {
-                pane.update(cx, |_, cx| item.save(project, cx))?.await?;
+                pane.update(cx, |_, cx| item.save(project, without_formatting, cx))?
+                    .await?;
             } else if can_save_as {
                 let start_abs_path = project
                     .update(cx, |project, cx| {
@@ -1203,7 +1209,7 @@ impl Pane {
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         if Self::can_autosave_item(item, cx) {
-            item.save(project, cx)
+            item.save(project, false, cx)
         } else {
             Task::ready(Ok(()))
         }

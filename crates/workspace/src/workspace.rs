@@ -151,6 +151,12 @@ pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWithoutFormatting {
+    pub save_intent: Option<SaveIntent>,
+}
+
 #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItemsAndPanes {
@@ -166,6 +172,7 @@ impl_actions!(
         NewFileInDirection,
         OpenTerminal,
         Save,
+        SaveWithoutFormatting,
         SaveAll,
         SwapPaneInDirection,
     ]
@@ -1310,6 +1317,7 @@ impl Workspace {
                             ix,
                             &*item,
                             save_intent,
+                            false,
                             &mut cx,
                         )
                         .await?
@@ -1555,6 +1563,23 @@ impl Workspace {
         save_intent: SaveIntent,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
+        self.save_active_item_internal(false, save_intent, cx)
+    }
+
+    pub fn save_without_formatting(
+        &mut self,
+        save_intent: SaveIntent,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        self.save_active_item_internal(true, save_intent, cx)
+    }
+
+    fn save_active_item_internal(
+        &mut self,
+        without_formatting: bool,
+        save_intent: SaveIntent,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
         let project = self.project.clone();
         let pane = self.active_pane();
         let item_ix = pane.read(cx).active_item_index();
@@ -1563,9 +1588,17 @@ impl Workspace {
 
         cx.spawn(|mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
-                    .await
-                    .map(|_| ())
+                Pane::save_item(
+                    project,
+                    &pane,
+                    item_ix,
+                    item.as_ref(),
+                    save_intent,
+                    without_formatting,
+                    &mut cx,
+                )
+                .await
+                .map(|_| ())
             } else {
                 Ok(())
             }
@@ -3370,6 +3403,13 @@ impl Workspace {
                     .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
                     .detach_and_log_err(cx);
             }))
+            .on_action(
+                cx.listener(|workspace, action: &SaveWithoutFormatting, cx| {
+                    workspace
+                        .save_without_formatting(action.save_intent.unwrap_or(SaveIntent::Save), cx)
+                        .detach_and_log_err(cx);
+                }),
+            )
             .on_action(cx.listener(|workspace, _: &SaveAs, cx| {
                 workspace
                     .save_active_item(SaveIntent::SaveAs, cx)

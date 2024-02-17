@@ -146,7 +146,12 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn can_save(&self, _cx: &AppContext) -> bool {
         false
     }
-    fn save(&mut self, _project: Model<Project>, _cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    fn save(
+        &mut self,
+        _project: Model<Project>,
+        _without_formatting: bool,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         unimplemented!("save() must be implemented if can_save() returns true")
     }
     fn save_as(
@@ -258,7 +263,12 @@ pub trait ItemHandle: 'static + Send {
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
+    fn save(
+        &self,
+        project: Model<Project>,
+        without_formatting: bool,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>>;
     fn save_as(
         &self,
         project: Model<Project>,
@@ -566,8 +576,13 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).can_save(cx)
     }
 
-    fn save(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(project, cx))
+    fn save(
+        &self,
+        project: Model<Project>,
+        without_formatting: bool,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>> {
+        self.update(cx, |item, cx| item.save(project, without_formatting, cx))
     }
 
     fn save_as(
@@ -1019,6 +1034,7 @@ pub mod test {
         fn save(
             &mut self,
             _: Model<Project>,
+            _: bool,
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;

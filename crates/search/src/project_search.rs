@@ -535,10 +535,12 @@ impl Item for ProjectSearchView {
     fn save(
         &mut self,
         project: Model<Project>,
+        without_formatting: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.results_editor
-            .update(cx, |editor, cx| editor.save(project, cx))
+        self.results_editor.update(cx, |editor, cx| {
+            editor.save(project, without_formatting, cx)
+        })
     }
 
     fn save_as(
