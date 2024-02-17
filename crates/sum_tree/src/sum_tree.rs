@@ -14,24 +14,39 @@ pub const TREE_BASE: usize = 2;
 #[cfg(not(test))]
 pub const TREE_BASE: usize = 6;
 
+/// An item that can be stored in a [`SumTree`]
+///
+/// Must be summarized by a type that implements [`Summary`]
 pub trait Item: Clone {
     type Summary: Summary;
 
     fn summary(&self) -> Self::Summary;
 }
 
+/// An [`Item`] whose summary has a specific key that can be used to identify it
 pub trait KeyedItem: Item {
     type Key: for<'a> Dimension<'a, Self::Summary> + Ord;
 
     fn key(&self) -> Self::Key;
 }
 
+/// A type that describes the Sum of all [`Item`]s in a subtree of the [`SumTree`]
+///
+/// Each Summary type can have multiple [`Dimensions`] that it measures,
+/// which can be used to navigate the tree
 pub trait Summary: Default + Clone + fmt::Debug {
     type Context;
 
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
 }
 
+/// Each [`Summary`] type can have more than one [`Dimension`] type that it measures.
+///
+/// You can use dimensions to seek to a specific location in the [`SumTree`]
+///
+/// # Example:
+/// Zed's rope has a `TextSummary` type that summarizes lines, characters, and bytes.
+/// Each of these are different dimensions we may want to seek to
 pub trait Dimension<'a, S: Summary>: Clone + fmt::Debug + Default {
     fn add_summary(&mut self, _summary: &'a S, _: &S::Context);
 
@@ -97,10 +112,33 @@ impl<D> fmt::Debug for End<D> {
     }
 }
 
+/// Bias is used to settle ambiguities when determining positions in an ordered sequence.
+///
+/// The primary use case is for text, where Bias influences
+/// which character an offset or anchor is associated with.
+///
+/// # Examples
+/// Given the buffer `AˇBCD`:
+/// - The offset of the cursor is 1
+/// - [Bias::Left] would attach the cursor to the character `A`
+/// - [Bias::Right] would attach the cursor to the character `B`
+///
+/// Given the buffer `A«BCˇ»D`:
+/// - The offset of the cursor is 3, and the selection is from 1 to 3
+/// - The left anchor of the selection has [Bias::Right], attaching it to the character `B`
+/// - The right anchor of the selection has [Bias::Left], attaching it to the character `C`
+///
+/// Given the buffer `{ˇ<...>`, where `<...>` is a folded region:
+/// - The display offset of the cursor is 1, but the offset in the buffer is determined by the bias
+/// - [Bias::Left] would attach the cursor to the character `{`, with a buffer offset of 1
+/// - [Bias::Right] would attach the cursor to the first character of the folded region,
+///   and the buffer offset would be the offset of the first character of the folded region
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Hash, Default)]
 pub enum Bias {
+    /// Attach to the character on the left
     #[default]
     Left,
+    /// Attach to the character on the right
     Right,
 }
 
@@ -113,6 +151,10 @@ impl Bias {
     }
 }
 
+/// A B-tree where each leaf node contains an [`Item`] of type `T`,
+/// and each internal node contains a [`Summary`] of the items in its subtree.
+///
+/// Any [`Dimension`] supported by the [`Summary`] type can be used to seek to a specific location in the tree.
 #[derive(Debug, Clone)]
 pub struct SumTree<T: Item>(Arc<Node<T>>);
 
