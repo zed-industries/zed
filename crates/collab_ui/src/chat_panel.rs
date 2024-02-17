@@ -480,6 +480,7 @@ impl ChatPanel {
                                     OffsetDateTime::now_utc(),
                                     message.timestamp,
                                     self.local_timezone,
+                                    None,
                                 ))
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
@@ -937,8 +938,12 @@ fn format_timestamp(
     reference: OffsetDateTime,
     timestamp: OffsetDateTime,
     timezone: UtcOffset,
+    locale: Option<String>,
 ) -> String {
-    let locale = sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
+    let locale = match locale {
+        Some(locale) => locale,
+        None => sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")),
+    };
     let timestamp_local = timestamp.to_offset(timezone);
     let timestamp_local_hour = timestamp_local.hour();
     let timestamp_local_minute = timestamp_local.minute();
@@ -1052,12 +1057,33 @@ mod tests {
     }
 
     #[test]
+    fn test_format_locale() {
+        let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
+        let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
+
+        assert_eq!(
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-GB"))
+            ),
+            "15:30"
+        );
+    }
+
+    #[test]
     fn test_format_today() {
         let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
         let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "03:30 pm"
         );
     }
@@ -1068,7 +1094,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 9, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 09:00 am"
         );
     }
@@ -1079,7 +1110,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 20, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 08:00 pm"
         );
     }
@@ -1090,7 +1126,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 18, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 06:00 pm"
         );
     }
@@ -1101,7 +1142,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 23, 55, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 11:55 pm"
         );
     }
@@ -1112,7 +1158,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 1, 20, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 08:00 pm"
         );
     }
@@ -1123,7 +1174,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 10, 20, 20, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "04/10/1990"
         );
     }
