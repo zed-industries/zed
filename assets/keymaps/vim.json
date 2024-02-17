@@ -509,31 +509,25 @@
     }
   },
   {
-    // Directory expansion
+    // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
-      "escape": "project_panel::ToggleFocus",
-      "enter": "project_panel::Open",
-      "o": "project_panel::Open",
-      "t": "project_panel::Open",
-      "v": "project_panel::Open",
-      "d": "project_panel::NewDirectory",
+      ":": "command_palette::Toggle",
       "%": "project_panel::NewFile",
-      "shift-r": "project_panel::Rename",
-      "m m": "project_panel::Cut",
-      "m c": "project_panel::Copy",
-      "m t": "project_panel::Paste",
-      "x": "project_panel::RevealInFinder",
-      "l": "project_panel::ExpandSelectedEntry",
+      "/": "project_panel::NewSearchInDirectory",
+      "d": "project_panel::NewDirectory",
+      "enter": "project_panel::Open",
+      "escape": "project_panel::ToggleFocus",
       "h": "project_panel::CollapseSelectedEntry",
-      // Move up and down
       "j": "menu::SelectNext",
       "k": "menu::SelectPrev",
+      "l": "project_panel::ExpandSelectedEntry",
+      "o": "project_panel::Open",
       "shift-d": "project_panel::Delete",
-      "/": "project_panel::NewSearchInDirectory",
-      // zed specific
-      "q p": "project_panel::CopyPath",
-      "q r": "project_panel::CopyRelativePath"
+      "shift-r": "project_panel::Rename",
+      "t": "project_panel::Open",
+      "v": "project_panel::Open",
+      "x": "project_panel::RevealInFinder"
     }
   }
 ]
