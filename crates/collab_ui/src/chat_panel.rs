@@ -13,6 +13,7 @@ use gpui::{
     Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
+use log::debug;
 use menu::Confirm;
 use message_editor::MessageEditor;
 use project::Fs;
@@ -283,6 +284,13 @@ impl ChatPanel {
     fn acknowledge_last_message(&mut self, cx: &mut ViewContext<Self>) {
         if self.active && self.is_scrolled_to_bottom {
             if let Some((chat, _)) = &self.active_chat {
+                if let Some(channel_id) = self.channel_id(cx) {
+                    self.last_acknowledged_message_id = self
+                        .channel_store
+                        .read(cx)
+                        .last_acknowledge_message_id(channel_id);
+                }
+
                 chat.update(cx, |chat, cx| {
                     chat.acknowledge_last_message(cx);
                 });
@@ -710,13 +718,6 @@ impl ChatPanel {
             let chat = open_chat.await?;
             let highlight_message_id = scroll_to_message_id;
             let scroll_to_message_id = this.update(&mut cx, |this, cx| {
-                if this.last_acknowledged_message_id.is_none() {
-                    this.last_acknowledged_message_id = this
-                        .channel_store
-                        .read(cx)
-                        .last_acknowledge_message_id(chat.read(cx).channel_id);
-                }
-
                 this.set_active_chat(chat.clone(), cx);
 
                 scroll_to_message_id.or_else(|| this.last_acknowledged_message_id)
@@ -925,12 +926,6 @@ impl Panel for ChatPanel {
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         self.active = active;
         if active {
-            if let Some(channel_id) = self.channel_id(cx) {
-                self.last_acknowledged_message_id = self
-                    .channel_store
-                    .read(cx)
-                    .last_acknowledge_message_id(channel_id)
-            }
             self.acknowledge_last_message(cx);
         }
     }
