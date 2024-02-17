@@ -245,6 +245,8 @@ impl Prettier {
                                 prettier_plugin_dir.join("index.mjs"),
                                 prettier_plugin_dir.join("index.js"),
                                 prettier_plugin_dir.join("plugin.js"),
+                                // this one is for @prettier/plugin-php
+                                prettier_plugin_dir.join("standalone.js"),
                                 prettier_plugin_dir,
                             ] {
                                 if possible_plugin_path.is_file() {
