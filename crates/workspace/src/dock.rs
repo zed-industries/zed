@@ -44,9 +44,6 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     }
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
-    fn collapsed_icon_color(&self, _: &WindowContext) -> Option<Color> {
-        None
-    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -65,7 +62,6 @@ pub trait PanelHandle: Send + Sync {
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
-    fn collapsed_icon_color(&self, _: &WindowContext) -> Option<Color>;
     fn to_any(&self) -> AnyView;
 }
 
@@ -135,10 +131,6 @@ where
 
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx).clone()
-    }
-
-    fn collapsed_icon_color(&self, cx: &WindowContext) -> Option<Color> {
-        self.read(cx).collapsed_icon_color(cx)
     }
 }
 
@@ -669,7 +661,6 @@ impl Render for PanelButtons {
                 let panel = entry.panel.clone();
 
                 let is_active_button = i == active_index && is_open;
-                let color = panel.collapsed_icon_color(cx);
                 let (action, tooltip) = if is_active_button {
                     let action = dock.toggle_action();
 
@@ -722,8 +713,7 @@ impl Render for PanelButtons {
                                 })
                                 .tooltip(move |cx| {
                                     Tooltip::for_action(tooltip.clone(), &*action, cx)
-                                })
-                                .when_some(color, |this, color| this.icon_color(color)),
+                                }),
                         ),
                 )
             });

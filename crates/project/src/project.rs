@@ -1059,9 +1059,11 @@ impl Project {
         }
         cx.notify();
     }
+
     pub fn runnable_inventory(&self) -> &Model<Inventory> {
         &self.runnables
     }
+
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
         &self.collaborators
     }

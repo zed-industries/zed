@@ -264,7 +264,6 @@ fn main() {
         extensions_ui::init(cx);
 
         cx.set_menus(app_menus());
-
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {

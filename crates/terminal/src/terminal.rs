@@ -35,7 +35,6 @@ use procinfo::LocalProcessInfo;
 use runnable::RunnableId;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::stream::StreamExt;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -424,6 +423,8 @@ impl TerminalBuilder {
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
+            use futures::StreamExt;
+
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(&mut cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
@@ -440,7 +441,7 @@ impl TerminalBuilder {
                     loop {
                         futures::select_biased! {
                             _ = timer => break,
-                            event = self.events_rx.next().fuse() => {
+                            event = self.events_rx.next() => {
                                 if let Some(event) = event {
                                     if matches!(event, AlacTermEvent::Wakeup) {
                                         wakeup = true;

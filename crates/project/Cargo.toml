@@ -21,7 +21,6 @@ test-support = [
 ]
 
 [dependencies]
-
 aho-corasick = "1.1"
 anyhow.workspace = true
 async-trait.workspace = true
@@ -68,13 +67,13 @@ toml.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-git2.workspace = true
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 db = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
+git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true

@@ -18,7 +18,6 @@ runnable.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true

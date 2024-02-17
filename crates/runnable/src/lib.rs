@@ -1,5 +1,5 @@
 //! Defines baseline interface of Runnables in Zed.
-// #![deny(missing_docs)]
+// #![deny(missing_docs)] // TODO kb rustdocs everywhere
 mod static_runnable;
 pub mod static_runnable_file;
 mod static_source;
@@ -14,6 +14,7 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+// TODO kb fugly: can we actually use an event instead?
 impl_actions!(runnable, [SpawnInTerminal]);
 
 #[derive(Debug, Clone)]

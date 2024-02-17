@@ -3,17 +3,12 @@ use std::path::PathBuf;
 use gpui::{Action, AppContext, ViewContext, WindowContext};
 use modal::RunnablesModal;
 use runnable::Runnable;
-use runnables_settings::RunnablesSettings;
-use settings::Settings;
 use util::ResultExt;
 use workspace::Workspace;
 
 mod modal;
-mod runnables_settings;
 
 pub fn init(cx: &mut AppContext) {
-    // TODO kb rusdocs everywhere + add an runnable definitions example into the default json file contents
-    RunnablesSettings::register(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace

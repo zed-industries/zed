@@ -276,6 +276,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )
             .register_action(
                 move |_: &mut Workspace, _: &OpenRunnables, cx: &mut ViewContext<Workspace>| {
+                    // TODO kb set initial content with an example
                     open_settings_file(&paths::RUNNABLES, || "".into(), cx);
                 },
             )
