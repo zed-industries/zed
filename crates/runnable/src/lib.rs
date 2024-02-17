@@ -1,14 +1,15 @@
 //! Defines baseline interface of Runnables in Zed.
 // #![deny(missing_docs)]
+mod static_runnable;
 pub mod static_runnable_file;
-mod static_runner;
 mod static_source;
+
+pub use static_runnable::StaticRunnable;
+pub use static_source::{StaticSource, TrackedFile};
 
 use anyhow::Result;
 use gpui::{impl_actions, ModelContext};
 use serde::Deserialize;
-pub use static_runner::StaticRunnable;
-pub use static_source::{StaticSource, TrackedFile};
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
