@@ -91,8 +91,37 @@ impl LspAdapter for SvelteLspAdapter {
     }
 
     fn initialization_options(&self) -> Option<serde_json::Value> {
+        let config = json!({
+          "inlayHints": {
+            "parameterNames": {
+              "enabled": "all",
+              "suppressWhenArgumentMatchesName": false
+            },
+            "parameterTypes": {
+              "enabled": true
+            },
+            "variableTypes": {
+              "enabled": true,
+              "suppressWhenTypeMatchesName": false
+            },
+            "propertyDeclarationTypes": {
+              "enabled": true
+            },
+            "functionLikeReturnType": {
+              "enabled": true
+            },
+            "enumMemberValues": {
+              "enabled": true
+            }
+          }
+        });
+
         Some(json!({
-            "provideFormatter": true
+            "provideFormatter": true,
+            "configuration": {
+              "typescript": config,
+              "javascript": config
+            }
         }))
     }
 
