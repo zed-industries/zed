@@ -3,6 +3,7 @@ Zed can be configured via a simple JSON file located at `~/.config/zed/keymap.js
 ## Predefined keymaps
 
 We have a growing collection of pre-defined keymaps in [zed repository's keymaps folder](https://github.com/zed-industries/zed/tree/main/assets/keymaps).
+You may apply these key bindings to your own IDE by pasting the pre-defined keymaps into your keymap.json config.
 
 ## Custom key bindings
 
