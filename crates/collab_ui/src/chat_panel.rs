@@ -917,26 +917,54 @@ impl Panel for ChatPanel {
 
 impl EventEmitter<PanelEvent> for ChatPanel {}
 
+fn is_12_hour_clock(locale: String) -> bool {
+    [
+        "es-MX", "es-CO", "es-SV", "es-NI",
+        "es-HN", // Mexico, Colombia, El Salvador, Nicaragua, Honduras
+        "en-US", "en-CA", "en-AU", "en-NZ", // U.S, Canada, Australia, New Zealand
+        "ar-SA", "ar-EG", "ar-JO", // Saudi Arabia, Egypt, Jorda
+        "en-IN", "hi-IN", // India, Hindu
+        "en-PK", "ur-PK", // Pakistan, Urdu
+        "en-PH", "fil-PH", // Phillipines, Filipino
+        "bn-BD", "ccp-BD", // Bangladesh, Chakma
+        "en-IE", "ga-IE", // Ireland, Irish
+        "en-MY", "ms-MY", // Malaysia, Malay
+    ]
+    .contains(&locale.as_str())
+}
+
 fn format_timestamp(
     reference: OffsetDateTime,
     timestamp: OffsetDateTime,
     timezone: UtcOffset,
 ) -> String {
+    let locale = sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
     let timestamp_local = timestamp.to_offset(timezone);
     let timestamp_local_hour = timestamp_local.hour();
-
-    let hour_12 = match timestamp_local_hour {
-        0 => 12,                              // Midnight
-        13..=23 => timestamp_local_hour - 12, // PM hours
-        _ => timestamp_local_hour,            // AM hours
-    };
-    let meridiem = if timestamp_local_hour >= 12 {
-        "pm"
-    } else {
-        "am"
-    };
     let timestamp_local_minute = timestamp_local.minute();
-    let formatted_time = format!("{:02}:{:02} {}", hour_12, timestamp_local_minute, meridiem);
+
+    let (hour, meridiem) = if is_12_hour_clock(locale) {
+        let meridiem = if timestamp_local_hour >= 12 {
+            "pm"
+        } else {
+            "am"
+        };
+
+        let hour_12 = match timestamp_local_hour {
+            0 => 12,                              // Midnight
+            13..=23 => timestamp_local_hour - 12, // PM hours
+            _ => timestamp_local_hour,            // AM hours
+        };
+
+        (hour_12, Some(meridiem))
+    } else {
+        (timestamp_local_hour, None)
+    };
+
+    let formatted_time = match meridiem {
+        Some(meridiem) => format!("{:02}:{:02} {}", hour, timestamp_local_minute, meridiem),
+        None => format!("{:02}:{:02}", hour, timestamp_local_minute),
+    };
 
     let reference_local = reference.to_offset(timezone);
     let reference_local_date = reference_local.date();
@@ -950,12 +978,20 @@ fn format_timestamp(
         return format!("yesterday at {}", formatted_time);
     }
 
-    format!(
-        "{:02}/{:02}/{}",
-        timestamp_local_date.month() as u32,
-        timestamp_local_date.day(),
-        timestamp_local_date.year()
-    )
+    match meridiem {
+        Some(_) => format!(
+            "{:02}/{:02}/{}",
+            timestamp_local_date.month() as u32,
+            timestamp_local_date.day(),
+            timestamp_local_date.year()
+        ),
+        None => format!(
+            "{:02}/{:02}/{}",
+            timestamp_local_date.day(),
+            timestamp_local_date.month() as u32,
+            timestamp_local_date.year()
+        ),
+    }
 }
 
 #[cfg(test)]
