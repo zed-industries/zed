@@ -8,7 +8,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
-use runnable::Token;
+use runnable::Runnable;
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -18,7 +18,7 @@ actions!(runnables, [Spawn]);
 /// A modal used to spawn new runnables.
 pub(crate) struct RunnablesModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Vec<Token>,
+    candidates: Vec<Arc<dyn Runnable>>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     placeholder_text: Arc<str>,
@@ -113,9 +113,9 @@ impl PickerDelegate for RunnablesModalDelegate {
                         .delegate
                         .inventory
                         .update(cx, |this, cx| this.list_runnables(path, cx));
-                    this.delegate.candidates.sort_by(|a, b| {
-                        a.metadata().display_name().cmp(b.metadata().display_name())
-                    });
+                    this.delegate
+                        .candidates
+                        .sort_by(|a, b| a.name().cmp(&b.name()));
 
                     this.delegate
                         .candidates
@@ -123,8 +123,8 @@ impl PickerDelegate for RunnablesModalDelegate {
                         .enumerate()
                         .map(|(index, candidate)| StringMatchCandidate {
                             id: index,
-                            char_bag: candidate.metadata().display_name().chars().collect(),
-                            string: candidate.metadata().display_name().into(),
+                            char_bag: candidate.name().chars().collect(),
+                            string: candidate.name().into(),
                         })
                         .collect::<Vec<_>>()
                 })
@@ -168,7 +168,7 @@ impl PickerDelegate for RunnablesModalDelegate {
             return;
         };
 
-        let spawn_in_terminal = self.candidates[ix].schedule(cwd, cx);
+        let spawn_in_terminal = self.candidates[ix].exec(cwd);
         self.workspace
             .update(cx, |_, cx| {
                 if let Some(spawn_in_terminal) = spawn_in_terminal {

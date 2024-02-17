@@ -5,9 +5,9 @@ mod static_runner;
 mod static_source;
 
 use anyhow::Result;
-use gpui::{impl_actions, AppContext, Model, ModelContext, WeakModel};
+use gpui::{impl_actions, ModelContext};
 use serde::Deserialize;
-pub use static_runner::StaticRunner;
+pub use static_runner::StaticRunnable;
 pub use static_source::{StaticSource, TrackedFile};
 use std::any::Any;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ impl_actions!(runnable, [SpawnTaskInTerminal]);
 
 #[derive(Debug, Default, Clone)]
 pub struct SpawnTaskInTerminal {
-    pub task_id: usize,
+    pub task_id: String,
     pub use_new_terminal: bool,
     pub label: String,
     pub command: String,
@@ -42,7 +42,7 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
         D: serde::Deserializer<'de>,
     {
         Ok(Self {
-            task_id: 0,
+            task_id: String::new(),
             use_new_terminal: false,
             label: String::new(),
             command: String::new(),
@@ -55,8 +55,9 @@ impl<'de> Deserialize<'de> for SpawnTaskInTerminal {
 /// Represents a short lived recipe of a runnable, whose main purpose
 /// is to get spawned.
 pub trait Runnable {
-    fn name(&self) -> String;
-    fn exec(&self, id: usize, cwd: Option<PathBuf>) -> Option<SpawnTaskInTerminal>;
+    fn id(&self) -> &str;
+    fn name(&self) -> &str;
+    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnTaskInTerminal>;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
 
@@ -70,61 +71,5 @@ pub trait Source: Any {
         &mut self,
         path: &Path,
         cx: &mut ModelContext<Box<dyn Source>>,
-    ) -> Vec<Token>;
-}
-
-#[derive(PartialEq)]
-pub struct Metadata {
-    source: WeakModel<Box<dyn Source>>,
-    display_name: String,
-}
-
-impl Metadata {
-    pub fn display_name(&self) -> &str {
-        &self.display_name
-    }
-}
-
-/// Represents a runnable that might or might not be already running.
-#[derive(Clone)]
-pub struct Token {
-    id: usize,
-    metadata: Arc<Metadata>,
-    state: Model<RunState>,
-}
-
-#[derive(Clone)]
-pub(crate) enum RunState {
-    NotScheduled(Arc<dyn Runnable>),
-    Scheduled {
-        spawn_in_terminal: Option<SpawnTaskInTerminal>,
-    },
-}
-
-impl Token {
-    pub fn schedule(
-        &self,
-        cwd: Option<PathBuf>,
-        cx: &mut AppContext,
-    ) -> Option<SpawnTaskInTerminal> {
-        self.state.update(cx, |run_state, _| match run_state {
-            RunState::NotScheduled(runnable) => {
-                let spawn_in_terminal = runnable.exec(self.id(), cwd);
-                let spawn_in_terminal_to_return = spawn_in_terminal.clone();
-                *run_state = RunState::Scheduled { spawn_in_terminal };
-                spawn_in_terminal_to_return
-            }
-            RunState::Scheduled {
-                spawn_in_terminal, ..
-            } => spawn_in_terminal.clone(),
-        })
-    }
-
-    pub fn metadata(&self) -> &Metadata {
-        &self.metadata
-    }
-
-    pub fn id(&self) -> usize {
-        self.id
-    }
+    ) -> Vec<Arc<dyn Runnable>>;
 }

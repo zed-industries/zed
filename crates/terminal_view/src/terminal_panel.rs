@@ -282,11 +282,11 @@ impl TerminalPanel {
         action: &runnable::SpawnTaskInTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        if action.label.is_empty() || action.command.is_empty() {
+        if action.task_id.is_empty() || action.label.is_empty() || action.command.is_empty() {
             return;
         };
         let external_task = ExternalTask {
-            id: action.task_id,
+            id: action.task_id.clone(),
             label: action.label.clone(),
             command: action.command.clone(),
             args: action.args.clone(),
@@ -299,7 +299,7 @@ impl TerminalPanel {
         if !action.use_new_terminal {
             if let Some((item_index, existing_terminal_view)) =
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.find_terminal_for_external_task(action.task_id, cx)
+                    terminal_panel.find_terminal_for_external_task(&action.task_id, cx)
                 })
             {
                 let window = cx.window_handle();
@@ -340,7 +340,7 @@ impl TerminalPanel {
 
     fn find_terminal_for_external_task(
         &self,
-        task_id: usize,
+        task_id: &str,
         cx: &mut ViewContext<Self>,
     ) -> Option<(usize, View<TerminalView>)> {
         self.pane

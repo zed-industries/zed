@@ -279,7 +279,7 @@ impl Display for TerminalError {
 }
 
 pub struct ExternalTask {
-    pub id: usize,
+    pub id: String,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -570,7 +570,7 @@ pub struct Terminal {
 }
 
 pub struct ExternalTaskState {
-    pub task_id: usize,
+    pub task_id: String,
     pub label: String,
 }
 

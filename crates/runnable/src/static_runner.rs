@@ -5,35 +5,43 @@ use std::path::PathBuf;
 
 use crate::{static_runnable_file::Definition, Runnable, SpawnTaskInTerminal};
 
-/// [`StaticRunner`] is a [`Runnable`] defined in .json file.
+/// [`StaticRunnable`] is a [`Runnable`] defined in .json file.
 #[derive(Clone, Debug, PartialEq)]
-pub struct StaticRunner {
-    runnable: Definition,
+pub struct StaticRunnable {
+    id: String,
+    definition: Definition,
 }
 
-impl StaticRunner {
-    pub fn new(runnable: Definition) -> Self {
-        Self { runnable }
+impl StaticRunnable {
+    pub fn new(id: usize, runnable: Definition) -> Self {
+        Self {
+            id: format!("static_{id}"),
+            definition: runnable,
+        }
     }
 }
 
-impl Runnable for StaticRunner {
+impl Runnable for StaticRunnable {
     fn boxed_clone(&self) -> Box<dyn Runnable> {
         Box::new(self.clone())
     }
 
-    fn exec(&self, id: usize, cwd: Option<PathBuf>) -> Option<SpawnTaskInTerminal> {
+    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnTaskInTerminal> {
         Some(SpawnTaskInTerminal {
-            task_id: id,
-            use_new_terminal: self.runnable.spawn_in_new_terminal,
-            label: self.runnable.label.clone(),
-            command: self.runnable.command.clone(),
-            args: self.runnable.args.clone(),
+            task_id: self.id.clone(),
+            use_new_terminal: self.definition.spawn_in_new_terminal,
+            label: self.definition.label.clone(),
+            command: self.definition.command.clone(),
+            args: self.definition.args.clone(),
             cwd,
         })
     }
 
-    fn name(&self) -> String {
-        self.runnable.label.clone()
+    fn name(&self) -> &str {
+        &self.definition.label
+    }
+
+    fn id(&self) -> &str {
+        &self.id
     }
 }

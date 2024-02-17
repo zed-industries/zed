@@ -5,14 +5,12 @@ use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{
-    static_runnable_file::{Definition, RunnableProvider},
-    RunState, Runnable, Source, StaticRunner, Token,
-};
+use crate::{static_runnable_file::RunnableProvider, Runnable, Source, StaticRunnable};
 use futures::channel::mpsc::UnboundedReceiver;
 
 pub struct StaticSource {
-    runnables: Vec<Token>,
+    runnables: Vec<StaticRunnable>,
+    _definitions: Model<TrackedFile<RunnableProvider>>,
     _subscription: Subscription,
 }
 
@@ -62,23 +60,26 @@ impl StaticSource {
         cx: &mut AppContext,
     ) -> Model<Box<dyn Source>> {
         cx.new_model(|cx| {
-            let _subscription = cx.observe(&definitions, |this, new_definitions, cx| {
-                let runnables = new_definitions
-                    .read(cx)
-                    .get()
-                    .runnables
-                    .clone()
-                    .into_iter()
-                    .enumerate()
-                    .map(|(id, runnable)| token_from_definition(id, runnable, cx))
-                    .collect();
-                if let Some(this) = this.as_any().downcast_mut::<Self>() {
-                    this.runnables = runnables;
-                    cx.notify();
-                }
-            });
+            let _subscription = cx.observe(
+                &definitions,
+                |this: &mut Box<(dyn Source + 'static)>, new_definitions, cx| {
+                    if let Some(this) = this.as_any().downcast_mut::<Self>() {
+                        this.runnables = new_definitions
+                            .read(cx)
+                            .get()
+                            .runnables
+                            .clone()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(id, definition)| StaticRunnable::new(id, definition))
+                            .collect();
+                        cx.notify();
+                    }
+                },
+            );
             Box::new(Self {
                 runnables: Vec::new(),
+                _definitions: definitions,
                 _subscription,
             })
         })
@@ -90,30 +91,15 @@ impl Source for StaticSource {
         &mut self,
         _: &std::path::Path,
         _: &mut ModelContext<Box<dyn Source>>,
-    ) -> Vec<Token> {
-        self.runnables.clone()
+    ) -> Vec<Arc<dyn Runnable>> {
+        self.runnables
+            .clone()
+            .into_iter()
+            .map(|runnable| Arc::new(runnable) as Arc<dyn Runnable>)
+            .collect()
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {
         self
-    }
-}
-
-fn token_from_definition(
-    id: usize,
-    runnable: Definition,
-    cx: &mut ModelContext<Box<dyn Source>>,
-) -> Token {
-    let runner = StaticRunner::new(runnable.clone());
-    let display_name = runner.name();
-    let source = cx.weak_model();
-    let state = cx.new_model(|_| RunState::NotScheduled(Arc::new(runner)));
-    Token {
-        id,
-        metadata: Arc::new(crate::Metadata {
-            source,
-            display_name,
-        }),
-        state,
     }
 }

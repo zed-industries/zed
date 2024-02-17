@@ -372,12 +372,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     }
                 }
             })
+            // TODO kb is it even needed? We need a task rerun though.
             .register_action(move |this, action: &RunActionWithName, cx| {
                 this.project().update(cx, |this, cx| {
                     let Some(runnable) = this.runnable_inventory().update(cx, |this, cx| {
                         this.list_runnables(&std::path::PathBuf::from(""), cx)
                             .into_iter()
-                            .find(|runnable| runnable.metadata().display_name() == action.name)
+                            .find(|runnable| runnable.name() == action.name)
                     }) else {
                         dbg!("Could not find a runnable with name", &action.name);
                         return;
@@ -385,7 +386,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
                     // TODO kb: has to receive some applicable path + has to spawn the terminal with the output stream
                     // same as the .spawn does in the runnables_ui's modal.rs::confirm
-                    let _ = runnable.schedule(None, cx);
+                    let _ = runnable.exec(None);
                 });
             });
 
