@@ -13,7 +13,6 @@ use gpui::{
     Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
-use log::debug;
 use menu::Confirm;
 use message_editor::MessageEditor;
 use project::Fs;
