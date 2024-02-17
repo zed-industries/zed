@@ -512,6 +512,7 @@
     // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
+      ":": "command_palette::Toggle",
       "%": "project_panel::NewFile",
       "/": "project_panel::NewSearchInDirectory",
       "d": "project_panel::NewDirectory",
