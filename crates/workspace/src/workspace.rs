@@ -1263,7 +1263,6 @@ impl Workspace {
             .split(" ")
             .flat_map(|k| Keystroke::parse(k).log_err())
             .collect();
-        println!("Sending keystrokes: {:?}", &keystrokes);
 
         cx.window_context().defer(move |cx| {
             for keystroke in keystrokes {
