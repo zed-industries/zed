@@ -1687,7 +1687,7 @@ message CompleteWithLanguageModel {
 
 message LanguageModelRequestMessage {
     string role = 1;
-    string body = 2;
+    string content = 2;
 }
 
 message LanguageModelResponse {

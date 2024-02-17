@@ -2,12 +2,10 @@ use anyhow::Result;
 use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AppContext, Task};
-use std::sync::Arc;
+use std::{future, sync::Arc};
+use util::ResultExt;
 
-use crate::{
-    assistant_settings::ZedDotDevModel, CompletionProvider, LanguageModelRequest,
-    LanguageModelRequestMessage,
-};
+use crate::{assistant_settings::ZedDotDevModel, CompletionProvider, LanguageModelRequest};
 
 pub struct ZedDotDevCompletionProvider {
     client: Arc<Client>,
@@ -60,13 +58,28 @@ impl ZedDotDevCompletionProvider {
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let request = proto::CompleteWithLanguageModel {
+            model: request.model.map(|model| model.id().to_string()),
+            messages: request
+                .messages
+                .iter()
+                .map(|message| message.to_proto())
+                .collect(),
+            stop: request.stop,
+            temperature: request.temperature,
+        };
+
         self.client
-            .request_stream(proto::CompleteWithLanguageModel {
-                model: request.model.map(|model| model.id().to_string()),
-                messages: request.messages.map(|message| message.to_proto()),
-                stop: request.stop,
-                temperature: todo!(),
+            .request_stream(request)
+            .map_ok(|stream| {
+                stream
+                    .filter_map(|response| {
+                        future::ready(response.log_err().and_then(|mut response| {
+                            Some(Ok(response.choices.pop()?.delta?.content?))
+                        }))
+                    })
+                    .boxed()
             })
-            .map_ok(|stream| stream.boxed())
+            .boxed()
     }
 }
