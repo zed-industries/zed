@@ -816,8 +816,11 @@ impl Item for TerminalView {
         None
     }
 
-    fn is_dirty(&self, _cx: &gpui::AppContext) -> bool {
-        self.has_bell()
+    fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
+        match self.terminal.read(cx).runnable() {
+            Some(runnable) => !runnable.completed,
+            None => self.has_bell(),
+        }
     }
 
     fn has_conflict(&self, _cx: &AppContext) -> bool {

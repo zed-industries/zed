@@ -34,6 +34,7 @@ impl Project {
                 Some(RunableState {
                     id: spawn_runnable.id,
                     label: spawn_runnable.label,
+                    completed: false,
                 }),
                 Shell::WithArguments {
                     program: spawn_runnable.command,

@@ -573,6 +573,7 @@ pub struct Terminal {
 pub struct RunableState {
     pub id: RunnableId,
     pub label: String,
+    pub completed: bool,
 }
 
 impl Terminal {
@@ -604,11 +605,10 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => {
-                if self.runnable.is_none() {
-                    cx.emit(Event::CloseTerminal)
-                }
-            }
+            AlacTermEvent::Exit => match &mut self.runnable {
+                Some(runnable) => runnable.completed = true,
+                None => cx.emit(Event::CloseTerminal),
+            },
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -1328,7 +1328,6 @@ impl Terminal {
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
         match &self.runnable {
-            // TODO kb alter icon if the runnable failed/completed
             Some(runnable_state) => truncate_and_trailoff(&runnable_state.label, MAX_CHARS),
             None => self
                 .foreground_process_info
