@@ -15,6 +15,9 @@ use text::Patch;
 pub use super::tab_map::TextSummary;
 pub type WrapEdit = text::Edit<u32>;
 
+/// Handles soft wrapping of text.
+///
+/// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct WrapMap {
     snapshot: WrapSnapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
