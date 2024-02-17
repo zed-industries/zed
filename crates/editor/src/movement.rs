@@ -5,6 +5,7 @@ use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, scroll::ScrollAnchor, CharKind, EditorStyle, ToOffset, ToPoint};
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
+use multi_buffer::MultiBufferSnapshot;
 
 use std::{ops::Range, sync::Arc};
 
@@ -254,7 +255,7 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
 
-    find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
+    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         (char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace())
             || left == '\n'
     })
@@ -267,7 +268,7 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
 
-    find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
+    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         let is_word_start =
             char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace();
         let is_subword_start =
@@ -366,16 +367,16 @@ pub fn end_of_paragraph(
 /// indicated by the given predicate returning true.
 /// The predicate is called with the character to the left and right of the candidate boundary location.
 /// If FindRange::SingleLine is specified and no boundary is found before the start of the current line, the start of the current line will be returned.
-pub fn find_preceding_boundary(
-    map: &DisplaySnapshot,
-    from: DisplayPoint,
+pub fn find_preceding_boundary_point(
+    buffer_snapshot: &MultiBufferSnapshot,
+    from: Point,
     find_range: FindRange,
     mut is_boundary: impl FnMut(char, char) -> bool,
-) -> DisplayPoint {
+) -> Point {
     let mut prev_ch = None;
-    let mut offset = from.to_point(map).to_offset(&map.buffer_snapshot);
+    let mut offset = from.to_offset(&buffer_snapshot);
 
-    for ch in map.buffer_snapshot.reversed_chars_at(offset) {
+    for ch in buffer_snapshot.reversed_chars_at(offset) {
         if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
@@ -389,7 +390,26 @@ pub fn find_preceding_boundary(
         prev_ch = Some(ch);
     }
 
-    map.clip_point(offset.to_display_point(map), Bias::Left)
+    offset.to_point(&buffer_snapshot)
+}
+
+/// Scans for a boundary preceding the given start point `from` until a boundary is found,
+/// indicated by the given predicate returning true.
+/// The predicate is called with the character to the left and right of the candidate boundary location.
+/// If FindRange::SingleLine is specified and no boundary is found before the start of the current line, the start of the current line will be returned.
+pub fn find_preceding_boundary_display_point(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    find_range: FindRange,
+    is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    let result = find_preceding_boundary_point(
+        &map.buffer_snapshot,
+        from.to_point(map),
+        find_range,
+        is_boundary,
+    );
+    map.clip_point(result.to_display_point(map), Bias::Left)
 }
 
 /// Scans for a boundary following the given start point until a boundary is found, indicated by the
@@ -626,7 +646,7 @@ mod tests {
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
-                find_preceding_boundary(
+                find_preceding_boundary_display_point(
                     &snapshot,
                     display_points[1],
                     FindRange::MultiLine,
@@ -700,7 +720,7 @@ mod tests {
         });
 
         assert_eq!(
-            find_preceding_boundary(
+            find_preceding_boundary_display_point(
                 &snapshot,
                 buffer_snapshot.len().to_display_point(&snapshot),
                 FindRange::MultiLine,

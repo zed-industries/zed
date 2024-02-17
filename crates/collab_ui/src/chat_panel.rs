@@ -733,7 +733,7 @@ impl Render for ChatPanel {
         v_flex()
             .key_context("ChatPanel")
             .track_focus(&self.focus_handle)
-            .full()
+            .size_full()
             .on_action(cx.listener(Self::send))
             .child(
                 h_flex().z_index(1).child(
@@ -755,11 +755,11 @@ impl Render for ChatPanel {
             )
             .child(div().flex_grow().px_2().map(|this| {
                 if self.active_chat.is_some() {
-                    this.child(list(self.message_list.clone()).full())
+                    this.child(list(self.message_list.clone()).size_full())
                 } else {
                     this.child(
                         div()
-                            .full()
+                            .size_full()
                             .p_4()
                             .child(
                                 Label::new("Select a channel to chat in.")

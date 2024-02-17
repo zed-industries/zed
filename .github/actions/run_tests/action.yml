@@ -2,22 +2,22 @@ name: "Run tests"
 description: "Runs the tests"
 
 runs:
-    using: "composite"
-    steps:
-        - name: Install Rust
-          shell: bash -euxo pipefail {0}
-          run: |
-              cargo install cargo-nextest
+  using: "composite"
+  steps:
+    - name: Install Rust
+      shell: bash -euxo pipefail {0}
+      run: |
+        cargo install cargo-nextest
 
-        - name: Install Node
-          uses: actions/setup-node@v4
-          with:
-              node-version: "18"
+    - name: Install Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "18"
 
-        - name: Limit target directory size
-          shell: bash -euxo pipefail {0}
-          run: script/clear-target-dir-if-larger-than 100
+    - name: Limit target directory size
+      shell: bash -euxo pipefail {0}
+      run: script/clear-target-dir-if-larger-than 100
 
-        - name: Run tests
-          shell: bash -euxo pipefail {0}
-          run: cargo nextest run --workspace --no-fail-fast
+    - name: Run tests
+      shell: bash -euxo pipefail {0}
+      run: cargo nextest run --workspace --no-fail-fast

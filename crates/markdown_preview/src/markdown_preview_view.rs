@@ -209,13 +209,13 @@ impl Render for MarkdownPreviewView {
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle)
-            .full()
+            .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
             .child(
                 div()
                     .flex_grow()
-                    .map(|this| this.child(list(self.list_state.clone()).full())),
+                    .map(|this| this.child(list(self.list_state.clone()).size_full())),
             )
     }
 }

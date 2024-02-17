@@ -123,6 +123,7 @@ pub(crate) struct GetCompletions {
 
 pub(crate) struct GetCodeActions {
     pub range: Range<Anchor>,
+    pub kinds: Option<Vec<lsp::CodeActionKind>>,
 }
 
 pub(crate) struct OnTypeFormatting {
@@ -1603,7 +1604,10 @@ impl LspCommand for GetCodeActions {
             partial_result_params: Default::default(),
             context: lsp::CodeActionContext {
                 diagnostics: relevant_diagnostics,
-                only: language_server.code_action_kinds(),
+                only: self
+                    .kinds
+                    .clone()
+                    .or_else(|| language_server.code_action_kinds()),
                 ..lsp::CodeActionContext::default()
             },
         }
@@ -1664,7 +1668,10 @@ impl LspCommand for GetCodeActions {
             })?
             .await?;
 
-        Ok(Self { range: start..end })
+        Ok(Self {
+            range: start..end,
+            kinds: None,
+        })
     }
 
     fn response_to_proto(

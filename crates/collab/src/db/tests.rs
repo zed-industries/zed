@@ -2,6 +2,7 @@ mod buffer_tests;
 mod channel_tests;
 mod contributor_tests;
 mod db_tests;
+mod extension_tests;
 mod feature_flag_tests;
 mod message_tests;
 

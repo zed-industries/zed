@@ -704,10 +704,12 @@ impl Item for Editor {
 
     fn save(&mut self, project: Model<Project>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
-        let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
-        cx.spawn(|_, mut cx| async move {
-            format.await?;
+        cx.spawn(|this, mut cx| async move {
+            this.update(&mut cx, |this, cx| {
+                this.perform_format(project.clone(), FormatTrigger::Save, cx)
+            })?
+            .await?;
 
             if buffers.len() == 1 {
                 project

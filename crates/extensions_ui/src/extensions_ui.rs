@@ -1,11 +1,11 @@
 use client::telemetry::Telemetry;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{Extension, ExtensionStatus, ExtensionStore};
-use fs::Fs;
 use gpui::{
-    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
-    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
+    FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
+    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace,
+    WindowContext,
 };
 use settings::Settings;
 use std::time::Duration;
@@ -31,10 +31,9 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct ExtensionsPage {
-    workspace: WeakView<Workspace>,
-    fs: Arc<dyn Fs>,
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
+    is_fetching_extensions: bool,
     extensions_entries: Vec<Extension>,
     query_editor: View<Editor>,
     query_contains_error: bool,
@@ -42,40 +41,9 @@ pub struct ExtensionsPage {
     extension_fetch_task: Option<Task<()>>,
 }
 
-impl Render for ExtensionsPage {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        h_flex()
-            .full()
-            .bg(cx.theme().colors().editor_background)
-            .child(
-                v_flex()
-                    .full()
-                    .p_4()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
-                    )
-                    .child(h_flex().w_56().my_4().child(self.render_search(cx)))
-                    .child(
-                        h_flex().flex_col().items_start().full().child(
-                            uniform_list::<_, Div, _>(
-                                cx.view().clone(),
-                                "entries",
-                                self.extensions_entries.len(),
-                                Self::render_extensions,
-                            )
-                            .size_full()
-                            .track_scroll(self.list.clone()),
-                        ),
-                    ),
-            )
-    }
-}
-
 impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
+        cx.new_view(|cx: &mut ViewContext<Self>| {
             let store = ExtensionStore::global(cx);
             let subscription = cx.observe(&store, |_, _, cx| cx.notify());
 
@@ -83,10 +51,9 @@ impl ExtensionsPage {
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let mut this = Self {
-                fs: workspace.project().read(cx).fs().clone(),
-                workspace: workspace.weak_handle(),
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
+                is_fetching_extensions: false,
                 extensions_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
@@ -95,8 +62,7 @@ impl ExtensionsPage {
             };
             this.fetch_extensions(None, cx);
             this
-        });
-        extensions_panel
+        })
     }
 
     fn install_extension(
@@ -118,15 +84,30 @@ impl ExtensionsPage {
     }
 
     fn fetch_extensions(&mut self, search: Option<&str>, cx: &mut ViewContext<Self>) {
+        self.is_fetching_extensions = true;
+        cx.notify();
+
         let extensions =
             ExtensionStore::global(cx).update(cx, |store, cx| store.fetch_extensions(search, cx));
 
         cx.spawn(move |this, mut cx| async move {
-            let extensions = extensions.await?;
-            this.update(&mut cx, |this, cx| {
-                this.extensions_entries = extensions;
-                cx.notify();
-            })
+            let fetch_result = extensions.await;
+            match fetch_result {
+                Ok(extensions) => this.update(&mut cx, |this, cx| {
+                    this.extensions_entries = extensions;
+                    this.is_fetching_extensions = false;
+                    cx.notify();
+                }),
+                Err(err) => {
+                    this.update(&mut cx, |this, cx| {
+                        this.is_fetching_extensions = false;
+                        cx.notify();
+                    })
+                    .ok();
+
+                    Err(err)
+                }
+            }
         })
         .detach_and_log_err(cx);
     }
@@ -213,9 +194,12 @@ impl ExtensionsPage {
         }
         .color(Color::Accent);
 
+        let repository_url = extension.repository.clone();
+
         div().w_full().child(
             v_flex()
                 .w_full()
+                .h(rems(7.))
                 .p_3()
                 .mt_4()
                 .gap_2()
@@ -248,18 +232,24 @@ impl ExtensionsPage {
                         ),
                 )
                 .child(
-                    h_flex().justify_between().child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
-                    ),
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        )
+                        .child(
+                            Label::new(format!("Downloads: {}", extension.download_count))
+                                .size(LabelSize::Small),
+                        ),
                 )
                 .child(
                     h_flex()
@@ -268,7 +258,19 @@ impl ExtensionsPage {
                             Label::new(description.clone())
                                 .size(LabelSize::Small)
                                 .color(Color::Default)
-                        })),
+                        }))
+                        .child(
+                            IconButton::new(
+                                SharedString::from(format!("repository-{}", extension.id)),
+                                IconName::Github,
+                            )
+                            .icon_color(Color::Accent)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(move |_, _, cx| {
+                                cx.open_url(&repository_url);
+                            })),
+                        ),
                 ),
         )
     }
@@ -344,11 +346,25 @@ impl ExtensionsPage {
         if let editor::EditorEvent::Edited = event {
             self.query_contains_error = false;
             self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(250))
-                    .await;
+                let search = this
+                    .update(&mut cx, |this, cx| this.search_query(cx))
+                    .ok()
+                    .flatten();
+
+                // Only debounce the fetching of extensions if we have a search
+                // query.
+                //
+                // If the search was just cleared then we can just reload the list
+                // of extensions without a debounce, which allows us to avoid seeing
+                // an intermittent flash of a "no extensions" state.
+                if let Some(_) = search {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(250))
+                        .await;
+                };
+
                 this.update(&mut cx, |this, cx| {
-                    this.fetch_extensions(this.search_query(cx).as_deref(), cx);
+                    this.fetch_extensions(search.as_deref(), cx);
                 })
                 .ok();
             }));
@@ -362,6 +378,60 @@ impl ExtensionsPage {
         } else {
             Some(search)
         }
+    }
+}
+
+impl Render for ExtensionsPage {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .p_4()
+            .gap_4()
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                h_flex()
+                    .w_full()
+                    .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+            )
+            .child(h_flex().w_56().child(self.render_search(cx)))
+            .child(v_flex().size_full().overflow_y_hidden().map(|this| {
+                if self.extensions_entries.is_empty() {
+                    let message = if self.is_fetching_extensions {
+                        "Loading extensions..."
+                    } else if self.search_query(cx).is_some() {
+                        "No extensions that match your search."
+                    } else {
+                        "No extensions."
+                    };
+
+                    return this.child(Label::new(message));
+                }
+
+                this.child(
+                    canvas({
+                        let view = cx.view().clone();
+                        let scroll_handle = self.list.clone();
+                        let item_count = self.extensions_entries.len();
+                        move |bounds, cx| {
+                            uniform_list::<_, Div, _>(
+                                view,
+                                "entries",
+                                item_count,
+                                Self::render_extensions,
+                            )
+                            .size_full()
+                            .track_scroll(scroll_handle)
+                            .into_any_element()
+                            .draw(
+                                bounds.origin,
+                                bounds.size.map(AvailableSpace::Definite),
+                                cx,
+                            )
+                        }
+                    })
+                    .size_full(),
+                )
+            }))
     }
 }
 
@@ -397,24 +467,9 @@ impl Item for ExtensionsPage {
     fn clone_on_split(
         &self,
         _workspace_id: WorkspaceId,
-        cx: &mut ViewContext<Self>,
+        _: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        Some(cx.new_view(|cx| {
-            let store = ExtensionStore::global(cx);
-            let subscription = cx.observe(&store, |_, _, cx| cx.notify());
-
-            ExtensionsPage {
-                fs: self.fs.clone(),
-                workspace: self.workspace.clone(),
-                list: UniformListScrollHandle::new(),
-                telemetry: self.telemetry.clone(),
-                extensions_entries: Default::default(),
-                query_editor: self.query_editor.clone(),
-                _subscription: subscription,
-                query_contains_error: false,
-                extension_fetch_task: None,
-            }
-        }))
+        None
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

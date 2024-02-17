@@ -77,6 +77,8 @@
   (template_string)
 ] @string
 
+(escape_sequence) @string.escape
+
 (regex) @string.regex
 (number) @number
 

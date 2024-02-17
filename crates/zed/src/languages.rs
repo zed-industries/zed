@@ -337,13 +337,17 @@ pub async fn language(
 }
 
 fn load_config(name: &str) -> LanguageConfig {
-    ::toml::from_slice(
-        &LanguageDir::get(&format!("{}/config.toml", name))
+    let config_toml = String::from_utf8(
+        LanguageDir::get(&format!("{}/config.toml", name))
             .unwrap()
-            .data,
+            .data
+            .to_vec(),
     )
-    .with_context(|| format!("failed to load config.toml for language {name:?}"))
-    .unwrap()
+    .unwrap();
+
+    ::toml::from_str(&config_toml)
+        .with_context(|| format!("failed to load config.toml for language {name:?}"))
+        .unwrap()
 }
 
 fn load_queries(name: &str) -> LanguageQueries {

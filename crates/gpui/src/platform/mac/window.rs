@@ -1,4 +1,4 @@
-use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, MetalRenderer, NSRange};
+use super::{global_bounds_from_ns_rect, ns_string, renderer, MacDisplay, NSRange};
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
     Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
@@ -23,7 +23,6 @@ use cocoa::{
 };
 use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
-use foreign_types::ForeignTypeRef;
 use futures::channel::oneshot;
 use objc::{
     class,
@@ -322,7 +321,7 @@ struct MacWindowState {
     native_window: id,
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
-    renderer: MetalRenderer,
+    renderer: renderer::Renderer,
     kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
@@ -450,6 +449,13 @@ impl MacWindowState {
         get_scale_factor(self.native_window)
     }
 
+    fn update_drawable_size(&mut self, drawable_size: NSSize) {
+        self.renderer.update_drawable_size(Size {
+            width: drawable_size.width,
+            height: drawable_size.height,
+        })
+    }
+
     fn titlebar_height(&self) -> Pixels {
         unsafe {
             let frame = NSWindow::frame(self.native_window);
@@ -478,7 +484,7 @@ impl MacWindow {
         handle: AnyWindowHandle,
         options: WindowOptions,
         executor: ForegroundExecutor,
-        instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
+        renderer_context: renderer::Context,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -541,13 +547,32 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
+            let window_size = {
+                let bounds = match options.bounds {
+                    WindowBounds::Fullscreen | WindowBounds::Maximized => {
+                        native_window.screen().visibleFrame()
+                    }
+                    WindowBounds::Fixed(bounds) => global_bounds_to_ns_rect(bounds),
+                };
+                let scale = get_scale_factor(native_window);
+                size(
+                    bounds.size.width as f32 * scale,
+                    bounds.size.height as f32 * scale,
+                )
+            };
+
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
                 display_link: None,
-                renderer: MetalRenderer::new(instance_buffer_pool),
+                renderer: renderer::new_renderer(
+                    renderer_context,
+                    native_window as *mut _,
+                    native_view as *mut _,
+                    window_size,
+                ),
                 kind: options.kind,
                 request_frame_callback: None,
                 event_callback: None,
@@ -704,6 +729,7 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        this.renderer.destroy();
         let window = this.native_window;
         this.display_link.take();
         this.executor
@@ -1031,7 +1057,22 @@ impl PlatformWindow for MacWindow {
     /// Enables or disables the Metal HUD for debugging purposes. Note that this only works
     /// when the app is bundled and it has the `MetalHudEnabled` key set to true in Info.plist.
     fn set_graphics_profiler_enabled(&self, enabled: bool) {
-        self.0.lock().renderer.set_hud_enabled(enabled);
+        let this_lock = self.0.lock();
+        let layer = this_lock.renderer.layer();
+
+        unsafe {
+            if enabled {
+                let hud_properties = NSDictionary::dictionaryWithObject_forKey_(
+                    nil,
+                    ns_string("default"),
+                    ns_string("mode"),
+                );
+                let _: () = msg_send![layer, setDeveloperHUDProperties: hud_properties];
+            } else {
+                let _: () =
+                    msg_send![layer, setDeveloperHUDProperties: NSDictionary::dictionary(nil)];
+            }
+        }
     }
 }
 
@@ -1487,30 +1528,27 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
     let window_state = unsafe { get_window_state(this) };
     let window_state = window_state.as_ref().lock();
-    window_state.renderer.layer().as_ptr() as id
+    window_state.renderer.layer_ptr() as id
 }
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
+    let scale_factor = lock.scale_factor() as f64;
+    let size = lock.content_size();
+    let drawable_size: NSSize = NSSize {
+        width: f64::from(size.width) * scale_factor,
+        height: f64::from(size.height) * scale_factor,
+    };
     unsafe {
-        let scale_factor = lock.scale_factor() as f64;
-        let size = lock.content_size();
-        let drawable_size: NSSize = NSSize {
-            width: f64::from(size.width) * scale_factor,
-            height: f64::from(size.height) * scale_factor,
-        };
-
         let _: () = msg_send![
             lock.renderer.layer(),
             setContentsScale: scale_factor
         ];
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setDrawableSize: drawable_size
-        ];
     }
+
+    lock.update_drawable_size(drawable_size);
 
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
@@ -1523,7 +1561,7 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
+    let mut lock = window_state.as_ref().lock();
 
     if lock.content_size() == size.into() {
         return;
@@ -1539,12 +1577,7 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         height: size.height * scale_factor,
     };
 
-    unsafe {
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setDrawableSize: drawable_size
-        ];
-    }
+    lock.update_drawable_size(drawable_size);
 
     drop(lock);
     let mut lock = window_state.lock();
@@ -1561,6 +1594,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     if let Some(mut callback) = lock.request_frame_callback.take() {
+        #[cfg(not(feature = "macos-blade"))]
         lock.renderer.set_presents_with_transaction(true);
         lock.stop_display_link();
         drop(lock);
@@ -1568,6 +1602,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
+        #[cfg(not(feature = "macos-blade"))]
         lock.renderer.set_presents_with_transaction(false);
         lock.start_display_link();
     }
