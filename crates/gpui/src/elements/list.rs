@@ -22,6 +22,7 @@ pub fn list(state: ListState) -> List {
     List {
         state,
         style: StyleRefinement::default(),
+        layout_behavior: ListLayoutBehavior::default(),
     }
 }
 
@@ -29,6 +30,15 @@ pub fn list(state: ListState) -> List {
 pub struct List {
     state: ListState,
     style: StyleRefinement,
+    layout_behavior: ListLayoutBehavior,
+}
+
+impl List {
+    /// Set the layout behavior for the list.
+    pub fn with_layout_behavior(mut self, behavior: ListLayoutBehavior) -> Self {
+        self.layout_behavior = behavior;
+        self
+    }
 }
 
 /// The list state that views must hold on behalf of the list element.
@@ -66,6 +76,16 @@ pub struct ListScrollEvent {
 
     /// Whether the list has been scrolled.
     pub is_scrolled: bool,
+}
+
+/// The sizing behavior to apply during layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ListLayoutBehavior {
+    /// The list should calculate its layout based on the size of the items.
+    AutoSized,
+    /// The list should fill the available space.
+    #[default]
+    Fill,
 }
 
 #[derive(Clone)]
@@ -488,52 +508,68 @@ impl Element for List {
         _state: Option<Self::State>,
         cx: &mut crate::ElementContext,
     ) -> (crate::LayoutId, Self::State) {
-        let mut style = Style::default();
-        style.overflow.y = Overflow::Scroll;
-        style.refine(&self.style);
+        let layout_id = match self.layout_behavior {
+            ListLayoutBehavior::AutoSized => {
+                let mut style = Style::default();
+                style.overflow.y = Overflow::Scroll;
+                style.refine(&self.style);
+                cx.with_text_style(style.text_style().cloned(), |cx| {
+                    let state = &mut *self.state.0.borrow_mut();
 
-        let layout_id = cx.with_text_style(style.text_style().cloned(), |cx| {
-            let state = &mut *self.state.0.borrow_mut();
-
-            let available_height = if let Some(last_bounds) = state.last_layout_bounds {
-                last_bounds.size.height
-            } else {
-                // If we don't have the last layout bounds (first render),
-                // we might just use the overdraw value as the available height to layout enough items.
-                state.overdraw
-            };
-            let padding = style.padding.to_pixels(
-                state.last_layout_bounds.unwrap_or_default().size.into(),
-                cx.rem_size(),
-            );
-
-            let (max_element_width, _, _) =
-                state.layout_items(None, available_height, &padding, cx);
-
-            let summary = state.items.summary();
-            let total_height = summary.height;
-            let all_rendered = summary.unrendered_count == 0;
-
-            if all_rendered {
-                cx.request_measured_layout(style, move |known_dimensions, available_space, _cx| {
-                    let width = known_dimensions
-                        .width
-                        .unwrap_or(match available_space.width {
-                            AvailableSpace::Definite(x) => x,
-                            AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                max_element_width
-                            }
-                        });
-                    let height = match available_space.height {
-                        AvailableSpace::Definite(height) => total_height.min(height),
-                        AvailableSpace::MinContent | AvailableSpace::MaxContent => total_height,
+                    let available_height = if let Some(last_bounds) = state.last_layout_bounds {
+                        last_bounds.size.height
+                    } else {
+                        // If we don't have the last layout bounds (first render),
+                        // we might just use the overdraw value as the available height to layout enough items.
+                        state.overdraw
                     };
-                    size(width, height)
+                    let padding = style.padding.to_pixels(
+                        state.last_layout_bounds.unwrap_or_default().size.into(),
+                        cx.rem_size(),
+                    );
+
+                    let (max_element_width, _, _) =
+                        state.layout_items(None, available_height, &padding, cx);
+
+                    let summary = state.items.summary();
+                    let total_height = summary.height;
+                    let all_rendered = summary.unrendered_count == 0;
+
+                    if all_rendered {
+                        cx.request_measured_layout(
+                            style,
+                            move |known_dimensions, available_space, _cx| {
+                                let width = known_dimensions.width.unwrap_or(match available_space
+                                    .width
+                                {
+                                    AvailableSpace::Definite(x) => x,
+                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                        max_element_width
+                                    }
+                                });
+                                let height = match available_space.height {
+                                    AvailableSpace::Definite(height) => total_height.min(height),
+                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                        total_height
+                                    }
+                                };
+                                size(width, height)
+                            },
+                        )
+                    } else {
+                        cx.request_layout(&style, None)
+                    }
                 })
-            } else {
-                cx.request_layout(&style, None)
             }
-        });
+            ListLayoutBehavior::Fill => {
+                let mut style = Style::default();
+                style.overflow.y = Overflow::Scroll;
+                style.refine(&self.style);
+                cx.with_text_style(style.text_style().cloned(), |cx| {
+                    cx.request_layout(&style, None)
+                })
+            }
+        };
         (layout_id, ())
     }
 
