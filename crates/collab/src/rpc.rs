@@ -305,7 +305,8 @@ impl Server {
             .add_message_handler(update_followers)
             .add_request_handler(get_private_user_info)
             .add_message_handler(acknowledge_channel_message)
-            .add_message_handler(acknowledge_buffer_version);
+            .add_message_handler(acknowledge_buffer_version)
+            .add_streaming_request_handler(complete_with_language_model);
 
         Arc::new(server)
     }
@@ -3179,6 +3180,14 @@ async fn acknowledge_buffer_version(
             &request.version,
         )
         .await?;
+    Ok(())
+}
+
+async fn complete_with_language_model(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: Session,
+) -> Result<()> {
     Ok(())
 }
 
