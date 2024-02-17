@@ -10,7 +10,7 @@ use anyhow::Result;
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AssistantSettings, OpenAiModel, ZedDotDevModel};
 use chrono::{DateTime, Local};
-use client::Client;
+use client::{proto, Client};
 pub(crate) use completion_provider::*;
 use gpui::{actions, AppContext, SharedString};
 pub(crate) use saved_conversation::*;
@@ -120,6 +120,13 @@ impl LanguageModel {
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(model.cycle()),
         }
     }
+
+    pub fn id(&self) -> &str {
+        match self {
+            LanguageModel::OpenAi(model) => model.id(),
+            LanguageModel::ZedDotDev(model) => model.id(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -128,13 +135,32 @@ pub struct LanguageModelRequestMessage {
     pub content: String,
 }
 
+impl LanguageModelRequestMessage {
+    pub fn to_proto(&self) -> proto::LanguageModelRequestMessage {
+        proto::LanguageModelRequestMessage {
+            role: self.role.to_string(),
+            content: self.content.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct LanguageModelRequest {
     pub model: Option<LanguageModel>,
     pub messages: Vec<LanguageModelRequestMessage>,
-    pub stream: bool,
     pub stop: Vec<String>,
     pub temperature: f32,
+}
+
+impl LanguageModelRequest {
+    pub fn to_proto(&self) -> proto::CompleteWithLanguageModel {
+        proto::CompleteWithLanguageModel {
+            model: self.model.as_ref().map(|m| m.id().to_string()),
+            messages: self.messages.iter().map(|m| m.to_proto()).collect(),
+            stop: self.stop.clone(),
+            temperature: self.temperature,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

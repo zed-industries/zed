@@ -1,7 +1,12 @@
 #[cfg(test)]
 mod fake;
 mod open_ai;
-mod zed_dot_dev;
+mod zed;
+
+#[cfg(test)]
+pub use fake::*;
+pub use open_ai::*;
+pub use zed::*;
 
 use crate::{
     assistant_settings::{AssistantProvider, AssistantSettings},
@@ -9,14 +14,10 @@ use crate::{
 };
 use anyhow::Result;
 use client::Client;
-#[cfg(test)]
-pub use fake::*;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AppContext, Task};
-use open_ai::*;
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use zed_dot_dev::*;
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let provider = match &AssistantSettings::get_global(cx).provider {

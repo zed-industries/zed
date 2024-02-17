@@ -669,7 +669,6 @@ impl AssistantPanel {
             let request = LanguageModelRequest {
                 model,
                 messages,
-                stream: true,
                 stop: vec!["|END|>".to_string()],
                 temperature,
             };
@@ -1569,7 +1568,6 @@ impl Conversation {
                     .filter(|message| matches!(message.status, MessageStatus::Done))
                     .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
                     .collect(),
-                stream: true,
                 stop: vec![],
                 temperature: 1.0,
             };
@@ -1848,7 +1846,6 @@ impl Conversation {
             let request = LanguageModelRequest {
                 model: Some(self.model.clone()),
                 messages: messages.collect(),
-                stream: true,
                 stop: vec![],
                 temperature: 1.0,
             };

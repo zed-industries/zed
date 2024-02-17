@@ -186,7 +186,8 @@ message Envelope {
 
         UpdateUserChannels update_user_channels = 157;
 
-        GetLanguageModelCompletion get_language_model_completion = 163; // current max
+        CompleteWithLanguageModel complete_with_language_model = 163;
+        LanguageModelResponse language_model_response = 164; // current max
     }
 
     reserved 158 to 161;
@@ -1677,8 +1678,8 @@ message SetRoomParticipantRole {
     ChannelRole role = 3;
 }
 
-message RequestLanguageModelCompletion {
-    string model = 1;
+message CompleteWithLanguageModel {
+    optional string model = 1;
     repeated LanguageModelRequestMessage messages = 2;
     repeated string stop = 3;
     float temperature = 4;
@@ -1689,7 +1690,7 @@ message LanguageModelRequestMessage {
     string body = 2;
 }
 
-message OpenAiResponseStreamEvent {
+message LanguageModelResponse {
     string id = 1;
     string object = 2;
     uint32 created = 3;
@@ -1699,8 +1700,8 @@ message OpenAiResponseStreamEvent {
 }
 
 message LanguageModelResponseMessage {
-    string role = 1;
-    string content = 2;
+    optional string role = 1;
+    optional string content = 2;
 }
 
 message LanguageModelChoiceDelta {

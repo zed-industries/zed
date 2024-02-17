@@ -1,10 +1,13 @@
 use anyhow::Result;
-use client::Client;
-use futures::{future::BoxFuture, stream::BoxStream, StreamExt};
+use client::{proto, Client};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AppContext, Task};
 use std::sync::Arc;
 
-use crate::{assistant_settings::ZedDotDevModel, CompletionProvider, LanguageModelRequest};
+use crate::{
+    assistant_settings::ZedDotDevModel, CompletionProvider, LanguageModelRequest,
+    LanguageModelRequestMessage,
+};
 
 pub struct ZedDotDevCompletionProvider {
     client: Arc<Client>,
@@ -57,6 +60,13 @@ impl ZedDotDevCompletionProvider {
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        self.client.request_stream(request)
+        self.client
+            .request_stream(proto::CompleteWithLanguageModel {
+                model: request.model.map(|model| model.id().to_string()),
+                messages: request.messages.map(|message| message.to_proto()),
+                stop: request.stop,
+                temperature: todo!(),
+            })
+            .map_ok(|stream| stream.boxed())
     }
 }

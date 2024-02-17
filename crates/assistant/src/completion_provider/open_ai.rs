@@ -96,7 +96,7 @@ impl OpenAiCompletionProvider {
                     content: msg.content,
                 })
                 .collect(),
-            stream: request.stream,
+            stream: true,
             stop: request.stop,
             temperature: request.temperature,
         }
