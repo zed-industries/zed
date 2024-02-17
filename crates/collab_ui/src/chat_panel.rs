@@ -710,14 +710,12 @@ impl ChatPanel {
             let chat = open_chat.await?;
             let highlight_message_id = scroll_to_message_id;
             let scroll_to_message_id = this.update(&mut cx, |this, cx| {
-                // TODO: make this more robust
-                // we now have to fallback to the original last_acknowledged_message_id,
-                // because the new one sometimes does not get correctly set
-                this.last_acknowledged_message_id = this
-                    .channel_store
-                    .read(cx)
-                    .last_acknowledge_message_id(chat.read(cx).channel_id)
-                    .or_else(|| this.last_acknowledged_message_id);
+                if this.last_acknowledged_message_id.is_none() {
+                    this.last_acknowledged_message_id = this
+                        .channel_store
+                        .read(cx)
+                        .last_acknowledge_message_id(chat.read(cx).channel_id);
+                }
 
                 this.set_active_chat(chat.clone(), cx);
 
