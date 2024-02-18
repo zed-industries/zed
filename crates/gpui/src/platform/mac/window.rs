@@ -1610,6 +1610,12 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 
 unsafe extern "C" fn step(view: *mut c_void) {
     let view = view as id;
+    let class = (*view).class();
+    if class.instance_size() == 0 {
+        // the class is nil
+        return;
+    }
+
     let window_state = unsafe { get_window_state(&*view) };
     let mut lock = window_state.lock();
 
