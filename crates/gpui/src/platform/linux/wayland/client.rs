@@ -384,20 +384,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 state.modifiers.command =
                     keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
 
-                let key = if matches!(
-                    key_sym,
-                    xkb::Keysym::BackSpace
-                        | xkb::Keysym::Left
-                        | xkb::Keysym::Right
-                        | xkb::Keysym::Down
-                        | xkb::Keysym::Up
-                        | xkb::Keysym::Super_L
-                        | xkb::Keysym::Super_R
-                ) {
-                    xkb::keysym_get_name(key_sym).to_lowercase()
-                } else {
-                    key_utf8.clone()
-                };
+                let key = xkb::keysym_get_name(key_sym).to_lowercase();
 
                 let focused_window = &state.keyboard_focused_window;
                 if let Some(focused_window) = focused_window {
@@ -407,7 +394,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers,
                                     key,
-                                    ime_key: None,
+                                    ime_key: Some(key_utf8),
                                 },
                                 is_held: false, // todo!(linux)
                             }));
@@ -417,7 +404,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers,
                                     key,
-                                    ime_key: None,
+                                    ime_key: Some(key_utf8),
                                 },
                             }));
                         }
