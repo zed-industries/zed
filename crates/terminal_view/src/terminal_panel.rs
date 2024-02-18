@@ -39,7 +39,6 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
-            workspace.register_action(TerminalPanel::spawn_runnable_in_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<TerminalPanel>(cx);
             });
@@ -209,11 +208,26 @@ impl TerminalPanel {
                     })
                 })
             } else {
-                Default::default()
+                Vec::new()
             };
             let pane = panel.read(cx).pane.clone();
             (panel, pane, items)
         })?;
+
+        if let Some(workspace) = workspace.upgrade() {
+            panel
+                .update(&mut cx, |panel, cx| {
+                    panel._subscriptions.push(cx.subscribe(
+                        &workspace,
+                        |terminal_panel, _, e, cx| {
+                            if let workspace::Event::SpawnRunnable(spawn_in_terminal) = e {
+                                terminal_panel.spawn_runnable_in_terminal(spawn_in_terminal, cx);
+                            };
+                        },
+                    ))
+                })
+                .ok();
+        }
 
         let pane = pane.downgrade();
         let items = futures::future::join_all(items).await;
@@ -279,32 +293,31 @@ impl TerminalPanel {
     }
 
     pub fn spawn_runnable_in_terminal(
-        workspace: &mut Workspace,
-        action: &runnable::SpawnInTerminal,
-        cx: &mut ViewContext<Workspace>,
+        &mut self,
+        spawn_in_terminal: &runnable::SpawnInTerminal,
+        cx: &mut ViewContext<Self>,
     ) {
-        if action.label.is_empty() || action.command.is_empty() {
-            return;
-        };
         let spawn_runnable = SpawnRunnable {
-            id: action.id.clone(),
-            label: action.label.clone(),
-            command: action.command.clone(),
-            args: action.args.clone(),
+            id: spawn_in_terminal.id.clone(),
+            label: spawn_in_terminal.label.clone(),
+            command: spawn_in_terminal.command.clone(),
+            args: spawn_in_terminal.args.clone(),
         };
-        let working_directory = action.cwd.clone();
-        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
-            return;
-        };
+        let working_directory = spawn_in_terminal.cwd.clone();
 
-        if !action.use_new_terminal {
-            if let Some((item_index, existing_terminal_view)) = terminal_panel
-                .update(cx, |terminal_panel, cx| {
-                    terminal_panel.find_terminal_for_runable(&action.id, cx)
-                })
+        if !spawn_in_terminal.use_new_terminal {
+            if let Some((item_index, existing_terminal_view)) =
+                self.find_terminal_for_runable(&spawn_in_terminal.id, cx)
             {
                 let window = cx.window_handle();
-                if let Some(new_terminal) = workspace.project().update(cx, |project, cx| {
+                let Some(project) = self
+                    .workspace
+                    .update(cx, |workspace, _| workspace.project().clone())
+                    .ok()
+                else {
+                    return;
+                };
+                if let Some(new_terminal) = project.update(cx, |project, cx| {
                     project
                         .create_terminal(working_directory, Some(spawn_runnable), window, cx)
                         .log_err()
@@ -312,18 +325,20 @@ impl TerminalPanel {
                     existing_terminal_view.update(cx, |existing_terminal_view, cx| {
                         existing_terminal_view.set_terminal(new_terminal, cx);
                     });
-                    terminal_panel.update(cx, |terminal_panel, cx| {
-                        terminal_panel.activate_terminal_view(item_index, cx)
-                    });
+                    self.activate_terminal_view(item_index, cx);
                 }
                 return;
             }
         }
 
-        terminal_panel.update(cx, |terminal_panel, cx| {
-            terminal_panel.add_terminal(working_directory, Some(spawn_runnable), cx)
-        });
-        workspace.focus_panel::<Self>(cx);
+        self.add_terminal(working_directory, Some(spawn_runnable), cx);
+        let task_workspace = self.workspace.clone();
+        cx.spawn(|_, mut cx| async move {
+            task_workspace
+                .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
+                .ok()
+        })
+        .detach();
     }
 
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -342,7 +357,7 @@ impl TerminalPanel {
     fn find_terminal_for_runable(
         &self,
         id: &RunnableId,
-        cx: &mut ViewContext<Self>,
+        cx: &mut AppContext,
     ) -> Option<(usize, View<TerminalView>)> {
         self.pane
             .read(cx)
@@ -359,7 +374,7 @@ impl TerminalPanel {
             })
     }
 
-    fn activate_terminal_view(&self, item_index: usize, cx: &mut ViewContext<Self>) {
+    fn activate_terminal_view(&self, item_index: usize, cx: &mut WindowContext) {
         self.pane.update(cx, |pane, cx| {
             pane.activate_item(item_index, true, true, cx)
         })
@@ -373,8 +388,8 @@ impl TerminalPanel {
     ) {
         let workspace = self.workspace.clone();
         self.pending_terminals_to_add += 1;
-        cx.spawn(|this, mut cx| async move {
-            let pane = this.update(&mut cx, |this, _| this.pane.clone())?;
+        cx.spawn(|terminal_panel, mut cx| async move {
+            let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
             workspace.update(&mut cx, |workspace, cx| {
                 let working_directory = if let Some(working_directory) = working_directory {
                     Some(working_directory)
@@ -404,7 +419,7 @@ impl TerminalPanel {
                     });
                 }
             })?;
-            this.update(&mut cx, |this, cx| {
+            terminal_panel.update(&mut cx, |this, cx| {
                 this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
                 this.serialize(cx)
             })?;

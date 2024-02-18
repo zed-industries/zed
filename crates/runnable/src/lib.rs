@@ -7,15 +7,13 @@ mod static_source;
 pub use static_runnable::StaticRunnable;
 pub use static_source::{StaticSource, TrackedFile};
 
-use anyhow::Result;
-use gpui::{impl_actions, ModelContext};
-use serde::Deserialize;
+use gpui::ModelContext;
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-// TODO kb fugly: can we actually use an event instead?
-impl_actions!(runnable, [SpawnInTerminal]);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnableId(String);
 
 #[derive(Debug, Clone)]
 pub struct SpawnInTerminal {
@@ -26,36 +24,6 @@ pub struct SpawnInTerminal {
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
 }
-
-impl PartialEq for SpawnInTerminal {
-    fn eq(&self, other: &Self) -> bool {
-        self.id.eq(&other.id)
-            && self.use_new_terminal.eq(&other.use_new_terminal)
-            && self.label.eq(&other.label)
-            && self.command.eq(&other.command)
-            && self.args.eq(&other.args)
-            && self.cwd.eq(&other.cwd)
-    }
-}
-
-impl<'de> Deserialize<'de> for SpawnInTerminal {
-    fn deserialize<D>(_: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(Self {
-            id: RunnableId(String::new()),
-            use_new_terminal: false,
-            label: String::new(),
-            command: String::new(),
-            args: Vec::new(),
-            cwd: None,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunnableId(String);
 
 /// Represents a short lived recipe of a runnable, whose main purpose
 /// is to get spawned.

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{Action, AppContext, ViewContext, WindowContext};
+use gpui::{AppContext, ViewContext, WindowContext};
 use modal::RunnablesModal;
 use runnable::Runnable;
 use util::ResultExt;
@@ -33,7 +33,11 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-fn schedule_runnable(workspace: &Workspace, runnable: &dyn Runnable, cx: &mut WindowContext) {
+fn schedule_runnable(
+    workspace: &Workspace,
+    runnable: &dyn Runnable,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
     let Some(cwd) = runnable_cwd(workspace, cx).log_err() else {
         return;
     };
@@ -44,7 +48,7 @@ fn schedule_runnable(workspace: &Workspace, runnable: &dyn Runnable, cx: &mut Wi
                 inventory.last_scheduled_runnable = Some(runnable.id().clone());
             })
         });
-        cx.dispatch_action(spawn_in_terminal.boxed_clone());
+        cx.emit(workspace::Event::SpawnRunnable(spawn_in_terminal));
     }
 }
 
