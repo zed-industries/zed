@@ -360,7 +360,12 @@ impl StateInner {
         available_height: Pixels,
         padding: &Edges<Pixels>,
         cx: &mut ElementContext,
-    ) -> (Pixels, Size<AvailableSpace>, VecDeque<AnyElement>) {
+    ) -> (
+        Pixels,
+        ListOffset,
+        Size<AvailableSpace>,
+        VecDeque<AnyElement>,
+    ) {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
         let mut item_elements = VecDeque::new();
@@ -477,7 +482,12 @@ impl StateInner {
 
         self.items = new_items;
 
-        (max_item_width, available_item_space, item_elements)
+        (
+            max_item_width,
+            scroll_top,
+            available_item_space,
+            item_elements,
+        )
     }
 }
 
@@ -528,7 +538,7 @@ impl Element for List {
                         cx.rem_size(),
                     );
 
-                    let (max_element_width, _, _) =
+                    let (max_element_width, _, _, _) =
                         state.layout_items(None, available_height, &padding, cx);
 
                     let summary = state.items.summary();
@@ -596,8 +606,7 @@ impl Element for List {
         }
 
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let scroll_top = state.logical_scroll_top();
-        let (_, available_item_space, mut item_elements) =
+        let (_, scroll_top, available_item_space, mut item_elements) =
             state.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
 
         // Only paint the visible items, if there is actually any space for them (taking padding into account)
