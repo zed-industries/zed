@@ -375,6 +375,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
                 let key_sym = keymap_state.key_get_one_sym(Keycode::from(key + MIN_KEYCODE));
 
+                state.modifiers.shift =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.alt =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.control =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.command =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+
                 let key = if matches!(
                     key_sym,
                     xkb::Keysym::BackSpace
@@ -394,45 +403,23 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 if let Some(focused_window) = focused_window {
                     match key_state {
                         wl_keyboard::KeyState::Pressed => {
-                            if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
-                                state.modifiers.shift = true;
-                            } else if key_sym == xkb::Keysym::Control_L
-                                || key_sym == xkb::Keysym::Control_R
-                            {
-                                state.modifiers.control = true;
-                            } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R
-                            {
-                                state.modifiers.alt = true;
-                            } else {
-                                focused_window.handle_input(KeyDown(KeyDownEvent {
-                                    keystroke: Keystroke {
-                                        modifiers: state.modifiers,
-                                        key,
-                                        ime_key: None,
-                                    },
-                                    is_held: false, // todo!(linux)
-                                }));
-                            }
+                            focused_window.handle_input(KeyDown(KeyDownEvent {
+                                keystroke: Keystroke {
+                                    modifiers: state.modifiers,
+                                    key,
+                                    ime_key: None,
+                                },
+                                is_held: false, // todo!(linux)
+                            }));
                         }
                         wl_keyboard::KeyState::Released => {
-                            if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
-                                state.modifiers.shift = false;
-                            } else if key_sym == xkb::Keysym::Control_L
-                                || key_sym == xkb::Keysym::Control_R
-                            {
-                                state.modifiers.control = false;
-                            } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R
-                            {
-                                state.modifiers.alt = false;
-                            } else {
-                                focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                                    keystroke: Keystroke {
-                                        modifiers: state.modifiers,
-                                        key,
-                                        ime_key: None,
-                                    },
-                                }));
-                            }
+                            focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
+                                keystroke: Keystroke {
+                                    modifiers: state.modifiers,
+                                    key,
+                                    ime_key: None,
+                                },
+                            }));
                         }
                         _ => {}
                     }
