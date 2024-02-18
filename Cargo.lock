@@ -7766,9 +7766,11 @@ name = "runnable"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "futures 0.3.28",
  "gpui",
  "parking_lot 0.11.2",
+ "schemars",
  "serde",
  "serde_json",
  "settings",

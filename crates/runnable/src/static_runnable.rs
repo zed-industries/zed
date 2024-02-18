@@ -1,11 +1,10 @@
-//! This module is responsible for executing static runnables, that is runnables defined by the user
-//! in the config file.
+//! Definitions of runnables with a static file config definition, not dependent on the application state.
 
 use std::path::PathBuf;
 
-use crate::{static_runnable_file::Definition, Runnable, RunnableId, SpawnInTerminal};
+use crate::{static_source::Definition, Runnable, RunnableId, SpawnInTerminal};
 
-/// [`StaticRunnable`] is a [`Runnable`] defined in .json file.
+/// A single config file entry with the deserialized runnable definition.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StaticRunnable {
     id: RunnableId,
@@ -13,7 +12,7 @@ pub struct StaticRunnable {
 }
 
 impl StaticRunnable {
-    pub fn new(id: usize, runnable: Definition) -> Self {
+    pub(super) fn new(id: usize, runnable: Definition) -> Self {
         Self {
             id: RunnableId(format!("static_{}_{}", runnable.label, id)),
             definition: runnable,
@@ -22,10 +21,6 @@ impl StaticRunnable {
 }
 
 impl Runnable for StaticRunnable {
-    fn boxed_clone(&self) -> Box<dyn Runnable> {
-        Box::new(self.clone())
-    }
-
     fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal> {
         Some(SpawnInTerminal {
             id: self.id.clone(),
@@ -34,7 +29,8 @@ impl Runnable for StaticRunnable {
             label: self.definition.label.clone(),
             command: self.definition.command.clone(),
             args: self.definition.args.clone(),
-            cwd,
+            cwd: self.definition.cwd.clone().or(cwd),
+            env: self.definition.env.clone(),
         })
     }
 

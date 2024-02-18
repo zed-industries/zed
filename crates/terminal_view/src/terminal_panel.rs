@@ -312,6 +312,7 @@ impl TerminalPanel {
             label: spawn_in_terminal.label.clone(),
             command: spawn_in_terminal.command.clone(),
             args: spawn_in_terminal.args.clone(),
+            env: spawn_in_terminal.env.clone(),
         };
         let working_directory = spawn_in_terminal.cwd.clone();
         let allow_multiple = spawn_in_terminal.allow_multiple;

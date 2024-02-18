@@ -1,17 +1,19 @@
+//! Project-wide storage of the runnables available, capable of updating itself from the sources set.
+
 use std::{path::Path, sync::Arc};
 
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use runnable::{Runnable, RunnableId, Source};
 
-struct SourceInInventory {
-    source: Model<Box<dyn Source>>,
-    _subscription: Subscription,
-}
-
 /// Inventory tracks available runnables for a given project.
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
     pub last_scheduled_runnable: Option<RunnableId>,
+}
+
+struct SourceInInventory {
+    source: Model<Box<dyn Source>>,
+    _subscription: Subscription,
 }
 
 impl Inventory {
@@ -22,6 +24,7 @@ impl Inventory {
         })
     }
 
+    /// Registers a new runnables source, that would be fetched for available runnables.
     pub fn add_source(&mut self, source: Model<Box<dyn Source>>, cx: &mut ModelContext<Self>) {
         let _subscription = cx.observe(&source, |_, _, cx| {
             cx.notify();
@@ -34,21 +37,27 @@ impl Inventory {
         cx.notify();
     }
 
-    pub fn list_runnables(&self, cx: &mut AppContext) -> Vec<Arc<dyn Runnable>> {
+    /// Pulls its sources to list runanbles for the path given (up to the source to decide what to return for no path).
+    pub fn list_runnables(
+        &self,
+        path: Option<&Path>,
+        cx: &mut AppContext,
+    ) -> Vec<Arc<dyn Runnable>> {
         let mut runnables = Vec::new();
         for source in &self.sources {
             runnables.extend(
                 source
                     .source
-                    .update(cx, |this, cx| this.runnables_for_path(Path::new(""), cx)),
+                    .update(cx, |source, cx| source.runnables_for_path(path, cx)),
             );
         }
         runnables
     }
 
+    /// Returns the last scheduled runnable, if any of the sources contains one with the matching id.
     pub fn last_schedule_runnable(&self, cx: &mut AppContext) -> Option<Arc<dyn Runnable>> {
         self.last_scheduled_runnable.as_ref().and_then(|id| {
-            self.list_runnables(cx)
+            self.list_runnables(None, cx)
                 .into_iter()
                 .find(|runnable| runnable.id() == id)
         })

@@ -285,6 +285,7 @@ pub struct SpawnRunnable {
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
+    pub env: HashMap<String, String>,
 }
 
 pub struct TerminalBuilder {

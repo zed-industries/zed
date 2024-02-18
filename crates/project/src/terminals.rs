@@ -31,7 +31,9 @@ impl Project {
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
+        let mut env = settings.env.clone();
         let (spawn_runnable, shell) = if let Some(spawn_runnable) = spawn_runnable {
+            env.extend(spawn_runnable.env);
             (
                 Some(RunableState {
                     id: spawn_runnable.id,
@@ -52,7 +54,7 @@ impl Project {
             working_directory.clone(),
             spawn_runnable,
             shell,
-            settings.env.clone(),
+            env,
             Some(settings.blinking.clone()),
             settings.alternate_scroll,
             window,

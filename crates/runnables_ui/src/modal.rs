@@ -67,9 +67,9 @@ impl Render for RunnablesModal {
         v_flex()
             .w(rems(20.))
             .child(self.picker.clone())
-            .on_mouse_down_out(cx.listener(|this, _, cx| {
-                this.picker.update(cx, |this, cx| {
-                    this.cancel(&Default::default(), cx);
+            .on_mouse_down_out(cx.listener(|modal, _, cx| {
+                modal.picker.update(cx, |picker, cx| {
+                    picker.cancel(&Default::default(), cx);
                 })
             }))
     }
@@ -109,16 +109,18 @@ impl PickerDelegate for RunnablesModalDelegate {
     ) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
-                .update(&mut cx, |this, cx| {
-                    this.delegate.candidates = this
+                .update(&mut cx, |picker, cx| {
+                    picker.delegate.candidates = picker
                         .delegate
                         .inventory
-                        .update(cx, |this, cx| this.list_runnables(cx));
-                    this.delegate
+                        .update(cx, |inventory, cx| inventory.list_runnables(None, cx));
+                    picker
+                        .delegate
                         .candidates
                         .sort_by(|a, b| a.name().cmp(&b.name()));
 
-                    this.delegate
+                    picker
+                        .delegate
                         .candidates
                         .iter()
                         .enumerate()
