@@ -2119,6 +2119,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "time",
+ "time_format",
  "tree-sitter-markdown",
  "ui",
  "util",
@@ -9627,6 +9628,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a942f44339478ef67935ab2bbaec2fb0322496cf3cbe84b261e06ac3814c572"
 dependencies = [
  "time-core",
+]
+
+[[package]]
+name = "time_format"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lazy_static",
+ "plist",
+ "sys-locale",
+ "time",
+ "util",
 ]
 
 [[package]]

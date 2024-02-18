@@ -78,6 +78,7 @@ members = [
     "crates/theme",
     "crates/theme_importer",
     "crates/theme_selector",
+    "crates/time_format",
     "crates/ui",
     "crates/util",
     "crates/vcs_menu",
@@ -168,6 +169,7 @@ text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
+time_format = { path = "crates/time_format" }
 ui = { path = "crates/ui" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
@@ -198,6 +200,7 @@ lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = "2.1.1"
 parking_lot = "0.11.1"
+plist = "1.3"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
 prost = "0.8"
