@@ -395,9 +395,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 } else if state.modifiers.control && 0x01 <= unicode_value && unicode_value <= 0x1A
                 {
                     // Convert control character into ascii counterpart (only ^A-Z and into lowercase)
-                    // ^A-Z are from 0x01 to 0x1A and ascii "a" starts at 0x60
-                    const ASCII_A: u32 = 0x60;
-                    if let Some(character) = std::char::from_u32(unicode_value + ASCII_A) {
+                    // ^A-Z are from 0x01 to 0x1A and ascii "a"-"z" are from 0x61 to 0x7A
+                    const ASCII_A: u32 = 0x61;
+                    if let Some(character) = std::char::from_u32(ASCII_A + (unicode_value - 0x01)) {
                         String::from(character)
                     } else {
                         key_utf8.clone()
