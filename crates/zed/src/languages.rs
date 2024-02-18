@@ -118,6 +118,7 @@ pub fn init(
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("uiua", tree_sitter_uiua::language()),
         ("vue", tree_sitter_vue::language()),
+        ("wgsl", tree_sitter_wgsl::language()),
         ("yaml", tree_sitter_yaml::language()),
         ("zig", tree_sitter_zig::language()),
     ]);
@@ -307,6 +308,7 @@ pub fn init(
         vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))],
     );
     language("glsl", vec![]);
+    language("wgsl", vec![]);
     language("nix", vec![]);
     language("nu", vec![Arc::new(nu::NuLanguageServer {})]);
     language("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);

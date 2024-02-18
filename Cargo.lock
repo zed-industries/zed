@@ -10425,6 +10425,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-wgsl"
+version = "0.0.1"
+source = "git+https://github.com/szebniok/tree-sitter-wgsl?rev=40259f3c77ea856841a4e0c4c807705f3e4a2b65#40259f3c77ea856841a4e0c4c807705f3e4a2b65"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=f545a41f57502e1b5ddf2a6668896c1b0620f930#f545a41f57502e1b5ddf2a6668896c1b0620f930"
@@ -11998,6 +12007,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-uiua",
  "tree-sitter-vue",
+ "tree-sitter-wgsl",
  "tree-sitter-yaml",
  "tree-sitter-zig",
  "unindent",

@@ -1,0 +1,10 @@
+name = "WGSL"
+grammar = "wgsl"
+path_suffixes = ["wgsl"]
+line_comments = ["// "]
+block_comment = ["/* ", " */"]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]
