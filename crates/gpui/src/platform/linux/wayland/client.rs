@@ -328,7 +328,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 state.repeat_rate = rate;
                 state.repeat_delay = delay;
-            },
+            }
             wl_keyboard::Event::Keymap {
                 format: WEnum::Value(format),
                 fd,
