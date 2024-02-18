@@ -1156,7 +1156,7 @@ impl Pane {
                         WorkspaceSettings::get_global(cx).autosave,
                         AutosaveSetting::OnWindowChange { .. }
                             | AutosaveSetting::OnFocusChange { .. }
-                    )
+                    ) && Self::can_autosave_item(&*item, cx)
                 })?;
                 if !will_autosave {
                     let answer = pane.update(cx, |pane, cx| {
