@@ -111,7 +111,6 @@ tiny_http = "0.8"
 toml.workspace = true
 tree-sitter-astro.workspace = true
 tree-sitter-bash.workspace = true
-tree-sitter-beancount.workspace = true
 tree-sitter-c-sharp.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-clojure.workspace = true

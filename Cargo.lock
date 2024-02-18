@@ -10046,15 +10046,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-beancount"
-version = "2.2.0"
-source = "git+https://github.com/polarmutex/tree-sitter-beancount?rev=da1bf8c6eb0ae7a97588affde7227630bcd678b6#da1bf8c6eb0ae7a97588affde7227630bcd678b6"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-c"
 version = "0.20.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11958,7 +11949,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-astro",
  "tree-sitter-bash",
- "tree-sitter-beancount",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
  "tree-sitter-clojure",
