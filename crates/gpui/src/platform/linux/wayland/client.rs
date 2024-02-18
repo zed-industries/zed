@@ -435,6 +435,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                                 // Need to implement state.repeat_delay and state.repeat_rate
                                 // todo!(linux)
+                                state.repeat_current_keysym = Some(key_sym);
                             }
                         }
                         wl_keyboard::KeyState::Released => {
@@ -455,6 +456,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                         ime_key: None,
                                     },
                                 }));
+
+                                state.repeat_current_keysym = None;
                             }
                         }
                         _ => {}
