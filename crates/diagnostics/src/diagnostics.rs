@@ -40,7 +40,7 @@ use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
-    ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
+    ItemNavHistory, Pane, SaveIntent, ToolbarItemLocation, Workspace,
 };
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
@@ -738,10 +738,10 @@ impl Item for ProjectDiagnosticsEditor {
     fn save(
         &mut self,
         project: Model<Project>,
-        trigger_formatter: bool,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(project, trigger_formatter, cx)
+        self.editor.save(project, save_intent, cx)
     }
 
     fn save_as(

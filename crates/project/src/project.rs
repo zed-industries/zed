@@ -496,6 +496,7 @@ impl ProjectEntryId {
 pub enum FormatTrigger {
     Save,
     Manual,
+    SaveWithoutFormatting,
 }
 
 struct ProjectLspAdapterDelegate {
@@ -516,6 +517,7 @@ impl FormatTrigger {
         match value {
             0 => FormatTrigger::Save,
             1 => FormatTrigger::Manual,
+            2 => FormatTrigger::SaveWithoutFormatting,
             _ => FormatTrigger::Save,
         }
     }
@@ -4234,6 +4236,7 @@ impl Project {
                             .collect();
 
                         if !code_actions.is_empty()
+                            && trigger != FormatTrigger::SaveWithoutFormatting
                             && !(trigger == FormatTrigger::Save
                                 && settings.format_on_save == FormatOnSave::Off)
                         {
@@ -4303,6 +4306,7 @@ impl Project {
                     // or external command.
                     let mut format_operation = None;
                     match (&settings.formatter, &settings.format_on_save) {
+                        (_, _) if trigger == FormatTrigger::SaveWithoutFormatting => {}
                         (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
                         (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)

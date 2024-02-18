@@ -20,6 +20,7 @@ use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPat
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::ItemSettings;
+use workspace::SaveIntent;
 
 use std::fmt::Write;
 use std::{
@@ -705,18 +706,24 @@ impl Item for Editor {
     fn save(
         &mut self,
         project: Model<Project>,
-        trigger_formatter: bool,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|this, mut cx| async move {
-            if trigger_formatter {
-                this.update(&mut cx, |this, cx| {
-                    this.perform_format(project.clone(), FormatTrigger::Save, cx)
-                })?
-                .await?;
-            }
+            this.update(&mut cx, |this, cx| {
+                this.perform_format(
+                    project.clone(),
+                    if save_intent == SaveIntent::SaveWithoutFormatting {
+                        FormatTrigger::SaveWithoutFormatting
+                    } else {
+                        FormatTrigger::Save
+                    },
+                    cx,
+                )
+            })?
+            .await?;
 
             if buffers.len() == 1 {
                 project

@@ -3,8 +3,8 @@ use crate::{
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
-    ViewId, Workspace, WorkspaceId,
+    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, SaveIntent,
+    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 use anyhow::Result;
 use client::{
@@ -149,7 +149,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn save(
         &mut self,
         _project: Model<Project>,
-        _trigger_formatter: bool,
+        _save_intent: SaveIntent,
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save() must be implemented if can_save() returns true")
@@ -266,7 +266,7 @@ pub trait ItemHandle: 'static + Send {
     fn save(
         &self,
         project: Model<Project>,
-        trigger_formatter: bool,
+        save_intent: SaveIntent,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn save_as(
@@ -595,10 +595,10 @@ impl<T: Item> ItemHandle for View<T> {
     fn save(
         &self,
         project: Model<Project>,
-        trigger_formatter: bool,
+        save_intent: SaveIntent,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(project, trigger_formatter, cx))
+        self.update(cx, |item, cx| item.save(project, save_intent, cx))
     }
 
     fn save_as(
@@ -801,7 +801,7 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent};
-    use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
+    use crate::{ItemId, ItemNavHistory, Pane, SaveIntent, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
         InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
@@ -1050,7 +1050,7 @@ pub mod test {
         fn save(
             &mut self,
             _: Model<Project>,
-            _: bool,
+            _: SaveIntent,
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;

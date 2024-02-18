@@ -1317,7 +1317,6 @@ impl Workspace {
                             ix,
                             &*item,
                             save_intent,
-                            true,
                             &mut cx,
                         )
                         .await?
@@ -1563,23 +1562,6 @@ impl Workspace {
         save_intent: SaveIntent,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        self.save_active_item_internal(true, save_intent, cx)
-    }
-
-    pub fn save_without_formatting(
-        &mut self,
-        save_intent: SaveIntent,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        self.save_active_item_internal(false, save_intent, cx)
-    }
-
-    fn save_active_item_internal(
-        &mut self,
-        trigger_formatter: bool,
-        save_intent: SaveIntent,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>> {
         let project = self.project.clone();
         let pane = self.active_pane();
         let item_ix = pane.read(cx).active_item_index();
@@ -1588,17 +1570,9 @@ impl Workspace {
 
         cx.spawn(|mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(
-                    project,
-                    &pane,
-                    item_ix,
-                    item.as_ref(),
-                    save_intent,
-                    trigger_formatter,
-                    &mut cx,
-                )
-                .await
-                .map(|_| ())
+                Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
+                    .await
+                    .map(|_| ())
             } else {
                 Ok(())
             }
@@ -3412,7 +3386,12 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace, action: &SaveWithoutFormatting, cx| {
                     workspace
-                        .save_without_formatting(action.save_intent.unwrap_or(SaveIntent::Save), cx)
+                        .save_active_item(
+                            action
+                                .save_intent
+                                .unwrap_or(SaveIntent::SaveWithoutFormatting),
+                            cx,
+                        )
                         .detach_and_log_err(cx);
                 }),
             )

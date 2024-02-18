@@ -44,6 +44,9 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// write all files (even if unchanged) without formatting
+    /// prompt before overwriting on-disk changes
+    SaveWithoutFormatting,
     /// write any files that have local changes
     /// prompt before overwriting on-disk changes
     SaveAll,
@@ -986,7 +989,6 @@ impl Pane {
                         item_ix,
                         &*item,
                         save_intent,
-                        false,
                         &mut cx,
                     )
                     .await?
@@ -1096,7 +1098,6 @@ impl Pane {
         item_ix: usize,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
-        trigger_formatter: bool,
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
         const CONFLICT_MESSAGE: &str =
@@ -1116,7 +1117,7 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save {
+        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormatting {
             is_dirty = true;
         }
 
@@ -1142,7 +1143,7 @@ impl Pane {
             })?;
             match answer.await {
                 Ok(0) => {
-                    pane.update(cx, |_, cx| item.save(project, trigger_formatter, cx))?
+                    pane.update(cx, |_, cx| item.save(project, save_intent, cx))?
                         .await?
                 }
                 Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
@@ -1177,7 +1178,7 @@ impl Pane {
             }
 
             if can_save {
-                pane.update(cx, |_, cx| item.save(project, trigger_formatter, cx))?
+                pane.update(cx, |_, cx| item.save(project, save_intent, cx))?
                     .await?;
             } else if can_save_as {
                 let start_abs_path = project
@@ -1211,7 +1212,15 @@ impl Pane {
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         if Self::can_autosave_item(item, cx) {
-            item.save(project, trigger_formatter, cx)
+            item.save(
+                project,
+                if trigger_formatter {
+                    SaveIntent::Save
+                } else {
+                    SaveIntent::SaveWithoutFormatting
+                },
+                cx,
+            )
         } else {
             Task::ready(Ok(()))
         }

@@ -36,7 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use workspace::{DeploySearch, NewSearch};
+use workspace::{DeploySearch, NewSearch, SaveIntent};
 
 use ui::{
     h_flex, prelude::*, v_flex, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
@@ -535,11 +535,11 @@ impl Item for ProjectSearchView {
     fn save(
         &mut self,
         project: Model<Project>,
-        trigger_formatter: bool,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
-            .update(cx, |editor, cx| editor.save(project, trigger_formatter, cx))
+            .update(cx, |editor, cx| editor.save(project, save_intent, cx))
     }
 
     fn save_as(
