@@ -41,6 +41,9 @@ pub(crate) struct WaylandClientState {
     wl_seat: Option<wl_seat::WlSeat>,
     keymap_state: Option<xkb::State>,
     modifiers: Modifiers,
+    repeat_rate: i32,
+    repeat_delay: i32,
+    repeat_current_keysym: Option<xkb::Keysym>,
     scroll_direction: f64,
     mouse_location: Option<Point<Pixels>>,
     button_pressed: Option<MouseButton>,
@@ -73,6 +76,9 @@ impl WaylandClient {
                 function: false,
                 command: false,
             },
+            repeat_rate: 4,
+            repeat_delay: 1000,
+            repeat_current_keysym: None,
             scroll_direction: -1.0,
             mouse_location: None,
             button_pressed: None,
@@ -319,6 +325,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
         qh: &QueueHandle<Self>,
     ) {
         match event {
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                state.repeat_rate = rate;
+                state.repeat_delay = delay;
+            },
             wl_keyboard::Event::Keymap {
                 format: WEnum::Value(format),
                 fd,
@@ -378,14 +388,24 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let key = if matches!(
                     key_sym,
                     xkb::Keysym::BackSpace
+                        | xkb::Keysym::Escape
+                        | xkb::Keysym::Home
+                        | xkb::Keysym::End
+                        | xkb::Keysym::Delete
+                        | xkb::Keysym::Insert
+                        | xkb::Keysym::Menu
                         | xkb::Keysym::Left
                         | xkb::Keysym::Right
                         | xkb::Keysym::Down
                         | xkb::Keysym::Up
+                        | xkb::Keysym::Page_Down
+                        | xkb::Keysym::Page_Up
                         | xkb::Keysym::Super_L
                         | xkb::Keysym::Super_R
                 ) {
                     xkb::keysym_get_name(key_sym).to_lowercase()
+                } else if let Some(key_char) = key_sym.key_char() {
+                    String::from(key_char)
                 } else {
                     key_utf8.clone()
                 };
@@ -412,6 +432,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                     },
                                     is_held: false, // todo!(linux)
                                 }));
+
+                                // Need to implement state.repeat_delay and state.repeat_rate
+                                // todo!(linux)
                             }
                         }
                         wl_keyboard::KeyState::Released => {
