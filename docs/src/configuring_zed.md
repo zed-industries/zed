@@ -956,7 +956,13 @@ See Buffer Font Features
 
 ## Theme
 
-- Description: The name and mode of the Zed theme to use for the UI.
+- Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
+- Setting: `theme`
+- Default: `One Dark`
+
+### Theme Object
+
+- Description: Specify the theme using an object that includes the `mode`, `dark`, and `light` themes.
 - Setting: `theme`
 - Default:
 
