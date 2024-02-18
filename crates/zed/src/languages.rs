@@ -155,7 +155,12 @@ pub fn init(
         ],
     );
 
-    language("dockerfile", vec![Arc::new(dockerfile::DockerfileLspAdapter::new(node_runtime.clone()))]);
+    language(
+        "dockerfile",
+        vec![Arc::new(dockerfile::DockerfileLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
 
     match &ElixirSettings::get(None, cx).lsp {
         elixir::ElixirLspSetting::ElixirLs => language(
