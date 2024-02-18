@@ -375,6 +375,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
                 let key_sym = keymap_state.key_get_one_sym(Keycode::from(key + MIN_KEYCODE));
 
+                let unicode_value = if key_utf8.chars().count() == 1 {
+                    key_utf8.chars().next().unwrap() as u32
+                } else { u32::MAX };
+
                 let key = if matches!(
                     key_sym,
                     xkb::Keysym::BackSpace
@@ -386,7 +390,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                         | xkb::Keysym::Super_R
                 ) {
                     xkb::keysym_get_name(key_sym).to_lowercase()
-                } else {
+                } else if state.modifiers.control && 0x01 <= unicode_value && unicode_value <= 0x1A {
+                    // Convert control character into ascii counterpart (only A-Z and always into lowercase)
+                    // https://www.geeksforgeeks.org/control-characters/
+                    if let Some(character) = std::char::from_u32(unicode_value + 0x60) {
+                        String::from(character)
+                    } else {
+                        key_utf8.clone()
+                    }
+                }
+                else {
                     key_utf8.clone()
                 };
 
