@@ -124,7 +124,10 @@ impl Project {
             // Paths are not strings so we need to jump through some hoops to format the command without `format!`
             let mut command = Vec::from(activate_command.as_bytes());
             command.push(b' ');
+            // Wrapping path in double quotes to catch spaces in folder name
+            command.extend_from_slice(b"\"");
             command.extend_from_slice(activate_script.as_os_str().as_encoded_bytes());
+            command.extend_from_slice(b"\"");
             command.push(b'\n');
 
             terminal_handle.update(cx, |this, _| this.input_bytes(command));

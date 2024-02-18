@@ -183,8 +183,10 @@ message Envelope {
         LspExtExpandMacroResponse lsp_ext_expand_macro_response = 155;
         SetRoomParticipantRole set_room_participant_role = 156;
 
-        UpdateUserChannels update_user_channels = 157; // current max
+        UpdateUserChannels update_user_channels = 157;
     }
+
+    reserved 158 to 161;
 }
 
 // Messages
@@ -210,13 +212,13 @@ enum ErrorCode {
     SignedOut = 3;
     UpgradeRequired = 4;
     Forbidden = 5;
-    WrongReleaseChannel = 6;
     NeedsCla = 7;
     NotARootChannel = 8;
     BadPublicNesting = 9;
     CircularNesting = 10;
     WrongMoveTarget = 11;
     UnsharedItem = 12;
+    reserved 6;
 }
 
 message Test {
@@ -291,6 +293,7 @@ message Participant {
     ParticipantLocation location = 4;
     uint32 participant_index = 5;
     ChannelRole role = 6;
+    reserved 7;
 }
 
 message PendingParticipant {

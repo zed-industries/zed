@@ -337,17 +337,12 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     let buffer_changes = db
         .transaction(|tx| {
             let buffers = &buffers;
-            async move {
-                db.latest_channel_buffer_changes(
-                    &[
-                        buffers[0].channel_id,
-                        buffers[1].channel_id,
-                        buffers[2].channel_id,
-                    ],
-                    &*tx,
-                )
-                .await
-            }
+            let mut hash = HashMap::default();
+            hash.insert(buffers[0].id, buffers[0].channel_id);
+            hash.insert(buffers[1].id, buffers[1].channel_id);
+            hash.insert(buffers[2].id, buffers[2].channel_id);
+
+            async move { db.latest_channel_buffer_changes(&hash, &*tx).await }
         })
         .await
         .unwrap();

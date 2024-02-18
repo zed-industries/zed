@@ -110,12 +110,10 @@ impl Database {
         user_id: UserId,
         connection: ConnectionId,
         live_kit_room: &str,
-        release_channel: &str,
     ) -> Result<proto::Room> {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
                 live_kit_room: ActiveValue::set(live_kit_room.into()),
-                environment: ActiveValue::set(Some(release_channel.to_string())),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -302,31 +300,21 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
-        environment: &str,
     ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryChannelIdAndEnvironment {
+            enum QueryChannelId {
                 ChannelId,
-                Environment,
             }
 
-            let (channel_id, release_channel): (Option<ChannelId>, Option<String>) =
-                room::Entity::find()
-                    .select_only()
-                    .column(room::Column::ChannelId)
-                    .column(room::Column::Environment)
-                    .filter(room::Column::Id.eq(room_id))
-                    .into_values::<_, QueryChannelIdAndEnvironment>()
-                    .one(&*tx)
-                    .await?
-                    .ok_or_else(|| anyhow!("no such room"))?;
-
-            if let Some(release_channel) = release_channel {
-                if &release_channel != environment {
-                    Err(anyhow!("must join using the {} release", release_channel))?;
-                }
-            }
+            let channel_id: Option<ChannelId> = room::Entity::find()
+                .select_only()
+                .column(room::Column::ChannelId)
+                .filter(room::Column::Id.eq(room_id))
+                .into_values::<_, QueryChannelId>()
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such room"))?;
 
             if channel_id.is_some() {
                 Err(anyhow!("tried to join channel call directly"))?

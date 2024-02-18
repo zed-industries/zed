@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use command_palette::CommandPalette;
 use editor::DisplayPoint;
+use futures::StreamExt;
 use gpui::KeyBinding;
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
@@ -846,4 +847,40 @@ async fn test_comma_w(cx: &mut gpui::TestAppContext) {
         .await;
     cx.assert_shared_state("hellˇo hello\nhello hello").await;
     cx.assert_shared_mode(Mode::Insert).await;
+}
+
+#[gpui::test]
+async fn test_rename(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_typescript(cx).await;
+
+    cx.set_state("const beˇfore = 2; console.log(before)", Mode::Normal);
+    let def_range = cx.lsp_range("const «beforeˇ» = 2; console.log(before)");
+    let tgt_range = cx.lsp_range("const before = 2; console.log(«beforeˇ»)");
+    let mut prepare_request =
+        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::PrepareRenameResponse::Range(def_range)))
+        });
+    let mut rename_request =
+        cx.handle_request::<lsp::request::Rename, _, _>(move |url, params, _| async move {
+            Ok(Some(lsp::WorkspaceEdit {
+                changes: Some(
+                    [(
+                        url.clone(),
+                        vec![
+                            lsp::TextEdit::new(def_range, params.new_name.clone()),
+                            lsp::TextEdit::new(tgt_range, params.new_name),
+                        ],
+                    )]
+                    .into(),
+                ),
+                ..Default::default()
+            }))
+        });
+
+    cx.simulate_keystrokes(["c", "d"]);
+    prepare_request.next().await.unwrap();
+    cx.simulate_input("after");
+    cx.simulate_keystrokes(["enter"]);
+    rename_request.next().await.unwrap();
+    cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }

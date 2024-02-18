@@ -3,35 +3,35 @@ name: Randomized Tests
 concurrency: randomized-tests
 
 on:
-    push:
-        branches:
-            - randomized-tests-runner
-    # schedule:
-    #    - cron: '0 * * * *'
+  push:
+    branches:
+      - randomized-tests-runner
+  # schedule:
+  #    - cron: '0 * * * *'
 
 env:
-    CARGO_TERM_COLOR: always
-    CARGO_INCREMENTAL: 0
-    RUST_BACKTRACE: 1
-    ZED_SERVER_URL: https://zed.dev
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  ZED_SERVER_URL: https://zed.dev
 
 jobs:
-    tests:
-        name: Run randomized tests
-        runs-on:
-            - self-hosted
-            - randomized-tests
-        steps:
-            - name: Install Node
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "18"
+  tests:
+    name: Run randomized tests
+    runs-on:
+      - self-hosted
+      - randomized-tests
+    steps:
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
 
-            - name: Checkout repo
-              uses: actions/checkout@v4
-              with:
-                  clean: false
-                  submodules: "recursive"
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
 
-            - name: Run randomized tests
-              run: script/randomized-test-ci
+      - name: Run randomized tests
+        run: script/randomized-test-ci

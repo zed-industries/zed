@@ -103,7 +103,6 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         connection: ConnectionId,
-        environment: &str,
     ) -> Result<(JoinRoom, Option<MembershipUpdated>, ChannelRole)> {
         self.transaction(move |tx| async move {
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
@@ -163,7 +162,7 @@ impl Database {
 
             let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
             let room_id = self
-                .get_or_create_channel_room(channel_id, &live_kit_room, environment, &*tx)
+                .get_or_create_channel_room(channel_id, &live_kit_room, &*tx)
                 .await?;
 
             self.join_channel_room_internal(room_id, user_id, connection, role, &*tx)
@@ -627,18 +626,40 @@ impl Database {
         }
 
         let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
+
+        let mut channel_ids_by_buffer_id = HashMap::default();
+        let mut rows = buffer::Entity::find()
+            .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
+            .stream(&*tx)
+            .await?;
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            channel_ids_by_buffer_id.insert(row.id, row.channel_id);
+        }
+        drop(rows);
+
         let latest_buffer_versions = self
-            .latest_channel_buffer_changes(&channel_ids, &*tx)
+            .latest_channel_buffer_changes(&channel_ids_by_buffer_id, &*tx)
             .await?;
 
-        let latest_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
+        let latest_channel_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
+
+        let observed_buffer_versions = self
+            .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, &*tx)
+            .await?;
+
+        let observed_channel_messages = self
+            .observed_channel_messages(&channel_ids, user_id, &*tx)
+            .await?;
 
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
             channel_participants,
             latest_buffer_versions,
-            latest_channel_messages: latest_messages,
+            latest_channel_messages,
+            observed_buffer_versions,
+            observed_channel_messages,
         })
     }
 
@@ -911,7 +932,6 @@ impl Database {
         &self,
         channel_id: ChannelId,
         live_kit_room: &str,
-        environment: &str,
         tx: &DatabaseTransaction,
     ) -> Result<RoomId> {
         let room = room::Entity::find()
@@ -920,19 +940,11 @@ impl Database {
             .await?;
 
         let room_id = if let Some(room) = room {
-            if let Some(env) = room.environment {
-                if &env != environment {
-                    Err(ErrorCode::WrongReleaseChannel
-                        .with_tag("required", &env)
-                        .anyhow())?;
-                }
-            }
             room.id
         } else {
             let result = room::Entity::insert(room::ActiveModel {
                 channel_id: ActiveValue::Set(Some(channel_id)),
                 live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
-                environment: ActiveValue::Set(Some(environment.to_string())),
                 ..Default::default()
             })
             .exec(&*tx)

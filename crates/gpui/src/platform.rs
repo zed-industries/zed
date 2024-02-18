@@ -3,10 +3,16 @@
 
 mod app_menu;
 mod keystroke;
+
 #[cfg(target_os = "linux")]
 mod linux;
+
 #[cfg(target_os = "macos")]
 mod mac;
+
+#[cfg(any(target_os = "linux", feature = "macos-blade"))]
+mod blade;
+
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 

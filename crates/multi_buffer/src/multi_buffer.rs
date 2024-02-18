@@ -47,11 +47,17 @@ const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExcerptId(usize);
 
+/// One or more [`Buffers`](Buffer) being edited in a single view.
+///
+/// See <https://zed.dev/features#multi-buffers>
 pub struct MultiBuffer {
+    /// A snapshot of the [`Excerpt`]s in the MultiBuffer.
+    /// Use [`MultiBuffer::snapshot`] to get a up-to-date snapshot.
     snapshot: RefCell<MultiBufferSnapshot>,
+    /// Contains the state of the buffers being edited
     buffers: RefCell<HashMap<BufferId, BufferState>>,
-    next_excerpt_id: usize,
     subscriptions: Topic,
+    /// If true, the multi-buffer only contains a single [`Buffer`] and a single [`Excerpt`]
     singleton: bool,
     replica_id: ReplicaId,
     history: History,
@@ -136,6 +142,7 @@ struct BufferState {
     _subscriptions: [gpui::Subscription; 2],
 }
 
+/// The contents of a [`MultiBuffer`] at a single point in time.
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
     singleton: bool,
@@ -150,22 +157,36 @@ pub struct MultiBufferSnapshot {
     has_conflict: bool,
 }
 
+/// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
 pub struct ExcerptBoundary {
     pub id: ExcerptId,
+    /// The row in the `MultiBuffer` where the boundary is located
     pub row: u32,
     pub buffer: BufferSnapshot,
     pub range: ExcerptRange<text::Anchor>,
+    /// It's possible to have multiple excerpts in the same buffer,
+    /// and they are rendered together without a new File header.
+    ///
+    /// This flag indicates that the excerpt is the first one in the buffer.
     pub starts_new_buffer: bool,
 }
 
+/// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
 #[derive(Clone)]
 struct Excerpt {
+    /// The unique identifier for this excerpt
     id: ExcerptId,
+    /// The location of the excerpt in the [`MultiBuffer`]
     locator: Locator,
+    /// The buffer being excerpted
     buffer_id: BufferId,
+    /// A snapshot of the buffer being excerpted
     buffer: BufferSnapshot,
+    /// The range of the buffer to be shown in the excerpt
     range: ExcerptRange<text::Anchor>,
+    /// The last row in the excerpted slice of the buffer
     max_buffer_row: u32,
+    /// A summary of the text in the excerpt
     text_summary: TextSummary,
     has_trailing_newline: bool,
 }
@@ -176,16 +197,23 @@ struct ExcerptIdMapping {
     locator: Locator,
 }
 
+/// A range of text from a single [`Buffer`], to be shown as an [`Excerpt`].
+/// These ranges are relative to the buffer itself
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExcerptRange<T> {
+    /// The full range of text to be shown in the excerpt.
     pub context: Range<T>,
+    /// The primary range of text to be highlighted in the excerpt.
+    /// In a multi-buffer search, this would be the text that matched the search
     pub primary: Option<Range<T>>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct ExcerptSummary {
     excerpt_id: ExcerptId,
+    /// The location of the last [`Excerpt`] being summarized
     excerpt_locator: Locator,
+    /// The maximum row of the [`Excerpt`]s being summarized
     max_buffer_row: u32,
     text: TextSummary,
 }
@@ -232,7 +260,6 @@ impl MultiBuffer {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
-            next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: false,
             capability,
@@ -272,7 +299,6 @@ impl MultiBuffer {
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
             buffers: RefCell::new(buffers),
-            next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: self.singleton,
             capability: self.capability,
@@ -310,6 +336,7 @@ impl MultiBuffer {
         self.replica_id
     }
 
+    /// Returns an up-to-date snapshot of the MultiBuffer.
     pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
         self.sync(cx);
         self.snapshot.borrow().clone()
@@ -993,7 +1020,12 @@ impl MultiBuffer {
         O: text::ToOffset,
     {
         let mut ids = Vec::new();
-        let mut next_excerpt_id = self.next_excerpt_id;
+        let mut next_excerpt_id =
+            if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
+                last_entry.id.0 + 1
+            } else {
+                1
+            };
         self.insert_excerpts_with_ids_after(
             prev_excerpt_id,
             buffer,
@@ -1079,9 +1111,6 @@ impl MultiBuffer {
                         ..buffer_snapshot.anchor_after(&primary.end)
                 }),
             };
-            if id.0 >= self.next_excerpt_id {
-                self.next_excerpt_id = id.0 + 1;
-            }
             excerpts.push((id, range.clone()));
             let excerpt = Excerpt::new(
                 id,
@@ -1093,6 +1122,10 @@ impl MultiBuffer {
             );
             new_excerpts.push(excerpt, &());
             prev_locator = locator.clone();
+
+            if let Some(last_mapping_entry) = new_excerpt_ids.last() {
+                assert!(id > last_mapping_entry.id, "excerpt ids must be increasing");
+            }
             new_excerpt_ids.push(ExcerptIdMapping { id, locator }, &());
         }
 

@@ -102,7 +102,6 @@ impl<R: RequestMessage> Response<R> {
 
 #[derive(Clone)]
 struct Session {
-    zed_environment: Arc<str>,
     user_id: UserId,
     connection_id: ConnectionId,
     db: Arc<tokio::sync::Mutex<DbHandle>>,
@@ -602,7 +601,7 @@ impl Server {
                 let mut pool = this.connection_pool.lock();
                 pool.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
-                this.peer.send(connection_id, build_update_user_channels(&channels_for_user.channel_memberships))?;
+                this.peer.send(connection_id, build_update_user_channels(&channels_for_user))?;
                 this.peer.send(connection_id, build_channels_update(
                     channels_for_user,
                     channel_invites
@@ -617,7 +616,6 @@ impl Server {
                 user_id,
                 connection_id,
                 db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
-                zed_environment: this.app_state.config.zed_environment.clone(),
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone(),
@@ -866,7 +864,7 @@ pub fn routes(server: Arc<Server>) -> Router<Body> {
 
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
-    _app_version_header: Option<TypedHeader<AppVersionHeader>>,
+    app_version_header: Option<TypedHeader<AppVersionHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(user): Extension<User>,
@@ -879,6 +877,19 @@ pub async fn handle_websocket_request(
             "client must be upgraded".to_string(),
         )
             .into_response();
+    }
+
+    // the first version of zed that sent this header was 0.121.x
+    if let Some(version) = app_version_header.map(|header| header.0 .0) {
+        // 0.123.0 was a nightly version with incompatible collab changes
+        // that were reverted.
+        if version == "0.123.0".parse().unwrap() {
+            return (
+                StatusCode::UPGRADE_REQUIRED,
+                "client must be upgraded".to_string(),
+            )
+                .into_response();
+        }
     }
 
     let socket_address = socket_address.to_string();
@@ -1009,12 +1020,7 @@ async fn create_room(
     let room = session
         .db()
         .await
-        .create_room(
-            session.user_id,
-            session.connection_id,
-            &live_kit_room,
-            &session.zed_environment,
-        )
+        .create_room(session.user_id, session.connection_id, &live_kit_room)
         .await?;
 
     response.send(proto::CreateRoomResponse {
@@ -1044,12 +1050,7 @@ async fn join_room(
         let room = session
             .db()
             .await
-            .join_room(
-                room_id,
-                session.user_id,
-                session.connection_id,
-                session.zed_environment.as_ref(),
-            )
+            .join_room(room_id, session.user_id, session.connection_id)
             .await?;
         room_updated(&room.room, &session.peer);
         room.into_inner()
@@ -2734,12 +2735,7 @@ async fn join_channel_internal(
         let db = session.db().await;
 
         let (joined_room, membership_updated, role) = db
-            .join_channel(
-                channel_id,
-                session.user_id,
-                session.connection_id,
-                session.zed_environment.as_ref(),
-            )
+            .join_channel(channel_id, session.user_id, session.connection_id)
             .await?;
 
         let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {
@@ -3343,17 +3339,18 @@ fn notify_membership_updated(
     }
 }
 
-fn build_update_user_channels(
-    memberships: &Vec<db::channel_member::Model>,
-) -> proto::UpdateUserChannels {
+fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserChannels {
     proto::UpdateUserChannels {
-        channel_memberships: memberships
+        channel_memberships: channels
+            .channel_memberships
             .iter()
             .map(|m| proto::ChannelMembership {
                 channel_id: m.channel_id.to_proto(),
                 role: m.role.into(),
             })
             .collect(),
+        observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
+        observed_channel_message_id: channels.observed_channel_messages.clone(),
         ..Default::default()
     }
 }

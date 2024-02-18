@@ -30,8 +30,6 @@
   "yield"
 ] @keyword
 
-(identifier) @variable
-
 ((identifier) @keyword
  (#match? @keyword "^(private|protected|public)$"))
 
@@ -54,11 +52,6 @@
 
 ; Identifiers
 
-[
-  (class_variable)
-  (instance_variable)
-] @property
-
 ((identifier) @constant.builtin
  (#match? @constant.builtin "^__(FILE|LINE|ENCODING)__$"))
 
@@ -75,21 +68,26 @@
 ((constant) @constant
  (#match? @constant "^[A-Z\\d_]+$"))
 
-(class
-  (constant) @type
-)
-
-(scope_resolution
-  ((constant) @type.super
-  (#match? @type "^([A-Z][a-zA-Z]*(?:::[A-Z][a-zA-Z]*)+)$"))
-) @operator
+; (class
+;   (constant) @type
+; )
 
 (superclass
   (constant) @type.super
 )
 
+(global_variable) @constant
+
+(constant) @type
+
 (self) @variable.special
 (super) @variable.special
+
+[
+  (class_variable)
+  (instance_variable)
+] @variable.member
+
 
 ; Literals
 

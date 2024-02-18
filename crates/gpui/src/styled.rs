@@ -21,13 +21,6 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the size of the element to sthe full width and height.
-    fn full(mut self) -> Self {
-        self.style().size.width = Some(relative(1.).into());
-        self.style().size.height = Some(relative(1.).into());
-        self
-    }
-
     /// Sets the position of the element to `relative`.
     /// [Docs](https://tailwindcss.com/docs/position)
     fn relative(mut self) -> Self {

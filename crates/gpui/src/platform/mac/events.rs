@@ -13,7 +13,7 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use ctor::ctor;
-use foreign_types::ForeignType;
+use metal::foreign_types::ForeignType as _;
 use objc::{class, msg_send, sel, sel_impl};
 use std::{borrow::Cow, ffi::CStr, mem, os::raw::c_char, ptr};
 

@@ -11,15 +11,13 @@ use gpui::{AppContext, AsyncAppContext, Global};
 use itertools::Itertools;
 use language::{Bias, Point};
 use release_channel::parse_zed_link;
-use std::ffi::OsStr;
-use std::os::unix::prelude::OsStrExt;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::{path::PathBuf, sync::atomic::AtomicBool};
-use util::paths::PathLikeWithPosition;
+use util::paths::{PathExt, PathLikeWithPosition};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -129,9 +127,9 @@ impl OpenListener {
         let paths: Vec<_> = urls
             .iter()
             .flat_map(|url| url.strip_prefix("file://"))
-            .map(|url| {
+            .flat_map(|url| {
                 let decoded = urlencoding::decode_binary(url.as_bytes());
-                PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
+                PathBuf::try_from_bytes(decoded.as_ref()).log_err()
             })
             .collect();
 
