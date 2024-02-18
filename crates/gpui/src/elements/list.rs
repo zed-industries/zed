@@ -22,7 +22,7 @@ pub fn list(state: ListState) -> List {
     List {
         state,
         style: StyleRefinement::default(),
-        layout_behavior: ListLayoutBehavior::default(),
+        sizing_behavior: ListSizingBehavior::default(),
     }
 }
 
@@ -30,13 +30,13 @@ pub fn list(state: ListState) -> List {
 pub struct List {
     state: ListState,
     style: StyleRefinement,
-    layout_behavior: ListLayoutBehavior,
+    sizing_behavior: ListSizingBehavior,
 }
 
 impl List {
-    /// Set the layout behavior for the list.
-    pub fn with_layout_behavior(mut self, behavior: ListLayoutBehavior) -> Self {
-        self.layout_behavior = behavior;
+    /// Set the sizing behavior for the list.
+    pub fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
+        self.sizing_behavior = behavior;
         self
     }
 }
@@ -47,6 +47,7 @@ pub struct ListState(Rc<RefCell<StateInner>>);
 
 struct StateInner {
     last_layout_bounds: Option<Bounds<Pixels>>,
+    last_padding: Option<Edges<Pixels>>,
     render_item: Box<dyn FnMut(usize, &mut WindowContext) -> AnyElement>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
@@ -80,12 +81,19 @@ pub struct ListScrollEvent {
 
 /// The sizing behavior to apply during layout.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum ListLayoutBehavior {
-    /// The list should calculate its layout based on the size of the items.
-    AutoSized,
-    /// The list should fill the available space.
+pub enum ListSizingBehavior {
+    /// The list should calculate its size based on the size of its items.
+    Infer,
+    /// The list should not calculate a fixed size.
     #[default]
-    Fill,
+    Auto,
+}
+
+struct LayoutItemsResponse {
+    max_item_width: Pixels,
+    scroll_top: ListOffset,
+    available_item_space: Size<AvailableSpace>,
+    item_elements: VecDeque<AnyElement>,
 }
 
 #[derive(Clone)]
@@ -133,6 +141,7 @@ impl ListState {
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
         Self(Rc::new(RefCell::new(StateInner {
             last_layout_bounds: None,
+            last_padding: None,
             render_item: Box::new(render_item),
             items,
             logical_scroll_top: None,
@@ -223,6 +232,7 @@ impl ListState {
         let height = state
             .last_layout_bounds
             .map_or(px(0.), |bounds| bounds.size.height);
+        let padding = state.last_padding.unwrap_or_default();
 
         if ix <= scroll_top.item_ix {
             scroll_top.item_ix = ix;
@@ -230,7 +240,7 @@ impl ListState {
         } else {
             let mut cursor = state.items.cursor::<ListItemSummary>();
             cursor.seek(&Count(ix + 1), Bias::Right, &());
-            let bottom = cursor.start().height;
+            let bottom = cursor.start().height + padding.top;
             let goal_top = px(0.).max(bottom - height);
 
             cursor.seek(&Height(goal_top), Bias::Left, &());
@@ -360,12 +370,7 @@ impl StateInner {
         available_height: Pixels,
         padding: &Edges<Pixels>,
         cx: &mut ElementContext,
-    ) -> (
-        Pixels,
-        ListOffset,
-        Size<AvailableSpace>,
-        VecDeque<AnyElement>,
-    ) {
+    ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
         let mut item_elements = VecDeque::new();
@@ -482,12 +487,12 @@ impl StateInner {
 
         self.items = new_items;
 
-        (
+        LayoutItemsResponse {
             max_item_width,
             scroll_top,
             available_item_space,
             item_elements,
-        )
+        }
     }
 }
 
@@ -518,8 +523,8 @@ impl Element for List {
         _state: Option<Self::State>,
         cx: &mut crate::ElementContext,
     ) -> (crate::LayoutId, Self::State) {
-        let layout_id = match self.layout_behavior {
-            ListLayoutBehavior::AutoSized => {
+        let layout_id = match self.sizing_behavior {
+            ListSizingBehavior::Infer => {
                 let mut style = Style::default();
                 style.overflow.y = Overflow::Scroll;
                 style.refine(&self.style);
@@ -538,8 +543,8 @@ impl Element for List {
                         cx.rem_size(),
                     );
 
-                    let (max_element_width, _, _, _) =
-                        state.layout_items(None, available_height, &padding, cx);
+                    let layout_response = state.layout_items(None, available_height, &padding, cx);
+                    let max_element_width = layout_response.max_item_width;
 
                     let summary = state.items.summary();
                     let total_height = summary.height;
@@ -571,9 +576,8 @@ impl Element for List {
                     }
                 })
             }
-            ListLayoutBehavior::Fill => {
+            ListSizingBehavior::Auto => {
                 let mut style = Style::default();
-                style.overflow.y = Overflow::Scroll;
                 style.refine(&self.style);
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.request_layout(&style, None)
@@ -606,7 +610,7 @@ impl Element for List {
         }
 
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let (_, scroll_top, available_item_space, mut item_elements) =
+        let mut layout_response =
             state.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
 
         // Only paint the visible items, if there is actually any space for them (taking padding into account)
@@ -614,16 +618,19 @@ impl Element for List {
             // Paint the visible items
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
-                item_origin.y -= scroll_top.offset_in_item;
-                for item_element in &mut item_elements {
-                    let item_height = item_element.measure(available_item_space, cx).height;
-                    item_element.draw(item_origin, available_item_space, cx);
+                item_origin.y -= layout_response.scroll_top.offset_in_item;
+                for item_element in &mut layout_response.item_elements {
+                    let item_height = item_element
+                        .measure(layout_response.available_item_space, cx)
+                        .height;
+                    item_element.draw(item_origin, layout_response.available_item_space, cx);
                     item_origin.y += item_height;
                 }
             });
         }
 
         state.last_layout_bounds = Some(bounds);
+        state.last_padding = Some(padding);
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
@@ -634,7 +641,7 @@ impl Element for List {
                 && cx.was_top_layer(&event.position, cx.stacking_order())
             {
                 list_state.0.borrow_mut().scroll(
-                    &scroll_top,
+                    &layout_response.scroll_top,
                     height,
                     event.delta.pixel_delta(px(20.)),
                     cx,

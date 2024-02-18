@@ -319,7 +319,7 @@ impl<D: PickerDelegate> Picker<D> {
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
             ElementContainer::List(state) => list(state.clone())
-                .with_layout_behavior(gpui::ListLayoutBehavior::AutoSized)
+                .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
                 .py_2()
                 .into_any_element(),
         }
