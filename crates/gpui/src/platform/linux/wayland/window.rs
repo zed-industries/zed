@@ -69,8 +69,8 @@ impl WaylandWindowInner {
         bounds: Bounds<i32>,
     ) -> Self {
         let raw = RawWindow {
-            window: wl_surf.id().as_ptr() as *mut _,
-            display: conn.backend().display_ptr() as *mut _,
+            window: wl_surf.id().as_ptr().cast::<c_void>(),
+            display: conn.backend().display_ptr().cast::<c_void>(),
         };
         let gpu = Arc::new(
             unsafe {
