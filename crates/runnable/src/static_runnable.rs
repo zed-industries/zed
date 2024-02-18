@@ -29,7 +29,8 @@ impl Runnable for StaticRunnable {
     fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal> {
         Some(SpawnInTerminal {
             id: self.id.clone(),
-            use_new_terminal: self.definition.spawn_in_new_terminal,
+            use_new_terminal: self.definition.use_new_terminal,
+            allow_multiple: self.definition.allow_multiple,
             label: self.definition.label.clone(),
             command: self.definition.command.clone(),
             args: self.definition.args.clone(),

@@ -12,13 +12,14 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RunnableId(String);
 
 #[derive(Debug, Clone)]
 pub struct SpawnInTerminal {
     pub id: RunnableId,
     pub use_new_terminal: bool,
+    pub allow_multiple: bool,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,

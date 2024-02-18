@@ -1,6 +1,7 @@
 use crate::Project;
 use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
 use settings::Settings;
+use smol::channel::bounded;
 use std::path::{Path, PathBuf};
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
@@ -29,12 +30,14 @@ impl Project {
 
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
+        let (completion_tx, completion_rx) = bounded(1);
         let (spawn_runnable, shell) = if let Some(spawn_runnable) = spawn_runnable {
             (
                 Some(RunableState {
                     id: spawn_runnable.id,
                     label: spawn_runnable.label,
                     completed: false,
+                    completion_rx,
                 }),
                 Shell::WithArguments {
                     program: spawn_runnable.command,
@@ -53,6 +56,7 @@ impl Project {
             Some(settings.blinking.clone()),
             settings.alternate_scroll,
             window,
+            completion_tx,
         )
         .map(|builder| {
             let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));

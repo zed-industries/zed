@@ -31,10 +31,12 @@ use mappings::mouse::{
 };
 
 use collections::{HashMap, VecDeque};
+use futures::StreamExt;
 use procinfo::LocalProcessInfo;
 use runnable::RunnableId;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use smol::channel::{Receiver, Sender};
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -299,6 +301,7 @@ impl TerminalBuilder {
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         window: AnyWindowHandle,
+        completion_tx: Sender<()>,
     ) -> Result<TerminalBuilder> {
         let pty_options = {
             let alac_shell = match shell.clone() {
@@ -394,6 +397,7 @@ impl TerminalBuilder {
         let terminal = Terminal {
             runnable,
             pty_tx: Notifier(pty_tx),
+            completion_tx,
             term,
             events: VecDeque::with_capacity(10), //Should never get this high.
             last_content: Default::default(),
@@ -423,8 +427,6 @@ impl TerminalBuilder {
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
-            use futures::StreamExt;
-
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(&mut cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
@@ -548,6 +550,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
+    completion_tx: Sender<()>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
@@ -575,6 +578,7 @@ pub struct RunableState {
     pub id: RunnableId,
     pub label: String,
     pub completed: bool,
+    pub completion_rx: Receiver<()>,
 }
 
 impl Terminal {
@@ -607,7 +611,10 @@ impl Terminal {
                 cx.emit(Event::Bell);
             }
             AlacTermEvent::Exit => match &mut self.runnable {
-                Some(runnable) => runnable.completed = true,
+                Some(runnable) => {
+                    runnable.completed = true;
+                    self.completion_tx.try_send(()).ok();
+                }
                 None => cx.emit(Event::CloseTerminal),
             },
             AlacTermEvent::MouseCursorDirty => {
@@ -1368,6 +1375,22 @@ impl Terminal {
 
     pub fn runnable(&self) -> Option<&RunableState> {
         self.runnable.as_ref()
+    }
+
+    pub fn wait_for_completed_runnable(&self, cx: &mut AppContext) -> Task<()> {
+        match self.runnable() {
+            Some(runnable) => {
+                if runnable.completed {
+                    Task::ready(())
+                } else {
+                    let mut completion_receiver = runnable.completion_rx.clone();
+                    cx.spawn(|_| async move {
+                        completion_receiver.next().await;
+                    })
+                }
+            }
+            None => Task::ready(()),
+        }
     }
 }
 

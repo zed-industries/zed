@@ -35,7 +35,9 @@ pub struct Definition {
     #[serde(default)]
     pub options: Options,
     #[serde(default)]
-    pub spawn_in_new_terminal: bool,
+    pub use_new_terminal: bool,
+    #[serde(default)]
+    pub allow_multiple: bool,
 }
 
 #[derive(Clone, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
