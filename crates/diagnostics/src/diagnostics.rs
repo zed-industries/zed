@@ -738,10 +738,10 @@ impl Item for ProjectDiagnosticsEditor {
     fn save(
         &mut self,
         project: Model<Project>,
-        without_formatting: bool,
+        trigger_formatter: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(project, without_formatting, cx)
+        self.editor.save(project, trigger_formatter, cx)
     }
 
     fn save_as(

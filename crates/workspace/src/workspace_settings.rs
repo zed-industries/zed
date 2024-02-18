@@ -38,11 +38,14 @@ pub enum AutosaveSetting {
     /// Disable autosave.
     Off,
     /// Save after inactivity period of `milliseconds`.
-    AfterDelay { milliseconds: u64 },
+    AfterDelay {
+        milliseconds: u64,
+        trigger_formatter: Option<bool>,
+    },
     /// Autosave when focus changes.
-    OnFocusChange,
+    OnFocusChange { trigger_formatter: Option<bool> },
     /// Autosave when the active window changes.
-    OnWindowChange,
+    OnWindowChange { trigger_formatter: Option<bool> },
 }
 
 impl Settings for WorkspaceSettings {

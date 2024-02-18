@@ -1896,7 +1896,7 @@ mod tests {
                     editor.newline(&Default::default(), cx);
                     editor.move_down(&Default::default(), cx);
                     editor.move_down(&Default::default(), cx);
-                    editor.save(project.clone(), cx)
+                    editor.save(project.clone(), true, cx)
                 })
             })
             .unwrap()

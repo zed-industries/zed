@@ -149,7 +149,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn save(
         &mut self,
         _project: Model<Project>,
-        _without_formatting: bool,
+        _trigger_formatter: bool,
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save() must be implemented if can_save() returns true")
@@ -266,7 +266,7 @@ pub trait ItemHandle: 'static + Send {
     fn save(
         &self,
         project: Model<Project>,
-        without_formatting: bool,
+        trigger_formatter: bool,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn save_as(
@@ -508,11 +508,20 @@ impl<T: Item> ItemHandle for View<T> {
 
                         ItemEvent::Edit => {
                             let autosave = WorkspaceSettings::get_global(cx).autosave;
-                            if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
+                            if let AutosaveSetting::AfterDelay {
+                                milliseconds,
+                                trigger_formatter,
+                            } = autosave
+                            {
                                 let delay = Duration::from_millis(milliseconds);
                                 let item = item.clone();
                                 pending_autosave.fire_new(delay, cx, move |workspace, cx| {
-                                    Pane::autosave_item(&item, workspace.project().clone(), cx)
+                                    Pane::autosave_item(
+                                        &item,
+                                        workspace.project().clone(),
+                                        trigger_formatter.unwrap_or(false),
+                                        cx,
+                                    )
                                 });
                             }
                         }
@@ -522,10 +531,17 @@ impl<T: Item> ItemHandle for View<T> {
                 }));
 
             cx.on_blur(&self.focus_handle(cx), move |workspace, cx| {
-                if WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange {
+                if let AutosaveSetting::OnFocusChange { trigger_formatter } =
+                    WorkspaceSettings::get_global(cx).autosave
+                {
                     if let Some(item) = weak_item.upgrade() {
-                        Pane::autosave_item(&item, workspace.project.clone(), cx)
-                            .detach_and_log_err(cx);
+                        Pane::autosave_item(
+                            &item,
+                            workspace.project.clone(),
+                            trigger_formatter.unwrap_or(false),
+                            cx,
+                        )
+                        .detach_and_log_err(cx);
                     }
                 }
             })
@@ -579,10 +595,10 @@ impl<T: Item> ItemHandle for View<T> {
     fn save(
         &self,
         project: Model<Project>,
-        without_formatting: bool,
+        trigger_formatter: bool,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(project, without_formatting, cx))
+        self.update(cx, |item, cx| item.save(project, trigger_formatter, cx))
     }
 
     fn save_as(

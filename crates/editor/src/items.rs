@@ -705,13 +705,13 @@ impl Item for Editor {
     fn save(
         &mut self,
         project: Model<Project>,
-        without_formatting: bool,
+        trigger_formatter: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|this, mut cx| async move {
-            if !without_formatting {
+            if trigger_formatter {
                 this.update(&mut cx, |this, cx| {
                     this.perform_format(project.clone(), FormatTrigger::Save, cx)
                 })?

@@ -1317,7 +1317,7 @@ impl Workspace {
                             ix,
                             &*item,
                             save_intent,
-                            false,
+                            true,
                             &mut cx,
                         )
                         .await?
@@ -1563,7 +1563,7 @@ impl Workspace {
         save_intent: SaveIntent,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        self.save_active_item_internal(false, save_intent, cx)
+        self.save_active_item_internal(true, save_intent, cx)
     }
 
     pub fn save_without_formatting(
@@ -1571,12 +1571,12 @@ impl Workspace {
         save_intent: SaveIntent,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        self.save_active_item_internal(true, save_intent, cx)
+        self.save_active_item_internal(false, save_intent, cx)
     }
 
     fn save_active_item_internal(
         &mut self,
-        without_formatting: bool,
+        trigger_formatter: bool,
         save_intent: SaveIntent,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
@@ -1594,7 +1594,7 @@ impl Workspace {
                     item_ix,
                     item.as_ref(),
                     save_intent,
-                    without_formatting,
+                    trigger_formatter,
                     &mut cx,
                 )
                 .await
@@ -3093,14 +3093,20 @@ impl Workspace {
                     if let Some(item) = pane.active_item() {
                         item.workspace_deactivated(cx);
                     }
-                    if matches!(
-                        WorkspaceSettings::get_global(cx).autosave,
-                        AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
-                    ) {
-                        for item in pane.items() {
-                            Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
+                    match WorkspaceSettings::get_global(cx).autosave {
+                        AutosaveSetting::OnWindowChange { trigger_formatter }
+                        | AutosaveSetting::OnFocusChange { trigger_formatter } => {
+                            for item in pane.items() {
+                                Pane::autosave_item(
+                                    item.as_ref(),
+                                    self.project.clone(),
+                                    trigger_formatter.unwrap_or(false),
+                                    cx,
+                                )
                                 .detach_and_log_err(cx);
+                            }
                         }
+                        _ => {}
                     }
                 });
             }
@@ -5005,7 +5011,9 @@ mod tests {
         item.update(cx, |item, cx| {
             cx.update_global(|settings: &mut SettingsStore, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnWindowChange);
+                    settings.autosave = Some(AutosaveSetting::OnWindowChange {
+                        trigger_formatter: Some(false),
+                    });
                 })
             });
             item.is_dirty = true;
@@ -5020,7 +5028,9 @@ mod tests {
             cx.focus_self();
             cx.update_global(|settings: &mut SettingsStore, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                    settings.autosave = Some(AutosaveSetting::OnFocusChange {
+                        trigger_formatter: Some(false),
+                    });
                 })
             });
             item.is_dirty = true;
@@ -5045,7 +5055,10 @@ mod tests {
         item.update(cx, |item, cx| {
             cx.update_global(|settings: &mut SettingsStore, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                    settings.autosave = Some(AutosaveSetting::AfterDelay {
+                        milliseconds: 500,
+                        trigger_formatter: Some(false),
+                    });
                 })
             });
             item.is_dirty = true;
@@ -5064,7 +5077,9 @@ mod tests {
         item.update(cx, |item, cx| {
             cx.update_global(|settings: &mut SettingsStore, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                    settings.autosave = Some(AutosaveSetting::OnFocusChange {
+                        trigger_formatter: Some(false),
+                    });
                 })
             });
             item.is_dirty = true;

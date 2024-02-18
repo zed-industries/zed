@@ -234,11 +234,11 @@
   // 1. Never automatically save:
   //     "autosave": "off",
   // 2. Save when changing focus away from the Zed window:
-  //     "autosave": "on_window_change",
+  //     "autosave": { "on_window_change": { "trigger_formatter": false } },
   // 3. Save when changing focus away from a specific buffer:
-  //     "autosave": "on_focus_change",
+  //     "autosave": { "on_focus_change": { "trigger_formatter": false } },
   // 4. Save when idle for a certain amount of time:
-  //     "autosave": { "after_delay": {"milliseconds": 500} },
+  //     "autosave": { "after_delay": { "milliseconds": 500, "trigger_formatter": false } },
   "autosave": "off",
   // Settings related to the editor's tabs
   "tabs": {
