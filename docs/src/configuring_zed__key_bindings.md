@@ -4,6 +4,11 @@ Zed can be configured via a simple JSON file located at `~/.config/zed/keymap.js
 
 We have a growing collection of pre-defined keymaps in [zed repository's keymaps folder](https://github.com/zed-industries/zed/tree/main/assets/keymaps).
 
+A selection of base keymaps is available in the welcome screen under the "Choose a keymap" option.
+
+Additionally, you can change the base keymap from the command palette - `⌘-Shift-P` - by selecting the "welcome: toggle base keymap selector" command.
+
+
 ## Custom key bindings
 
 ### Accessing custom key bindings
@@ -45,7 +50,7 @@ But, it was impossible to take into account the `{` and `}` when he was typing s
         "context": "Editor",
         "bindings": {
           "alt-[": null,
-          "alt-]": null,
+          "alt-]": null
         }
     }
 ]
