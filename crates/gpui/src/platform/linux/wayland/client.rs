@@ -377,7 +377,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                 let unicode_value = if key_utf8.chars().count() == 1 {
                     key_utf8.chars().next().unwrap() as u32
-                } else { u32::MAX };
+                } else {
+                    u32::MAX
+                };
 
                 let key = if matches!(
                     key_sym,
@@ -390,16 +392,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                         | xkb::Keysym::Super_R
                 ) {
                     xkb::keysym_get_name(key_sym).to_lowercase()
-                } else if state.modifiers.control && 0x01 <= unicode_value && unicode_value <= 0x1A {
-                    // Convert control character into ascii counterpart (only A-Z and always into lowercase)
-                    // https://www.geeksforgeeks.org/control-characters/
-                    if let Some(character) = std::char::from_u32(unicode_value + 0x60) {
+                } else if state.modifiers.control && 0x01 <= unicode_value && unicode_value <= 0x1A
+                {
+                    // Convert control character into ascii counterpart (only ^A-Z and into lowercase)
+                    // ^A-Z are from 0x01 to 0x1A and ascii "a" starts at 0x60
+                    const ASCII_A: u32 = 0x60;
+                    if let Some(character) = std::char::from_u32(unicode_value + ASCII_A) {
                         String::from(character)
                     } else {
                         key_utf8.clone()
                     }
-                }
-                else {
+                } else {
                     key_utf8.clone()
                 };
 
