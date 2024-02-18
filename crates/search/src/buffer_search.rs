@@ -845,6 +845,16 @@ impl BufferSearchBar {
     fn toggle_whole_word(&mut self, _: &ToggleWholeWord, cx: &mut ViewContext<Self>) {
         self.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
     }
+
+    fn clear_active_searchable_item_matches(&mut self, cx: &mut WindowContext) {
+        if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+            self.active_match_index = None;
+            self.searchable_items_with_matches
+                .remove(&active_searchable_item.downgrade());
+            active_searchable_item.clear_matches(cx);
+        }
+    }
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         let mut active_item_matches = None;
         for (searchable_item, matches) in self.searchable_items_with_matches.drain() {
@@ -871,10 +881,7 @@ impl BufferSearchBar {
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             self.query_contains_error = false;
             if query.is_empty() {
-                self.active_match_index.take();
-                self.searchable_items_with_matches
-                    .remove(&active_searchable_item.downgrade());
-                active_searchable_item.clear_matches(cx);
+                self.clear_active_searchable_item_matches(cx);
                 let _ = done_tx.send(());
                 cx.notify();
             } else {
@@ -890,10 +897,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
-                            self.active_match_index = None;
-                            self.searchable_items_with_matches
-                                .remove(&active_searchable_item.downgrade());
-                            active_searchable_item.clear_matches(cx);
+                            self.clear_active_searchable_item_matches(cx);
                             cx.notify();
                             return done_rx;
                         }
@@ -910,10 +914,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
-                            self.active_match_index = None;
-                            self.searchable_items_with_matches
-                                .remove(&active_searchable_item.downgrade());
-                            active_searchable_item.clear_matches(cx);
+                            self.clear_active_searchable_item_matches(cx);
                             cx.notify();
                             return done_rx;
                         }
