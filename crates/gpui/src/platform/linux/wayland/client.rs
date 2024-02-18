@@ -423,6 +423,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R
                             {
                                 state.modifiers.alt = true;
+                            } else if key_sym == xkb::Keysym::Super_L || key_sym == xkb::Keysym::Super_R
+                            {
+                                state.modifiers.command = true;
                             } else {
                                 focused_window.handle_input(KeyDown(KeyDownEvent {
                                     keystroke: Keystroke {
@@ -448,6 +451,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R
                             {
                                 state.modifiers.alt = false;
+                            } else if key_sym == xkb::Keysym::Super_L || key_sym == xkb::Keysym::Super_R
+                            {
+                                state.modifiers.command = true;
                             } else {
                                 focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
                                     keystroke: Keystroke {
