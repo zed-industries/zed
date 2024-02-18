@@ -356,14 +356,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 group,
                 ..
             } => {
-                state.keymap_state.as_mut().unwrap().update_mask(
-                    mods_depressed,
-                    mods_latched,
-                    mods_locked,
-                    0,
-                    0,
-                    group,
-                );
+                let keymap_state = state.keymap_state.as_mut().unwrap();
+                keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
+                state.modifiers.shift =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.alt =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.control =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.command =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
             }
             wl_keyboard::Event::Key {
                 key,
@@ -373,16 +375,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
                 let key_sym = keymap_state.key_get_one_sym(Keycode::from(key + MIN_KEYCODE));
-
-                state.modifiers.shift =
-                    keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
-                state.modifiers.alt =
-                    keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
-                state.modifiers.control =
-                    keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
-                state.modifiers.command =
-                    keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-
                 let key = xkb::keysym_get_name(key_sym).to_lowercase();
 
                 let focused_window = &state.keyboard_focused_window;
@@ -411,15 +403,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                     }
                 }
             }
-            wl_keyboard::Event::Leave { .. } => {
-                state.modifiers = Modifiers {
-                    control: false,
-                    alt: false,
-                    shift: false,
-                    command: false,
-                    function: false,
-                };
-            }
+            wl_keyboard::Event::Leave { .. } => {}
             _ => {}
         }
     }
@@ -504,13 +488,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                             focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
                                 button: linux_button_to_gpui(button),
                                 position: *mouse_location,
-                                modifiers: Modifiers {
-                                    shift: false,
-                                    control: false,
-                                    alt: false,
-                                    function: false,
-                                    command: false,
-                                },
+                                modifiers: Modifiers::default(),
                                 click_count: 1,
                             }));
                         }
