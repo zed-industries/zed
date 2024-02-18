@@ -4,16 +4,21 @@ use std::{
     fmt, iter,
 };
 
+/// A unique identifier for each distributed node
 pub type ReplicaId = u16;
+
+/// A [Lamport sequence number](https://en.wikipedia.org/wiki/Lamport_timestamp),
 pub type Seq = u32;
 
+/// A [Lamport timestamp](https://en.wikipedia.org/wiki/Lamport_timestamp),
+/// used to determine the ordering of events in the editor.
 #[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct Lamport {
     pub replica_id: ReplicaId,
     pub value: Seq,
 }
 
-/// A vector clock
+/// A [vector clock](https://en.wikipedia.org/wiki/Vector_clock)
 #[derive(Clone, Default, Hash, Eq, PartialEq)]
 pub struct Global(SmallVec<[u32; 8]>);
 

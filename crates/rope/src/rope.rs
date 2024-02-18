@@ -953,15 +953,24 @@ impl sum_tree::Summary for ChunkSummary {
     }
 }
 
+/// Summary of a string of text.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
+    /// Length in UTF-8
     pub len: usize,
+    /// Length in UTF-16 code units
     pub len_utf16: OffsetUtf16,
+    /// A point representing the number of lines and the length of the last line
     pub lines: Point,
+    /// How many `char`s are in the first line
     pub first_line_chars: u32,
+    /// How many `char`s are in the last line
     pub last_line_chars: u32,
+    /// How many UTF-16 code units are in the last line
     pub last_line_len_utf16: u32,
+    /// The row idx of the longest row
     pub longest_row: u32,
+    /// How many `char`s are in the longest row
     pub longest_row_chars: u32,
 }
 

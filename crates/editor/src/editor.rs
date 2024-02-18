@@ -290,7 +290,7 @@ pub enum SelectPhase {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum SelectMode {
+pub enum SelectMode {
     Character,
     Word(Range<Anchor>),
     Line(Range<Anchor>),
@@ -349,10 +349,16 @@ type CompletionId = usize;
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
 type InlayBackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<InlayHighlight>);
 
+/// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
+///
+/// See the [module level documentation](self) for more information.
 pub struct Editor {
     handle: WeakView<Self>,
     focus_handle: FocusHandle,
+    /// The text buffer being edited
     buffer: Model<MultiBuffer>,
+    /// Map of how text in the buffer should be displayed.
+    /// Handles soft wraps, folds, fake inlay text insertions, etc.
     display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,
