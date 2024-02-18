@@ -116,6 +116,7 @@ tree-sitter-c.workspace = true
 tree-sitter-clojure.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
+tree-sitter-dockerfile.workspace = true
 tree-sitter-elixir.workspace = true
 tree-sitter-elm.workspace = true
 tree-sitter-embedded-template.workspace = true
