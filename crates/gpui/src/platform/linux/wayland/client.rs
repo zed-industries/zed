@@ -22,7 +22,6 @@ use xkbcommon::xkb::{Keycode, KEYMAP_COMPILE_NO_FLAGS};
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
-use crate::PlatformInput::KeyDown;
 use crate::ScrollDelta;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
@@ -390,7 +389,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 if let Some(focused_window) = focused_window {
                     match key_state {
                         wl_keyboard::KeyState::Pressed => {
-                            focused_window.handle_input(KeyDown(KeyDownEvent {
+                            focused_window.handle_input(PlatformInput::KeyDown(KeyDownEvent {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers,
                                     key,
