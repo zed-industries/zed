@@ -387,6 +387,7 @@
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
+      "cmd-k s": "workspace::SaveWithoutFormatting",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-n": "workspace::NewFile",
       "cmd-shift-n": "workspace::NewWindow",
