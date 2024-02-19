@@ -1,3 +1,4 @@
+use assistant::assistant_settings::AssistantSettings;
 use assistant::{AssistantPanel, InlineAssist};
 use editor::{Editor, EditorSettings};
 
@@ -126,7 +127,9 @@ impl Render for QuickActionBar {
             .gap_2()
             .children(inlay_hints_button)
             .children(search_button)
-            .child(assistant_button)
+            .when(AssistantSettings::get_global(cx).button, |bar| {
+                bar.child(assistant_button)
+            })
     }
 }
 

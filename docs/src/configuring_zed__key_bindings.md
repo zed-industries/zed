@@ -4,6 +4,11 @@ Zed can be configured via a simple JSON file located at `~/.config/zed/keymap.js
 
 We have a growing collection of pre-defined keymaps in [zed repository's keymaps folder](https://github.com/zed-industries/zed/tree/main/assets/keymaps).
 
+A selection of base keymaps is available in the welcome screen under the "Choose a keymap" option.
+
+Additionally, you can change the base keymap from the command palette - `⌘-Shift-P` - by selecting the "welcome: toggle base keymap selector" command.
+
+
 ## Custom key bindings
 
 ### Accessing custom key bindings
@@ -38,14 +43,14 @@ Some people have unique and custom keyboard layouts.
 
 For example, [@TomPlanche](https://github.com/TomPlanche) having a [French keyboard](https%3A%2F%2Fcdn.shopify.com%2Fs%2Ffiles%2F1%2F0810%2F3669%2Ffiles%2Ffrench-azerty-mac-keyboard-layout-2021-keyshorts.png&f=1&nofb=1&ipt=f53a06c5e60a20b621082410aa699c8cceff269a11ff90b3b5a35c6124dbf827&ipo=images), had to type `Shift-Alt-(` in order to have a simple `[` so he made a simple layout with those 'rules':
 `ù -> [`, `backtick -> ]`, `Alt-[ (where [ is the old ù) -> {`, `Alt-] -> }`.
-But, it was impossible to take into account the `{` and `}` when he was typing so now, in order to ignore a binding, he can add `null` to the binding: 
+But, it was impossible to take into account the `{` and `}` when he was typing so now, in order to ignore a binding, he can add `null` to the binding:
 ```json
 [
     {
         "context": "Editor",
         "bindings": {
           "alt-[": null,
-          "alt-]": null,
+          "alt-]": null
         }
     }
 ]
@@ -298,7 +303,7 @@ But, it was impossible to take into account the `{` and `}` when he was typing s
 | Activate item 8        | Pane           | `Control` + `8`      |
 | Activate item 9        | Pane           | `Control` + `9`      |
 | Activate last item     | Pane           | `Control` + `0`      |
-| Go back                | Pane           | `Control` + ` `      |
+| Go back                | Pane           | `Control` + `-`      |
 | Go forward             | Pane           | `Control` + `_`      |
 | Reopen closed item     | Pane           | `⌘` + `Shift` + `T`  |
 | Split down             | Pane           | `⌘` + `K`, `Down`    |

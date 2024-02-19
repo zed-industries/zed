@@ -29,8 +29,11 @@ pub struct SelectionsCollection {
     buffer: Model<MultiBuffer>,
     pub next_selection_id: usize,
     pub line_mode: bool,
-    disjoint: Arc<[Selection<Anchor>]>,
-    pending: Option<PendingSelection>,
+    /// The non-pending, non-overlapping selections.
+    /// The [SelectionsCollection::pending] selection could possibly overlap these
+    pub disjoint: Arc<[Selection<Anchor>]>,
+    /// A pending selection, such as when the mouse is being dragged
+    pub pending: Option<PendingSelection>,
 }
 
 impl SelectionsCollection {

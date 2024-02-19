@@ -61,7 +61,7 @@ pub struct WelcomePage {
 impl Render for WelcomePage {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .full()
+            .size_full()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus_handle)
             .child(

@@ -165,6 +165,7 @@ gpui::actions!(
         GoToPrevHunk,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
+        OpenUrl,
         HalfPageDown,
         HalfPageUp,
         Hover,

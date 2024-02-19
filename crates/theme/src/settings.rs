@@ -40,9 +40,20 @@ impl ThemeSettings {
     /// taking into account the current [`SystemAppearance`].
     pub fn reload_current_theme(cx: &mut AppContext) {
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
+        let system_appearance = SystemAppearance::global(cx);
 
         if let Some(theme_selection) = theme_settings.theme_selection.clone() {
-            let theme_name = theme_selection.theme(*SystemAppearance::global(cx));
+            let mut theme_name = theme_selection.theme(*system_appearance);
+
+            // If the selected theme doesn't exist, fall back to a default theme
+            // based on the system appearance.
+            let theme_registry = ThemeRegistry::global(cx);
+            if theme_registry.get(&theme_name).ok().is_none() {
+                theme_name = match *system_appearance {
+                    Appearance::Light => "One Light",
+                    Appearance::Dark => "One Dark",
+                };
+            };
 
             if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
                 ThemeSettings::override_global(theme_settings, cx);

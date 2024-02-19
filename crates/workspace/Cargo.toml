@@ -16,7 +16,7 @@ test-support = [
     "project/test-support",
     "settings/test-support",
     "gpui/test-support",
-    "fs/test-support"
+    "fs/test-support",
 ]
 
 [dependencies]
@@ -40,6 +40,7 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
+runnable.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

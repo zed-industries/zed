@@ -1,4 +1,4 @@
-#![cfg_attr(not(target_os = "macos"), allow(unused))]
+#![cfg_attr(any(not(target_os = "macos"), feature = "macos-blade"), allow(unused))]
 
 use std::{
     env,
@@ -7,15 +7,18 @@ use std::{
 
 use cbindgen::Config;
 
+//TODO: consider generating shader code for WGSL
+//TODO: deprecate "runtime-shaders" and "macos-blade"
+
 fn main() {
     #[cfg(target_os = "macos")]
     generate_dispatch_bindings();
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(feature = "macos-blade")))]
     let header_path = generate_shader_bindings();
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(feature = "macos-blade")))]
     #[cfg(feature = "runtime_shaders")]
     emit_stitched_shaders(&header_path);
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(feature = "macos-blade")))]
     #[cfg(not(feature = "runtime_shaders"))]
     compile_metal_shaders(&header_path);
 }

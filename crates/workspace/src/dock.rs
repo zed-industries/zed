@@ -661,7 +661,6 @@ impl Render for PanelButtons {
                 let panel = entry.panel.clone();
 
                 let is_active_button = i == active_index && is_open;
-
                 let (action, tooltip) = if is_active_button {
                     let action = dock.toggle_action();
 

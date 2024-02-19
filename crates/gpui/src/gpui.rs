@@ -60,8 +60,9 @@
 //! and will be publishing more guides to GPUI on our [blog](https://zed.dev/blog).
 
 #![deny(missing_docs)]
-#![allow(clippy::type_complexity)]
-#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
+#![allow(clippy::collapsible_else_if)] // False positives in platform specific code
+#![allow(unused_mut)] // False positives in platform specific code
 
 #[macro_use]
 mod action;

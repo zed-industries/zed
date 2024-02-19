@@ -31,9 +31,12 @@ use mappings::mouse::{
 };
 
 use collections::{HashMap, VecDeque};
+use futures::StreamExt;
 use procinfo::LocalProcessInfo;
+use runnable::RunnableId;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use smol::channel::{Receiver, Sender};
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -277,6 +280,14 @@ impl Display for TerminalError {
     }
 }
 
+pub struct SpawnRunnable {
+    pub id: RunnableId,
+    pub label: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+}
+
 pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<AlacTermEvent>,
@@ -285,11 +296,13 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
+        runnable: Option<RunableState>,
         shell: Shell,
         env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         window: AnyWindowHandle,
+        completion_tx: Sender<()>,
     ) -> Result<TerminalBuilder> {
         let pty_options = {
             let alac_shell = match shell.clone() {
@@ -322,7 +335,7 @@ impl TerminalBuilder {
 
         let config = Config {
             scrolling_history: 10000,
-            ..Default::default()
+            ..Config::default()
         };
 
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
@@ -383,7 +396,9 @@ impl TerminalBuilder {
         let word_regex = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
 
         let terminal = Terminal {
+            runnable,
             pty_tx: Notifier(pty_tx),
+            completion_tx,
             term,
             events: VecDeque::with_capacity(10), //Should never get this high.
             last_content: Default::default(),
@@ -412,17 +427,15 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
-        cx.spawn(|this, mut cx| async move {
-            use futures::StreamExt;
-
+        cx.spawn(|terminal, mut cx| async move {
             while let Some(event) = self.events_rx.next().await {
-                this.update(&mut cx, |this, cx| {
+                terminal.update(&mut cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
-                    this.process_event(&event, cx);
+                    terminal.process_event(&event, cx);
                 })?;
 
                 'outer: loop {
-                    let mut events = vec![];
+                    let mut events = Vec::new();
                     let mut timer = cx
                         .background_executor()
                         .timer(Duration::from_millis(4))
@@ -453,7 +466,7 @@ impl TerminalBuilder {
                         smol::future::yield_now().await;
                         break 'outer;
                     } else {
-                        this.update(&mut cx, |this, cx| {
+                        terminal.update(&mut cx, |this, cx| {
                             if wakeup {
                                 this.process_event(&AlacTermEvent::Wakeup, cx);
                             }
@@ -538,6 +551,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
+    completion_tx: Sender<()>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
@@ -558,6 +572,14 @@ pub struct Terminal {
     hovered_word: bool,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
+    runnable: Option<RunableState>,
+}
+
+pub struct RunableState {
+    pub id: RunnableId,
+    pub label: String,
+    pub completed: bool,
+    pub completion_rx: Receiver<()>,
 }
 
 impl Terminal {
@@ -589,7 +611,13 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => cx.emit(Event::CloseTerminal),
+            AlacTermEvent::Exit => match &mut self.runnable {
+                Some(runnable) => {
+                    runnable.completed = true;
+                    self.completion_tx.try_send(()).ok();
+                }
+                None => cx.emit(Event::CloseTerminal),
+            },
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -1307,38 +1335,63 @@ impl Terminal {
     }
 
     pub fn title(&self, truncate: bool) -> String {
-        self.foreground_process_info
-            .as_ref()
-            .map(|fpi| {
-                let process_file = fpi
-                    .cwd
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let process_name = format!(
-                    "{}{}",
-                    fpi.name,
-                    if fpi.argv.len() >= 1 {
-                        format!(" {}", (fpi.argv[1..]).join(" "))
+        const MAX_CHARS: usize = 25;
+        match &self.runnable {
+            Some(runnable_state) => truncate_and_trailoff(&runnable_state.label, MAX_CHARS),
+            None => self
+                .foreground_process_info
+                .as_ref()
+                .map(|fpi| {
+                    let process_file = fpi
+                        .cwd
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let process_name = format!(
+                        "{}{}",
+                        fpi.name,
+                        if fpi.argv.len() >= 1 {
+                            format!(" {}", (fpi.argv[1..]).join(" "))
+                        } else {
+                            "".to_string()
+                        }
+                    );
+                    let (process_file, process_name) = if truncate {
+                        (
+                            truncate_and_trailoff(&process_file, MAX_CHARS),
+                            truncate_and_trailoff(&process_name, MAX_CHARS),
+                        )
                     } else {
-                        "".to_string()
-                    }
-                );
-                let (process_file, process_name) = if truncate {
-                    (
-                        truncate_and_trailoff(&process_file, 25),
-                        truncate_and_trailoff(&process_name, 25),
-                    )
-                } else {
-                    (process_file, process_name)
-                };
-                format!("{process_file} — {process_name}")
-            })
-            .unwrap_or_else(|| "Terminal".to_string())
+                        (process_file, process_name)
+                    };
+                    format!("{process_file} — {process_name}")
+                })
+                .unwrap_or_else(|| "Terminal".to_string()),
+        }
     }
 
     pub fn can_navigate_to_selected_word(&self) -> bool {
         self.cmd_pressed && self.hovered_word
+    }
+
+    pub fn runnable(&self) -> Option<&RunableState> {
+        self.runnable.as_ref()
+    }
+
+    pub fn wait_for_completed_runnable(&self, cx: &mut AppContext) -> Task<()> {
+        match self.runnable() {
+            Some(runnable) => {
+                if runnable.completed {
+                    Task::ready(())
+                } else {
+                    let mut completion_receiver = runnable.completion_rx.clone();
+                    cx.spawn(|_| async move {
+                        completion_receiver.next().await;
+                    })
+                }
+            }
+            None => Task::ready(()),
+        }
     }
 }
 

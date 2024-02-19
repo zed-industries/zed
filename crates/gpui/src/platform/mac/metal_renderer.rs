@@ -1,19 +1,20 @@
+use super::metal_atlas::MetalAtlas;
 use crate::{
-    platform::mac::ns_string, point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds,
-    ContentMask, DevicePixels, Hsla, MetalAtlas, MonochromeSprite, Path, PathId, PathVertex,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
+    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
+    Hsla, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use block::ConcreteBlock;
 use cocoa::{
-    base::{nil, NO, YES},
-    foundation::{NSDictionary, NSUInteger},
+    base::{NO, YES},
+    foundation::NSUInteger,
     quartzcore::AutoresizingMask,
 };
 use collections::HashMap;
 use core_foundation::base::TCFType;
 use foreign_types::ForeignType;
 use media::core_video::CVMetalTextureCache;
-use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -28,6 +29,18 @@ const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shader
 const SHADERS_SOURCE_FILE: &'static str =
     include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
 const INSTANCE_BUFFER_SIZE: usize = 2 * 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value (maybe even we could adjust dynamically...)
+
+pub type Context = Arc<Mutex<Vec<metal::Buffer>>>;
+pub type Renderer = MetalRenderer;
+
+pub unsafe fn new_renderer(
+    context: self::Context,
+    _native_window: *mut c_void,
+    _native_view: *mut c_void,
+    _bounds: crate::Size<f32>,
+) -> Renderer {
+    MetalRenderer::new(context)
+}
 
 pub(crate) struct MetalRenderer {
     device: metal::Device,
@@ -196,31 +209,31 @@ impl MetalRenderer {
         &self.layer
     }
 
-    pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
-        &self.sprite_atlas
+    pub fn layer_ptr(&self) -> *mut CAMetalLayer {
+        self.layer.as_ptr()
     }
 
-    /// Enables or disables the Metal HUD for debugging purposes. Note that this only works
-    /// when the app is bundled and it has the `MetalHudEnabled` key set to true in Info.plist.
-    pub fn set_hud_enabled(&mut self, enabled: bool) {
-        unsafe {
-            if enabled {
-                let hud_properties = NSDictionary::dictionaryWithObject_forKey_(
-                    nil,
-                    ns_string("default"),
-                    ns_string("mode"),
-                );
-                let _: () = msg_send![&*self.layer, setDeveloperHUDProperties: hud_properties];
-            } else {
-                let _: () = msg_send![&*self.layer, setDeveloperHUDProperties: NSDictionary::dictionary(nil)];
-            }
-        }
+    pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
+        &self.sprite_atlas
     }
 
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
         self.presents_with_transaction = presents_with_transaction;
         self.layer
             .set_presents_with_transaction(presents_with_transaction);
+    }
+
+    pub fn update_drawable_size(&mut self, size: Size<f64>) {
+        unsafe {
+            let _: () = msg_send![
+                self.layer(),
+                setDrawableSize: size
+            ];
+        }
+    }
+
+    pub fn destroy(&mut self) {
+        // nothing to do
     }
 
     pub fn draw(&mut self, scene: &Scene) {

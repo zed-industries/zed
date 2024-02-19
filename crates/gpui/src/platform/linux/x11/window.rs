@@ -1,6 +1,20 @@
 //todo!(linux): remove
 #![allow(unused)]
 
+use crate::{
+    platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Pixels, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, Size, WindowAppearance,
+    WindowBounds, WindowOptions, X11Display,
+};
+use blade_graphics as gpu;
+use parking_lot::Mutex;
+use raw_window_handle as rwh;
+
+use xcb::{
+    x::{self, StackMode},
+    Xid as _,
+};
+
 use std::{
     ffi::c_void,
     mem,
@@ -8,17 +22,6 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
-};
-
-use blade_graphics as gpu;
-use parking_lot::Mutex;
-use raw_window_handle as rwh;
-use xcb::{x, Xid as _};
-
-use crate::platform::linux::blade_renderer::BladeRenderer;
-use crate::{
-    Bounds, GlobalPixels, Pixels, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, Size, WindowAppearance, WindowBounds, WindowOptions, X11Display,
 };
 
 #[derive(Default)]
@@ -293,9 +296,13 @@ impl X11WindowState {
             let mut inner = self.inner.lock();
             let old_bounds = mem::replace(&mut inner.bounds, bounds);
             do_move = old_bounds.origin != bounds.origin;
+            //todo!(linux): use normal GPUI types here, refactor out the double
+            // viewport check and extra casts ( )
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
             if inner.renderer.viewport_size() != gpu_size {
-                inner.renderer.resize(gpu_size);
+                inner
+                    .renderer
+                    .update_drawable_size(size(gpu_size.width as f64, gpu_size.height as f64));
                 resize_args = Some((inner.content_size(), inner.scale_factor));
             }
         }
@@ -493,7 +500,7 @@ impl PlatformWindow for X11Window {
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         let inner = self.0.inner.lock();
-        inner.renderer.atlas().clone()
+        inner.renderer.sprite_atlas().clone()
     }
 
     fn set_graphics_profiler_enabled(&self, enabled: bool) {

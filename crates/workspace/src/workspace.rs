@@ -50,6 +50,7 @@ pub use persistence::{
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use runnable::SpawnInTerminal;
 use serde::Deserialize;
 use settings::Settings;
 use shared_screen::SharedScreen;
@@ -108,7 +109,6 @@ actions!(
         FollowNextCollaborator,
         NewTerminal,
         NewCenterTerminal,
-        ToggleTerminalFocus,
         NewSearch,
         Feedback,
         Restart,
@@ -464,6 +464,7 @@ pub enum Event {
     PaneAdded(View<Pane>),
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
+    SpawnRunnable(SpawnInTerminal),
 }
 
 pub enum OpenVisible {
@@ -2743,7 +2744,6 @@ impl Workspace {
 
         cx.notify();
 
-        self.last_active_view_id = active_view_id.clone();
         proto::FollowResponse {
             active_view_id,
             views: self
@@ -2917,7 +2917,6 @@ impl Workspace {
     pub fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
-
         if cx.is_window_active() {
             if let Some(item) = self.active_item(cx) {
                 if item.focus_handle(cx).contains_focused(cx) {
