@@ -362,9 +362,9 @@ impl ChatPanel {
                         .px_1()
                         .py_0p5()
                         .mb_1()
-                        .overflow_hidden()
                         .child(
                             div()
+                                .overflow_hidden()
                                 .max_h_12()
                                 .child(reply_to_message_body.element(body_element_id, cx)),
                         ),
@@ -802,18 +802,21 @@ impl Render for ChatPanel {
 
                 el.when_some(reply_message, |el, reply_message| {
                     el.child(
-                        div()
+                        h_flex()
                             .when(!self.is_scrolled_to_bottom, |el| {
                                 el.border_t_1().border_color(cx.theme().colors().border)
                             })
-                            .flex()
-                            .w_full()
-                            .items_start()
+                            .justify_between()
                             .overflow_hidden()
+                            .items_start()
                             .py_1()
                             .px_2()
                             .bg(cx.theme().colors().background)
-                            .child(self.render_replied_to_message(None, &reply_message, cx))
+                            .child(
+                                div().flex_shrink().overflow_hidden().child(
+                                    self.render_replied_to_message(None, &reply_message, cx),
+                                ),
+                            )
                             .child(
                                 IconButton::new("close-reply-preview", IconName::Close)
                                     .shape(ui::IconButtonShape::Square)
