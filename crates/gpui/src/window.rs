@@ -341,6 +341,12 @@ impl Window {
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
+        platform_window.on_close(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                let _ = handle.update(&mut cx, |_, cx| cx.remove_window());
+            }
+        }));
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
@@ -1595,17 +1601,7 @@ impl<'a> WindowContext<'a> {
         let mut this = self.to_async();
         self.window
             .platform_window
-            .on_should_close(Box::new(move || {
-                this.update(|cx| {
-                    // Ensure that the window is removed from the app if it's been closed
-                    // by always pre-empting the system close event.
-                    if f(cx) {
-                        cx.remove_window();
-                    }
-                    false
-                })
-                .unwrap_or(true)
-            }))
+            .on_should_close(Box::new(move || this.update(|cx| f(cx)).unwrap_or(true)))
     }
 
     pub(crate) fn parent_view_id(&self) -> EntityId {
