@@ -300,13 +300,6 @@ impl TerminalPanel {
         spawn_in_terminal: &runnable::SpawnInTerminal,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(project) = self
-            .workspace
-            .update(cx, |workspace, _| workspace.project().clone())
-            .ok()
-        else {
-            return;
-        };
         let spawn_runnable = SpawnRunnable {
             id: spawn_in_terminal.id.clone(),
             label: spawn_in_terminal.label.clone(),
@@ -328,7 +321,7 @@ impl TerminalPanel {
             self.spawn_in_new_terminal(spawn_runnable, working_directory, cx);
             return;
         }
-        let last_existing_terminal = terminals_for_runnable
+        let (existing_item_index, existing_terminal) = terminals_for_runnable
             .last()
             .expect("covered no terminals case above")
             .clone();
@@ -337,76 +330,39 @@ impl TerminalPanel {
                 !use_new_terminal,
                 "Should have handled 'allow_multiple && use_new_terminal' case above"
             );
-            let window = cx.window_handle();
-            if let Some(new_terminal) = project.update(cx, |project, cx| {
-                project
-                    .create_terminal(working_directory, Some(spawn_runnable), window, cx)
-                    .log_err()
-            }) {
-                let (item_index, existing_terminal_view) = last_existing_terminal;
-                existing_terminal_view.update(cx, |existing_terminal_view, cx| {
-                    existing_terminal_view.set_terminal(new_terminal, cx);
-                });
-                self.activate_terminal_view(item_index, cx);
-            }
+            self.replace_terminal(
+                working_directory,
+                spawn_runnable,
+                existing_item_index,
+                existing_terminal,
+                cx,
+            );
         } else {
-            let deferred_runnable = cx.spawn(|terminal_panel, mut cx| async move {
-                let pending_tasks = terminals_for_runnable.iter().filter_map(|(_, terminal)| {
-                    terminal
-                        .update(&mut cx, |terminal_view, cx| {
-                            terminal_view
-                                .terminal()
-                                .update(cx, |terminal, cx| terminal.wait_for_completed_runnable(cx))
-                        })
-                        .ok()
-                });
-                let _: Vec<()> = join_all(pending_tasks).await;
-
-                if use_new_terminal {
+            self.deferred_runnables.insert(
+                spawn_in_terminal.id.clone(),
+                cx.spawn(|terminal_panel, mut cx| async move {
+                    wait_for_terminals_tasks(terminals_for_runnable, &mut cx).await;
                     terminal_panel
-                        .update(&mut cx, |terminal_view, cx| {
-                            terminal_view.spawn_in_new_terminal(
-                                spawn_runnable,
-                                working_directory,
-                                cx,
-                            );
+                        .update(&mut cx, |terminal_panel, cx| {
+                            if use_new_terminal {
+                                terminal_panel.spawn_in_new_terminal(
+                                    spawn_runnable,
+                                    working_directory,
+                                    cx,
+                                );
+                            } else {
+                                terminal_panel.replace_terminal(
+                                    working_directory,
+                                    spawn_runnable,
+                                    existing_item_index,
+                                    existing_terminal,
+                                    cx,
+                                );
+                            }
                         })
                         .ok();
-                } else {
-                    let window = cx.window_handle();
-                    if let Some(new_terminal) = project
-                        .update(&mut cx, |project, cx| {
-                            project
-                                .create_terminal(
-                                    working_directory,
-                                    Some(spawn_runnable),
-                                    window,
-                                    cx,
-                                )
-                                .log_err()
-                        })
-                        .ok()
-                        .flatten()
-                    {
-                        let (item_index, existing_terminal_view) = last_existing_terminal;
-                        let Some(()) = existing_terminal_view
-                            .update(&mut cx, |existing_terminal_view, cx| {
-                                existing_terminal_view.set_terminal(new_terminal, cx);
-                            })
-                            .ok()
-                        else {
-                            return;
-                        };
-                        terminal_panel
-                            .update(&mut cx, |terminal_panel, cx| {
-                                terminal_panel.activate_terminal_view(item_index, cx);
-                            })
-                            .ok();
-                    }
-                }
-            });
-            self.deferred_runnables
-                .insert(spawn_in_terminal.id.clone(), deferred_runnable);
+                }),
+            );
         }
     }
 
@@ -563,6 +519,47 @@ impl TerminalPanel {
             .log_err(),
         );
     }
+
+    fn replace_terminal(
+        &self,
+        working_directory: Option<PathBuf>,
+        spawn_runnable: SpawnRunnable,
+        terminal_item_index: usize,
+        terminal_to_replace: View<TerminalView>,
+        cx: &mut ViewContext<'_, Self>,
+    ) -> Option<()> {
+        let project = self
+            .workspace
+            .update(cx, |workspace, _| workspace.project().clone())
+            .ok()?;
+        let window = cx.window_handle();
+        let new_terminal = project.update(cx, |project, cx| {
+            project
+                .create_terminal(working_directory, Some(spawn_runnable), window, cx)
+                .log_err()
+        })?;
+        terminal_to_replace.update(cx, |terminal_to_replace, cx| {
+            terminal_to_replace.set_terminal(new_terminal, cx);
+        });
+        self.activate_terminal_view(terminal_item_index, cx);
+        Some(())
+    }
+}
+
+async fn wait_for_terminals_tasks(
+    terminals_for_runnable: Vec<(usize, View<TerminalView>)>,
+    cx: &mut AsyncWindowContext,
+) {
+    let pending_tasks = terminals_for_runnable.iter().filter_map(|(_, terminal)| {
+        terminal
+            .update(cx, |terminal_view, cx| {
+                terminal_view
+                    .terminal()
+                    .update(cx, |terminal, cx| terminal.wait_for_completed_runnable(cx))
+            })
+            .ok()
+    });
+    let _: Vec<()> = join_all(pending_tasks).await;
 }
 
 fn add_paths_to_terminal(pane: &mut Pane, paths: &[PathBuf], cx: &mut ViewContext<'_, Pane>) {
