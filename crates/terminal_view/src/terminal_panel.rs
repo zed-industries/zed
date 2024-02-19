@@ -323,7 +323,7 @@ impl TerminalPanel {
             return;
         }
 
-        let terminals_for_runnable = self.terminals_for_runable(&spawn_in_terminal.id, cx);
+        let terminals_for_runnable = self.terminals_for_runnable(&spawn_in_terminal.id, cx);
         if terminals_for_runnable.is_empty() {
             self.spawn_in_new_terminal(spawn_runnable, working_directory, cx);
             return;
@@ -439,7 +439,7 @@ impl TerminalPanel {
         this.update(cx, |this, cx| this.add_terminal(None, None, cx))
     }
 
-    fn terminals_for_runable(
+    fn terminals_for_runnable(
         &self,
         id: &RunnableId,
         cx: &mut AppContext,

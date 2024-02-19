@@ -55,8 +55,9 @@ impl Inventory {
     }
 
     /// Returns the last scheduled runnable, if any of the sources contains one with the matching id.
-    pub fn last_schedule_runnable(&self, cx: &mut AppContext) -> Option<Arc<dyn Runnable>> {
+    pub fn last_scheduled_runnable(&self, cx: &mut AppContext) -> Option<Arc<dyn Runnable>> {
         self.last_scheduled_runnable.as_ref().and_then(|id| {
+            // TODO straighten the `Path` story to understand what has to be passed here: or it will break in the future.
             self.list_runnables(None, cx)
                 .into_iter()
                 .find(|runnable| runnable.id() == id)

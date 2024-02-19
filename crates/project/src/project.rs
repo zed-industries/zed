@@ -9087,10 +9087,6 @@ impl Project {
             Vec::new()
         }
     }
-
-    pub fn runnables(&self) -> &Model<Inventory> {
-        &self.runnables
-    }
 }
 
 fn subscribe_for_copilot_events(

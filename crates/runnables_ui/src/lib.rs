@@ -23,7 +23,7 @@ pub fn init(cx: &mut AppContext) {
                     if let Some(runnable) = workspace.project().update(cx, |project, cx| {
                         project
                             .runnable_inventory()
-                            .update(cx, |inventory, cx| inventory.last_schedule_runnable(cx))
+                            .update(cx, |inventory, cx| inventory.last_scheduled_runnable(cx))
                     }) {
                         schedule_runnable(workspace, runnable.as_ref(), cx)
                     };
@@ -45,7 +45,7 @@ fn schedule_runnable(
     let spawn_in_terminal = runnable.exec(cwd);
     if let Some(spawn_in_terminal) = spawn_in_terminal {
         workspace.project().update(cx, |project, cx| {
-            project.runnables().update(cx, |inventory, _| {
+            project.runnable_inventory().update(cx, |inventory, _| {
                 inventory.last_scheduled_runnable = Some(runnable.id().clone());
             })
         });
