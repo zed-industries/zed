@@ -26,7 +26,7 @@ impl Runnable for StaticRunnable {
             id: self.id.clone(),
             cwd,
             use_new_terminal: self.definition.use_new_terminal,
-            allow_multiple: self.definition.allow_multiple,
+            allow_concurrent_runs: self.definition.allow_concurrent_runs,
             label: self.definition.label.clone(),
             command: self.definition.command.clone(),
             args: self.definition.args.clone(),

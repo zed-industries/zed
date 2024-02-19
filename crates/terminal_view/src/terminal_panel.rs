@@ -308,10 +308,10 @@ impl TerminalPanel {
             env: spawn_in_terminal.env.clone(),
         };
         let working_directory = spawn_in_terminal.cwd.clone();
-        let allow_multiple = spawn_in_terminal.allow_multiple;
+        let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;
 
-        if allow_multiple && use_new_terminal {
+        if allow_concurrent_runs && use_new_terminal {
             self.spawn_in_new_terminal(spawn_runnable, working_directory, cx);
             return;
         }
@@ -325,10 +325,10 @@ impl TerminalPanel {
             .last()
             .expect("covered no terminals case above")
             .clone();
-        if allow_multiple {
+        if allow_concurrent_runs {
             debug_assert!(
                 !use_new_terminal,
-                "Should have handled 'allow_multiple && use_new_terminal' case above"
+                "Should have handled 'allow_concurrent_runs && use_new_terminal' case above"
             );
             self.replace_terminal(
                 working_directory,

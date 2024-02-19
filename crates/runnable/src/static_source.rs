@@ -43,7 +43,7 @@ pub(crate) struct Definition {
     pub use_new_terminal: bool,
     /// Whether to allow multiple instances of the same runnable to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
-    pub allow_multiple: bool,
+    pub allow_concurrent_runs: bool,
 }
 
 /// A group of Runnables defined in a JSON file.

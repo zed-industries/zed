@@ -35,7 +35,7 @@ pub struct SpawnInTerminal {
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     pub use_new_terminal: bool,
     /// Whether to allow multiple instances of the same runnable to be run, or rather wait for the existing ones to finish.
-    pub allow_multiple: bool,
+    pub allow_concurrent_runs: bool,
 }
 
 /// Represents a short lived recipe of a runnable, whose main purpose
