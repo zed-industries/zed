@@ -1279,7 +1279,7 @@ impl Render for AssistantPanel {
                             let conversation_count = self.saved_conversations.len();
                             canvas(move |bounds, cx| {
                                 uniform_list(
-                                    view,
+                                    view.clone(),
                                     "saved_conversations",
                                     conversation_count,
                                     |this, range, cx| {
@@ -1288,7 +1288,7 @@ impl Render for AssistantPanel {
                                             .collect()
                                     },
                                 )
-                                .track_scroll(scroll_handle)
+                                .track_scroll(scroll_handle.clone())
                                 .into_any_element()
                                 .draw(
                                     bounds.origin,

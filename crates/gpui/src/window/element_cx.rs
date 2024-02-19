@@ -168,6 +168,7 @@ pub struct ElementContext<'a> {
     #[deref_mut]
     pub(crate) cx: WindowContext<'a>,
     pub(crate) pre_paint_pass: bool,
+    pub(crate) in_layout: bool,
 }
 
 impl<'a> WindowContext<'a> {
@@ -182,6 +183,7 @@ impl<'a> WindowContext<'a> {
         f(&mut ElementContext {
             cx: WindowContext::new(self.app, self.window),
             pre_paint_pass,
+            in_layout: false,
         })
     }
 }
@@ -318,6 +320,10 @@ impl<'a> VisualContext for ElementContext<'a> {
 }
 
 impl<'a> ElementContext<'a> {
+    pub(crate) fn in_layout(&mut self, in_layout: bool) {
+        self.in_layout = in_layout;
+    }
+
     pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
         let view_id = self.parent_view_id();
         let grafted_view_ids = self
@@ -483,6 +489,10 @@ impl<'a> ElementContext<'a> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn with_z_index<R>(&mut self, z_index: u16, f: impl FnOnce(&mut Self) -> R) -> R {
+        // if self.in_layout {
+        //     panic!("Don't push z-index in layout");
+        // }
+
         let new_stacking_order_id = post_inc(
             self.window_mut()
                 .next_frame
@@ -1141,6 +1151,10 @@ impl<'a> ElementContext<'a> {
         if !self.pre_paint_pass {
             return;
         }
+
+        // if self.in_layout {
+        //     panic!("Don't add an opaque layer during layout");
+        // }
 
         let stacking_order = self.window.next_frame.z_index_stack.clone();
         let view_id = self.parent_view_id();

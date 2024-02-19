@@ -105,7 +105,7 @@ impl<V: Render> Element for View<V> {
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
-        cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
+        cx.paint_view(self.entity_id(), |cx| element.as_mut().unwrap().paint(cx));
     }
 }
 
@@ -247,21 +247,66 @@ impl AnyView {
         self.model.entity_id()
     }
 
-    pub(crate) fn draw(
+    pub(crate) fn layout(
         &self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) {
-        cx.paint_view(self.entity_id(), |cx| {
+    ) -> AnyElement {
+        cx.in_layout(true);
+        let element = cx.paint_view(self.entity_id(), |cx| {
             cx.with_absolute_element_offset(origin, |cx| {
                 let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
                 cx.compute_layout(layout_id, available_space);
-                rendered_element.paint(cx)
+                rendered_element
+            })
+        });
+        cx.in_layout(false);
+        element
+    }
+
+    pub(crate) fn paint(
+        &self,
+        origin: Point<Pixels>,
+        rendered_element: &mut AnyElement,
+        cx: &mut ElementContext,
+    ) {
+        cx.paint_view(self.entity_id(), |cx| {
+            cx.with_absolute_element_offset(origin, |cx| {
+                rendered_element.paint(cx);
             });
-        })
+        });
     }
 }
+
+//     pub(crate) fn draw(
+//         &self,
+//         origin: Point<Pixels>,
+//         available_space: Size<AvailableSpace>,
+//         cx: &mut ElementContext,
+//     ) {
+//         cx.paint_view(self.entity_id(), |cx| {
+//             cx.with_absolute_element_offset(origin, |cx| {
+//                 cx.in_layout(true);
+//                 let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
+//                 assert_eq!(
+//                     *cx.window.next_frame.next_stacking_order_ids.last().unwrap(),
+//                     0
+//                 );
+//                 // let prev_last_stacking_order_id = cx.window.next_frame.next_stacking_order_ids.last();
+//                 cx.compute_layout(layout_id, available_space);
+//                 cx.in_layout(false);
+//                 // assert_eq!(cx.window.next_frame.z_index_stack.len(), 0);
+//                 *cx.window
+//                     .next_frame
+//                     .next_stacking_order_ids
+//                     .last_mut()
+//                     .unwrap() = 0;
+//                 rendered_element.paint(cx)
+//             });
+//         })
+//     }
+// }
 
 impl<V: Render> From<View<V>> for AnyView {
     fn from(value: View<V>) -> Self {
@@ -307,7 +352,7 @@ impl Element for AnyView {
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         cx.paint_view(self.entity_id(), |cx| {
             if !self.cache {
-                state.element.take().unwrap().paint(cx);
+                state.element.as_mut().unwrap().paint(cx);
                 return;
             }
 

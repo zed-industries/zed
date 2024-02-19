@@ -103,13 +103,13 @@ pub trait IntoElement: Sized {
     {
         let element = self.into_element();
         let element_id = element.element_id();
-        let element = DrawableElement {
+        let mut element = DrawableElement {
             element: Some(element),
             phase: ElementDrawPhase::Start,
         };
 
         let frame_state =
-            DrawableElement::draw(element, origin, available_space.map(Into::into), cx);
+            DrawableElement::draw(&mut element, origin, available_space.map(Into::into), cx);
 
         if let Some(mut frame_state) = frame_state {
             f(&mut frame_state, cx)
@@ -301,8 +301,8 @@ impl<E: Element> DrawableElement<E> {
         layout_id
     }
 
-    fn paint(mut self, cx: &mut ElementContext) -> Option<E::State> {
-        match self.phase {
+    fn paint(&mut self, cx: &mut ElementContext) -> Option<&mut E::State> {
+        match &mut self.phase {
             ElementDrawPhase::LayoutRequested {
                 layout_id,
                 frame_state,
@@ -312,13 +312,13 @@ impl<E: Element> DrawableElement<E> {
                 frame_state,
                 ..
             } => {
-                let bounds = cx.layout_bounds(layout_id);
+                let bounds = cx.layout_bounds(*layout_id);
 
-                if let Some(mut frame_state) = frame_state {
+                if let Some(frame_state) = frame_state {
                     self.element
-                        .take()
+                        .as_mut()
                         .unwrap()
-                        .paint(bounds, &mut frame_state, cx);
+                        .paint(bounds, frame_state, cx);
                     Some(frame_state)
                 } else {
                     let element_id = self
@@ -330,7 +330,7 @@ impl<E: Element> DrawableElement<E> {
                     cx.with_element_state(element_id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();
                         self.element
-                            .take()
+                            .as_mut()
                             .unwrap()
                             .paint(bounds, &mut element_state, cx);
                         ((), element_state)
@@ -384,11 +384,11 @@ impl<E: Element> DrawableElement<E> {
     }
 
     fn draw(
-        mut self,
+        &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) -> Option<E::State> {
+    ) -> Option<&mut E::State> {
         self.measure(available_space, cx);
         cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
     }
@@ -408,7 +408,7 @@ where
     }
 
     fn paint(&mut self, cx: &mut ElementContext) {
-        DrawableElement::paint(self.take().unwrap(), cx);
+        DrawableElement::paint(self.as_mut().unwrap(), cx);
     }
 
     fn measure(
@@ -425,7 +425,7 @@ where
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) {
-        DrawableElement::draw(self.take().unwrap(), origin, available_space, cx);
+        DrawableElement::draw(self.as_mut().unwrap(), origin, available_space, cx);
     }
 }
 

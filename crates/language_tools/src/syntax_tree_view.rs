@@ -357,10 +357,12 @@ impl Render for SyntaxTreeView {
             .size_full()
             .track_scroll(self.list_scroll_handle.clone())
             .text_bg(cx.theme().colors().background);
+        
+            let mut list_element = list.into_any_element();
 
             rendered = rendered.child(
                 canvas(move |bounds, cx| {
-                    list.into_any_element().draw(
+                    list_element.draw(
                         bounds.origin,
                         bounds.size.map(AvailableSpace::Definite),
                         cx,

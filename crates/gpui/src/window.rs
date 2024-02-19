@@ -960,55 +960,51 @@ impl<'a> WindowContext<'a> {
             requested_handler.handler = input_handler;
         }
 
-        // TODO: Restructure this
         let root_view = self.window.root_view.take().unwrap();
-        self.with_element_context(true, |cx| {
+        let mut root_element = self.with_element_context(true, |cx| {
             cx.with_z_index(0, |cx| {
                 cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
-                    // // We need to use cx.cx here so we can utilize borrow splitting
-                    // for (action_type, action_listeners) in &cx.cx.app.global_action_listeners {
-                    //     for action_listener in action_listeners.iter().cloned() {
-                    //         cx.cx.window.next_frame.dispatch_tree.on_action(
-                    //             *action_type,
-                    //             Rc::new(
-                    //                 move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                    //                     action_listener(action, phase, cx)
-                    //                 },
-                    //             ),
-                    //         )
-                    //     }
-                    // }
-
                     let available_space = cx.window.viewport_size.map(Into::into);
-                    root_view.draw(Point::default(), available_space, cx);
+                    let mut root_element = root_view.layout(Point::default(), available_space, cx);
+                    root_view.paint(Point::default(), &mut root_element, cx);
+                    root_element
                 })
             })
         });
 
-        if let Some(active_drag) = self.app.active_drag.take() {
-            self.with_element_context(true, |cx| {
-                cx.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
+        let mut drag_element = None;
+        let mut tooltip_element = None;
+
+        self.with_element_context(true, |cx| {
+            cx.with_z_index(1, |cx| {
+                if let Some(active_drag) = cx.app.active_drag.take() {
                     let offset = cx.mouse_position() - active_drag.cursor_offset;
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(offset, available_space, cx);
-                })
-            });
-            self.active_drag = Some(active_drag);
-        } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
-            self.with_element_context(true, |cx| {
-                cx.with_z_index(1, |cx| {
+                    let mut element = active_drag.view.layout(offset, available_space, cx);
+                    active_drag.view.paint(offset, &mut element, cx);
+                    drag_element = Some(element);
+
+                    cx.active_drag = Some(active_drag);
+                } else if let Some(tooltip_request) = cx.window.next_frame.tooltip_request.take() {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    tooltip_request.tooltip.view.draw(
+                    let mut element = tooltip_request.tooltip.view.layout(
                         tooltip_request.tooltip.cursor_offset,
                         available_space,
                         cx,
                     );
-                })
-            });
-            self.window.next_frame.tooltip_request = Some(tooltip_request);
-        }
+                    tooltip_request.tooltip.view.paint(
+                        tooltip_request.tooltip.cursor_offset,
+                        &mut element,
+                        cx,
+                    );
+                    tooltip_element = Some(element);
+
+                    cx.window.next_frame.tooltip_request = Some(tooltip_request);
+                }
+            })
+        });
 
         assert_eq!(self.window.next_frame.z_index_stack.len(), 0);
         self.window.next_frame.next_stacking_order_ids = vec![0];
@@ -1030,36 +1026,33 @@ impl<'a> WindowContext<'a> {
                         }
                     }
 
-                    let available_space = cx.window.viewport_size.map(Into::into);
-                    root_view.draw(Point::default(), available_space, cx);
+                    // let available_space = cx.window.viewport_size.map(Into::into);
+                    // let mut root_element = root_view.layout(Point::default(), available_space, cx);
+                    root_view.paint(Point::default(), &mut root_element, cx);
                 })
             })
         });
 
-        if let Some(active_drag) = self.app.active_drag.take() {
-            self.with_element_context(false, |cx| {
-                cx.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
-                    let offset = cx.mouse_position() - active_drag.cursor_offset;
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(offset, available_space, cx);
-                })
-            });
-            self.active_drag = Some(active_drag);
-        } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
-            self.with_element_context(false, |cx| {
-                cx.with_z_index(1, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    tooltip_request.tooltip.view.draw(
-                        tooltip_request.tooltip.cursor_offset,
-                        available_space,
-                        cx,
-                    );
-                })
-            });
-            self.window.next_frame.tooltip_request = Some(tooltip_request);
-        }
+        self.with_element_context(false, |cx| {
+            cx.with_z_index(1, |cx| {
+                if let Some(mut drag_element) = drag_element {
+                    if let Some(active_drag) = cx.app.active_drag.take() {
+                        let offset = cx.mouse_position() - active_drag.cursor_offset;
+                        active_drag.view.paint(offset, &mut drag_element, cx);
+                    }
+                }
+
+                if let Some(mut tooltip_element) = tooltip_element {
+                    if let Some(tooltip_request) = cx.window.next_frame.tooltip_request.take() {
+                        tooltip_request.tooltip.view.paint(
+                            tooltip_request.tooltip.cursor_offset,
+                            &mut tooltip_element,
+                            cx,
+                        );
+                    }
+                }
+            })
+        });
 
         self.window.dirty_views.clear();
 

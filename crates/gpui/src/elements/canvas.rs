@@ -4,7 +4,7 @@ use crate::{Bounds, Element, ElementContext, IntoElement, Pixels, Style, StyleRe
 
 /// Construct a canvas element with the given paint callback.
 /// Useful for adding short term custom drawing to a view.
-pub fn canvas(callback: impl 'static + FnOnce(&Bounds<Pixels>, &mut ElementContext)) -> Canvas {
+pub fn canvas(callback: impl 'static + FnMut(&Bounds<Pixels>, &mut ElementContext)) -> Canvas {
     Canvas {
         paint_callback: Some(Box::new(callback)),
         style: StyleRefinement::default(),
@@ -14,7 +14,7 @@ pub fn canvas(callback: impl 'static + FnOnce(&Bounds<Pixels>, &mut ElementConte
 /// A canvas element, meant for accessing the low level paint API without defining a whole
 /// custom element
 pub struct Canvas {
-    paint_callback: Option<Box<dyn FnOnce(&Bounds<Pixels>, &mut ElementContext)>>,
+    paint_callback: Option<Box<dyn FnMut(&Bounds<Pixels>, &mut ElementContext)>>,
     style: StyleRefinement,
 }
 
@@ -46,7 +46,7 @@ impl Element for Canvas {
 
     fn paint(&mut self, bounds: Bounds<Pixels>, style: &mut Style, cx: &mut ElementContext) {
         style.paint(bounds, cx, |cx| {
-            (self.paint_callback.take().unwrap())(&bounds, cx)
+            (self.paint_callback.as_mut().unwrap())(&bounds, cx)
         });
     }
 }

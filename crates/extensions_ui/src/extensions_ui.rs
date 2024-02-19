@@ -414,13 +414,13 @@ impl Render for ExtensionsPage {
                         let item_count = self.extensions_entries.len();
                         move |bounds, cx| {
                             uniform_list::<_, Div, _>(
-                                view,
+                                view.clone(),
                                 "entries",
                                 item_count,
                                 Self::render_extensions,
                             )
                             .size_full()
-                            .track_scroll(scroll_handle)
+                            .track_scroll(scroll_handle.clone())
                             .into_any_element()
                             .draw(
                                 bounds.origin,
