@@ -66,7 +66,7 @@ impl RunnablesModal {
 impl Render for RunnablesModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
         v_flex()
-            .w(rems(20.))
+            .w(rems(34.))
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|modal, _, cx| {
                 modal.picker.update(cx, |picker, cx| {
