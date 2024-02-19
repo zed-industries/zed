@@ -383,9 +383,15 @@ impl PlatformWindow for X11Window {
         Rc::clone(&self.0.display)
     }
 
-    //todo!(linux)
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::default()
+        let cookie = self.0.xcb_connection.send_request(&x::QueryPointer {
+            window: self.0.x_window,
+        });
+        let reply: x::QueryPointerReply = self.0.xcb_connection.wait_for_reply(cookie).unwrap();
+        Point::new(
+            (reply.root_x() as u32).into(),
+            (reply.root_y() as u32).into(),
+        )
     }
 
     //todo!(linux)
