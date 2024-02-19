@@ -7,6 +7,7 @@ use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use schemars::JsonSchema;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
@@ -53,7 +54,8 @@ impl JsonLspAdapter {
             },
             cx,
         );
-
+        let runnables_schema = runnable::static_source::DefinitionProvider::generate_json_schema();
+        dbg!(&runnables_schema);
         serde_json::json!({
             "json": {
                 "format": {
@@ -70,6 +72,10 @@ impl JsonLspAdapter {
                     {
                         "fileMatch": [schema_file_match(&paths::KEYMAP)],
                         "schema": KeymapFile::generate_json_schema(&action_names),
+                    },
+                    {
+                        "fileMatch": [schema_file_match(&paths::RUNNABLES)],
+                        "schema": runnables_schema,
                     }
                 ]
             }

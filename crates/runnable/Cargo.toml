@@ -14,6 +14,7 @@ parking_lot.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_json_lenient.workspace = true
 settings.workspace = true
 smol.workspace = true
 util.workspace = true

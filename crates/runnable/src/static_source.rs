@@ -8,7 +8,7 @@ use std::{
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use schemars::JsonSchema;
+use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
@@ -46,12 +46,24 @@ pub(crate) struct Definition {
     pub allow_multiple: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct DefinitionProvider {
+/// A group of Runnables defined in a JSON file.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DefinitionProvider {
     version: String,
     runnables: Vec<Definition>,
 }
 
+impl DefinitionProvider {
+    /// Generates JSON schema of Runnables JSON definition format.
+    pub fn generate_json_schema() -> serde_json_lenient::Value {
+        let schema = SchemaSettings::draft07()
+            .with(|settings| settings.option_add_null_type = false)
+            .into_generator()
+            .into_root_schema_for::<Self>();
+
+        serde_json_lenient::to_value(schema).unwrap()
+    }
+}
 /// A Wrapper around deserializable T that keeps track of it's contents
 /// via a provided channel. Once T value changes, the observers of [`TrackedFile`] are
 /// notified.
@@ -68,7 +80,8 @@ impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
         cx.new_model(move |cx| {
             cx.spawn(|tracked_file, mut cx| async move {
                 while let Some(new_contents) = tracker.next().await {
-                    let Some(new_contents) = serde_json::from_str(&new_contents).log_err() else {
+                    let Some(new_contents) = serde_json_lenient::from_str(&new_contents).log_err()
+                    else {
                         continue;
                     };
                     tracked_file.update(&mut cx, |tracked_file: &mut TrackedFile<T>, cx| {
