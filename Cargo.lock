@@ -10091,15 +10091,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-beancount"
-version = "2.2.0"
-source = "git+https://github.com/polarmutex/tree-sitter-beancount?rev=da1bf8c6eb0ae7a97588affde7227630bcd678b6#da1bf8c6eb0ae7a97588affde7227630bcd678b6"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-c"
 version = "0.20.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10140,6 +10131,15 @@ dependencies = [
 name = "tree-sitter-css"
 version = "0.19.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-css?rev=769203d0f9abe1a9a691ac2b9fe4bb4397a73c51#769203d0f9abe1a9a691ac2b9fe4bb4397a73c51"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-dockerfile"
+version = "0.1.0"
+source = "git+https://github.com/camdencheek/tree-sitter-dockerfile?rev=33e22c33bcdbfc33d42806ee84cfd0b1248cc392#33e22c33bcdbfc33d42806ee84cfd0b1248cc392"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -12006,12 +12006,12 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-astro",
  "tree-sitter-bash",
- "tree-sitter-beancount",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
  "tree-sitter-clojure",
  "tree-sitter-cpp",
  "tree-sitter-css",
+ "tree-sitter-dockerfile",
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",

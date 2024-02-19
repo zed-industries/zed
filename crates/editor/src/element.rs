@@ -262,6 +262,7 @@ impl EditorElement {
         register_action(view, cx, Editor::go_to_definition_split);
         register_action(view, cx, Editor::go_to_type_definition);
         register_action(view, cx, Editor::go_to_type_definition_split);
+        register_action(view, cx, Editor::open_url);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at);
         register_action(view, cx, Editor::unfold_lines);

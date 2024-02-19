@@ -15,6 +15,7 @@ mod clojure;
 mod csharp;
 mod css;
 mod deno;
+mod dockerfile;
 mod elixir;
 mod elm;
 mod erlang;
@@ -68,12 +69,12 @@ pub fn init(
     languages.register_native_grammars([
         ("astro", tree_sitter_astro::language()),
         ("bash", tree_sitter_bash::language()),
-        ("beancount", tree_sitter_beancount::language()),
         ("c", tree_sitter_c::language()),
         ("c_sharp", tree_sitter_c_sharp::language()),
         ("clojure", tree_sitter_clojure::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
+        ("dockerfile", tree_sitter_dockerfile::language()),
         ("elixir", tree_sitter_elixir::language()),
         ("elm", tree_sitter_elm::language()),
         (
@@ -81,7 +82,7 @@ pub fn init(
             tree_sitter_embedded_template::language(),
         ),
         ("erlang", tree_sitter_erlang::language()),
-        ("gitcommit", tree_sitter_gitcommit::language()),
+        ("git_commit", tree_sitter_gitcommit::language()),
         ("gleam", tree_sitter_gleam::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
@@ -140,7 +141,6 @@ pub fn init(
         ],
     );
     language("bash", vec![]);
-    language("beancount", vec![]);
     language("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
     language("cpp", vec![Arc::new(c::CLspAdapter)]);
@@ -151,6 +151,13 @@ pub fn init(
             Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
+    );
+
+    language(
+        "dockerfile",
+        vec![Arc::new(dockerfile::DockerfileLspAdapter::new(
+            node_runtime.clone(),
+        ))],
     );
 
     match &ElixirSettings::get(None, cx).lsp {

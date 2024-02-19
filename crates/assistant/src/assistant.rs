@@ -1,5 +1,5 @@
 pub mod assistant_panel;
-mod assistant_settings;
+pub mod assistant_settings;
 mod codegen;
 mod prompts;
 mod streaming_diff;
