@@ -373,9 +373,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 ..
             } => {
                 let keymap_state = state.keymap_state.as_ref().unwrap();
-                let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
-                let key_sym = keymap_state.key_get_one_sym(Keycode::from(key + MIN_KEYCODE));
+                let keycode = Keycode::from(key + MIN_KEYCODE);
+                let key_utf32 = keymap_state.key_get_utf32(keycode);
+                let key_utf8 = keymap_state.key_get_utf8(keycode);
+                let key_sym = keymap_state.key_get_one_sym(keycode);
                 let key = xkb::keysym_get_name(key_sym).to_lowercase();
+
+                // Ignore control characters for the purposes of ime_key,
+                // but if key_utf32 is 0 then assume it isn't a control character
+                let ime_key = (key_utf32 == 0 || key_utf32 >= 32).then_some(key_utf8);
 
                 let focused_window = &state.keyboard_focused_window;
                 if let Some(focused_window) = focused_window {
@@ -385,7 +391,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers,
                                     key,
-                                    ime_key: Some(key_utf8),
+                                    ime_key,
                                 },
                                 is_held: false, // todo!(linux)
                             }));
@@ -395,7 +401,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                 keystroke: Keystroke {
                                     modifiers: state.modifiers,
                                     key,
-                                    ime_key: Some(key_utf8),
+                                    ime_key,
                                 },
                             }));
                         }
