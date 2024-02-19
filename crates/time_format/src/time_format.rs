@@ -127,7 +127,7 @@ fn read_is_12_hour_clock_from_user_preferences() -> Result<bool> {
     #[cfg(not(target_os = "macos"))]
     {
         //todo!(linux)
-        Ok(false)
+        Err(anyhow::Error::msg("Not implemented"))
     }
 }
 
