@@ -1,16 +1,21 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
-    View, ViewContext, WindowContext,
+    div, list, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, Length, ListState, MouseButton, MouseDownEvent, Render, Task,
+    UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::sync::Arc;
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
 
+enum ElementContainer {
+    List(ListState),
+    UniformList(UniformListScrollHandle),
+}
+
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
-    scroll_handle: UniformListScrollHandle,
+    element_container: ElementContainer,
     editor: View<Editor>,
     pending_update_matches: Option<Task<()>>,
     confirm_on_update: Option<bool>,
@@ -65,14 +70,27 @@ fn create_editor(placeholder: Arc<str>, cx: &mut WindowContext<'_>) -> View<Edit
         editor
     })
 }
+
 impl<D: PickerDelegate> Picker<D> {
-    pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
+    /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
+    /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
+    pub fn uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
+        Self::new(delegate, cx, true)
+    }
+
+    /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
+    /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
+    pub fn list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
+        Self::new(delegate, cx, false)
+    }
+
+    fn new(delegate: D, cx: &mut ViewContext<Self>, is_uniform: bool) -> Self {
         let editor = create_editor(delegate.placeholder_text(), cx);
         cx.subscribe(&editor, Self::on_input_editor_event).detach();
         let mut this = Self {
             delegate,
             editor,
-            scroll_handle: UniformListScrollHandle::new(),
+            element_container: Self::crate_element_container(is_uniform, cx),
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
@@ -81,6 +99,28 @@ impl<D: PickerDelegate> Picker<D> {
         };
         this.update_matches("".to_string(), cx);
         this
+    }
+
+    fn crate_element_container(is_uniform: bool, cx: &mut ViewContext<Self>) -> ElementContainer {
+        if is_uniform {
+            ElementContainer::UniformList(UniformListScrollHandle::new())
+        } else {
+            let view = cx.view().downgrade();
+            ElementContainer::List(ListState::new(
+                0,
+                gpui::ListAlignment::Top,
+                px(1000.),
+                move |ix, cx| {
+                    view.upgrade()
+                        .map(|view| {
+                            view.update(cx, |this, cx| {
+                                this.render_element(cx, ix).into_any_element()
+                            })
+                        })
+                        .unwrap_or_else(|| div().into_any_element())
+                },
+            ))
+        }
     }
 
     pub fn width(mut self, width: impl Into<gpui::Length>) -> Self {
@@ -108,7 +148,7 @@ impl<D: PickerDelegate> Picker<D> {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
             self.delegate.set_selected_index(ix, cx);
-            self.scroll_handle.scroll_to_item(ix);
+            self.scroll_to_item_index(ix);
             cx.notify();
         }
     }
@@ -119,7 +159,7 @@ impl<D: PickerDelegate> Picker<D> {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
             self.delegate.set_selected_index(ix, cx);
-            self.scroll_handle.scroll_to_item(ix);
+            self.scroll_to_item_index(ix);
             cx.notify();
         }
     }
@@ -128,7 +168,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         if count > 0 {
             self.delegate.set_selected_index(0, cx);
-            self.scroll_handle.scroll_to_item(0);
+            self.scroll_to_item_index(0);
             cx.notify();
         }
     }
@@ -137,7 +177,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         if count > 0 {
             self.delegate.set_selected_index(count - 1, cx);
-            self.scroll_handle.scroll_to_item(count - 1);
+            self.scroll_to_item_index(count - 1);
             cx.notify();
         }
     }
@@ -147,7 +187,7 @@ impl<D: PickerDelegate> Picker<D> {
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
         self.delegate.set_selected_index(new_index, cx);
-        self.scroll_handle.scroll_to_item(new_index);
+        self.scroll_to_item_index(new_index);
         cx.notify();
     }
 
@@ -215,8 +255,12 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
+        if let ElementContainer::List(state) = &mut self.element_container {
+            state.reset(self.delegate.match_count());
+        }
+
         let index = self.delegate.selected_index();
-        self.scroll_handle.scroll_to_item(index);
+        self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
             self.delegate.confirm(secondary, cx);
@@ -231,6 +275,58 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.set_text(query, cx));
+    }
+
+    fn scroll_to_item_index(&mut self, ix: usize) {
+        match &mut self.element_container {
+            ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
+            ElementContainer::UniformList(scroll_handle) => scroll_handle.scroll_to_item(ix),
+        }
+    }
+
+    fn render_element(&self, cx: &mut ViewContext<Self>, ix: usize) -> impl IntoElement {
+        div()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, cx| {
+                    this.handle_click(ix, event.modifiers.command, cx)
+                }),
+            )
+            .children(
+                self.delegate
+                    .render_match(ix, ix == self.delegate.selected_index(), cx),
+            )
+            .when(
+                self.delegate.separators_after_indices().contains(&ix),
+                |picker| {
+                    picker
+                        .border_color(cx.theme().colors().border_variant)
+                        .border_b_1()
+                        .pb(px(-1.0))
+                },
+            )
+    }
+
+    fn render_element_container(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        match &self.element_container {
+            ElementContainer::UniformList(scroll_handle) => uniform_list(
+                cx.view().clone(),
+                "candidates",
+                self.delegate.match_count(),
+                move |picker, visible_range, cx| {
+                    visible_range
+                        .map(|ix| picker.render_element(cx, ix))
+                        .collect()
+                },
+            )
+            .py_2()
+            .track_scroll(scroll_handle.clone())
+            .into_any_element(),
+            ElementContainer::List(state) => list(state.clone())
+                .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+                .py_2()
+                .into_any_element(),
+        }
     }
 }
 
@@ -269,50 +365,10 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 el.child(
                     v_flex()
                         .flex_grow()
-                        .py_2()
                         .max_h(self.max_height.unwrap_or(rems(18.).into()))
                         .overflow_hidden()
                         .children(self.delegate.render_header(cx))
-                        .child(
-                            uniform_list(
-                                cx.view().clone(),
-                                "candidates",
-                                self.delegate.match_count(),
-                                {
-                                    let separators_after_indices = self.delegate.separators_after_indices();
-                                    let selected_index = self.delegate.selected_index();
-                                    move |picker, visible_range, cx| {
-                                        visible_range
-                                            .map(|ix| {
-                                                div()
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        cx.listener(move |this, event: &MouseDownEvent, cx| {
-                                                            this.handle_click(
-                                                                ix,
-                                                                event.modifiers.command,
-                                                                cx,
-                                                            )
-                                                        }),
-                                                    )
-                                                    .children(picker.delegate.render_match(
-                                                        ix,
-                                                        ix == selected_index,
-                                                        cx,
-                                                    )).when(separators_after_indices.contains(&ix), |picker| {
-                                                        picker
-                                                            .border_color(cx.theme().colors().border_variant)
-                                                            .border_b_1()
-                                                            .pb(px(-1.0))
-                                                    })
-                                            })
-                                            .collect()
-                                    }
-                                },
-                            )
-                            .track_scroll(self.scroll_handle.clone())
-                        )
-
+                        .child(self.render_element_container(cx)),
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {

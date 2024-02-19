@@ -5,7 +5,7 @@ use ui::{prelude::*, HighlightedLabel};
 use util::paths::PathExt;
 use workspace::WorkspaceLocation;
 
-#[derive(IntoElement)]
+#[derive(Clone, IntoElement)]
 pub struct HighlightedText {
     pub text: String,
     pub highlight_positions: Vec<usize>,
@@ -48,6 +48,7 @@ impl RenderOnce for HighlightedText {
     }
 }
 
+#[derive(Clone)]
 pub struct HighlightedWorkspaceLocation {
     pub names: HighlightedText,
     pub paths: Vec<HighlightedText>,
