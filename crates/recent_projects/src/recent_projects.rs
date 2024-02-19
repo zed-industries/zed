@@ -3,14 +3,14 @@ mod projects;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result, Subscription, Task,
-    View, ViewContext, WeakView,
+    actions, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    Result, Subscription, Task, View, ViewContext, WeakView,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, IconButton, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, Divider, IconButton, ListItem, ListItemSpacing, Tooltip};
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_DB};
 
@@ -31,6 +31,7 @@ impl ModalView for RecentProjects {}
 impl RecentProjects {
     fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
         let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
@@ -237,17 +238,20 @@ impl PickerDelegate for RecentProjectsDelegate {
                             this.children(highlighted_location.paths)
                         }),
                 )
-                .end_slot(
-                    IconButton::new("delete", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .on_click(cx.listener(move |this, _event, cx| {
-                            cx.stop_propagation();
-                            cx.prevent_default();
+                .end_hover_slot::<AnyElement>(
+                    div()
+                        .child(
+                            IconButton::new("delete", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener(move |this, _event, cx| {
+                                    cx.stop_propagation();
+                                    cx.prevent_default();
 
-                            this.delegate.delete_recent_project(ix, cx)
-                        }))
-                        .tooltip(|cx| Tooltip::text("Delete From Recent Projects...", cx)),
+                                    this.delegate.delete_recent_project(ix, cx)
+                                }))
+                                .tooltip(|cx| Tooltip::text("Delete From Recent Projects...", cx)),
+                        )
+                        .into_any_element(),
                 ),
         )
     }
