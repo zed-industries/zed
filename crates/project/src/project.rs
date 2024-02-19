@@ -695,7 +695,7 @@ impl Project {
             .await?;
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
-
+            let runnables = Inventory::new(cx);
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
                 let worktree =
@@ -777,7 +777,7 @@ impl Project {
                 default_prettier: DefaultPrettier::default(),
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
-                runnables: Inventory::new(cx),
+                runnables,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
