@@ -22,7 +22,7 @@ impl ContactFinder {
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx).modal(false));
+        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx).modal(false));
 
         Self { picker }
     }

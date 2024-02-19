@@ -102,6 +102,10 @@ impl LspAdapter for IntelephenseLspAdapter {
     fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([("PHP".into(), "php".into())])
     }
+
+    fn prettier_plugins(&self) -> &[&'static str] {
+        &["@prettier/plugin-php"]
+    }
 }
 
 async fn get_cached_server_binary(

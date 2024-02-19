@@ -91,8 +91,8 @@ jobs:
       - name: Build collab
         run: cargo build -p collab
 
-      - name: Build other binaries
-        run: cargo build --workspace --bins --all-features
+      - name: Build other binaries and features
+        run: cargo build --workspace --bins --all-features; cargo check -p gpui --features "macos-blade"
 
   # todo!(linux): Actually run the tests
   linux_tests:

@@ -1396,7 +1396,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=c4f951a88b345724cb952e920ad30e39851f7760#c4f951a88b345724cb952e920ad30e39851f7760"
+source = "git+https://github.com/kvark/blade?rev=e9d93a4d41f3946a03ffb76136290d6ccf7f2b80#e9d93a4d41f3946a03ffb76136290d6ccf7f2b80"
 dependencies = [
  "ash",
  "ash-window",
@@ -1413,7 +1413,7 @@ dependencies = [
  "khronos-egl",
  "libloading 0.8.0",
  "log",
- "metal 0.25.0",
+ "metal",
  "mint",
  "naga",
  "objc",
@@ -1426,7 +1426,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=c4f951a88b345724cb952e920ad30e39851f7760#c4f951a88b345724cb952e920ad30e39851f7760"
+source = "git+https://github.com/kvark/blade?rev=e9d93a4d41f3946a03ffb76136290d6ccf7f2b80#e9d93a4d41f3946a03ffb76136290d6ccf7f2b80"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1687,7 +1687,7 @@ dependencies = [
  "serde_json",
  "syn 1.0.109",
  "tempfile",
- "toml",
+ "toml 0.5.11",
 ]
 
 [[package]]
@@ -2065,7 +2065,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-tungstenite",
- "toml",
+ "toml 0.8.10",
  "tonic",
  "tower",
  "tracing",
@@ -2115,6 +2115,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
+ "sys-locale",
  "theme",
  "theme_selector",
  "time",
@@ -2359,13 +2360,13 @@ dependencies = [
 
 [[package]]
 name = "core-text"
-version = "19.2.0"
+version = "20.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99d74ada66e07c1cefa18f8abfba765b486f250de2e4a999e5727fc0dd4b4a25"
+checksum = "c9d2790b5c08465d49f8dc05c8bcae9fea467855947db39b0f8145c091aaced5"
 dependencies = [
  "core-foundation",
- "core-graphics 0.22.3",
- "foreign-types 0.3.2",
+ "core-graphics 0.23.1",
+ "foreign-types 0.5.0",
  "libc",
 ]
 
@@ -3283,7 +3284,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
- "toml",
+ "toml 0.8.10",
  "util",
 ]
 
@@ -3511,12 +3512,12 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "font-kit"
 version = "0.11.0"
-source = "git+https://github.com/zed-industries/font-kit?rev=d97147f#d97147ff11a9024b9707d9c9c7e3a0bdaba048ac"
+source = "git+https://github.com/zed-industries/font-kit?rev=5a5c4d4#5a5c4d4ca395c74eb0abde38508e170ce0fd761a"
 dependencies = [
  "bitflags 1.3.2",
  "byteorder",
  "core-foundation",
- "core-graphics 0.22.3",
+ "core-graphics 0.23.1",
  "core-text",
  "dirs-next",
  "dwrote",
@@ -4085,7 +4086,7 @@ dependencies = [
  "cocoa",
  "collections",
  "core-foundation",
- "core-graphics 0.22.3",
+ "core-graphics 0.23.1",
  "core-text",
  "cosmic-text",
  "ctor",
@@ -4095,7 +4096,7 @@ dependencies = [
  "etagere",
  "flume",
  "font-kit",
- "foreign-types 0.3.2",
+ "foreign-types 0.5.0",
  "futures 0.3.28",
  "gpui_macros",
  "image",
@@ -4104,7 +4105,7 @@ dependencies = [
  "linkme",
  "log",
  "media",
- "metal 0.21.0",
+ "metal",
  "num_cpus",
  "objc",
  "open",
@@ -4921,7 +4922,7 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
- "toml",
+ "toml 0.8.10",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
@@ -5350,8 +5351,8 @@ dependencies = [
  "block",
  "bytes 1.5.0",
  "core-foundation",
- "foreign-types 0.3.2",
- "metal 0.21.0",
+ "foreign-types 0.5.0",
+ "metal",
  "objc",
 ]
 
@@ -5421,20 +5422,6 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "serde",
-]
-
-[[package]]
-name = "metal"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4598d719460ade24c7d91f335daf055bf2a7eec030728ce751814c50cdd6a26c"
-dependencies = [
- "bitflags 1.3.2",
- "block",
- "cocoa-foundation",
- "foreign-types 0.3.2",
- "log",
- "objc",
 ]
 
 [[package]]
@@ -6822,7 +6809,7 @@ version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d6ea3c4595b96363c13943497db34af4460fb474a95c43f4446ad341b8c9785"
 dependencies = [
- "toml",
+ "toml 0.5.11",
 ]
 
 [[package]]
@@ -6832,7 +6819,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f4c021e1093a56626774e81216a4ce732a735e5bad4868a03f3ed65ca0c3919"
 dependencies = [
  "once_cell",
- "toml_edit",
+ "toml_edit 0.19.15",
 ]
 
 [[package]]
@@ -6930,7 +6917,7 @@ dependencies = [
  "terminal",
  "text",
  "thiserror",
- "toml",
+ "toml 0.8.10",
  "unindent",
  "util",
 ]
@@ -8402,6 +8389,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb3622f419d1296904700073ea6cc23ad690adbd66f13ea683df73298736f0c1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8435,7 +8431,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "smallvec",
- "toml",
+ "toml 0.8.10",
  "tree-sitter",
  "tree-sitter-json 0.19.0",
  "unindent",
@@ -9490,7 +9486,7 @@ dependencies = [
  "serde_repr",
  "settings",
  "story",
- "toml",
+ "toml 0.8.10",
  "util",
  "uuid 1.4.1",
 ]
@@ -9808,10 +9804,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml_datetime"
-version = "0.6.3"
+name = "toml"
+version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cda73e2f1397b1262d6dfdcef8aafae14d1de7748d66822d3bfeeb6d03e5e4b"
+checksum = "9a9aad4a3066010876e8dcf5a8a06e70a558751117a145c6ce2b82c2e2054290"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit 0.22.6",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3550f4e9685620ac18a50ed434eb3aec30db8ba93b0287467bca5826ea25baf1"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "toml_edit"
@@ -9821,7 +9832,20 @@ checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
 dependencies = [
  "indexmap 2.0.0",
  "toml_datetime",
- "winnow",
+ "winnow 0.5.15",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.22.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c1b5fd4128cc8d3e0cb74d4ed9a9cc7c7284becd4df68f5f940e1ad123606f6"
+dependencies = [
+ "indexmap 2.0.0",
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "winnow 0.6.1",
 ]
 
 [[package]]
@@ -10022,15 +10046,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-beancount"
-version = "2.2.0"
-source = "git+https://github.com/polarmutex/tree-sitter-beancount?rev=da1bf8c6eb0ae7a97588affde7227630bcd678b6#da1bf8c6eb0ae7a97588affde7227630bcd678b6"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-c"
 version = "0.20.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10080,6 +10095,15 @@ dependencies = [
 name = "tree-sitter-dart"
 version = "0.0.1"
 source = "git+https://github.com/agent3bood/tree-sitter-dart?rev=48934e3bf757a9b78f17bdfaa3e2b4284656fdc7#48934e3bf757a9b78f17bdfaa3e2b4284656fdc7"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-dockerfile"
+version = "0.1.0"
+source = "git+https://github.com/camdencheek/tree-sitter-dockerfile?rev=33e22c33bcdbfc33d42806ee84cfd0b1248cc392#33e22c33bcdbfc33d42806ee84cfd0b1248cc392"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -10822,7 +10846,6 @@ dependencies = [
  "collections",
  "command_palette",
  "copilot",
- "diagnostics",
  "editor",
  "futures 0.3.28",
  "gpui",
@@ -10834,7 +10857,6 @@ dependencies = [
  "nvim-rs",
  "parking_lot 0.11.2",
  "project",
- "project_panel",
  "regex",
  "release_channel",
  "search",
@@ -11608,6 +11630,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "winnow"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d90f4e0f530c4c69f62b80d839e9ef3855edc9cba471a160c4d692deed62b401"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "winreg"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11932,17 +11963,17 @@ dependencies = [
  "theme_selector",
  "thiserror",
  "tiny_http",
- "toml",
+ "toml 0.8.10",
  "tree-sitter",
  "tree-sitter-astro",
  "tree-sitter-bash",
- "tree-sitter-beancount",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
  "tree-sitter-clojure",
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-dart",
+ "tree-sitter-dockerfile",
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",

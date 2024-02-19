@@ -31,7 +31,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     });
 }
 
-pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInterceptResult> {
+pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandInterceptResult> {
     // Note: this is a very poor simulation of vim's command palette.
     // In the future we should adjust it to handle parsing range syntax,
     // and then calling the appropriate commands with/without ranges.
@@ -203,7 +203,10 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
         ),
 
         // quickfix / loclist (merged together for now)
-        "cl" | "cli" | "clis" | "clist" => ("clist", diagnostics::Deploy.boxed_clone()),
+        "cl" | "cli" | "clis" | "clist" => (
+            "clist",
+            cx.build_action("diagnostics::Deploy", None).unwrap(),
+        ),
         "cc" => ("cc", editor::actions::Hover.boxed_clone()),
         "ll" => ("ll", editor::actions::Hover.boxed_clone()),
         "cn" | "cne" | "cnex" | "cnext" => ("cnext", editor::actions::GoToDiagnostic.boxed_clone()),
@@ -234,21 +237,55 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
         "sor i" | "sort i" => ("sort i", SortLinesCaseInsensitive.boxed_clone()),
 
         // Explore, etc.
-        "E" | "Ex" | "Exp" | "Expl" | "Explo" | "Explor" | "Explore" => {
-            ("Explore", project_panel::ToggleFocus.boxed_clone())
-        }
-        "H" | "He" | "Hex" | "Hexp" | "Hexpl" | "Hexplo" | "Hexplor" | "Hexplore" => {
-            ("Hexplore", project_panel::ToggleFocus.boxed_clone())
-        }
-        "L" | "Le" | "Lex" | "Lexp" | "Lexpl" | "Lexplo" | "Lexplor" | "Lexplore" => {
-            ("Lexplore", project_panel::ToggleFocus.boxed_clone())
-        }
-        "S" | "Se" | "Sex" | "Sexp" | "Sexpl" | "Sexplo" | "Sexplor" | "Sexplore" => {
-            ("Sexplore", project_panel::ToggleFocus.boxed_clone())
-        }
-        "Ve" | "Vex" | "Vexp" | "Vexpl" | "Vexplo" | "Vexplor" | "Vexplore" => {
-            ("Vexplore", project_panel::ToggleFocus.boxed_clone())
-        }
+        "E" | "Ex" | "Exp" | "Expl" | "Explo" | "Explor" | "Explore" => (
+            "Explore",
+            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
+        ),
+        "H" | "He" | "Hex" | "Hexp" | "Hexpl" | "Hexplo" | "Hexplor" | "Hexplore" => (
+            "Hexplore",
+            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
+        ),
+        "L" | "Le" | "Lex" | "Lexp" | "Lexpl" | "Lexplo" | "Lexplor" | "Lexplore" => (
+            "Lexplore",
+            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
+        ),
+        "S" | "Se" | "Sex" | "Sexp" | "Sexpl" | "Sexplo" | "Sexplor" | "Sexplore" => (
+            "Sexplore",
+            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
+        ),
+        "Ve" | "Vex" | "Vexp" | "Vexpl" | "Vexplo" | "Vexplor" | "Vexplore" => (
+            "Vexplore",
+            cx.build_action("project_panel::ToggleFocus", None).unwrap(),
+        ),
+        "te" | "ter" | "term" => (
+            "term",
+            cx.build_action("terminal_panel::ToggleFocus", None)
+                .unwrap(),
+        ),
+        // Zed panes
+        "T" | "Te" | "Ter" | "Term" => (
+            "Term",
+            cx.build_action("terminal_panel::ToggleFocus", None)
+                .unwrap(),
+        ),
+        "C" | "Co" | "Col" | "Coll" | "Colla" | "Collab" => (
+            "Collab",
+            cx.build_action("collab_panel::ToggleFocus", None).unwrap(),
+        ),
+        "Ch" | "Cha" | "Chat" => (
+            "Chat",
+            cx.build_action("chat_panel::ToggleFocus", None).unwrap(),
+        ),
+        "No" | "Not" | "Noti" | "Notif" | "Notifi" | "Notific" | "Notifica" | "Notificat"
+        | "Notificati" | "Notificatio" | "Notification" => (
+            "Notifications",
+            cx.build_action("notification_panel::ToggleFocus", None)
+                .unwrap(),
+        ),
+        "A" | "AI" | "Ai" => (
+            "AI",
+            cx.build_action("assistant::ToggleFocus", None).unwrap(),
+        ),
 
         // goto (other ranges handled under _ => )
         "$" => ("$", EndOfDocument.boxed_clone()),

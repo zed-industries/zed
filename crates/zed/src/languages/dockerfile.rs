@@ -4,7 +4,6 @@ use futures::StreamExt;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use serde_json::json;
 use smol::fs;
 use std::{
     any::Any,
@@ -14,39 +13,40 @@ use std::{
 };
 use util::{async_maybe, ResultExt};
 
-const SERVER_PATH: &'static str = "node_modules/svelte-language-server/bin/server.js";
+const SERVER_PATH: &'static str =
+    "node_modules/dockerfile-language-server-nodejs/bin/docker-langserver";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
-pub struct SvelteLspAdapter {
+pub struct DockerfileLspAdapter {
     node: Arc<dyn NodeRuntime>,
 }
 
-impl SvelteLspAdapter {
+impl DockerfileLspAdapter {
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
-        SvelteLspAdapter { node }
+        Self { node }
     }
 }
 
 #[async_trait]
-impl LspAdapter for SvelteLspAdapter {
+impl LspAdapter for DockerfileLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("svelte-language-server".into())
+        LanguageServerName("docker-langserver".into())
     }
 
     fn short_name(&self) -> &'static str {
-        "svelte"
+        "dockerfile"
     }
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
+    ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
             self.node
-                .npm_package_latest_version("svelte-language-server")
+                .npm_package_latest_version("dockerfile-language-server-nodejs")
                 .await?,
         ) as Box<_>)
     }
@@ -64,7 +64,7 @@ impl LspAdapter for SvelteLspAdapter {
             self.node
                 .npm_install_packages(
                     &container_dir,
-                    &[("svelte-language-server", version.as_str())],
+                    &[("dockerfile-language-server-nodejs", version.as_str())],
                 )
                 .await?;
         }
@@ -89,45 +89,6 @@ impl LspAdapter for SvelteLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &*self.node).await
     }
-
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        let config = json!({
-          "inlayHints": {
-            "parameterNames": {
-              "enabled": "all",
-              "suppressWhenArgumentMatchesName": false
-            },
-            "parameterTypes": {
-              "enabled": true
-            },
-            "variableTypes": {
-              "enabled": true,
-              "suppressWhenTypeMatchesName": false
-            },
-            "propertyDeclarationTypes": {
-              "enabled": true
-            },
-            "functionLikeReturnType": {
-              "enabled": true
-            },
-            "enumMemberValues": {
-              "enabled": true
-            }
-          }
-        });
-
-        Some(json!({
-            "provideFormatter": true,
-            "configuration": {
-              "typescript": config,
-              "javascript": config
-            }
-        }))
-    }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["prettier-plugin-svelte"]
-    }
 }
 
 async fn get_cached_server_binary(
@@ -143,6 +104,7 @@ async fn get_cached_server_binary(
                 last_version_dir = Some(entry.path());
             }
         }
+
         let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
         let server_path = last_version_dir.join(SERVER_PATH);
         if server_path.exists() {
