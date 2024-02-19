@@ -358,7 +358,6 @@ impl Global for GlobalAppState {}
 
 pub struct WorkspaceStore {
     workspaces: HashSet<WindowHandle<Workspace>>,
-    followers: Vec<Follower>,
     client: Arc<Client>,
     _subscriptions: Vec<client::Subscription>,
 }
@@ -3788,10 +3787,8 @@ impl WorkspaceStore {
     pub fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
         Self {
             workspaces: Default::default(),
-            followers: Default::default(),
             _subscriptions: vec![
                 client.add_request_handler(cx.weak_model(), Self::handle_follow),
-                client.add_message_handler(cx.weak_model(), Self::handle_unfollow),
                 client.add_message_handler(cx.weak_model(), Self::handle_update_followers),
             ],
             client,
@@ -3806,25 +3803,10 @@ impl WorkspaceStore {
     ) -> Option<()> {
         let active_call = ActiveCall::try_global(cx)?;
         let room_id = active_call.read(cx).room()?.read(cx).id();
-        let follower_ids: Vec<_> = self
-            .followers
-            .iter()
-            .filter_map(|follower| {
-                if follower.project_id == project_id || project_id.is_none() {
-                    Some(follower.peer_id.into())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if follower_ids.is_empty() {
-            return None;
-        }
         self.client
             .send(proto::UpdateFollowers {
                 room_id,
                 project_id,
-                follower_ids,
                 variant: Some(update),
             })
             .log_err()
@@ -3865,29 +3847,7 @@ impl WorkspaceStore {
                     .is_ok()
             });
 
-            if let Err(ix) = this.followers.binary_search(&follower) {
-                this.followers.insert(ix, follower);
-            }
-
             Ok(response)
-        })?
-    }
-
-    async fn handle_unfollow(
-        model: Model<Self>,
-        envelope: TypedEnvelope<proto::Unfollow>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        model.update(&mut cx, |this, _| {
-            let follower = Follower {
-                project_id: envelope.payload.project_id,
-                peer_id: envelope.original_sender_id()?,
-            };
-            if let Ok(ix) = this.followers.binary_search(&follower) {
-                this.followers.remove(ix);
-            }
-            Ok(())
         })?
     }
 

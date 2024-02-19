@@ -1297,7 +1297,7 @@ message FollowResponse {
 message UpdateFollowers {
     uint64 room_id = 1;
     optional uint64 project_id = 2;
-    repeated PeerId follower_ids = 3;
+    reserved 3;
     oneof variant {
         UpdateActiveView update_active_view = 4;
         View create_view = 5;
