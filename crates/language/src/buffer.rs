@@ -98,15 +98,19 @@ impl RopeFingerprint {
             false
         } else {
             for edit in other.edits_since::<usize>(&self.current_version) {
-                if !edit.old.is_empty() {
-                    if self
-                        .base_text
-                        .bytes_in_range(edit.old.clone())
-                        .flatten()
-                        .ne(other.bytes_in_range(edit.old).flatten())
-                    {
-                        return false;
-                    }
+                let Some(range) = Some(edit.old)
+                    .filter(|range| range.is_empty())
+                    .or_else(|| Some(edit.new).filter(|range| range.is_empty()))
+                else {
+                    continue;
+                };
+                if self
+                    .base_text
+                    .bytes_in_range(range.clone())
+                    .flatten()
+                    .ne(other.bytes_in_range(range).flatten())
+                {
+                    return false;
                 }
             }
             // self.current_version = other.version();
