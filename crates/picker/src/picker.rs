@@ -72,10 +72,14 @@ fn create_editor(placeholder: Arc<str>, cx: &mut WindowContext<'_>) -> View<Edit
 }
 
 impl<D: PickerDelegate> Picker<D> {
+    /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
+    /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
         Self::new(delegate, cx, true)
     }
 
+    /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
+    /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
     pub fn list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
         Self::new(delegate, cx, false)
     }
