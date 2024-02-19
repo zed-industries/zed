@@ -24,6 +24,7 @@ libc = "0.2"
 mio-extras = "2.0.6"
 ordered-float.workspace = true
 procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "5cd757e5f2eb039ed0c6bb6512223e69d5efc64d", default-features = false }
+runnable.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
