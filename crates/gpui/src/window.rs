@@ -963,12 +963,10 @@ impl<'a> WindowContext<'a> {
         let root_view = self.window.root_view.take().unwrap();
         let mut root_element = self.with_element_context(true, |cx| {
             cx.with_z_index(0, |cx| {
-                cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
-                    let available_space = cx.window.viewport_size.map(Into::into);
-                    let mut root_element = root_view.layout(Point::default(), available_space, cx);
-                    root_view.paint(Point::default(), &mut root_element, cx);
-                    root_element
-                })
+                let available_space = cx.window.viewport_size.map(Into::into);
+                let mut root_element = root_view.layout(Point::default(), available_space, cx);
+                root_view.paint(Point::default(), &mut root_element, cx);
+                root_element
             })
         });
 
@@ -1039,6 +1037,7 @@ impl<'a> WindowContext<'a> {
                     if let Some(active_drag) = cx.app.active_drag.take() {
                         let offset = cx.mouse_position() - active_drag.cursor_offset;
                         active_drag.view.paint(offset, &mut drag_element, cx);
+                        cx.active_drag = Some(active_drag);
                     }
                 }
 

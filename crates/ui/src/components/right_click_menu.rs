@@ -118,16 +118,16 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         element_state: &mut Self::State,
         cx: &mut ElementContext,
     ) {
-        if let Some(mut child) = element_state.child_element.take() {
+        if let Some(child) = element_state.child_element.as_mut() {
             child.paint(cx);
         }
 
-        if let Some(mut menu) = element_state.menu_element.take() {
+        if let Some(menu) = element_state.menu_element.as_mut() {
             menu.paint(cx);
             return;
         }
 
-        let Some(builder) = self.menu_builder.take() else {
+        let Some(builder) = self.menu_builder.clone() else {
             return;
         };
         let menu = element_state.menu.clone();

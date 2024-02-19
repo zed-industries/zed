@@ -1172,16 +1172,20 @@ impl<'a> ElementContext<'a> {
         focus_handle: Option<FocusHandle>,
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
-        let window = &mut self.window;
-        let focus_id = focus_handle.as_ref().map(|handle| handle.id);
-        window
-            .next_frame
-            .dispatch_tree
-            .push_node(context.clone(), focus_id, None);
+        if !self.pre_paint_pass {
+            let window = &mut self.window;
+            let focus_id = focus_handle.as_ref().map(|handle| handle.id);
+            window
+                .next_frame
+                .dispatch_tree
+                .push_node(context.clone(), focus_id, None);
+        }
 
         let result = f(focus_handle, self);
 
-        self.window.next_frame.dispatch_tree.pop_node();
+        if !self.pre_paint_pass {
+            self.window.next_frame.dispatch_tree.pop_node();
+        }
 
         result
     }

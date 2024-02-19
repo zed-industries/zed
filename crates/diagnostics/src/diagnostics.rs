@@ -1592,7 +1592,7 @@ mod tests {
                 .enumerate()
                 .filter_map(|(ix, (row, block))| {
                     let name: SharedString = match block {
-                        TransformBlock::Custom(block) => cx.with_element_context({
+                        TransformBlock::Custom(block) => cx.with_element_context(false, {
                             let editor_view = editor_view.clone();
                             |cx| -> Option<SharedString> {
                                 block
