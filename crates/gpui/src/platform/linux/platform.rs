@@ -385,15 +385,43 @@ impl Platform for LinuxPlatform {
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        unimplemented!()
+        let url = url.to_string();
+        let username = username.to_string();
+        let password = password.to_vec();
+        self.background_executor().spawn(async move {
+            oo7::Keyring::new().await?.create_item(&url, &vec![("url", &url), ("username", &username)], password, true).await?;
+            Ok(())
+        })
     }
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        unimplemented!()
+        let url = url.to_string();
+        self.background_executor().spawn(async move {
+            let items = oo7::Keyring::new().await?.search_items(&vec![("url", &url)]).await?;
+
+            if let Some(item) = items.first() {
+                let attributes = item.attributes().await?;
+                let username = attributes.get("username").ok_or(anyhow::Error::msg("can not find username in stored credential"))?;
+                let secret = item.secret().await?;
+
+                // we loose the zeroizing capabilities at this boundary, which is a current limitation of the creds api
+                return Ok(Some((username.to_string(), secret.to_vec())))
+            }
+            Ok(None)
+       })
     }
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        unimplemented!()
+        let url = url.to_string();
+        self.background_executor().spawn(async move {
+            let items = oo7::Keyring::new().await?.search_items(&vec![("url", &url)]).await?;
+
+            if let Some(item) = items.first() {
+                item.delete().await?;
+            }
+
+            Ok(())
+        })
     }
 
     fn window_appearance(&self) -> crate::WindowAppearance {
