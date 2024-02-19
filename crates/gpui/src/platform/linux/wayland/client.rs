@@ -379,9 +379,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let key_sym = keymap_state.key_get_one_sym(keycode);
                 let key = xkb::keysym_get_name(key_sym).to_lowercase();
 
-                // Ignore control characters for the purposes of ime_key,
-                // but if key_utf32 is 0 then assume it isn't a control character
-                let ime_key = (key_utf32 == 0 || key_utf32 >= 32).then_some(key_utf8);
+                // Ignore control characters (and DEL) for the purposes of ime_key,
+                // but if key_utf32 is 0 then assume it isn't one
+                let ime_key =
+                    (key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127)).then_some(key_utf8);
 
                 let focused_window = &state.keyboard_focused_window;
                 if let Some(focused_window) = focused_window {
