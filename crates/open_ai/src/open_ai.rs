@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use util::http::{AsyncBody, HttpClient, Method, Request};
+use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -13,7 +13,7 @@ pub enum Role {
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub enum OpenAiModel {
+pub enum Model {
     #[serde(rename = "gpt-3.5-turbo-0613")]
     ThreePointFiveTurbo,
     #[serde(rename = "gpt-4-0613")]
@@ -23,59 +23,77 @@ pub enum OpenAiModel {
     FourTurbo,
 }
 
+impl Model {
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
+            Self::Four => "gpt-4-0613",
+            Self::FourTurbo => "gpt-4-1106-preview",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
+            Self::Four => "gpt-4",
+            Self::FourTurbo => "gpt-4-turbo",
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
-pub struct OpenAiRequest {
-    pub model: OpenAiModel,
-    pub messages: Vec<OpenAiRequestMessage>,
+pub struct Request {
+    pub model: Model,
+    pub messages: Vec<RequestMessage>,
     pub stream: bool,
     pub stop: Vec<String>,
     pub temperature: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct OpenAiRequestMessage {
+pub struct RequestMessage {
     pub role: Role,
     pub content: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct OpenAiResponseMessage {
+pub struct ResponseMessage {
     pub role: Option<Role>,
     pub content: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct OpenAiUsage {
+pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct OpenAiChoiceDelta {
+pub struct ChoiceDelta {
     pub index: u32,
-    pub delta: OpenAiResponseMessage,
+    pub delta: ResponseMessage,
     pub finish_reason: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct OpenAiResponseStreamEvent {
+pub struct ResponseStreamEvent {
     pub id: Option<String>,
     pub object: String,
     pub created: u32,
     pub model: String,
-    pub choices: Vec<OpenAiChoiceDelta>,
-    pub usage: Option<OpenAiUsage>,
+    pub choices: Vec<ChoiceDelta>,
+    pub usage: Option<Usage>,
 }
 
-pub async fn stream_completion<T: HttpClient>(
-    client: &T,
+pub async fn stream_completion(
+    client: &dyn HttpClient,
     host: &str,
     api_key: &str,
-    request: OpenAiRequest,
-) -> Result<BoxStream<'static, Result<OpenAiResponseStreamEvent>>> {
+    request: Request,
+) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{host}/chat/completions");
-    let request = Request::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")

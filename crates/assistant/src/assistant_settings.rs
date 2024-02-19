@@ -1,44 +1,8 @@
 use gpui::Pixels;
+pub use open_ai::Model as OpenAiModel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub enum OpenAiModel {
-    #[serde(rename = "gpt-3.5-turbo-0613")]
-    ThreePointFiveTurbo,
-    #[serde(rename = "gpt-4-0613")]
-    Four,
-    #[serde(rename = "gpt-4-1106-preview")]
-    #[default]
-    FourTurbo,
-}
-
-impl OpenAiModel {
-    pub fn id(&self) -> &'static str {
-        match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
-            Self::Four => "gpt-4-0613",
-            Self::FourTurbo => "gpt-4-1106-preview",
-        }
-    }
-
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
-            Self::Four => "gpt-4",
-            Self::FourTurbo => "gpt-4-turbo",
-        }
-    }
-
-    pub fn cycle(&self) -> Self {
-        match self {
-            Self::ThreePointFiveTurbo => Self::Four,
-            Self::Four => Self::FourTurbo,
-            Self::FourTurbo => Self::ThreePointFiveTurbo,
-        }
-    }
-}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum ZedDotDevModel {

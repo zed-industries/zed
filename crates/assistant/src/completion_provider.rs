@@ -30,7 +30,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         } => CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
             default_model.clone(),
             api_url.clone(),
-            cx,
+            client.http_client(),
         )),
     };
     cx.set_global(provider);
@@ -70,7 +70,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                     *provider = CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
                         default_model.clone(),
                         api_url.clone(),
-                        cx,
+                        client.http_client(),
                     ));
                 }
                 #[cfg(test)]

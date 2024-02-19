@@ -347,6 +347,7 @@ dependencies = [
  "log",
  "menu",
  "multi_buffer",
+ "open_ai",
  "ordered-float 2.10.0",
  "parking_lot 0.11.2",
  "project",

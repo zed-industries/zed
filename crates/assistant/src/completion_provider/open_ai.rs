@@ -1,32 +1,29 @@
-use crate::{
-    assistant_settings::OpenAiModel, LanguageModel, LanguageModelChoiceDelta, LanguageModelRequest,
-    LanguageModelUsage, Role,
-};
+use crate::{assistant_settings::OpenAiModel, LanguageModel, LanguageModelRequest, Role};
 use anyhow::{anyhow, Result};
-use futures::{
-    future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
-    Stream, StreamExt,
-};
-use gpui::{AppContext, BackgroundExecutor, Task};
-use isahc::{http::StatusCode, Request, RequestExt};
-use serde::{Deserialize, Serialize};
-use std::{env, io};
-use util::ResultExt;
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use gpui::{AppContext, Task};
+use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
+use std::{env, sync::Arc};
+use util::{http::HttpClient, ResultExt};
 
 pub struct OpenAiCompletionProvider {
     api_key: Option<String>,
     api_url: String,
     default_model: OpenAiModel,
-    executor: BackgroundExecutor,
+    http_client: Arc<dyn HttpClient>,
 }
 
 impl OpenAiCompletionProvider {
-    pub fn new(default_model: OpenAiModel, api_url: String, cx: &AppContext) -> Self {
+    pub fn new(
+        default_model: OpenAiModel,
+        api_url: String,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Self {
         Self {
             api_key: env::var("OPENAI_API_KEY").log_err(),
             api_url,
             default_model,
-            executor: cx.background_executor().clone(),
+            http_client,
         }
     }
 
@@ -61,12 +58,12 @@ impl OpenAiCompletionProvider {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = self.to_open_ai_request(request);
 
+        let http_client = self.http_client.clone();
         let api_key = self.api_key.clone();
         let api_url = self.api_url.clone();
-        let executor = self.executor.clone();
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(&api_key, &api_url, executor, request);
+            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             let stream = response
                 .filter_map(|response| async move {
@@ -81,24 +78,34 @@ impl OpenAiCompletionProvider {
         .boxed()
     }
 
-    fn to_open_ai_request(&self, request: LanguageModelRequest) -> OpenAiRequest {
+    fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
         let model = match request.model {
             Some(LanguageModel::OpenAi(model)) => model,
             _ => self.default_model(),
         };
-        OpenAiRequest {
+        Request {
             model,
             messages: request
                 .messages
                 .into_iter()
-                .map(|msg| OpenAiRequestMessage {
-                    role: msg.role,
+                .map(|msg| RequestMessage {
+                    role: msg.role.into(),
                     content: msg.content,
                 })
                 .collect(),
             stream: true,
             stop: request.stop,
             temperature: request.temperature,
+        }
+    }
+}
+
+impl Into<open_ai::Role> for Role {
+    fn into(self) -> open_ai::Role {
+        match self {
+            Role::User => OpenAiRole::User,
+            Role::Assistant => OpenAiRole::Assistant,
+            Role::System => OpenAiRole::System,
         }
     }
 }
