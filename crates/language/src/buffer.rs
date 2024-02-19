@@ -102,7 +102,8 @@ impl RopeFingerprint {
                     if self
                         .base_text
                         .bytes_in_range(edit.old.clone())
-                        .ne(other.bytes_in_range(edit.old))
+                        .flatten()
+                        .ne(other.bytes_in_range(edit.old).flatten())
                     {
                         return false;
                     }
