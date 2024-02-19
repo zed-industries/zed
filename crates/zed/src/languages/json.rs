@@ -54,7 +54,6 @@ impl JsonLspAdapter {
             cx,
         );
         let runnables_schema = runnable::static_source::DefinitionProvider::generate_json_schema();
-        dbg!(&runnables_schema);
         serde_json::json!({
             "json": {
                 "format": {
