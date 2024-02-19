@@ -3188,6 +3188,8 @@ async fn complete_with_language_model(
     response: StreamingResponse<proto::CompleteWithLanguageModel>,
     session: Session,
 ) -> Result<()> {
+
+
     Ok(())
 }
 
