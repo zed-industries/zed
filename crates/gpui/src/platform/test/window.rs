@@ -272,9 +272,7 @@ impl PlatformWindow for TestWindow {
         self.0.lock().should_close_handler = Some(callback);
     }
 
-    fn on_close(&self, _callback: Box<dyn FnOnce()>) {
-        unimplemented!()
-    }
+    fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
