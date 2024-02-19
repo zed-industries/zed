@@ -4,9 +4,8 @@ use futures::future::BoxFuture;
 use isahc::config::{Configurable, RedirectPolicy};
 pub use isahc::{
     http::{Method, StatusCode, Uri},
-    Error,
+    AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
 };
-pub use isahc::{AsyncBody, Request, Response};
 use parking_lot::Mutex;
 use smol::future::FutureExt;
 #[cfg(feature = "test-support")]

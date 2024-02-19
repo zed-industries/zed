@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -11,24 +13,56 @@ pub enum Role {
     System,
 }
 
+impl TryFrom<String> for Role {
+    type Error = anyhow::Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        match value.as_str() {
+            "user" => Ok(Self::User),
+            "assistant" => Ok(Self::Assistant),
+            "system" => Ok(Self::System),
+            _ => Err(anyhow!("invalid role")),
+        }
+    }
+}
+
+impl Into<String> for Role {
+    fn into(self) -> String {
+        match self {
+            Role::User => "user".to_owned(),
+            Role::Assistant => "assistant".to_owned(),
+            Role::System => "system".to_owned(),
+        }
+    }
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo-0613")]
+    #[serde(rename = "gpt-3.5-turbo")]
     ThreePointFiveTurbo,
-    #[serde(rename = "gpt-4-0613")]
+    #[serde(rename = "gpt-4")]
     Four,
-    #[serde(rename = "gpt-4-1106-preview")]
+    #[serde(rename = "gpt-4-turbo-preview")]
     #[default]
     FourTurbo,
 }
 
 impl Model {
+    pub fn from_id(id: &str) -> Result<Self> {
+        match id {
+            "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
+            "gpt-4" => Ok(Self::Four),
+            "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
+            _ => Err(anyhow!("invalid model id")),
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
-            Self::Four => "gpt-4-0613",
-            Self::FourTurbo => "gpt-4-1106-preview",
+            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
+            Self::Four => "gpt-4",
+            Self::FourTurbo => "gpt-4-turbo-preview",
         }
     }
 
@@ -88,11 +122,11 @@ pub struct ResponseStreamEvent {
 
 pub async fn stream_completion(
     client: &dyn HttpClient,
-    host: &str,
+    api_url: &str,
     api_key: &str,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
-    let uri = format!("{host}/chat/completions");
+    let uri = format!("{api_url}/chat/completions");
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)

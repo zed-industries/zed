@@ -1691,7 +1691,7 @@ message LanguageModelRequestMessage {
 }
 
 message LanguageModelResponse {
-    string id = 1;
+    optional string id = 1;
     string object = 2;
     uint32 created = 3;
     string model = 4;
@@ -1707,7 +1707,7 @@ message LanguageModelResponseMessage {
 message LanguageModelChoiceDelta {
     uint32 index = 1;
     LanguageModelResponseMessage delta = 2;
-    string finish_reason = 3;
+    optional string finish_reason = 3;
 }
 
 message LanguageModelUsage {

@@ -29,6 +29,7 @@ use axum::{
 };
 use collections::{HashMap, HashSet};
 pub use connection_pool::ConnectionPool;
+use core::fmt::{self, Debug, Formatter};
 use futures::{
     channel::oneshot,
     future::{self, BoxFuture},
@@ -47,7 +48,6 @@ use rpc::{
 use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
-    fmt,
     future::Future,
     marker::PhantomData,
     mem,
@@ -64,7 +64,7 @@ use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{field, info_span, instrument, Instrument};
-use util::SemanticVersion;
+use util::{http::IsahcHttpClient, SemanticVersion};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -126,6 +126,7 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
+    http_client: IsahcHttpClient,
     _executor: Executor,
 }
 
@@ -150,8 +151,8 @@ impl Session {
     }
 }
 
-impl fmt::Debug for Session {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Debug for Session {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Session")
             .field("user_id", &self.user_id)
             .field("connection_id", &self.connection_id)
@@ -205,7 +206,7 @@ impl Server {
         let mut server = Self {
             id: parking_lot::Mutex::new(id),
             peer: Peer::new(id.0 as u32),
-            app_state,
+            app_state: app_state.clone(),
             executor,
             connection_pool: Default::default(),
             handlers: Default::default(),
@@ -306,7 +307,18 @@ impl Server {
             .add_request_handler(get_private_user_info)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
-            .add_streaming_request_handler(complete_with_language_model);
+            .add_streaming_request_handler({
+                let app_state = app_state.clone();
+                move |request, response, session| {
+                    complete_with_language_model(
+                        request,
+                        response,
+                        session,
+                        app_state.config.open_ai_api_key.clone(),
+                        app_state.config.google_ai_api_key.clone(),
+                    )
+                }
+            });
 
         Arc::new(server)
     }
@@ -672,6 +684,7 @@ impl Server {
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone(),
+                http_client: IsahcHttpClient::new().map_err(|error| anyhow!(error))?,
                 _executor: executor.clone()
             };
             update_user_contacts(user_id, &session).await?;
@@ -3187,16 +3200,81 @@ async fn complete_with_language_model(
     request: proto::CompleteWithLanguageModel,
     response: StreamingResponse<proto::CompleteWithLanguageModel>,
     session: Session,
+    open_ai_api_key: Option<Arc<str>>,
+    google_ai_api_key: Option<Arc<str>>,
 ) -> Result<()> {
-    if request.model.starts_with("gemini") {
-        let db = session.db().await;
-        let flags = db.get_user_flags(session.user_id).await?;
-        if flags.iter().any(|flag| flag == "gemini") {}
-    } else if request.model.starts_with("gpt") {
-        // open_ai::stream_completions()
-        // build completion provider
-        // start request
-        // forward response chunks
+    if request.model.starts_with("gpt") {
+        let api_key =
+            open_ai_api_key.ok_or_else(|| anyhow!("no OpenAI API key configured on the server"))?;
+        complete_with_open_ai(request, response, session, api_key).await?;
+    } else if request.model.starts_with("gemini") {
+        todo!()
+        // let api_key = google_ai_api_key
+        //     .ok_or_else(|| anyhow!("no Google API key configured on the server"))?;
+        // let db = session.db().await;
+        // let flags = db.get_user_flags(session.user_id).await?;
+        // if flags.iter().any(|flag| flag == "gemini") {}
+    }
+
+    Ok(())
+}
+
+async fn complete_with_open_ai(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: Session,
+    api_key: Arc<str>,
+) -> Result<()> {
+    const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
+
+    let mut completion_stream = open_ai::stream_completion(
+        &session.http_client,
+        OPEN_AI_API_URL,
+        &api_key,
+        open_ai::Request {
+            model: open_ai::Model::from_id(&request.model).unwrap_or(open_ai::Model::FourTurbo),
+            messages: request
+                .messages
+                .into_iter()
+                .map(|message| {
+                    Ok(open_ai::RequestMessage {
+                        role: message.role.try_into()?,
+                        content: message.content,
+                    })
+                })
+                .collect::<Result<Vec<open_ai::RequestMessage>>>()?,
+            stream: true,
+            stop: request.stop,
+            temperature: request.temperature,
+        },
+    )
+    .await?;
+
+    while let Some(event) = completion_stream.next().await {
+        let event = event?;
+        response.send(proto::LanguageModelResponse {
+            id: event.id,
+            object: event.object,
+            created: event.created,
+            model: event.model,
+            choices: event
+                .choices
+                .into_iter()
+                .map(|choice| proto::LanguageModelChoiceDelta {
+                    index: choice.index,
+                    delta: Some(proto::LanguageModelResponseMessage {
+                        role: choice.delta.role.map(Into::into),
+                        content: choice.delta.content,
+                    }),
+                    finish_reason: choice.finish_reason,
+                })
+                .collect(),
+            usage: event.usage.map(|usage| proto::LanguageModelUsage {
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                total_tokens: usage.total_tokens,
+            }),
+        })?;
     }
 
     Ok(())

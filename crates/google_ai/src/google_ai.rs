@@ -5,13 +5,13 @@ use util::http::HttpClient;
 
 pub async fn stream_generate_content<T: HttpClient>(
     client: &T,
-    host: &str,
+    api_url: &str,
     api_key: &str,
     request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
     let uri = format!(
         "{}/v1beta/models/gemini-pro:streamGenerateContent?alt=sse&key={}",
-        host, api_key
+        api_url, api_key
     );
     let request = serde_json::to_string(&request)?;
     let mut response = client.post_json(&uri, request.into()).await?;
