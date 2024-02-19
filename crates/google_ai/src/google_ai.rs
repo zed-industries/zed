@@ -1,33 +1,49 @@
-use futures::AsyncReadExt;
+use anyhow::{anyhow, Result};
+use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use util::http::{AsyncBody, Error, HttpClient, Method, Request, Response};
+use util::http::HttpClient;
 
-pub async fn make_request<T: HttpClient>(
+pub async fn stream_generate_content<T: HttpClient>(
     client: &T,
-    uri: &str,
-    method: Method,
-    body: AsyncBody,
-) -> Result<(), Error> {
-    let request = Request::builder().method(method).uri(uri).body(body)?;
-
-    let response = client.send(request).await?;
-
-    // Read chunks of the response body and print them out.
-    let mut stream = response.into_body();
-
-    let mut start = 0;
-    let mut buffer = Vec::new();
-    while let Ok(n) = stream.read(&mut buffer).await {
-        if n == 0 {
-            break;
-        }
-        println!("New chunk: {:?}", &buffer[start..start + n]);
-        start += n;
+    host: &str,
+    api_key: &str,
+    request: GenerateContentRequest,
+) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
+    let uri = format!(
+        "{}/v1beta/models/gemini-pro:streamGenerateContent?alt=sse&key={}",
+        host, api_key
+    );
+    let request = serde_json::to_string(&request)?;
+    let mut response = client.post_json(&uri, request.into()).await?;
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
+        Ok(reader
+            .lines()
+            .filter_map(|line| async move {
+                match line {
+                    Ok(line) => {
+                        if let Some(line) = line.strip_prefix("data: ") {
+                            match serde_json::from_str(line) {
+                                Ok(response) => Some(Ok(response)),
+                                Err(error) => Some(Err(anyhow!(error))),
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    Err(error) => Some(Err(anyhow!(error))),
+                }
+            })
+            .boxed())
+    } else {
+        let mut text = String::new();
+        response.body_mut().read_to_string(&mut text).await?;
+        Err(anyhow!(
+            "error during streamGenerateContent, status code: {:?}, body: {}",
+            response.status(),
+            text
+        ))
     }
-
-    println!("Response body: {:?}", String::from_utf8_lossy(&buffer));
-
-    Ok(())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,20 +60,23 @@ pub enum Task {
     BatchEmbedContents,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerateContentRequest {
     pub contents: Vec<Content>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerateContentResponse {
     pub candidates: Option<Vec<GenerateContentCandidate>>,
     pub prompt_feedback: Option<PromptFeedback>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerateContentCandidate {
     pub index: usize,
     pub content: Content,
@@ -67,35 +86,42 @@ pub struct GenerateContentCandidate {
     pub citation_metadata: Option<CitationMetadata>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Content {
     pub parts: Vec<Part>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Part {
     TextPart(TextPart),
     InlineDataPart(InlineDataPart),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TextPart {
     pub text: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InlineDataPart {
     pub inline_data: GenerativeContentBlob,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerativeContentBlob {
     pub mime_type: String,
     pub data: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FinishReason {
+    #[serde(rename = "FINISH_REASON_UNSPECIFIED")]
     Unspecified,
     Stop,
     MaxTokens,
@@ -104,14 +130,17 @@ pub enum FinishReason {
     Other,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BlockReason {
+    #[serde(rename = "BLOCK_REASON_UNSPECIFIED")]
     Unspecified,
     Safety,
     Other,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CitationSource {
     pub start_index: Option<usize>,
     pub end_index: Option<usize>,
@@ -119,19 +148,22 @@ pub struct CitationSource {
     pub license: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CitationMetadata {
     pub citation_sources: Vec<CitationSource>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PromptFeedback {
-    pub block_reason: BlockReason,
+    pub block_reason: Option<BlockReason>,
     pub safety_ratings: Vec<SafetyRating>,
     pub block_reason_message: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
     pub candidate_count: Option<usize>,
     pub stop_sequences: Option<Vec<String>>,
@@ -141,32 +173,57 @@ pub struct GenerationConfig {
     pub top_k: Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SafetySetting {
     pub category: HarmCategory,
     pub threshold: HarmBlockThreshold,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum HarmCategory {
+    #[serde(rename = "HARM_CATEGORY_UNSPECIFIED")]
     Unspecified,
-    HateSpeech,
-    SexuallyExplicit,
+    #[serde(rename = "HARM_CATEGORY_DEROGATORY")]
+    Derogatory,
+    #[serde(rename = "HARM_CATEGORY_TOXICITY")]
+    Toxicity,
+    #[serde(rename = "HARM_CATEGORY_VIOLENCE")]
+    Violence,
+    #[serde(rename = "HARM_CATEGORY_SEXUAL")]
+    Sexual,
+    #[serde(rename = "HARM_CATEGORY_MEDICAL")]
+    Medical,
+    #[serde(rename = "HARM_CATEGORY_DANGEROUS")]
+    Dangerous,
+    #[serde(rename = "HARM_CATEGORY_HARASSMENT")]
     Harassment,
+    #[serde(rename = "HARM_CATEGORY_HATE_SPEECH")]
+    HateSpeech,
+    #[serde(rename = "HARM_CATEGORY_SEXUALLY_EXPLICIT")]
+    SexuallyExplicit,
+    #[serde(rename = "HARM_CATEGORY_DANGEROUS_CONTENT")]
     DangerousContent,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum HarmBlockThreshold {
+    #[serde(rename = "HARM_BLOCK_THRESHOLD_UNSPECIFIED")]
     Unspecified,
+    #[serde(rename = "BLOCK_LOW_AND_ABOVE")]
     BlockLowAndAbove,
+    #[serde(rename = "BLOCK_MEDIUM_AND_ABOVE")]
     BlockMediumAndAbove,
+    #[serde(rename = "BLOCK_ONLY_HIGH")]
     BlockOnlyHigh,
+    #[serde(rename = "BLOCK_NONE")]
     BlockNone,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum HarmProbability {
+    #[serde(rename = "HARM_PROBABILITY_UNSPECIFIED")]
     Unspecified,
     Negligible,
     Low,
@@ -174,7 +231,8 @@ pub enum HarmProbability {
     High,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SafetyRating {
     pub category: HarmCategory,
     pub probability: HarmProbability,
