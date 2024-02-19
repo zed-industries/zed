@@ -80,7 +80,7 @@ impl CommandPalette {
             previous_focus_handle,
         );
 
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
         Self { picker }
     }
 }
@@ -317,8 +317,8 @@ impl PickerDelegate for CommandPaletteDelegate {
         });
         let action = command.action;
         cx.focus(&self.previous_focus_handle);
-        cx.dispatch_action(action);
         self.dismissed(cx);
+        cx.dispatch_action(action);
     }
 
     fn render_match(

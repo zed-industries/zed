@@ -105,6 +105,31 @@ spec:
                 secretKeyRef:
                   name: livekit
                   key: secret
+            - name: BLOB_STORE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: blob-store
+                  key: access_key
+            - name: BLOB_STORE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: blob-store
+                  key: secret_key
+            - name: BLOB_STORE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: blob-store
+                  key: url
+            - name: BLOB_STORE_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: blob-store
+                  key: region
+            - name: BLOB_STORE_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: blob-store
+                  key: bucket
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE

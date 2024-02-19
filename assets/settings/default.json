@@ -484,6 +484,7 @@
   "deno": {
     "enable": false
   },
+  "code_actions_on_format": {},
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {
@@ -494,7 +495,10 @@
     },
     "Go": {
       "tab_size": 4,
-      "hard_tabs": true
+      "hard_tabs": true,
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
     },
     "Markdown": {
       "soft_wrap": "preferred_line_length"

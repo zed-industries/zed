@@ -44,6 +44,12 @@ If you are developing collaborative features of Zed, you'll need to install the 
   brew install livekit foreman
   ```
 
+Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
+
+```sh
+docker compose up -d
+```
+
 ## Building Zed from Source
 
 Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).

@@ -69,9 +69,17 @@ impl BladeAtlas {
         }
     }
 
-    pub fn allocate(&self, size: Size<DevicePixels>, texture_kind: AtlasTextureKind) -> AtlasTile {
+    /// Allocate a rectangle and make it available for rendering immediately (without waiting for `before_frame`)
+    pub fn allocate_for_rendering(
+        &self,
+        size: Size<DevicePixels>,
+        texture_kind: AtlasTextureKind,
+        gpu_encoder: &mut gpu::CommandEncoder,
+    ) -> AtlasTile {
         let mut lock = self.0.lock();
-        lock.allocate(size, texture_kind)
+        let tile = lock.allocate(size, texture_kind);
+        lock.flush_initializations(gpu_encoder);
+        tile
     }
 
     pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
@@ -200,15 +208,19 @@ impl BladeAtlasState {
     }
 
     fn upload_texture(&mut self, id: AtlasTextureId, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
-        let data = self.upload_belt.alloc_data(bytes, &self.gpu);
+        let data = unsafe { self.upload_belt.alloc_data(bytes, &self.gpu) };
         self.uploads.push(PendingUpload { id, bounds, data });
     }
 
-    fn flush(&mut self, encoder: &mut gpu::CommandEncoder) {
+    fn flush_initializations(&mut self, encoder: &mut gpu::CommandEncoder) {
         for id in self.initializations.drain(..) {
             let texture = &self.storage[id];
             encoder.init_texture(texture.raw);
         }
+    }
+
+    fn flush(&mut self, encoder: &mut gpu::CommandEncoder) {
+        self.flush_initializations(encoder);
 
         let mut transfers = encoder.transfer();
         for upload in self.uploads.drain(..) {

@@ -1,6 +1,20 @@
 //todo!(linux): remove
 #![allow(unused)]
 
+use crate::{
+    platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Pixels, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, Size, WindowAppearance,
+    WindowBounds, WindowOptions, X11Display,
+};
+use blade_graphics as gpu;
+use parking_lot::Mutex;
+use raw_window_handle as rwh;
+
+use xcb::{
+    x::{self, StackMode},
+    Xid as _,
+};
+
 use std::{
     ffi::c_void,
     mem,
@@ -8,20 +22,6 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
-};
-
-use blade_graphics as gpu;
-use parking_lot::Mutex;
-use raw_window_handle as rwh;
-use xcb::{
-    x::{self, StackMode},
-    Xid as _,
-};
-
-use crate::platform::linux::blade_renderer::BladeRenderer;
-use crate::{
-    Bounds, GlobalPixels, Pixels, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    Size, WindowAppearance, WindowBounds, WindowOptions, X11Display,
 };
 
 #[derive(Default)]
@@ -52,6 +52,7 @@ struct LinuxWindowInner {
     bounds: Bounds<i32>,
     scale_factor: f32,
     renderer: BladeRenderer,
+    input_handler: Option<PlatformInputHandler>,
 }
 
 impl LinuxWindowInner {
@@ -152,7 +153,19 @@ impl X11WindowState {
         let xcb_values = [
             x::Cw::BackPixel(screen.white_pixel()),
             x::Cw::EventMask(
-                x::EventMask::EXPOSURE | x::EventMask::STRUCTURE_NOTIFY | x::EventMask::KEY_PRESS,
+                x::EventMask::EXPOSURE
+                    | x::EventMask::STRUCTURE_NOTIFY
+                    | x::EventMask::KEY_PRESS
+                    | x::EventMask::KEY_RELEASE
+                    | x::EventMask::BUTTON_PRESS
+                    | x::EventMask::BUTTON_RELEASE
+                    | x::EventMask::POINTER_MOTION
+                    | x::EventMask::BUTTON1_MOTION
+                    | x::EventMask::BUTTON2_MOTION
+                    | x::EventMask::BUTTON3_MOTION
+                    | x::EventMask::BUTTON4_MOTION
+                    | x::EventMask::BUTTON5_MOTION
+                    | x::EventMask::BUTTON_MOTION,
             ),
         ];
 
@@ -238,7 +251,7 @@ impl X11WindowState {
 
         // Note: this has to be done after the GPU init, or otherwise
         // the sizes are immediately invalidated.
-        let gpu_extent = query_render_extent(&xcb_connection, x_window);
+        let gpu_extent = query_render_extent(xcb_connection, x_window);
 
         Self {
             xcb_connection: Arc::clone(xcb_connection),
@@ -250,6 +263,7 @@ impl X11WindowState {
                 bounds,
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
+                input_handler: None,
             }),
         }
     }
@@ -282,9 +296,13 @@ impl X11WindowState {
             let mut inner = self.inner.lock();
             let old_bounds = mem::replace(&mut inner.bounds, bounds);
             do_move = old_bounds.origin != bounds.origin;
+            //todo!(linux): use normal GPUI types here, refactor out the double
+            // viewport check and extra casts ( )
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
             if inner.renderer.viewport_size() != gpu_size {
-                inner.renderer.resize(gpu_size);
+                inner
+                    .renderer
+                    .update_drawable_size(size(gpu_size.width as f64, gpu_size.height as f64));
                 resize_args = Some((inner.content_size(), inner.scale_factor));
             }
         }
@@ -312,6 +330,20 @@ impl X11WindowState {
                 remainder: 0,
             })
             .unwrap();
+    }
+
+    pub fn handle_input(&self, input: PlatformInput) {
+        if let Some(ref mut fun) = self.callbacks.lock().input {
+            if fun(input.clone()) {
+                return;
+            }
+        }
+        if let PlatformInput::KeyDown(event) = input {
+            let mut inner = self.inner.lock();
+            if let Some(ref mut input_handler) = inner.input_handler {
+                input_handler.replace_text_in_range(None, &event.keystroke.key);
+            }
+        }
     }
 }
 
@@ -356,12 +388,12 @@ impl PlatformWindow for X11Window {
         self
     }
 
-    //todo!(linux)
-    fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {}
+    fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
+        self.0.inner.lock().input_handler = Some(input_handler);
+    }
 
-    //todo!(linux)
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        None
+        self.0.inner.lock().input_handler.take()
     }
 
     //todo!(linux)
@@ -378,7 +410,7 @@ impl PlatformWindow for X11Window {
     fn activate(&self) {
         self.0.xcb_connection.send_request(&x::ConfigureWindow {
             window: self.0.x_window,
-            value_list: &[x::ConfigWindow::StackMode(StackMode::Above)],
+            value_list: &[x::ConfigWindow::StackMode(x::StackMode::Above)],
         });
     }
 
@@ -468,7 +500,7 @@ impl PlatformWindow for X11Window {
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         let inner = self.0.inner.lock();
-        inner.renderer.atlas().clone()
+        inner.renderer.sprite_atlas().clone()
     }
 
     fn set_graphics_profiler_enabled(&self, enabled: bool) {

@@ -25,7 +25,7 @@ pub fn init(cx: &mut AppContext) {
                 let handle = cx.view().downgrade();
                 workspace.toggle_modal(cx, move |cx| {
                     let delegate = ProjectSymbolsDelegate::new(handle, project);
-                    Picker::new(delegate, cx).width(rems(34.))
+                    Picker::uniform_list(delegate, cx).width(rems(34.))
                 })
             });
         },
@@ -344,7 +344,7 @@ mod tests {
 
         // Create the project symbols view.
         let symbols = cx.new_view(|cx| {
-            Picker::new(
+            Picker::uniform_list(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
                 cx,
             )

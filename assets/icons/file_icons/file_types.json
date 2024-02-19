@@ -16,10 +16,12 @@
         "bmp": "image",
         "c": "code",
         "cc": "code",
+        "cjs": "code",
         "conf": "settings",
         "cpp": "code",
         "css": "css",
         "csv": "storage",
+        "cts": "typescript",
         "dat": "storage",
         "db": "storage",
         "dbf": "storage",
@@ -73,6 +75,7 @@
         "ldf": "storage",
         "lock": "lock",
         "log": "log",
+        "lua": "lua",
         "m4a": "audio",
         "m4v": "video",
         "md": "document",
@@ -80,12 +83,14 @@
         "mdf": "storage",
         "mdx": "document",
         "mkv": "video",
+        "mjs": "code",
         "mka": "audio",
         "ml": "ocaml",
         "mli": "ocaml",
         "mov": "video",
         "mp3": "audio",
         "mp4": "video",
+        "mts": "typescript",
         "myd": "storage",
         "myi": "storage",
         "odp": "document",
@@ -206,8 +211,11 @@
         "log": {
             "icon": "icons/file_icons/info.svg"
         },
+        "lua": {
+            "icon": "icons/file_icons/lua.svg"
+        },
         "ocaml": {
-          "icon": "icons/file_icons/ocaml.svg"
+            "icon": "icons/file_icons/ocaml.svg"
         },
         "phoenix": {
             "icon": "icons/file_icons/phoenix.svg"

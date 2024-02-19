@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
@@ -49,8 +50,8 @@ pub(crate) struct LinuxPlatformInner {
 }
 
 pub(crate) struct LinuxPlatform {
-    client: Arc<dyn Client>,
-    inner: Arc<LinuxPlatformInner>,
+    client: Rc<dyn Client>,
+    inner: Rc<LinuxPlatformInner>,
 }
 
 pub(crate) struct LinuxPlatformState {
@@ -93,7 +94,7 @@ impl LinuxPlatform {
         let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
             Arc::new(WaylandClientDispatcher::new(&conn));
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
-        let inner = Arc::new(LinuxPlatformInner {
+        let inner = Rc::new(LinuxPlatformInner {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             main_receiver,
@@ -101,10 +102,10 @@ impl LinuxPlatform {
             callbacks,
             state,
         });
-        let client = Arc::new(WaylandClient::new(Arc::clone(&inner), Arc::clone(&conn)));
+        let client = Rc::new(WaylandClient::new(Rc::clone(&inner), Arc::clone(&conn)));
         Self {
             client,
-            inner: Arc::clone(&inner),
+            inner: Rc::clone(&inner),
         }
     }
 
@@ -115,15 +116,27 @@ impl LinuxPlatform {
         callbacks: Mutex<Callbacks>,
         state: Mutex<LinuxPlatformState>,
     ) -> Self {
-        let (xcb_connection, x_root_index) =
-            xcb::Connection::connect_with_extensions(None, &[xcb::Extension::Present], &[])
-                .unwrap();
+        let (xcb_connection, x_root_index) = xcb::Connection::connect_with_extensions(
+            None,
+            &[xcb::Extension::Present, xcb::Extension::Xkb],
+            &[],
+        )
+        .unwrap();
+
+        let xkb_ver = xcb_connection
+            .wait_for_reply(xcb_connection.send_request(&xcb::xkb::UseExtension {
+                wanted_major: xcb::xkb::MAJOR_VERSION as u16,
+                wanted_minor: xcb::xkb::MINOR_VERSION as u16,
+            }))
+            .unwrap();
+        assert!(xkb_ver.supported());
+
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
         let xcb_connection = Arc::new(xcb_connection);
         let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
             Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
-        let inner = Arc::new(LinuxPlatformInner {
+        let inner = Rc::new(LinuxPlatformInner {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             main_receiver,
@@ -131,15 +144,15 @@ impl LinuxPlatform {
             callbacks,
             state,
         });
-        let client = Arc::new(X11Client::new(
-            Arc::clone(&inner),
+        let client = Rc::new(X11Client::new(
+            Rc::clone(&inner),
             xcb_connection,
             x_root_index,
             atoms,
         ));
         Self {
             client,
-            inner: Arc::clone(&inner),
+            inner: Rc::clone(&inner),
         }
     }
 }
@@ -202,7 +215,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn open_url(&self, url: &str) {
-        unimplemented!()
+        open::that(url);
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -213,15 +226,75 @@ impl Platform for LinuxPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
-        unimplemented!()
+        let (done_tx, done_rx) = oneshot::channel();
+        self.foreground_executor()
+            .spawn(async move {
+                let title = if options.multiple {
+                    if !options.files {
+                        "Open folders"
+                    } else {
+                        "Open files"
+                    }
+                } else {
+                    if !options.files {
+                        "Open folder"
+                    } else {
+                        "Open file"
+                    }
+                };
+
+                let result = OpenFileRequest::default()
+                    .modal(true)
+                    .title(title)
+                    .accept_label("Select")
+                    .multiple(options.multiple)
+                    .directory(options.directories)
+                    .send()
+                    .await
+                    .ok()
+                    .and_then(|request| request.response().ok())
+                    .and_then(|response| {
+                        response
+                            .uris()
+                            .iter()
+                            .map(|uri| uri.to_file_path().ok())
+                            .collect()
+                    });
+
+                done_tx.send(result);
+            })
+            .detach();
+        done_rx
     }
 
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
-        unimplemented!()
+        let (done_tx, done_rx) = oneshot::channel();
+        let directory = directory.to_owned();
+        self.foreground_executor()
+            .spawn(async move {
+                let result = SaveFileRequest::default()
+                    .modal(true)
+                    .title("Select new path")
+                    .accept_label("Accept")
+                    .send()
+                    .await
+                    .ok()
+                    .and_then(|request| request.response().ok())
+                    .and_then(|response| {
+                        response
+                            .uris()
+                            .first()
+                            .and_then(|uri| uri.to_file_path().ok())
+                    });
+
+                done_tx.send(result);
+            })
+            .detach();
+        done_rx
     }
 
     fn reveal_path(&self, path: &Path) {
-        unimplemented!()
+        open::that(path);
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {

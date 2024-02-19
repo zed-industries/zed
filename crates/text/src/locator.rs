@@ -7,6 +7,13 @@ lazy_static! {
     static ref MAX: Locator = Locator::max();
 }
 
+/// An identifier for a position in a ordered collection.
+///
+/// Allows prepending and appending without needing to renumber existing locators
+/// using `Locator::between(lhs, rhs)`.
+///
+/// The initial location for a collection should be `Locator::between(Locator::min(), Locator::max())`,
+/// leaving room for items to be inserted before and after it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Locator(SmallVec<[u64; 4]>);
 

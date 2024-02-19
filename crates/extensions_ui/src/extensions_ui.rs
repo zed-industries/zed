@@ -1,12 +1,11 @@
 use client::telemetry::Telemetry;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{Extension, ExtensionStatus, ExtensionStore};
-use fs::Fs;
 use gpui::{
     actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
     FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
-    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
-    WhiteSpace, WindowContext,
+    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace,
+    WindowContext,
 };
 use settings::Settings;
 use std::time::Duration;
@@ -32,8 +31,6 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct ExtensionsPage {
-    workspace: WeakView<Workspace>,
-    fs: Arc<dyn Fs>,
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
@@ -46,7 +43,7 @@ pub struct ExtensionsPage {
 
 impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        let extensions_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
+        cx.new_view(|cx: &mut ViewContext<Self>| {
             let store = ExtensionStore::global(cx);
             let subscription = cx.observe(&store, |_, _, cx| cx.notify());
 
@@ -54,8 +51,6 @@ impl ExtensionsPage {
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let mut this = Self {
-                fs: workspace.project().read(cx).fs().clone(),
-                workspace: workspace.weak_handle(),
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
                 is_fetching_extensions: false,
@@ -67,8 +62,7 @@ impl ExtensionsPage {
             };
             this.fetch_extensions(None, cx);
             this
-        });
-        extensions_panel
+        })
     }
 
     fn install_extension(
@@ -200,6 +194,8 @@ impl ExtensionsPage {
         }
         .color(Color::Accent);
 
+        let repository_url = extension.repository.clone();
+
         div().w_full().child(
             v_flex()
                 .w_full()
@@ -236,18 +232,24 @@ impl ExtensionsPage {
                         ),
                 )
                 .child(
-                    h_flex().justify_between().child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
-                    ),
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        )
+                        .child(
+                            Label::new(format!("Downloads: {}", extension.download_count))
+                                .size(LabelSize::Small),
+                        ),
                 )
                 .child(
                     h_flex()
@@ -256,7 +258,19 @@ impl ExtensionsPage {
                             Label::new(description.clone())
                                 .size(LabelSize::Small)
                                 .color(Color::Default)
-                        })),
+                        }))
+                        .child(
+                            IconButton::new(
+                                SharedString::from(format!("repository-{}", extension.id)),
+                                IconName::Github,
+                            )
+                            .icon_color(Color::Accent)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(move |_, _, cx| {
+                                cx.open_url(&repository_url);
+                            })),
+                        ),
                 ),
         )
     }
@@ -453,25 +467,9 @@ impl Item for ExtensionsPage {
     fn clone_on_split(
         &self,
         _workspace_id: WorkspaceId,
-        cx: &mut ViewContext<Self>,
+        _: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        Some(cx.new_view(|cx| {
-            let store = ExtensionStore::global(cx);
-            let subscription = cx.observe(&store, |_, _, cx| cx.notify());
-
-            ExtensionsPage {
-                fs: self.fs.clone(),
-                workspace: self.workspace.clone(),
-                list: UniformListScrollHandle::new(),
-                telemetry: self.telemetry.clone(),
-                is_fetching_extensions: false,
-                extensions_entries: Default::default(),
-                query_editor: self.query_editor.clone(),
-                _subscription: subscription,
-                query_contains_error: false,
-                extension_fetch_task: None,
-            }
-        }))
+        None
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

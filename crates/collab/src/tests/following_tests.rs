@@ -2077,3 +2077,66 @@ async fn test_following_to_channel_notes_other_workspace(
         assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
     });
 }
+
+#[gpui::test]
+async fn test_following_while_deactivated(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let (_, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
+
+    let mut cx_a2 = cx_a.clone();
+    let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
+    join_channel(channel, &client_a, cx_a).await.unwrap();
+    share_workspace(&workspace_a, cx_a).await.unwrap();
+
+    // a opens 1.txt
+    cx_a.simulate_keystrokes("cmd-p 1 enter");
+    cx_a.run_until_parked();
+    workspace_a.update(cx_a, |workspace, cx| {
+        let editor = workspace.active_item(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
+    });
+
+    // b joins channel and is following a
+    join_channel(channel, &client_b, cx_b).await.unwrap();
+    cx_b.run_until_parked();
+    let (workspace_b, cx_b) = client_b.active_workspace(cx_b);
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
+    });
+
+    // stop following
+    cx_b.simulate_keystrokes("down");
+
+    // a opens a different file while not followed
+    cx_a.simulate_keystrokes("cmd-p 2 enter");
+
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
+    });
+
+    // a opens a file in a new window
+    let (_, cx_a2) = client_a.build_test_workspace(&mut cx_a2).await;
+    cx_a2.update(|cx| cx.activate_window());
+    cx_a2.simulate_keystrokes("cmd-p 3 enter");
+    cx_a2.run_until_parked();
+
+    // b starts following a again
+    cx_b.simulate_keystrokes("cmd-ctrl-alt-f");
+    cx_a.run_until_parked();
+
+    // a returns to the shared project
+    cx_a.update(|cx| cx.activate_window());
+    cx_a.run_until_parked();
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        let editor = workspace.active_item(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "2.js");
+    });
+
+    // b should follow a back
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "2.js");
+    });
+}

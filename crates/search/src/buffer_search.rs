@@ -182,11 +182,13 @@ impl Render for BufferSearchBar {
                 if self.query(cx).is_empty() {
                     return None;
                 }
-                let matches = self
+                let matches_count = self
                     .searchable_items_with_matches
-                    .get(&searchable_item.downgrade())?;
+                    .get(&searchable_item.downgrade())
+                    .map(Vec::len)
+                    .unwrap_or(0);
                 if let Some(match_ix) = self.active_match_index {
-                    Some(format!("{}/{}", match_ix + 1, matches.len()))
+                    Some(format!("{}/{}", match_ix + 1, matches_count))
                 } else {
                     match_color = Color::Error; // No matches found
                     None
@@ -687,7 +689,6 @@ impl BufferSearchBar {
                 });
             });
             self.search_options = options;
-            self.query_contains_error = false;
             self.clear_matches(cx);
             cx.notify();
         }
@@ -804,7 +805,6 @@ impl BufferSearchBar {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited => {
-                self.query_contains_error = false;
                 self.clear_matches(cx);
                 let search = self.update_matches(cx);
                 cx.spawn(|this, mut cx| async move {
@@ -845,6 +845,16 @@ impl BufferSearchBar {
     fn toggle_whole_word(&mut self, _: &ToggleWholeWord, cx: &mut ViewContext<Self>) {
         self.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
     }
+
+    fn clear_active_searchable_item_matches(&mut self, cx: &mut WindowContext) {
+        if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+            self.active_match_index = None;
+            self.searchable_items_with_matches
+                .remove(&active_searchable_item.downgrade());
+            active_searchable_item.clear_matches(cx);
+        }
+    }
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         let mut active_item_matches = None;
         for (searchable_item, matches) in self.searchable_items_with_matches.drain() {
@@ -869,9 +879,9 @@ impl BufferSearchBar {
         self.pending_search.take();
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
+            self.query_contains_error = false;
             if query.is_empty() {
-                self.active_match_index.take();
-                active_searchable_item.clear_matches(cx);
+                self.clear_active_searchable_item_matches(cx);
                 let _ = done_tx.send(());
                 cx.notify();
             } else {
@@ -887,7 +897,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
-                            self.active_match_index = None;
+                            self.clear_active_searchable_item_matches(cx);
                             cx.notify();
                             return done_rx;
                         }
@@ -904,7 +914,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
-                            self.active_match_index = None;
+                            self.clear_active_searchable_item_matches(cx);
                             cx.notify();
                             return done_rx;
                         }
@@ -1910,5 +1920,44 @@ mod tests {
         "#
             .unindent()
         );
+    }
+
+    #[gpui::test]
+    async fn test_invalid_regexp_search_after_valid(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+        let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
+            background_highlights
+                .into_iter()
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>()
+        };
+        // Search using valid regexp
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.activate_search_mode(SearchMode::Regex, cx);
+                search_bar.search("expression", None, cx)
+            })
+            .await
+            .unwrap();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                display_points_of(editor.all_text_background_highlights(cx)),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 20),
+                    DisplayPoint::new(1, 9)..DisplayPoint::new(1, 19),
+                ],
+            );
+        });
+
+        // Now, the expression is invalid
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search("expression (", None, cx)
+            })
+            .await
+            .unwrap_err();
+        editor.update(cx, |editor, cx| {
+            assert!(display_points_of(editor.all_text_background_highlights(cx)).is_empty(),);
+        });
     }
 }

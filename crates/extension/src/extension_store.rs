@@ -42,6 +42,7 @@ pub struct Extension {
     pub description: Option<String>,
     pub authors: Vec<String>,
     pub repository: String,
+    pub download_count: usize,
 }
 
 #[derive(Clone)]
@@ -414,8 +415,8 @@ impl ExtensionStore {
                 language.matcher.clone(),
                 vec![],
                 move || {
-                    let config = std::fs::read(language_path.join("config.toml"))?;
-                    let config: LanguageConfig = ::toml::from_slice(&config)?;
+                    let config = std::fs::read_to_string(language_path.join("config.toml"))?;
+                    let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
                     Ok((config, queries))
                 },

@@ -16,6 +16,9 @@ use text::{Patch, Rope};
 
 use super::Highlights;
 
+/// Decides where the [`Inlay`]s should be displayed.
+///
+/// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct InlayMap {
     snapshot: InlaySnapshot,
     inlays: Vec<Inlay>,
