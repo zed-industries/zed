@@ -106,6 +106,14 @@ impl Client for X11Client {
                     window.request_refresh();
                 }
                 xcb::Event::Present(xcb::present::Event::IdleNotify(_ev)) => {}
+                xcb::Event::X(x::Event::FocusIn(ev)) => {
+                    let window = self.get_window(ev.event());
+                    window.set_focused(true);
+                }
+                xcb::Event::X(x::Event::FocusOut(ev)) => {
+                    let window = self.get_window(ev.event());
+                    window.set_focused(false);
+                }
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
                     let window = self.get_window(ev.event());
                     let modifiers = super::modifiers_from_state(ev.state());
