@@ -726,17 +726,12 @@ impl EditorElement {
         }
 
         let gutter_settings = EditorSettings::get_global(cx).gutter;
-        let line_number_right_padding = if gutter_settings.buttons {
-            layout.gutter_padding
-        } else {
-            layout.gutter_padding / 2.0
-        };
 
         for (ix, line) in layout.line_numbers.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin
                     + point(
-                        bounds.size.width - line.width - line_number_right_padding,
+                        bounds.size.width - line.width - layout.gutter_right_padding,
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
 
@@ -747,7 +742,7 @@ impl EditorElement {
         cx.with_z_index(1, |cx| {
             for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
                 if let Some(fold_indicator) = fold_indicator {
-                    assert!(gutter_settings.buttons);
+                    debug_assert!(gutter_settings.folds);
                     let mut fold_indicator = fold_indicator.into_any_element();
                     let available_space = size(
                         AvailableSpace::MinContent,
@@ -756,11 +751,12 @@ impl EditorElement {
                     let fold_indicator_size = fold_indicator.measure(available_space, cx);
 
                     let position = point(
-                        bounds.size.width - layout.gutter_padding,
+                        bounds.size.width - layout.gutter_right_padding,
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
                     let centering_offset = point(
-                        (layout.gutter_padding + layout.gutter_margin - fold_indicator_size.width)
+                        (layout.gutter_right_padding + layout.gutter_margin
+                            - fold_indicator_size.width)
                             / 2.,
                         (line_height - fold_indicator_size.height) / 2.,
                     );
@@ -770,7 +766,7 @@ impl EditorElement {
             }
 
             if let Some(indicator) = layout.code_actions_indicator.take() {
-                assert!(gutter_settings.buttons);
+                debug_assert!(gutter_settings.code_actions);
                 let mut button = indicator.button.into_any_element();
                 let available_space = size(
                     AvailableSpace::MinContent,
@@ -781,7 +777,8 @@ impl EditorElement {
                 let mut x = Pixels::ZERO;
                 let mut y = indicator.row as f32 * line_height - scroll_top;
                 // Center indicator.
-                x += ((layout.gutter_padding + layout.gutter_margin) - indicator_size.width) / 2.;
+                x +=
+                    (layout.gutter_margin + layout.gutter_left_padding - indicator_size.width) / 2.;
                 y += (line_height - indicator_size.height) / 2.;
 
                 button.draw(bounds.origin + point(x, y), available_space, cx);
@@ -1831,7 +1828,7 @@ impl EditorElement {
         let include_line_numbers =
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
         let include_fold_statuses =
-            EditorSettings::get_global(cx).gutter.buttons && snapshot.mode == EditorMode::Full;
+            EditorSettings::get_global(cx).gutter.folds && snapshot.mode == EditorMode::Full;
         let mut shaped_line_numbers = Vec::with_capacity(rows.len());
         let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
@@ -2233,7 +2230,8 @@ impl EditorElement {
                     bounds.size.width,
                     scroll_width,
                     text_width,
-                    gutter_dimensions.padding,
+                    gutter_dimensions.left_padding,
+                    gutter_dimensions.right_padding,
                     gutter_dimensions.width,
                     em_width,
                     gutter_dimensions.width + gutter_dimensions.margin,
@@ -2294,7 +2292,7 @@ impl EditorElement {
                         Some(crate::ContextMenu::CodeActions(_))
                     );
 
-                    if gutter_settings.buttons {
+                    if gutter_settings.code_actions {
                         code_actions_indicator = editor
                             .render_code_actions_indicator(&style, active, cx)
                             .map(|element| CodeActionsIndicator {
@@ -2329,7 +2327,7 @@ impl EditorElement {
             };
 
             let editor_view = cx.view().clone();
-            let fold_indicators = if gutter_settings.buttons {
+            let fold_indicators = if gutter_settings.folds {
                 cx.with_element_context(|cx| {
                     cx.with_element_id(Some("gutter_fold_indicators"), |_cx| {
                         editor.render_fold_indicators(
@@ -2397,7 +2395,8 @@ impl EditorElement {
                 visible_display_row_range: start_row..end_row,
                 wrap_guides,
                 gutter_size,
-                gutter_padding: gutter_dimensions.padding,
+                gutter_left_padding: gutter_dimensions.left_padding,
+                gutter_right_padding: gutter_dimensions.right_padding,
                 text_size,
                 scrollbar_row_range,
                 show_scrollbars,
@@ -2430,7 +2429,8 @@ impl EditorElement {
         editor_width: Pixels,
         scroll_width: Pixels,
         text_width: Pixels,
-        gutter_padding: Pixels,
+        gutter_left_padding: Pixels,
+        gutter_right_padding: Pixels,
         gutter_width: Pixels,
         em_width: Pixels,
         text_x: Pixels,
@@ -2474,7 +2474,8 @@ impl EditorElement {
                     block.render(&mut BlockContext {
                         context: cx,
                         anchor_x,
-                        gutter_padding,
+                        gutter_left_padding,
+                        gutter_right_padding,
                         line_height,
                         gutter_width,
                         em_width,
@@ -2580,12 +2581,12 @@ impl EditorElement {
                         h_flex()
                             .id(("collapsed context", block_id))
                             .size_full()
-                            .gap(gutter_padding)
+                            .gap(gutter_left_padding + gutter_right_padding)
                             .child(
                                 h_flex()
                                     .justify_end()
                                     .flex_none()
-                                    .w(gutter_width - gutter_padding)
+                                    .w(gutter_width - (gutter_left_padding + gutter_right_padding))
                                     .h_full()
                                     .text_buffer(cx)
                                     .text_color(cx.theme().colors().editor_line_number)
@@ -3180,7 +3181,8 @@ type BufferRow = u32;
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
     gutter_size: Size<Pixels>,
-    gutter_padding: Pixels,
+    gutter_left_padding: Pixels,
+    gutter_right_padding: Pixels,
     gutter_margin: Pixels,
     text_size: gpui::Size<Pixels>,
     mode: EditorMode,

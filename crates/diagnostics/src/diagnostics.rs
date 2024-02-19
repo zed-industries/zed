@@ -1599,7 +1599,8 @@ mod tests {
                                     .render(&mut BlockContext {
                                         context: cx,
                                         anchor_x: px(0.),
-                                        gutter_padding: px(0.),
+                                        gutter_left_padding: px(0.),
+                                        gutter_right_padding: px(0.),
                                         gutter_width: px(0.),
                                         line_height: px(0.),
                                         em_width: px(0.),

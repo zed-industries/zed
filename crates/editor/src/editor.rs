@@ -444,7 +444,8 @@ pub struct EditorSnapshot {
 }
 
 pub struct GutterDimensions {
-    pub padding: Pixels,
+    pub left_padding: Pixels,
+    pub right_padding: Pixels,
     pub width: Pixels,
     pub margin: Pixels,
 }
@@ -452,7 +453,8 @@ pub struct GutterDimensions {
 impl Default for GutterDimensions {
     fn default() -> Self {
         Self {
-            padding: Pixels::ZERO,
+            left_padding: Pixels::ZERO,
+            right_padding: Pixels::ZERO,
             width: Pixels::ZERO,
             margin: Pixels::ZERO,
         }
@@ -9639,8 +9641,6 @@ impl EditorSnapshot {
     ) -> GutterDimensions {
         if self.show_gutter {
             let descent = cx.text_system().descent(font_id, font_size);
-            let gutter_padding_factor = 4.0;
-            let gutter_padding = (em_width * gutter_padding_factor).round();
 
             let show_git_gutter = matches!(
                 ProjectSettings::get_global(cx).git.git_gutter,
@@ -9648,28 +9648,40 @@ impl EditorSnapshot {
             );
             let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-            let line_gutter_width = {
+            let line_gutter_width = if gutter_settings.line_numbers {
                 // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
                 let min_width_for_number_on_gutter = em_width * 4.0;
                 max_line_number_width.max(min_width_for_number_on_gutter)
+            } else {
+                0.0.into()
             };
 
-            let gutter_width = match (
+            let left_gutter_padding = match (
                 show_git_gutter,
+                gutter_settings.code_actions,
                 gutter_settings.line_numbers,
-                gutter_settings.buttons,
             ) {
-                (false, false, false) => 0.0.into(),
                 (true, false, false) => em_width,
-                (_, true, false) => line_gutter_width + gutter_padding,
-                (_, false, true) => gutter_padding * 2.0,
-                (_, true, true) => line_gutter_width + gutter_padding * 2.0,
+                (false, false, true) => em_width * 2.0,
+                (true, true, _) => em_width * 4.0,
+                (true, false, _) => em_width * 2.0,
+                (false, true, _) => em_width * 4.0,
+                _ => 0.0.into(),
             };
 
+            let right_gutter_padding = match (gutter_settings.line_numbers, gutter_settings.folds) {
+                (true, true) => em_width * 4.0,
+                (true, false) => em_width * 2.0,
+                (false, true) => em_width * 3.0,
+                (false, false) => 0.0.into(),
+            };
+
+            let gutter_width = line_gutter_width + left_gutter_padding + right_gutter_padding;
             let gutter_margin = -descent;
 
             GutterDimensions {
-                padding: gutter_padding,
+                left_padding: left_gutter_padding,
+                right_padding: right_gutter_padding,
                 width: gutter_width,
                 margin: gutter_margin,
             }

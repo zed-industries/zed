@@ -49,7 +49,8 @@ pub struct Scrollbar {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
     pub line_numbers: bool,
-    pub buttons: bool,
+    pub code_actions: bool,
+    pub folds: bool,
 }
 
 /// When to show the scrollbar in the editor.
@@ -173,10 +174,14 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
-    /// Whether to show code action/folding buttons in the gutter.
+    /// Whether to show code action buttons in the gutter.
     ///
     /// Default: true
-    pub buttons: Option<bool>,
+    pub code_actions: Option<bool>,
+    /// Whether to show fold buttons in the gutter.
+    ///
+    /// Default: true
+    pub folds: Option<bool>,
 }
 
 impl Settings for EditorSettings {
