@@ -865,7 +865,7 @@ impl<'a> WindowContext<'a> {
     pub fn was_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
         // Precondition: the depth map is ordered from topmost to bottomost.
 
-        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
+        for (opaque_layer, _, bounds) in self.window.next_frame.depth_map.iter() {
             if layer >= opaque_layer {
                 // The queried layer is either above or is the same as the this opaque layer.
                 // Anything after this point is guaranteed to be below the queried layer.
@@ -902,7 +902,7 @@ impl<'a> WindowContext<'a> {
     ) -> bool {
         // Precondition: the depth map is ordered from topmost to bottomost.
 
-        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
+        for (opaque_layer, _, bounds) in self.window.next_frame.depth_map.iter() {
             if layer >= opaque_layer {
                 // The queried layer is either above or is the same as the this opaque layer.
                 // Anything after this point is guaranteed to be below the queried layer.
@@ -960,8 +960,60 @@ impl<'a> WindowContext<'a> {
             requested_handler.handler = input_handler;
         }
 
+        // TODO: Restructure this
         let root_view = self.window.root_view.take().unwrap();
-        self.with_element_context(|cx| {
+        self.with_element_context(true, |cx| {
+            cx.with_z_index(0, |cx| {
+                cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
+                    // // We need to use cx.cx here so we can utilize borrow splitting
+                    // for (action_type, action_listeners) in &cx.cx.app.global_action_listeners {
+                    //     for action_listener in action_listeners.iter().cloned() {
+                    //         cx.cx.window.next_frame.dispatch_tree.on_action(
+                    //             *action_type,
+                    //             Rc::new(
+                    //                 move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                    //                     action_listener(action, phase, cx)
+                    //                 },
+                    //             ),
+                    //         )
+                    //     }
+                    // }
+
+                    let available_space = cx.window.viewport_size.map(Into::into);
+                    root_view.draw(Point::default(), available_space, cx);
+                })
+            })
+        });
+
+        if let Some(active_drag) = self.app.active_drag.take() {
+            self.with_element_context(true, |cx| {
+                cx.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
+                    let offset = cx.mouse_position() - active_drag.cursor_offset;
+                    let available_space =
+                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                    active_drag.view.draw(offset, available_space, cx);
+                })
+            });
+            self.active_drag = Some(active_drag);
+        } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
+            self.with_element_context(true, |cx| {
+                cx.with_z_index(1, |cx| {
+                    let available_space =
+                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                    tooltip_request.tooltip.view.draw(
+                        tooltip_request.tooltip.cursor_offset,
+                        available_space,
+                        cx,
+                    );
+                })
+            });
+            self.window.next_frame.tooltip_request = Some(tooltip_request);
+        }
+
+        assert_eq!(self.window.next_frame.z_index_stack.len(), 0);
+        self.window.next_frame.next_stacking_order_ids = vec![0];
+
+        self.with_element_context(false, |cx| {
             cx.with_z_index(0, |cx| {
                 cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
                     // We need to use cx.cx here so we can utilize borrow splitting
@@ -985,7 +1037,7 @@ impl<'a> WindowContext<'a> {
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
-            self.with_element_context(|cx| {
+            self.with_element_context(false, |cx| {
                 cx.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
                     let offset = cx.mouse_position() - active_drag.cursor_offset;
                     let available_space =
@@ -995,7 +1047,7 @@ impl<'a> WindowContext<'a> {
             });
             self.active_drag = Some(active_drag);
         } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
-            self.with_element_context(|cx| {
+            self.with_element_context(false, |cx| {
                 cx.with_z_index(1, |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
@@ -1008,6 +1060,7 @@ impl<'a> WindowContext<'a> {
             });
             self.window.next_frame.tooltip_request = Some(tooltip_request);
         }
+
         self.window.dirty_views.clear();
 
         self.window
@@ -1206,7 +1259,7 @@ impl<'a> WindowContext<'a> {
             // Capture phase, events bubble from back to front. Handlers for this phase are used for
             // special purposes, such as detecting events outside of a given Bounds.
             for (_, _, handler) in &mut handlers {
-                self.with_element_context(|cx| {
+                self.with_element_context(false, |cx| {
                     handler(event, DispatchPhase::Capture, cx);
                 });
                 if !self.app.propagate_event {
@@ -1217,7 +1270,7 @@ impl<'a> WindowContext<'a> {
             // Bubble phase, where most normal handlers do their work.
             if self.app.propagate_event {
                 for (_, _, handler) in handlers.iter_mut().rev() {
-                    self.with_element_context(|cx| {
+                    self.with_element_context(false, |cx| {
                         handler(event, DispatchPhase::Bubble, cx);
                     });
                     if !self.app.propagate_event {
@@ -1345,7 +1398,7 @@ impl<'a> WindowContext<'a> {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
 
             for key_listener in node.key_listeners.clone() {
-                self.with_element_context(|cx| {
+                self.with_element_context(false, |cx| {
                     key_listener(event, DispatchPhase::Capture, cx);
                 });
                 if !self.propagate_event {
@@ -1359,7 +1412,7 @@ impl<'a> WindowContext<'a> {
             // Handle low level key events
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for key_listener in node.key_listeners.clone() {
-                self.with_element_context(|cx| {
+                self.with_element_context(false, |cx| {
                     key_listener(event, DispatchPhase::Bubble, cx);
                 });
                 if !self.propagate_event {
@@ -1446,7 +1499,7 @@ impl<'a> WindowContext<'a> {
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
-                    self.with_element_context(|cx| {
+                    self.with_element_context(false, |cx| {
                         listener(any_action, DispatchPhase::Capture, cx);
                     });
 
@@ -1468,7 +1521,7 @@ impl<'a> WindowContext<'a> {
                 if action_type == any_action.type_id() {
                     self.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
-                    self.with_element_context(|cx| {
+                    self.with_element_context(false, |cx| {
                         listener(any_action, DispatchPhase::Bubble, cx);
                     });
 

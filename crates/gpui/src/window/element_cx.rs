@@ -164,16 +164,24 @@ impl Frame {
 /// This context is used for assisting in the implementation of the element trait
 #[derive(Deref, DerefMut)]
 pub struct ElementContext<'a> {
+    #[deref]
+    #[deref_mut]
     pub(crate) cx: WindowContext<'a>,
+    pub(crate) pre_paint_pass: bool,
 }
 
 impl<'a> WindowContext<'a> {
     /// Convert this window context into an ElementContext in this callback.
     /// If you need to use this method, you're probably intermixing the imperative
     /// and declarative APIs, which is not recommended.
-    pub fn with_element_context<R>(&mut self, f: impl FnOnce(&mut ElementContext) -> R) -> R {
+    pub fn with_element_context<R>(
+        &mut self,
+        pre_paint_pass: bool,
+        f: impl FnOnce(&mut ElementContext) -> R,
+    ) -> R {
         f(&mut ElementContext {
             cx: WindowContext::new(self.app, self.window),
+            pre_paint_pass,
         })
     }
 }
@@ -658,6 +666,10 @@ impl<'a> ElementContext<'a> {
         corner_radii: Corners<Pixels>,
         shadows: &[BoxShadow],
     ) {
+        if self.pre_paint_pass {
+            return;
+        }
+
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let view_id = self.parent_view_id();
@@ -687,6 +699,10 @@ impl<'a> ElementContext<'a> {
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
+        if self.pre_paint_pass {
+            return;
+        }
+
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let view_id = self.parent_view_id();
@@ -710,6 +726,10 @@ impl<'a> ElementContext<'a> {
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
+        if self.pre_paint_pass {
+            return;
+        }
+
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let view_id = self.parent_view_id();
@@ -731,6 +751,10 @@ impl<'a> ElementContext<'a> {
         width: Pixels,
         style: &UnderlineStyle,
     ) {
+        if self.pre_paint_pass {
+            return;
+        }
+
         let scale_factor = self.scale_factor();
         let height = if style.wavy {
             style.thickness * 3.
@@ -767,6 +791,10 @@ impl<'a> ElementContext<'a> {
         width: Pixels,
         style: &StrikethroughStyle,
     ) {
+        if self.pre_paint_pass {
+            return;
+        }
+
         let scale_factor = self.scale_factor();
         let height = style.thickness;
         let bounds = Bounds {
@@ -806,6 +834,10 @@ impl<'a> ElementContext<'a> {
         font_size: Pixels,
         color: Hsla,
     ) -> Result<()> {
+        if self.pre_paint_pass {
+            return Ok(());
+        }
+
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let subpixel_variant = Point {
@@ -866,6 +898,10 @@ impl<'a> ElementContext<'a> {
         glyph_id: GlyphId,
         font_size: Pixels,
     ) -> Result<()> {
+        if self.pre_paint_pass {
+            return Ok(());
+        }
+
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let params = RenderGlyphParams {
@@ -920,6 +956,10 @@ impl<'a> ElementContext<'a> {
         path: SharedString,
         color: Hsla,
     ) -> Result<()> {
+        if self.pre_paint_pass {
+            return Ok(());
+        }
+
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         // Render the SVG at twice the size to get a higher quality result.
@@ -965,6 +1005,10 @@ impl<'a> ElementContext<'a> {
         data: Arc<ImageData>,
         grayscale: bool,
     ) -> Result<()> {
+        if self.pre_paint_pass {
+            return Ok(());
+        }
+
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let params = RenderImageParams { image_id: data.id };
@@ -1094,6 +1138,10 @@ impl<'a> ElementContext<'a> {
 
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
+        if !self.pre_paint_pass {
+            return;
+        }
+
         let stacking_order = self.window.next_frame.z_index_stack.clone();
         let view_id = self.parent_view_id();
         let depth_map = &mut self.window.next_frame.depth_map;
@@ -1168,6 +1216,10 @@ impl<'a> ElementContext<'a> {
     ///
     /// [element_input_handler]: crate::ElementInputHandler
     pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
+        if self.pre_paint_pass {
+            return;
+        }
+
         if focus_handle.is_focused(self) {
             let view_id = self.parent_view_id();
             self.window.next_frame.requested_input_handler = Some(RequestedInputHandler {
@@ -1187,6 +1239,10 @@ impl<'a> ElementContext<'a> {
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
+        if self.pre_paint_pass {
+            return;
+        }
+
         let view_id = self.parent_view_id();
         let order = self.window.next_frame.z_index_stack.clone();
         self.window
@@ -1215,6 +1271,10 @@ impl<'a> ElementContext<'a> {
         &mut self,
         listener: impl Fn(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
+        if self.pre_paint_pass {
+            return;
+        }
+
         self.window.next_frame.dispatch_tree.on_key_event(Rc::new(
             move |event: &dyn Any, phase, cx: &mut ElementContext<'_>| {
                 if let Some(event) = event.downcast_ref::<Event>() {

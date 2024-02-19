@@ -2203,7 +2203,7 @@ impl EditorElement {
             let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
 
             let editor_view = cx.view().clone();
-            let (scroll_width, blocks) = cx.with_element_context(|cx| {
+            let (scroll_width, blocks) = cx.with_element_context(false, |cx| {
              cx.with_element_id(Some("editor_blocks"), |cx| {
                 self.layout_blocks(
                     start_row..end_row,
@@ -2303,7 +2303,7 @@ impl EditorElement {
             };
 
             let editor_view = cx.view().clone();
-            let fold_indicators = cx.with_element_context(|cx| {
+            let fold_indicators = cx.with_element_context(false, |cx| {
 
                 cx.with_element_id(Some("gutter_fold_indicators"), |_cx| {
                 editor.render_fold_indicators(
@@ -3022,13 +3022,14 @@ impl Element for EditorElement {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
-                        cx.with_element_context(|cx| cx.request_layout(&style, None))
+                        cx.with_element_context(false, |cx| cx.request_layout(&style, None))
                     }
+
                     EditorMode::AutoHeight { max_lines } => {
                         let editor_handle = cx.view().clone();
                         let max_line_number_width =
                             self.max_line_number_width(&editor.snapshot(cx), cx);
-                        cx.with_element_context(|cx| {
+                        cx.with_element_context(false, |cx| {
                             cx.request_measured_layout(
                                 Style::default(),
                                 move |known_dimensions, _, cx| {
@@ -3047,11 +3048,12 @@ impl Element for EditorElement {
                             )
                         })
                     }
+
                     EditorMode::Full => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = relative(1.).into();
-                        cx.with_element_context(|cx| cx.request_layout(&style, None))
+                        cx.with_element_context(false, |cx| cx.request_layout(&style, None))
                     }
                 };
 
@@ -3661,7 +3663,7 @@ mod tests {
             .unwrap();
         let state = cx
             .update_window(window.into(), |view, cx| {
-                cx.with_element_context(|cx| {
+                cx.with_element_context(false, |cx| {
                     cx.with_view_id(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
@@ -3757,7 +3759,7 @@ mod tests {
 
         let state = cx
             .update_window(window.into(), |view, cx| {
-                cx.with_element_context(|cx| {
+                cx.with_element_context(false, |cx| {
                     cx.with_view_id(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
@@ -3823,7 +3825,7 @@ mod tests {
         let mut element = EditorElement::new(&editor, style);
         let state = cx
             .update_window(window.into(), |view, cx| {
-                cx.with_element_context(|cx| {
+                cx.with_element_context(false, |cx| {
                     cx.with_view_id(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
@@ -3851,7 +3853,7 @@ mod tests {
         // Don't panic.
         let bounds = Bounds::<Pixels>::new(Default::default(), size);
         cx.update_window(window.into(), |_, cx| {
-            cx.with_element_context(|cx| element.paint(bounds, &mut (), cx))
+            cx.with_element_context(false, |cx| element.paint(bounds, &mut (), cx))
         })
         .unwrap()
     }
@@ -4028,7 +4030,7 @@ mod tests {
             .unwrap();
         let layout_state = cx
             .update_window(window.into(), |_, cx| {
-                cx.with_element_context(|cx| {
+                cx.with_element_context(false, |cx| {
                     element.compute_layout(
                         Bounds {
                             origin: point(px(500.), px(500.)),
