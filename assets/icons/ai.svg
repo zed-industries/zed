@@ -1,23 +1,24 @@
-<svg width="14" height="16" viewBox="0 0 14 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M10 8.94203V11C7.38649 11 6.61351 11 4 11V10.6812L10 5.31884V5H4V7.08696" stroke="black" stroke-width="1.25"/>
-<circle cx="0.5" cy="8" r="0.5" fill="black"/>
-<circle cx="1.49976" cy="5.82825" r="0.5" fill="black" fill-opacity="0.75"/>
-<circle cx="1.49976" cy="10.1719" r="0.5" fill="black" fill-opacity="0.75"/>
-<circle cx="13.5" cy="8.01581" r="0.5" fill="black"/>
-<circle cx="12.5" cy="5.84387" r="0.5" fill="black" fill-opacity="0.75"/>
-<circle cx="12.5" cy="10.1877" r="0.5" fill="black" fill-opacity="0.75"/>
-<circle cx="6.99219" cy="1.48438" r="0.5" fill="black"/>
-<circle cx="4.5" cy="2.5" r="0.5" fill="black" fill-opacity="0.75"/>
-<circle cx="0.5" cy="12.016" r="0.5" fill="black"/>
-<circle cx="0.5" cy="3.98438" r="0.5" fill="black"/>
-<circle cx="13.5" cy="12.016" r="0.5" fill="black"/>
-<circle cx="13.5" cy="3.98438" r="0.5" fill="black"/>
-<circle cx="2.49976" cy="14.516" r="0.5" fill="black"/>
-<circle cx="2.48413" cy="1.48438" r="0.5" fill="black"/>
-<circle cx="11.5" cy="14.516" r="0.5" fill="black"/>
-<circle cx="11.5" cy="1.48438" r="0.5" fill="black"/>
-<circle cx="9.49609" cy="2.48438" r="0.5" fill="black" fill-opacity="0.75"/>
-<circle cx="6.99219" cy="14.5" r="0.5" fill="black"/>
-<circle cx="4.50391" cy="13.516" r="0.5" fill="black" fill-opacity="0.75"/>
-<circle cx="9.49609" cy="13.5" r="0.5" fill="black" fill-opacity="0.75"/>
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="14px" height="14px" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M 8.875 7.464 L 8.875 9.291 C 6.555 9.291 5.87 9.291 3.55 9.291 L 3.55 9.008 L 8.875 4.249 L 8.875 3.966 L 3.55 3.966 L 3.55 5.819" stroke="black" stroke-width="1.25" style=""/>
+  <circle cx="0.443" cy="6.63" r="0.443" fill="black" style=""/>
+  <circle cx="1.331" cy="4.702" r="0.443" fill="black" fill-opacity="0.75" style=""/>
+  <circle cx="1.331" cy="8.557" r="0.443" fill="black" fill-opacity="0.75" style=""/>
+  <circle cx="11.981" cy="6.643" r="0.443" fill="black" style=""/>
+  <circle cx="11.094" cy="4.717" r="0.443" fill="black" fill-opacity="0.75" style=""/>
+  <circle cx="11.094" cy="8.571" r="0.443" fill="black" fill-opacity="0.75" style=""/>
+  <circle cx="6.205" cy="0.845" r="0.443" fill="black" style=""/>
+  <circle cx="3.994" cy="1.748" r="0.443" fill="black" fill-opacity="0.75" style=""/>
+  <circle cx="0.443" cy="10.194" r="0.443" fill="black" style=""/>
+  <circle cx="0.443" cy="3.065" r="0.443" fill="black" style=""/>
+  <circle cx="11.981" cy="10.194" r="0.443" fill="black" style=""/>
+  <circle cx="11.981" cy="3.065" r="0.443" fill="black" style=""/>
+  <circle cx="2.218" cy="12.413" r="0.443" fill="black" style=""/>
+  <circle cx="2.205" cy="0.845" r="0.443" fill="black" style=""/>
+  <circle cx="10.207" cy="12.413" r="0.443" fill="black" style=""/>
+  <circle cx="10.207" cy="0.845" r="0.443" fill="black" style=""/>
+  <circle cx="8.427" cy="1.735" r="0.443" fill="black" fill-opacity="0.75" style=""/>
+  <circle cx="6.205" cy="12.399" r="0.443" fill="black" style=""/>
+  <circle cx="3.998" cy="11.524" r="0.443" fill="black" fill-opacity="0.75" style=""/>
+  <circle cx="8.427" cy="11.51" r="0.443" fill="black" fill-opacity="0.75" style=""/>
 </svg>
