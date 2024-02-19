@@ -26,9 +26,9 @@ use crate::PlatformInput::KeyDown;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformDisplay, PlatformInput, Point, ScrollWheelEvent, TouchPhase, WindowOptions,
+    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
+    ScrollWheelEvent, TouchPhase, WindowOptions,
 };
-use crate::{NavigationDirection, ScrollDelta};
 
 const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
 
@@ -467,7 +467,7 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
         BTN_RIGHT => MouseButton::Right,
         BTN_MIDDLE => MouseButton::Middle,
         BTN_BACK | BTN_SIDE => MouseButton::Navigate(NavigationDirection::Back),
-        BTN_FORWARD | BTN_EXTRA => MouseButton::Navigate(NavigationDirection::Back),
+        BTN_FORWARD | BTN_EXTRA => MouseButton::Navigate(NavigationDirection::Forward),
         _ => return None,
     })
 }
@@ -523,19 +523,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 ..
             } => {
                 let focused_window = &state.mouse_focused_window;
-                let mouse_location = &state.mouse_location;
-                if let (Some(focused_window), Some(mouse_location)) =
-                    (focused_window, mouse_location)
+                let mouse_location = state.mouse_location;
+                let button = linux_button_to_gpui(button);
+                if let (Some(focused_window), Some(mouse_location), Some(button)) =
+                    (focused_window, mouse_location, button)
                 {
-                    let Some(button) = linux_button_to_gpui(button) else {
-                        return;
-                    };
                     match button_state {
                         wl_pointer::ButtonState::Pressed => {
                             state.button_pressed = Some(button);
                             focused_window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
                                 button,
-                                position: *mouse_location,
+                                position: mouse_location,
                                 modifiers: state.modifiers,
                                 click_count: 1,
                             }));
@@ -544,7 +542,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                             state.button_pressed = None;
                             focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
                                 button,
-                                position: *mouse_location,
+                                position: mouse_location,
                                 modifiers: Modifiers {
                                     shift: false,
                                     control: false,
