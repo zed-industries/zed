@@ -71,8 +71,8 @@ impl WaylandWindowInner {
         bounds: Bounds<i32>,
     ) -> Self {
         let raw = RawWindow {
-            window: wl_surf.id().as_ptr() as *mut _,
-            display: conn.backend().display_ptr() as *mut _,
+            window: wl_surf.id().as_ptr().cast::<c_void>(),
+            display: conn.backend().display_ptr().cast::<c_void>(),
         };
         let gpu = Arc::new(
             unsafe {
@@ -204,7 +204,9 @@ impl WaylandWindowState {
         if let PlatformInput::KeyDown(event) = input {
             let mut inner = self.inner.lock();
             if let Some(ref mut input_handler) = inner.input_handler {
-                input_handler.replace_text_in_range(None, &event.keystroke.key);
+                if let Some(ime_key) = &event.keystroke.ime_key {
+                    input_handler.replace_text_in_range(None, ime_key);
+                }
             }
         }
     }

@@ -27,7 +27,6 @@ use xkbcommon::xkb::{Keycode, KEYMAP_COMPILE_NO_FLAGS};
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
-use crate::PlatformInput::KeyDown;
 use crate::ScrollDelta;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
@@ -394,14 +393,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 group,
                 ..
             } => {
-                state.keymap_state.as_mut().unwrap().update_mask(
-                    mods_depressed,
-                    mods_latched,
-                    mods_locked,
-                    0,
-                    0,
-                    group,
-                );
+                let keymap_state = state.keymap_state.as_mut().unwrap();
+                keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
+                state.modifiers.shift =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.alt =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.control =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+                state.modifiers.command =
+                    keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
             }
             wl_keyboard::Event::Key {
                 key,
@@ -409,81 +410,44 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 ..
             } => {
                 let keymap_state = state.keymap_state.as_ref().unwrap();
-                let key_utf8 = keymap_state.key_get_utf8(Keycode::from(key + MIN_KEYCODE));
-                let key_sym = keymap_state.key_get_one_sym(Keycode::from(key + MIN_KEYCODE));
+                let keycode = Keycode::from(key + MIN_KEYCODE);
+                let key_utf32 = keymap_state.key_get_utf32(keycode);
+                let key_utf8 = keymap_state.key_get_utf8(keycode);
+                let key_sym = keymap_state.key_get_one_sym(keycode);
+                let key = xkb::keysym_get_name(key_sym).to_lowercase();
 
-                let key = if matches!(
-                    key_sym,
-                    xkb::Keysym::BackSpace
-                        | xkb::Keysym::Left
-                        | xkb::Keysym::Right
-                        | xkb::Keysym::Down
-                        | xkb::Keysym::Up
-                        | xkb::Keysym::Super_L
-                        | xkb::Keysym::Super_R
-                ) {
-                    xkb::keysym_get_name(key_sym).to_lowercase()
-                } else {
-                    key_utf8.clone()
-                };
+                // Ignore control characters (and DEL) for the purposes of ime_key,
+                // but if key_utf32 is 0 then assume it isn't one
+                let ime_key =
+                    (key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127)).then_some(key_utf8);
 
                 let focused_window = &state.keyboard_focused_window;
                 if let Some(focused_window) = focused_window {
                     match key_state {
                         wl_keyboard::KeyState::Pressed => {
-                            if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
-                                state.modifiers.shift = true;
-                            } else if key_sym == xkb::Keysym::Control_L
-                                || key_sym == xkb::Keysym::Control_R
-                            {
-                                state.modifiers.control = true;
-                            } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R
-                            {
-                                state.modifiers.alt = true;
-                            } else {
-                                focused_window.handle_input(KeyDown(KeyDownEvent {
-                                    keystroke: Keystroke {
-                                        modifiers: state.modifiers,
-                                        key,
-                                        ime_key: None,
-                                    },
-                                    is_held: false, // todo!(linux)
-                                }));
-                            }
+                            focused_window.handle_input(PlatformInput::KeyDown(KeyDownEvent {
+                                keystroke: Keystroke {
+                                    modifiers: state.modifiers,
+                                    key,
+                                    ime_key,
+                                },
+                                is_held: false, // todo!(linux)
+                            }));
                         }
                         wl_keyboard::KeyState::Released => {
-                            if key_sym == xkb::Keysym::Shift_L || key_sym == xkb::Keysym::Shift_R {
-                                state.modifiers.shift = false;
-                            } else if key_sym == xkb::Keysym::Control_L
-                                || key_sym == xkb::Keysym::Control_R
-                            {
-                                state.modifiers.control = false;
-                            } else if key_sym == xkb::Keysym::Alt_L || key_sym == xkb::Keysym::Alt_R
-                            {
-                                state.modifiers.alt = false;
-                            } else {
-                                focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                                    keystroke: Keystroke {
-                                        modifiers: state.modifiers,
-                                        key,
-                                        ime_key: None,
-                                    },
-                                }));
-                            }
+                            focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
+                                keystroke: Keystroke {
+                                    modifiers: state.modifiers,
+                                    key,
+                                    ime_key,
+                                },
+                            }));
                         }
                         _ => {}
                     }
                 }
             }
-            wl_keyboard::Event::Leave { .. } => {
-                state.modifiers = Modifiers {
-                    control: false,
-                    alt: false,
-                    shift: false,
-                    command: false,
-                    function: false,
-                };
-            }
+            wl_keyboard::Event::Leave { .. } => {}
             _ => {}
         }
     }
@@ -568,13 +532,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                             focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
                                 button: linux_button_to_gpui(button),
                                 position: *mouse_location,
-                                modifiers: Modifiers {
-                                    shift: false,
-                                    control: false,
-                                    alt: false,
-                                    function: false,
-                                    command: false,
-                                },
+                                modifiers: Modifiers::default(),
                                 click_count: 1,
                             }));
                         }
