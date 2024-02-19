@@ -272,6 +272,7 @@ pub struct Window {
     appearance_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
@@ -338,6 +339,7 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
         let active = Rc::new(Cell::new(false));
+        let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
@@ -351,6 +353,7 @@ impl Window {
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
             let active = active.clone();
+            let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move || {
@@ -365,6 +368,12 @@ impl Window {
                         .log_err();
                 }
 
+                // Keep presenting the current scene for 1 extra second since the
+                // last input to prevent the display from underclocking the refresh rate.
+                let needs_present = needs_present.get()
+                    || (active.get()
+                        && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
+
                 if dirty.get() {
                     measure("frame duration", || {
                         handle
@@ -374,12 +383,7 @@ impl Window {
                             })
                             .log_err();
                     })
-                }
-                // Keep presenting the current scene for 1 extra second since the
-                // last input to prevent the display from underclocking the refresh rate.
-                else if active.get()
-                    && last_input_timestamp.get().elapsed() < Duration::from_secs(1)
-                {
+                } else if needs_present {
                     handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
             }
@@ -462,6 +466,7 @@ impl Window {
             appearance_observers: SubscriberSet::new(),
             active,
             dirty,
+            needs_present,
             last_input_timestamp,
             refreshing: false,
             drawing: false,
@@ -1084,12 +1089,14 @@ impl<'a> WindowContext<'a> {
         }
         self.window.refreshing = false;
         self.window.drawing = false;
+        self.window.needs_present.set(true);
     }
 
     fn present(&self) {
         self.window
             .platform_window
             .draw(&self.window.rendered_frame.scene);
+        self.window.needs_present.set(false);
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1240,6 +1247,10 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any) {
+        if self.window.dirty.get() {
+            self.draw();
+        }
+
         let node_id = self
             .window
             .focus
