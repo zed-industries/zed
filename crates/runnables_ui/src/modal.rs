@@ -51,8 +51,9 @@ impl RunnablesModal {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let picker =
-            cx.new_view(|cx| Picker::uniform_list(RunnablesModalDelegate::new(inventory, workspace), cx));
+        let picker = cx.new_view(|cx| {
+            Picker::uniform_list(RunnablesModalDelegate::new(inventory, workspace), cx)
+        });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
         });
