@@ -696,6 +696,9 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let runnables = Inventory::new(cx);
+            /// BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
+            /// Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
+            /// That's because Worktree's identifier is entity id, which should probably be changed.
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
                 let worktree =
