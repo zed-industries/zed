@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{AppContext, ViewContext, WindowContext};
 use modal::RunnablesModal;
@@ -38,8 +38,9 @@ fn schedule_runnable(
     runnable: &dyn Runnable,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
-    let Some(cwd) = runnable_cwd(workspace, cx).log_err() else {
-        return;
+    let cwd = match runnable.cwd() {
+        Some(cwd) => Some(cwd.to_path_buf()),
+        None => runnable_cwd(workspace, cx).log_err().flatten(),
     };
     let spawn_in_terminal = runnable.exec(cwd);
     if let Some(spawn_in_terminal) = spawn_in_terminal {

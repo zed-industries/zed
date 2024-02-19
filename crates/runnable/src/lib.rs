@@ -45,6 +45,8 @@ pub trait Runnable {
     fn id(&self) -> &RunnableId;
     /// Human readable name of the runnable to display in the UI.
     fn name(&self) -> &str;
+    /// Task's current working directory. If `None`, current project's root will be used.
+    fn cwd(&self) -> Option<&Path>;
     /// Sets up everything needed to spawn the runnable in the given directory (`cwd`).
     /// If a runnable is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
     fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal>;
