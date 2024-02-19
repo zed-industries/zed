@@ -80,9 +80,10 @@ impl OpenAiCompletionProvider {
 
     fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
         let model = match request.model {
-            Some(LanguageModel::OpenAi(model)) => model,
-            _ => self.default_model(),
+            LanguageModel::ZedDotDev(_) => self.default_model(),
+            LanguageModel::OpenAi(model) => model,
         };
+
         Request {
             model,
             messages: request

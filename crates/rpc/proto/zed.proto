@@ -1679,7 +1679,7 @@ message SetRoomParticipantRole {
 }
 
 message CompleteWithLanguageModel {
-    optional string model = 1;
+    string model = 1;
     repeated LanguageModelRequestMessage messages = 2;
     repeated string stop = 3;
     float temperature = 4;

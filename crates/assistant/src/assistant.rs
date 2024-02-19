@@ -154,7 +154,7 @@ impl LanguageModelRequestMessage {
 
 #[derive(Debug, Default, Serialize)]
 pub struct LanguageModelRequest {
-    pub model: Option<LanguageModel>,
+    pub model: LanguageModel,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stop: Vec<String>,
     pub temperature: f32,
@@ -163,7 +163,7 @@ pub struct LanguageModelRequest {
 impl LanguageModelRequest {
     pub fn to_proto(&self) -> proto::CompleteWithLanguageModel {
         proto::CompleteWithLanguageModel {
-            model: self.model.as_ref().map(|m| m.id().to_string()),
+            model: self.model.id().to_string(),
             messages: self.messages.iter().map(|m| m.to_proto()).collect(),
             stop: self.stop.clone(),
             temperature: self.temperature,

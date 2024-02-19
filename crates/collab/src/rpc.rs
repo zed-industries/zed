@@ -3188,6 +3188,17 @@ async fn complete_with_language_model(
     response: StreamingResponse<proto::CompleteWithLanguageModel>,
     session: Session,
 ) -> Result<()> {
+    if request.model.starts_with("gemini") {
+        let db = session.db().await;
+        let flags = db.get_user_flags(session.user_id).await?;
+        if flags.iter().any(|flag| flag == "gemini") {}
+    } else if request.model.starts_with("gpt") {
+        // open_ai::stream_completions()
+        // build completion provider
+        // start request
+        // forward response chunks
+    }
+
     Ok(())
 }
 

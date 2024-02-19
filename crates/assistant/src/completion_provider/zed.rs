@@ -59,7 +59,7 @@ impl ZedDotDevCompletionProvider {
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let request = proto::CompleteWithLanguageModel {
-            model: request.model.map(|model| model.id().to_string()),
+            model: request.model.id().to_string(),
             messages: request
                 .messages
                 .iter()

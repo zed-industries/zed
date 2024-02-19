@@ -644,7 +644,6 @@ impl AssistantPanel {
             generate_content_prompt(user_prompt, language_name, buffer, range, project_name)
         });
 
-        let mut model = None;
         let mut messages = Vec::new();
         if let Some(conversation) = conversation {
             let conversation = conversation.read(cx);
@@ -654,8 +653,8 @@ impl AssistantPanel {
                     .messages(cx)
                     .map(|message| message.to_open_ai_message(buffer)),
             );
-            model = Some(self.model.clone());
         }
+        let model = self.model.clone();
 
         cx.spawn(|_, mut cx| async move {
             // I Don't know if we want to return a ? here.
@@ -1562,7 +1561,7 @@ impl Conversation {
             }
 
             let request = LanguageModelRequest {
-                model: Some(self.model.clone()),
+                model: self.model.clone(),
                 messages: self
                     .messages(cx)
                     .filter(|message| matches!(message.status, MessageStatus::Done))
@@ -1844,7 +1843,7 @@ impl Conversation {
                         .into(),
                 }));
             let request = LanguageModelRequest {
-                model: Some(self.model.clone()),
+                model: self.model.clone(),
                 messages: messages.collect(),
                 stop: vec![],
                 temperature: 1.0,
