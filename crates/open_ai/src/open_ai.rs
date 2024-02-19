@@ -21,7 +21,7 @@ impl TryFrom<String> for Role {
             "user" => Ok(Self::User),
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
-            _ => Err(anyhow!("invalid role")),
+            _ => Err(anyhow!("invalid role '{value}'")),
         }
     }
 }

@@ -314,7 +314,7 @@ impl Server {
                         request,
                         response,
                         session,
-                        app_state.config.open_ai_api_key.clone(),
+                        app_state.config.openai_api_key.clone(),
                         app_state.config.google_ai_api_key.clone(),
                     )
                 }

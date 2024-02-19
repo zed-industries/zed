@@ -141,7 +141,7 @@ pub struct Config {
     pub blob_store_secret_key: Option<String>,
     pub blob_store_bucket: Option<String>,
     pub zed_environment: Arc<str>,
-    pub open_ai_api_key: Option<Arc<str>>,
+    pub openai_api_key: Option<Arc<str>>,
     pub google_ai_api_key: Option<Arc<str>>,
 }
 

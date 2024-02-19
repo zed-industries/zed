@@ -6,11 +6,11 @@ use settings::Settings;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum ZedDotDevModel {
-    #[serde(rename = "gpt-3.5-turbo-0613")]
+    #[serde(rename = "gpt-3.5-turbo")]
     GptThreePointFiveTurbo,
-    #[serde(rename = "gpt-4-0613")]
+    #[serde(rename = "gpt-4")]
     GptFour,
-    #[serde(rename = "gpt-4-1106-preview")]
+    #[serde(rename = "gpt-4-turbo-preview")]
     #[default]
     GptFourTurbo,
 }
@@ -18,9 +18,9 @@ pub enum ZedDotDevModel {
 impl ZedDotDevModel {
     pub fn id(&self) -> &'static str {
         match self {
-            Self::GptThreePointFiveTurbo => "gpt-3.5-turbo-0613",
-            Self::GptFour => "gpt-4-0613",
-            Self::GptFourTurbo => "gpt-4-1106-preview",
+            Self::GptThreePointFiveTurbo => "gpt-3.5-turbo",
+            Self::GptFour => "gpt-4",
+            Self::GptFourTurbo => "gpt-4-turbo-preview",
         }
     }
 
