@@ -7,7 +7,6 @@ use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use schemars::JsonSchema;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;

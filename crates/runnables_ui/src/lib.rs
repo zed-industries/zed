@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gpui::{AppContext, ViewContext, WindowContext};
 use modal::RunnablesModal;
