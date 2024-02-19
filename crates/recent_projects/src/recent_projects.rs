@@ -49,7 +49,7 @@ impl RecentProjects {
 
             this.update(&mut cx, move |this, cx| {
                 this.picker.update(cx, move |picker, cx| {
-                    picker.delegate.workspace_locations = workspaces;
+                    picker.delegate.workspaces = workspaces;
                     picker.update_matches(picker.query(cx), cx)
                 })
             })
@@ -122,7 +122,7 @@ impl Render for RecentProjects {
 
 pub struct RecentProjectsDelegate {
     workspace: WeakView<Workspace>,
-    workspace_locations: Vec<(WorkspaceId, WorkspaceLocation)>,
+    workspaces: Vec<(WorkspaceId, WorkspaceLocation)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
@@ -132,7 +132,7 @@ impl RecentProjectsDelegate {
     fn new(workspace: WeakView<Workspace>, render_paths: bool) -> Self {
         Self {
             workspace,
-            workspace_locations: vec![],
+            workspaces: vec![],
             selected_match_index: 0,
             matches: Default::default(),
             render_paths,
@@ -167,7 +167,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         let query = query.trim_start();
         let smart_case = query.chars().any(|c| c.is_uppercase());
         let candidates = self
-            .workspace_locations
+            .workspaces
             .iter()
             .enumerate()
             .map(|(id, (_, location))| {
@@ -207,7 +207,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .get(self.selected_index())
             .zip(self.workspace.upgrade())
         {
-            let (_, workspace_location) = &self.workspace_locations[selected_match.candidate_id];
+            let (_, workspace_location) = &self.workspaces[selected_match.candidate_id];
             workspace
                 .update(cx, |workspace, cx| {
                     workspace
@@ -230,7 +230,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             return None;
         };
 
-        let (workspace_id, location) = &self.workspace_locations[r#match.candidate_id];
+        let (workspace_id, location) = &self.workspaces[r#match.candidate_id];
         let highlighted_location: HighlightedWorkspaceLocation =
             HighlightedWorkspaceLocation::new(&r#match, location);
         let tooltip_highlighted_location = highlighted_location.clone();
@@ -285,7 +285,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 impl RecentProjectsDelegate {
     fn delete_recent_project(&self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(selected_match) = self.matches.get(ix) {
-            let (workspace_id, _) = self.workspace_locations[selected_match.candidate_id];
+            let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
             cx.spawn(move |this, mut cx| async move {
                 let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
                 let workspaces = WORKSPACE_DB
@@ -293,7 +293,7 @@ impl RecentProjectsDelegate {
                     .await
                     .unwrap_or_default();
                 this.update(&mut cx, move |picker, cx| {
-                    picker.delegate.workspace_locations = workspaces;
+                    picker.delegate.workspaces = workspaces;
                     picker.update_matches(picker.query(cx), cx)
                 })
             })
