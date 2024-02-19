@@ -1,10 +1,11 @@
 use crate::Project;
 use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
 use settings::Settings;
+use smol::channel::bounded;
 use std::path::{Path, PathBuf};
 use terminal::{
-    terminal_settings::{self, TerminalSettings, VenvSettingsContent},
-    Terminal, TerminalBuilder,
+    terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
+    RunableState, SpawnRunnable, Terminal, TerminalBuilder,
 };
 
 // #[cfg(target_os = "macos")]
@@ -18,63 +19,83 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
+        spawn_runnable: Option<SpawnRunnable>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
-        if self.is_remote() {
-            return Err(anyhow::anyhow!(
-                "creating terminals as a guest is not supported yet"
-            ));
-        } else {
-            let settings = TerminalSettings::get_global(cx);
-            let python_settings = settings.detect_venv.clone();
-            let shell = settings.shell.clone();
+        anyhow::ensure!(
+            !self.is_remote(),
+            "creating terminals as a guest is not supported yet"
+        );
 
-            let terminal = TerminalBuilder::new(
-                working_directory.clone(),
-                shell.clone(),
-                settings.env.clone(),
-                Some(settings.blinking.clone()),
-                settings.alternate_scroll,
-                window,
+        let settings = TerminalSettings::get_global(cx);
+        let python_settings = settings.detect_venv.clone();
+        let (completion_tx, completion_rx) = bounded(1);
+        let mut env = settings.env.clone();
+        let (spawn_runnable, shell) = if let Some(spawn_runnable) = spawn_runnable {
+            env.extend(spawn_runnable.env);
+            (
+                Some(RunableState {
+                    id: spawn_runnable.id,
+                    label: spawn_runnable.label,
+                    completed: false,
+                    completion_rx,
+                }),
+                Shell::WithArguments {
+                    program: spawn_runnable.command,
+                    args: spawn_runnable.args,
+                },
             )
-            .map(|builder| {
-                let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
+        } else {
+            (None, settings.shell.clone())
+        };
 
-                self.terminals
-                    .local_handles
-                    .push(terminal_handle.downgrade());
+        let terminal = TerminalBuilder::new(
+            working_directory.clone(),
+            spawn_runnable,
+            shell,
+            env,
+            Some(settings.blinking.clone()),
+            settings.alternate_scroll,
+            window,
+            completion_tx,
+        )
+        .map(|builder| {
+            let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
 
-                let id = terminal_handle.entity_id();
-                cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
-                    let handles = &mut project.terminals.local_handles;
+            self.terminals
+                .local_handles
+                .push(terminal_handle.downgrade());
 
-                    if let Some(index) = handles
-                        .iter()
-                        .position(|terminal| terminal.entity_id() == id)
-                    {
-                        handles.remove(index);
-                        cx.notify();
-                    }
-                })
-                .detach();
+            let id = terminal_handle.entity_id();
+            cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                let handles = &mut project.terminals.local_handles;
 
-                if let Some(python_settings) = &python_settings.as_option() {
-                    let activate_command = Project::get_activate_command(python_settings);
-                    let activate_script_path =
-                        self.find_activate_script_path(python_settings, working_directory);
-                    self.activate_python_virtual_environment(
-                        activate_command,
-                        activate_script_path,
-                        &terminal_handle,
-                        cx,
-                    );
+                if let Some(index) = handles
+                    .iter()
+                    .position(|terminal| terminal.entity_id() == id)
+                {
+                    handles.remove(index);
+                    cx.notify();
                 }
-                terminal_handle
-            });
+            })
+            .detach();
 
-            terminal
-        }
+            if let Some(python_settings) = &python_settings.as_option() {
+                let activate_command = Project::get_activate_command(python_settings);
+                let activate_script_path =
+                    self.find_activate_script_path(python_settings, working_directory);
+                self.activate_python_virtual_environment(
+                    activate_command,
+                    activate_script_path,
+                    &terminal_handle,
+                    cx,
+                );
+            }
+            terminal_handle
+        });
+
+        terminal
     }
 
     pub fn find_activate_script_path(

@@ -50,6 +50,7 @@ prettier.workspace = true
 rand.workspace = true
 regex.workspace = true
 rpc.workspace = true
+runnable.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -71,7 +72,7 @@ collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 db = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-fs = { workspace = true,  features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
 git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
