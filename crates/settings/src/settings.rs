@@ -36,3 +36,7 @@ pub fn initial_user_settings_content() -> Cow<'static, str> {
 pub fn initial_local_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_local_settings.json")
 }
+
+pub fn initial_runnables_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_runnables.json")
+}
