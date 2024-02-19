@@ -219,7 +219,7 @@ pub fn render_markdown_mut(
                         last_link_len
                     };
 
-                    if style != HighlightStyle::default() {
+                    if style != HighlightStyle::default() && last_run_len < text.len() {
                         let mut new_highlight = true;
                         if let Some((last_range, last_style)) = highlights.last_mut() {
                             if last_range.end == last_run_len
