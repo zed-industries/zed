@@ -450,9 +450,11 @@ impl BladeRenderer {
 
         for path in paths {
             let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
-            let tile = self
-                .atlas
-                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path);
+            let tile = self.atlas.allocate_for_rendering(
+                clipped_bounds.size.map(Into::into),
+                AtlasTextureKind::Path,
+                &mut self.command_encoder,
+            );
             vertices_by_texture_id
                 .entry(tile.texture_id)
                 .or_insert(Vec::new())
