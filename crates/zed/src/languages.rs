@@ -93,6 +93,7 @@ pub fn init(
         ("heex", tree_sitter_heex::language()),
         ("html", tree_sitter_html::language()),
         ("json", tree_sitter_json::language()),
+        ("log", tree_sitter_log::language()),
         ("lua", tree_sitter_lua::language()),
         ("markdown", tree_sitter_markdown::language()),
         ("nix", tree_sitter_nix::language()),
@@ -273,6 +274,7 @@ pub fn init(
     );
     language("scheme", vec![]);
     language("racket", vec![]);
+    language("log", vec![]);
     language("lua", vec![Arc::new(lua::LuaLspAdapter)]);
     language(
         "yaml",

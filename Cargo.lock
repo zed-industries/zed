@@ -10249,6 +10249,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-log"
+version = "0.0.1"
+source = "git+https://github.com/Tudyx/tree-sitter-log?rev=62cfe307e942af3417171243b599cc7deac5eab9#62cfe307e942af3417171243b599cc7deac5eab9"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-lua"
 version = "0.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11979,6 +11988,7 @@ dependencies = [
  "tree-sitter-heex",
  "tree-sitter-html",
  "tree-sitter-json 0.20.0",
+ "tree-sitter-log",
  "tree-sitter-lua",
  "tree-sitter-markdown",
  "tree-sitter-nix",
