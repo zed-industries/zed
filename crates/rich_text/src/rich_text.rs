@@ -187,7 +187,7 @@ pub fn render_markdown_mut(
                         // Manually scan for links
                         let mut finder = linkify::LinkFinder::new();
                         finder.kinds(&[linkify::LinkKind::Url]);
-                        let mut last_link_len = 0;
+                        let mut last_link_len = prev_len;
                         for link in finder.links(&t) {
                             let start = link.start();
                             let end = link.end();

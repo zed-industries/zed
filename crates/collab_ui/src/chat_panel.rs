@@ -1059,6 +1059,107 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_render_markdown_with_auto_detect_links() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body: "Here is a link https://zed.dev to zeds website".to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar_uri: "avatar_fgh".into(),
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: Vec::new(),
+            reply_to_message_id: None,
+        };
+
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) =
+            marked_text_ranges("Here is a link «https://zed.dev» to zeds website", false);
+        assert_eq!(message.text, body);
+        assert_eq!(1, ranges.len());
+        assert_eq!(
+            message.highlights,
+            vec![(
+                ranges[0].clone(),
+                HighlightStyle {
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: 1.0.into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+                .into()
+            ),]
+        );
+    }
+
+    #[gpui::test]
+    fn test_render_markdown_with_auto_detect_links_and_additional_formatting() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body: "**Here is a link https://zed.dev to zeds website**".to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar_uri: "avatar_fgh".into(),
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: Vec::new(),
+            reply_to_message_id: None,
+        };
+
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) = marked_text_ranges(
+            "«Here is a link »«https://zed.dev»« to zeds website»",
+            false,
+        );
+        assert_eq!(message.text, body);
+        assert_eq!(3, ranges.len());
+        assert_eq!(
+            message.highlights,
+            vec![
+                (
+                    ranges[0].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (
+                    ranges[1].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        underline: Some(gpui::UnderlineStyle {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (
+                    ranges[2].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn test_format_locale() {
         let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
