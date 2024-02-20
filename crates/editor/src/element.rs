@@ -375,7 +375,7 @@ impl EditorElement {
     ) {
         let mouse_position = cx.mouse_position();
         if !text_bounds.contains(&mouse_position)
-            || !cx.was_top_layer(&mouse_position, stacking_order)
+            || !cx.is_top_layer(&mouse_position, stacking_order)
         {
             return;
         }
@@ -407,7 +407,7 @@ impl EditorElement {
         } else if !text_bounds.contains(&event.position) {
             return;
         }
-        if !cx.was_top_layer(&event.position, stacking_order) {
+        if !cx.is_top_layer(&event.position, stacking_order) {
             return;
         }
 
@@ -483,7 +483,7 @@ impl EditorElement {
             && !pending_nonempty_selections
             && event.modifiers.command
             && text_bounds.contains(&event.position)
-            && cx.was_top_layer(&event.position, stacking_order)
+            && cx.is_top_layer(&event.position, stacking_order)
         {
             let point = position_map.point_for_position(text_bounds, event.position);
             editor.handle_click_hovered_link(point, event.modifiers, cx);
@@ -551,7 +551,7 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let text_hovered = text_bounds.contains(&event.position);
         let gutter_hovered = gutter_bounds.contains(&event.position);
-        let was_top = cx.was_top_layer(&event.position, stacking_order);
+        let was_top = cx.is_top_layer(&event.position, stacking_order);
 
         editor.set_gutter_hovered(gutter_hovered, cx);
 
@@ -1243,7 +1243,7 @@ impl EditorElement {
                         popover_origin.x = popover_origin.x + x_out_of_bounds;
                     }
 
-                    if cx.was_top_layer(&popover_origin, cx.stacking_order()) {
+                    if cx.is_top_layer(&popover_origin, cx.stacking_order()) {
                         cx.break_content_mask(|cx| {
                             hover_popover.draw(popover_origin, available_space, cx)
                         });

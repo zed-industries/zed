@@ -426,7 +426,7 @@ impl Element for InteractiveText {
                     .clickable_ranges
                     .iter()
                     .any(|range| range.contains(&ix))
-                    && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                    && cx.is_top_layer(&mouse_position, cx.stacking_order())
                 {
                     cx.set_cursor_style(crate::CursorStyle::PointingHand)
                 }

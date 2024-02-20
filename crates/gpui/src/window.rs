@@ -862,7 +862,7 @@ impl<'a> WindowContext<'a> {
     /// Returns true if there is no opaque layer containing the given point
     /// on top of the given level. Layers who are extensions of the queried layer
     /// are not considered to be on top of queried layer.
-    pub fn was_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
+    pub fn is_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
         // Precondition: the depth map is ordered from topmost to bottomost.
 
         for (opaque_layer, _, bounds) in self.window.next_frame.depth_map.iter() {
@@ -960,12 +960,13 @@ impl<'a> WindowContext<'a> {
             requested_handler.handler = input_handler;
         }
 
+        // Layout root views
+
         let root_view = self.window.root_view.take().unwrap();
         let mut root_element = self.with_element_context(true, |cx| {
             cx.with_z_index(0, |cx| {
                 let available_space = cx.window.viewport_size.map(Into::into);
                 let mut root_element = root_view.layout(Point::default(), available_space, cx);
-                root_view.paint(Point::default(), &mut root_element, cx);
                 root_element
             })
         });
@@ -980,9 +981,7 @@ impl<'a> WindowContext<'a> {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                     let mut element = active_drag.view.layout(offset, available_space, cx);
-                    active_drag.view.paint(offset, &mut element, cx);
                     drag_element = Some(element);
-
                     cx.active_drag = Some(active_drag);
                 } else if let Some(tooltip_request) = cx.window.next_frame.tooltip_request.take() {
                     let available_space =
@@ -992,13 +991,7 @@ impl<'a> WindowContext<'a> {
                         available_space,
                         cx,
                     );
-                    tooltip_request.tooltip.view.paint(
-                        tooltip_request.tooltip.cursor_offset,
-                        &mut element,
-                        cx,
-                    );
                     tooltip_element = Some(element);
-
                     cx.window.next_frame.tooltip_request = Some(tooltip_request);
                 }
             })
@@ -1006,6 +999,42 @@ impl<'a> WindowContext<'a> {
 
         assert_eq!(self.window.next_frame.z_index_stack.len(), 0);
         self.window.next_frame.next_stacking_order_ids = vec![0];
+
+        // Painting dry run
+
+        self.with_element_context(true, |cx| {
+            cx.with_z_index(0, |cx| {
+                cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
+                    root_view.paint(Point::default(), &mut root_element, cx);
+                })
+            })
+        });
+
+        self.with_element_context(false, |cx| {
+            cx.with_z_index(1, |cx| {
+                if let Some(drag_element) = &mut drag_element {
+                    if let Some(active_drag) = cx.app.active_drag.take() {
+                        let offset = cx.mouse_position() - active_drag.cursor_offset;
+                        active_drag.view.paint(offset, drag_element, cx);
+                    }
+                }
+
+                if let Some(tooltip_element) = &mut tooltip_element {
+                    if let Some(tooltip_request) = cx.window.next_frame.tooltip_request.take() {
+                        tooltip_request.tooltip.view.paint(
+                            tooltip_request.tooltip.cursor_offset,
+                            tooltip_element,
+                            cx,
+                        );
+                    }
+                }
+            })
+        });
+
+        assert_eq!(self.window.next_frame.z_index_stack.len(), 0);
+        self.window.next_frame.next_stacking_order_ids = vec![0];
+
+        // Actual painting run
 
         self.with_element_context(false, |cx| {
             cx.with_z_index(0, |cx| {
@@ -1024,8 +1053,6 @@ impl<'a> WindowContext<'a> {
                         }
                     }
 
-                    // let available_space = cx.window.viewport_size.map(Into::into);
-                    // let mut root_element = root_view.layout(Point::default(), available_space, cx);
                     root_view.paint(Point::default(), &mut root_element, cx);
                 })
             })

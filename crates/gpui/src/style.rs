@@ -411,8 +411,8 @@ impl Style {
         });
 
         let background_color = self.background.as_ref().and_then(Fill::color);
-        if background_color.map_or(false, |color| !color.is_transparent()) {
-            cx.with_z_index(1, |cx| {
+        cx.with_z_index(1, |cx| {
+            if background_color.map_or(false, |color| !color.is_transparent()) {
                 let mut border_color = background_color.unwrap_or_default();
                 border_color.a = 0.;
                 cx.paint_quad(quad(
@@ -422,8 +422,8 @@ impl Style {
                     Edges::default(),
                     border_color,
                 ));
-            });
-        }
+            }
+        });
 
         cx.with_z_index(2, |cx| {
             continuation(cx);
