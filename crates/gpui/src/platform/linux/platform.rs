@@ -91,8 +91,9 @@ impl LinuxPlatform {
         state: Mutex<LinuxPlatformState>,
     ) -> Self {
         let conn = Arc::new(Connection::connect_to_env().unwrap());
+        let eventfd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
         let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
-            Arc::new(WaylandClientDispatcher::new(&conn));
+            Arc::new(WaylandClientDispatcher::new(eventfd));
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
         let inner = Rc::new(LinuxPlatformInner {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
@@ -102,7 +103,11 @@ impl LinuxPlatform {
             callbacks,
             state,
         });
-        let client = Rc::new(WaylandClient::new(Rc::clone(&inner), Arc::clone(&conn)));
+        let client = Rc::new(WaylandClient::new(
+            Rc::clone(&inner),
+            Arc::clone(&conn),
+            eventfd,
+        ));
         Self {
             client,
             inner: Rc::clone(&inner),

@@ -4104,6 +4104,7 @@ dependencies = [
  "image",
  "itertools 0.10.5",
  "lazy_static",
+ "libc",
  "linkme",
  "log",
  "media",

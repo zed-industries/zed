@@ -1,3 +1,5 @@
+use std::io::Error;
+use std::os::fd::{AsFd, AsRawFd};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -64,10 +66,15 @@ pub(crate) struct WaylandClient {
     state: Mutex<WaylandClientState>,
     event_queue: Mutex<EventQueue<WaylandClientState>>,
     qh: Arc<QueueHandle<WaylandClientState>>,
+    eventfd: i32,
 }
 
 impl WaylandClient {
-    pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>, conn: Arc<Connection>) -> Self {
+    pub(crate) fn new(
+        linux_platform_inner: Rc<LinuxPlatformInner>,
+        conn: Arc<Connection>,
+        eventfd: i32,
+    ) -> Self {
         let state = WaylandClientState {
             compositor: None,
             buffer: None,
@@ -100,6 +107,7 @@ impl WaylandClient {
             state: Mutex::new(state),
             event_queue: Mutex::new(event_queue),
             qh: Arc::new(qh),
+            eventfd,
         }
     }
 }
@@ -112,18 +120,81 @@ impl Client for WaylandClient {
 
         eq.roundtrip(&mut self.state.lock()).unwrap();
 
+        // Create epoll
+        let epoll_fd = unsafe { libc::epoll_create1(0) };
+        if epoll_fd == -1 {
+            panic!("{:?}", Error::last_os_error());
+        }
+
+        // Add eventfd to epoll
+        let mut eventfd_event = libc::epoll_event {
+            events: (libc::EPOLLIN | libc::EPOLLET) as u32,
+            u64: self.eventfd as u64,
+        };
+
+        if unsafe {
+            libc::epoll_ctl(
+                epoll_fd,
+                libc::EPOLL_CTL_ADD,
+                self.eventfd,
+                &mut eventfd_event,
+            )
+        } == -1
+        {
+            panic!("{:?}", Error::last_os_error());
+        }
+
+        // Add wayland_client fd to epoll
+        let conn_fd = self.conn.as_fd().as_raw_fd();
+        let mut wayland_event = libc::epoll_event {
+            events: (libc::EPOLLIN) as u32,
+            u64: conn_fd as u64,
+        };
+
+        if unsafe { libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, conn_fd, &mut wayland_event) }
+            == -1
+        {
+            panic!("{:?}", Error::last_os_error());
+        }
+
+        let mut events: Vec<libc::epoll_event> = vec![libc::epoll_event { events: 0, u64: 0 }; 2];
+
         on_finish_launching();
         while !self.platform_inner.state.lock().quit_requested {
             eq.flush().unwrap();
             eq.dispatch_pending(&mut self.state.lock()).unwrap();
-            if let Some(guard) = self.conn.prepare_read() {
-                guard.read().unwrap();
-                eq.dispatch_pending(&mut self.state.lock()).unwrap();
+            let read_guard = eq.prepare_read().unwrap();
+
+            let num_events = unsafe { libc::epoll_wait(epoll_fd, events.as_mut_ptr(), 2, -1) };
+
+            if num_events == -1 {
+                panic!("{:?}", Error::last_os_error());
             }
-            if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
-                runnable.run();
+
+            let mut wayland_socket_ready = false;
+            for i in 0..num_events {
+                if events[i as usize].u64 == conn_fd as u64 {
+                    wayland_socket_ready = true;
+                }
+            }
+
+            if wayland_socket_ready {
+                read_guard.read().unwrap();
+                eq.dispatch_pending(&mut self.state.lock()).unwrap();
+            } else {
+                drop(read_guard);
+            }
+
+            for i in 0..num_events {
+                if events[i as usize].u64 == self.eventfd as u64 {
+                    while let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
+                        runnable.run();
+                    }
+                }
             }
         }
+
+        unsafe { libc::close(epoll_fd) };
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

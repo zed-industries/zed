@@ -1,21 +1,12 @@
-use std::sync::Arc;
-
-use wayland_client::{Connection, EventQueue};
-
 use crate::platform::linux::client_dispatcher::ClientDispatcher;
 
 pub(crate) struct WaylandClientDispatcher {
-    conn: Arc<Connection>,
-    event_queue: Arc<EventQueue<Connection>>,
+    eventfd: i32,
 }
 
 impl WaylandClientDispatcher {
-    pub(crate) fn new(conn: &Arc<Connection>) -> Self {
-        let event_queue = conn.new_event_queue();
-        Self {
-            conn: Arc::clone(conn),
-            event_queue: Arc::new(event_queue),
-        }
+    pub(crate) fn new(eventfd: i32) -> Self {
+        Self { eventfd }
     }
 }
 
@@ -26,5 +17,8 @@ impl Drop for WaylandClientDispatcher {
 }
 
 impl ClientDispatcher for WaylandClientDispatcher {
-    fn dispatch_on_main_thread(&self) {}
+    fn dispatch_on_main_thread(&self) {
+        // wake up the event loop
+        unsafe { libc::eventfd_write(self.eventfd, 1u64) };
+    }
 }
