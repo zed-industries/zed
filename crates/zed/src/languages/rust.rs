@@ -74,11 +74,15 @@ impl LspAdapter for RustLspAdapter {
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let mut file = File::create(&destination_path).await?;
             futures::io::copy(decompressed_bytes, &mut file).await?;
-            fs::set_permissions(
-                &destination_path,
-                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-            )
-            .await?;
+            // todo!("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &destination_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
 
             remove_matching(&container_dir, |entry| entry != destination_path).await;
         }

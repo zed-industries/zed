@@ -61,6 +61,10 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(LinuxPlatform::new())
 }
+#[cfg(target_os = "windows")]
+pub(crate) fn current_platform() -> Rc<dyn Platform> {
+    todo!("windows")
+}
 
 pub(crate) trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
