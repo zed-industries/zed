@@ -114,22 +114,6 @@ impl LanguageModel {
         }
     }
 
-    pub fn cycle(&self) -> Self {
-        match self {
-            LanguageModel::OpenAi(model) => LanguageModel::OpenAi(match &model {
-                OpenAiModel::ThreePointFiveTurbo => OpenAiModel::Four,
-                OpenAiModel::Four => OpenAiModel::FourTurbo,
-                OpenAiModel::FourTurbo => OpenAiModel::ThreePointFiveTurbo,
-            }),
-            LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
-                ZedDotDevModel::GptThreePointFiveTurbo => ZedDotDevModel::GptFour,
-                ZedDotDevModel::GptFour => ZedDotDevModel::GptFourTurbo,
-                ZedDotDevModel::GptFourTurbo => ZedDotDevModel::GptThreePointFiveTurbo,
-                ZedDotDevModel::Custom(_) => model.clone(),
-            }),
-        }
-    }
-
     pub fn id(&self) -> &str {
         match self {
             LanguageModel::OpenAi(model) => model.id(),

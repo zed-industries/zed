@@ -1,5 +1,5 @@
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings},
+    assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
@@ -767,8 +767,26 @@ impl AssistantPanel {
     }
 
     fn cycle_model(&mut self, cx: &mut ViewContext<Self>) {
-        let model = self.model.cycle();
-        self.set_model(model, cx);
+        let next_model = match &self.model {
+            LanguageModel::OpenAi(model) => LanguageModel::OpenAi(match &model {
+                open_ai::Model::ThreePointFiveTurbo => open_ai::Model::Four,
+                open_ai::Model::Four => open_ai::Model::FourTurbo,
+                open_ai::Model::FourTurbo => open_ai::Model::ThreePointFiveTurbo,
+            }),
+            LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
+                ZedDotDevModel::GptThreePointFiveTurbo => ZedDotDevModel::GptFour,
+                ZedDotDevModel::GptFour => ZedDotDevModel::GptFourTurbo,
+                ZedDotDevModel::GptFourTurbo => {
+                    match CompletionProvider::global(cx).default_model() {
+                        LanguageModel::ZedDotDev(custom) => custom,
+                        _ => ZedDotDevModel::GptThreePointFiveTurbo,
+                    }
+                }
+                ZedDotDevModel::Custom(_) => ZedDotDevModel::GptThreePointFiveTurbo,
+            }),
+        };
+
+        self.set_model(next_model, cx);
     }
 
     fn set_model(&mut self, model: LanguageModel, cx: &mut ViewContext<Self>) {
