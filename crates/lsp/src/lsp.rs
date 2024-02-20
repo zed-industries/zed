@@ -4,7 +4,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
+use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
@@ -35,6 +35,7 @@ const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, &str, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
@@ -61,7 +62,7 @@ pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
-    name: String,
+    name: Arc<str>,
     capabilities: ServerCapabilities,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
@@ -72,7 +73,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
-    _server: Option<Mutex<Child>>,
+    server: Arc<Mutex<Option<Child>>>,
 }
 
 /// Identifies a running language server.
@@ -217,7 +218,7 @@ impl LanguageServer {
         );
 
         if let Some(name) = binary.path.file_name() {
-            server.name = name.to_string_lossy().to_string();
+            server.name = name.to_string_lossy().into();
         }
 
         Ok(server)
@@ -293,7 +294,7 @@ impl LanguageServer {
             notification_handlers,
             response_handlers,
             io_handlers,
-            name: Default::default(),
+            name: "".into(),
             capabilities: Default::default(),
             code_action_kinds,
             next_id: Default::default(),
@@ -302,7 +303,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            _server: server.map(|server| Mutex::new(server)),
+            server: Arc::new(Mutex::new(server.map(|server| server))),
         }
     }
 
@@ -618,7 +619,7 @@ impl LanguageServer {
         cx.spawn(|_| async move {
             let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
-                self.name = info.name;
+                self.name = info.name.into();
             }
             self.capabilities = response.capabilities;
 
@@ -644,14 +645,30 @@ impl LanguageServer {
             );
             let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
             outbound_tx.close();
+
+            let server = self.server.clone();
+            let name = self.name.clone();
+            let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
             Some(
                 async move {
                     log::debug!("language server shutdown started");
-                    shutdown_request.await?;
+
+                    select! {
+                        request_result = shutdown_request.fuse() => {
+                            request_result?;
+                        }
+
+                        _ = timer => {
+                            log::info!("timeout waiting for language server {name} to shutdown");
+                        },
+                    }
+
                     response_handlers.lock().take();
                     exit?;
                     output_done.recv().await;
+                    server.lock().take().map(|mut child| child.kill());
                     log::debug!("language server shutdown finished");
+
                     drop(tasks);
                     anyhow::Ok(())
                 }
@@ -931,7 +948,7 @@ impl LanguageServer {
             });
 
             let method = T::METHOD;
-            futures::select! {
+            select! {
                 response = rx.fuse() => {
                     let elapsed = started.elapsed();
                     log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
