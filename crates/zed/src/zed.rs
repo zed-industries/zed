@@ -23,6 +23,7 @@ use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use runnable::static_source::StaticSource;
+use runnables_ui::OneshotSource;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
@@ -163,11 +164,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 app_state.fs.clone(),
                 paths::RUNNABLES.clone(),
             );
-            let source = StaticSource::new(runnables_file_rx, cx);
+            let static_source = StaticSource::new(runnables_file_rx, cx);
+            let oneshot_source = OneshotSource::new(cx);
+
             project.update(cx, |project, cx| {
-                project
-                    .runnable_inventory()
-                    .update(cx, |inventory, cx| inventory.add_source(source, cx))
+                project.runnable_inventory().update(cx, |inventory, cx| {
+                    inventory.add_source(oneshot_source, cx);
+                    inventory.add_source(static_source, cx);
+                })
             });
         }
         cx.spawn(|workspace_handle, mut cx| async move {

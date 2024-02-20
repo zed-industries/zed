@@ -1,6 +1,6 @@
 //! Project-wide storage of the runnables available, capable of updating itself from the sources set.
 
-use std::{path::Path, sync::Arc};
+use std::{any::TypeId, path::Path, sync::Arc};
 
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use runnable::{Runnable, RunnableId, Source};
@@ -14,6 +14,7 @@ pub struct Inventory {
 struct SourceInInventory {
     source: Model<Box<dyn Source>>,
     _subscription: Subscription,
+    type_id: TypeId,
 }
 
 impl Inventory {
@@ -29,12 +30,28 @@ impl Inventory {
         let _subscription = cx.observe(&source, |_, _, cx| {
             cx.notify();
         });
+        let type_id = source.read(cx).type_id();
         let source = SourceInInventory {
             source,
             _subscription,
+            type_id,
         };
         self.sources.push(source);
         cx.notify();
+    }
+    pub fn source<T: Source>(&self) -> Option<Model<Box<dyn Source>>> {
+        let target_type_id = std::any::TypeId::of::<T>();
+        self.sources.iter().find_map(
+            |SourceInInventory {
+                 type_id, source, ..
+             }| {
+                if &target_type_id == type_id {
+                    Some(source.clone())
+                } else {
+                    None
+                }
+            },
+        )
     }
 
     /// Pulls its sources to list runanbles for the path given (up to the source to decide what to return for no path).

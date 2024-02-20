@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
-    ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
+    actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -13,7 +13,7 @@ use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::schedule_runnable;
+use crate::{schedule_runnable, OneshotSource};
 
 actions!(runnables, [Spawn, Rerun]);
 
@@ -25,6 +25,7 @@ pub(crate) struct RunnablesModalDelegate {
     selected_index: usize,
     placeholder_text: Arc<str>,
     workspace: WeakView<Workspace>,
+    last_prompt: String,
 }
 
 impl RunnablesModalDelegate {
@@ -36,7 +37,20 @@ impl RunnablesModalDelegate {
             matches: Vec::new(),
             selected_index: 0,
             placeholder_text: Arc::from("Select runnable..."),
+            last_prompt: String::default(),
         }
+    }
+
+    fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<Arc<dyn Runnable>> {
+        let oneshot_source = self
+            .inventory
+            .update(cx, |this, _| this.source::<OneshotSource>())?;
+        oneshot_source.update(cx, |this, _| {
+            let Some(this) = this.as_any().downcast_mut::<OneshotSource>() else {
+                return None;
+            };
+            Some(this.spawn(self.last_prompt.clone()))
+        })
     }
 }
 
@@ -149,6 +163,7 @@ impl PickerDelegate for RunnablesModalDelegate {
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
+                    delegate.last_prompt = query;
 
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
@@ -161,14 +176,21 @@ impl PickerDelegate for RunnablesModalDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        let Some(current_match) = self.matches.get(current_match_index) else {
+        let Some(runnable) = secondary
+            .then(|| self.spawn_oneshot(cx))
+            .flatten()
+            .or_else(|| {
+                self.matches.get(current_match_index).map(|current_match| {
+                    let ix = current_match.candidate_id;
+                    self.candidates[ix].clone()
+                })
+            })
+        else {
             return;
         };
 
-        let ix = current_match.candidate_id;
-        let runnable = &self.candidates[ix];
         self.workspace
             .update(cx, |workspace, cx| {
                 schedule_runnable(workspace, runnable.as_ref(), cx);
