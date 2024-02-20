@@ -154,7 +154,7 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
         let item = h_flex()
             .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
             .items_start()
-            .children(vec![bullet, div().children(contents).pr_2().w_full()]);
+            .children(vec![bullet, div().children(contents).pr_4().w_full()]);
 
         items.push(item);
     }
