@@ -80,7 +80,7 @@ pub struct GenerateContentResponse {
 pub struct GenerateContentCandidate {
     pub index: usize,
     pub content: Content,
-    pub finish_reason: Option<FinishReason>,
+    pub finish_reason: Option<String>,
     pub finish_message: Option<String>,
     pub safety_ratings: Option<Vec<SafetyRating>>,
     pub citation_metadata: Option<CitationMetadata>,
@@ -90,6 +90,14 @@ pub struct GenerateContentCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct Content {
     pub parts: Vec<Part>,
+    pub role: Role,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Role {
+    User,
+    Model,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,27 +127,6 @@ pub struct GenerativeContentBlob {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum FinishReason {
-    #[serde(rename = "FINISH_REASON_UNSPECIFIED")]
-    Unspecified,
-    Stop,
-    MaxTokens,
-    Safety,
-    Recitation,
-    Other,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum BlockReason {
-    #[serde(rename = "BLOCK_REASON_UNSPECIFIED")]
-    Unspecified,
-    Safety,
-    Other,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CitationSource {
     pub start_index: Option<usize>,
@@ -157,7 +144,7 @@ pub struct CitationMetadata {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptFeedback {
-    pub block_reason: Option<BlockReason>,
+    pub block_reason: Option<String>,
     pub safety_ratings: Vec<SafetyRating>,
     pub block_reason_message: Option<String>,
 }

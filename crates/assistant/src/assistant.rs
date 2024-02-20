@@ -125,6 +125,7 @@ impl LanguageModel {
                 ZedDotDevModel::GptThreePointFiveTurbo => ZedDotDevModel::GptFour,
                 ZedDotDevModel::GptFour => ZedDotDevModel::GptFourTurbo,
                 ZedDotDevModel::GptFourTurbo => ZedDotDevModel::GptThreePointFiveTurbo,
+                ZedDotDevModel::Custom(_) => model.clone(),
             }),
         }
     }
@@ -146,7 +147,11 @@ pub struct LanguageModelRequestMessage {
 impl LanguageModelRequestMessage {
     pub fn to_proto(&self) -> proto::LanguageModelRequestMessage {
         proto::LanguageModelRequestMessage {
-            role: self.role.to_string(),
+            role: match self.role {
+                Role::User => proto::LanguageModelRole::LanguageModelUser,
+                Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,
+                Role::System => proto::LanguageModelRole::LanguageModelSystem,
+            } as i32,
             content: self.content.clone(),
         }
     }

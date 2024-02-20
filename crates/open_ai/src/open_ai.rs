@@ -112,8 +112,6 @@ pub struct ChoiceDelta {
 
 #[derive(Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub id: Option<String>,
-    pub object: String,
     pub created: u32,
     pub model: String,
     pub choices: Vec<ChoiceDelta>,

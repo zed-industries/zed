@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(untagged)]
 pub enum ZedDotDevModel {
     #[serde(rename = "gpt-3.5-turbo")]
     GptThreePointFiveTurbo,
@@ -13,30 +14,25 @@ pub enum ZedDotDevModel {
     #[serde(rename = "gpt-4-turbo-preview")]
     #[default]
     GptFourTurbo,
+    Custom(String),
 }
 
 impl ZedDotDevModel {
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Self::GptThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::GptFour => "gpt-4",
             Self::GptFourTurbo => "gpt-4-turbo-preview",
+            Self::Custom(id) => id,
         }
     }
 
-    pub fn display_name(&self) -> &'static str {
+    pub fn display_name(&self) -> &str {
         match self {
             Self::GptThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::GptFour => "gpt-4",
             Self::GptFourTurbo => "gpt-4-turbo",
-        }
-    }
-
-    pub fn cycle(&self) -> Self {
-        match self {
-            Self::GptThreePointFiveTurbo => Self::GptFour,
-            Self::GptFour => Self::GptFourTurbo,
-            Self::GptFourTurbo => Self::GptThreePointFiveTurbo,
+            Self::Custom(id) => id.as_str(),
         }
     }
 }

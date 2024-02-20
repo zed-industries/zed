@@ -1686,32 +1686,27 @@ message CompleteWithLanguageModel {
 }
 
 message LanguageModelRequestMessage {
-    string role = 1;
+    LanguageModelRole role = 1;
     string content = 2;
 }
 
-message LanguageModelResponse {
-    optional string id = 1;
-    string object = 2;
-    uint32 created = 3;
-    string model = 4;
-    repeated LanguageModelChoiceDelta choices = 5;
-    LanguageModelUsage usage = 6;
+enum LanguageModelRole {
+    LanguageModelUser = 0;
+    LanguageModelAssistant = 1;
+    LanguageModelSystem = 2;
 }
 
 message LanguageModelResponseMessage {
-    optional string role = 1;
+    optional LanguageModelRole role = 1;
     optional string content = 2;
+}
+
+message LanguageModelResponse {
+    repeated LanguageModelChoiceDelta choices = 1;
 }
 
 message LanguageModelChoiceDelta {
     uint32 index = 1;
     LanguageModelResponseMessage delta = 2;
     optional string finish_reason = 3;
-}
-
-message LanguageModelUsage {
-    uint32 prompt_tokens = 1;
-    uint32 completion_tokens = 2;
-    uint32 total_tokens = 3;
 }

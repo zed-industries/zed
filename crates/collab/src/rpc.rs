@@ -10,7 +10,7 @@ use crate::{
     executor::Executor,
     AppState, Error, Result,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use async_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
@@ -40,8 +40,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
-        RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
+        self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LanguageModelRole,
+        LiveKitConnectionInfo, RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
 };
@@ -520,7 +520,8 @@ impl Server {
                     let duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     match result {
                         Err(error) => {
-                            tracing::error!(%error, ?duration_ms, "error handling message")
+                            dbg!(&error);
+                            tracing::error!(%error, ?duration_ms, "error handling message");
                         }
                         Ok(()) => tracing::info!(?duration_ms, "finished handling message"),
                     }
@@ -3208,12 +3209,10 @@ async fn complete_with_language_model(
             open_ai_api_key.ok_or_else(|| anyhow!("no OpenAI API key configured on the server"))?;
         complete_with_open_ai(request, response, session, api_key).await?;
     } else if request.model.starts_with("gemini") {
-        todo!()
-        // let api_key = google_ai_api_key
-        //     .ok_or_else(|| anyhow!("no Google API key configured on the server"))?;
-        // let db = session.db().await;
-        // let flags = db.get_user_flags(session.user_id).await?;
-        // if flags.iter().any(|flag| flag == "gemini") {}
+        let api_key = google_ai_api_key
+            .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
+
+        complete_with_google_ai(request, response, session, api_key).await?;
     }
 
     Ok(())
@@ -3237,8 +3236,14 @@ async fn complete_with_open_ai(
                 .messages
                 .into_iter()
                 .map(|message| {
+                    let role = LanguageModelRole::from_i32(message.role)
+                        .ok_or_else(|| anyhow!("invalid role {}", message.role))?;
                     Ok(open_ai::RequestMessage {
-                        role: message.role.try_into()?,
+                        role: match role {
+                            LanguageModelRole::LanguageModelUser => open_ai::Role::User,
+                            LanguageModelRole::LanguageModelAssistant => open_ai::Role::Assistant,
+                            LanguageModelRole::LanguageModelSystem => open_ai::Role::System,
+                        },
                         content: message.content,
                     })
                 })
@@ -3248,32 +3253,108 @@ async fn complete_with_open_ai(
             temperature: request.temperature,
         },
     )
-    .await?;
+    .await
+    .context("open_ai::stream_completion request failed")?;
 
     while let Some(event) = completion_stream.next().await {
         let event = event?;
         response.send(proto::LanguageModelResponse {
-            id: event.id,
-            object: event.object,
-            created: event.created,
-            model: event.model,
             choices: event
                 .choices
                 .into_iter()
                 .map(|choice| proto::LanguageModelChoiceDelta {
                     index: choice.index,
                     delta: Some(proto::LanguageModelResponseMessage {
-                        role: choice.delta.role.map(Into::into),
+                        role: choice.delta.role.map(|role| match role {
+                            open_ai::Role::User => LanguageModelRole::LanguageModelUser,
+                            open_ai::Role::Assistant => LanguageModelRole::LanguageModelAssistant,
+                            open_ai::Role::System => LanguageModelRole::LanguageModelSystem,
+                        } as i32),
                         content: choice.delta.content,
                     }),
                     finish_reason: choice.finish_reason,
                 })
                 .collect(),
-            usage: event.usage.map(|usage| proto::LanguageModelUsage {
-                prompt_tokens: usage.prompt_tokens,
-                completion_tokens: usage.completion_tokens,
-                total_tokens: usage.total_tokens,
-            }),
+        })?;
+    }
+
+    Ok(())
+}
+
+async fn complete_with_google_ai(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: Session,
+    api_key: Arc<str>,
+) -> Result<()> {
+    const GOOGLE_AI_API_URL: &str = "https://generativelanguage.googleapis.com";
+
+    let db = session.db().await;
+    let flags = db.get_user_flags(session.user_id).await?;
+    if !flags.iter().any(|flag| flag == "google-ai") {
+        return Err(anyhow!("permission denied"))?;
+    }
+
+    let mut stream = google_ai::stream_generate_content(
+        &session.http_client,
+        GOOGLE_AI_API_URL,
+        api_key.as_ref(),
+        google_ai::GenerateContentRequest {
+            contents: request
+                .messages
+                .into_iter()
+                .map(|message| {
+                    let role = LanguageModelRole::from_i32(message.role)
+                        .ok_or_else(|| anyhow!("invalid role {}", message.role))?;
+
+                    Ok(google_ai::Content {
+                        parts: vec![google_ai::Part::TextPart(google_ai::TextPart {
+                            text: message.content,
+                        })],
+                        role: match role {
+                            LanguageModelRole::LanguageModelUser => google_ai::Role::User,
+                            LanguageModelRole::LanguageModelAssistant => google_ai::Role::Model,
+                            LanguageModelRole::LanguageModelSystem => google_ai::Role::User,
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?,
+            generation_config: None,
+            safety_settings: None,
+        },
+    )
+    .await
+    .context("google_ai::stream_generate_content request failed")?;
+
+    while let Some(event) = stream.next().await {
+        let event = event?;
+        response.send(proto::LanguageModelResponse {
+            choices: event
+                .candidates
+                .unwrap_or_default()
+                .into_iter()
+                .map(|candidate| proto::LanguageModelChoiceDelta {
+                    index: candidate.index as u32,
+                    delta: Some(proto::LanguageModelResponseMessage {
+                        role: Some(match candidate.content.role {
+                            google_ai::Role::User => LanguageModelRole::LanguageModelUser,
+                            google_ai::Role::Model => LanguageModelRole::LanguageModelAssistant,
+                        } as i32),
+                        content: Some(
+                            candidate
+                                .content
+                                .parts
+                                .into_iter()
+                                .filter_map(|part| match part {
+                                    google_ai::Part::TextPart(part) => Some(part.text),
+                                    google_ai::Part::InlineDataPart(_) => None,
+                                })
+                                .collect(),
+                        ),
+                    }),
+                    finish_reason: candidate.finish_reason.map(|reason| reason.to_string()),
+                })
+                .collect(),
         })?;
     }
 
