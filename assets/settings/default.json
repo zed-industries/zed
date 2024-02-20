@@ -502,6 +502,7 @@
       }
     },
     "Markdown": {
+      "tab_size": 2,
       "soft_wrap": "preferred_line_length"
     },
     "JavaScript": {
