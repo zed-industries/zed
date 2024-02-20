@@ -49,7 +49,7 @@ impl RunnablesModalDelegate {
             let Some(this) = this.as_any().downcast_mut::<OneshotSource>() else {
                 return None;
             };
-            this.spawn(self.last_prompt.clone(), cx)
+            Some(this.spawn(self.last_prompt.clone()))
         })
     }
 }

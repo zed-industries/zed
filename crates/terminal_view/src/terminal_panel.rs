@@ -16,7 +16,7 @@ use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use terminal::{
-    terminal_settings::{TerminalDockPosition, TerminalSettings},
+    terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
     SpawnRunnable,
 };
 use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
@@ -300,13 +300,30 @@ impl TerminalPanel {
         spawn_in_terminal: &runnable::SpawnInTerminal,
         cx: &mut ViewContext<Self>,
     ) {
-        let spawn_runnable = SpawnRunnable {
+        let mut spawn_runnable = SpawnRunnable {
             id: spawn_in_terminal.id.clone(),
             label: spawn_in_terminal.label.clone(),
             command: spawn_in_terminal.command.clone(),
             args: spawn_in_terminal.args.clone(),
             env: spawn_in_terminal.env.clone(),
         };
+        if spawn_in_terminal.separate_shell {
+            let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone()
+            {
+                Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, vec![])),
+                Shell::Program(shell) => Some((shell, vec![])),
+                Shell::WithArguments { program, args } => Some((program, args)),
+            }) else {
+                return;
+            };
+
+            let command = std::mem::take(&mut spawn_runnable.command);
+            let args = std::mem::take(&mut spawn_runnable.args);
+            spawn_runnable.command = shell;
+            user_args.extend(["-c".to_owned(), command]);
+            user_args.extend(args);
+            spawn_runnable.args = user_args;
+        }
         let working_directory = spawn_in_terminal.cwd.clone();
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;
