@@ -52,7 +52,7 @@ pub use text::{
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::RangeExt;
+use util::{RangeExt, ResultExt};
 
 use self::proto::serialize_transaction;
 
@@ -576,12 +576,12 @@ impl Buffer {
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
             .into();
-        this.saved_undo_top = Some(
-            message
-                .saved_undo_top
-                .and_then(|entry| proto::deserialize_transaction(entry).ok())
-                .ok_or_else(|| anyhow!("invalid saved_undo_top"))?,
-        );
+        dbg!(&message.saved_undo_top);
+        this.saved_undo_top = if let Some(saved_undo_top) = message.saved_undo_top {
+            Some(proto::deserialize_transaction(saved_undo_top)?)
+        } else {
+            None
+        };
         Ok(this)
     }
 
