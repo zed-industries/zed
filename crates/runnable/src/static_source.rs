@@ -79,17 +79,20 @@ impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
     ) -> Model<Self> {
         cx.new_model(move |cx| {
             cx.spawn(|tracked_file, mut cx| async move {
-                while let Some(new_contents) = tracker.next().await.filter(|s| !s.is_empty()) {
-                    let Some(new_contents) = serde_json_lenient::from_str(&new_contents).log_err()
-                    else {
-                        continue;
-                    };
-                    tracked_file.update(&mut cx, |tracked_file: &mut TrackedFile<T>, cx| {
-                        if tracked_file.parsed_contents != new_contents {
-                            tracked_file.parsed_contents = new_contents;
-                            cx.notify();
+                while let Some(new_contents) = tracker.next().await {
+                    if !new_contents.trim().is_empty() {
+                        let Some(new_contents) =
+                            serde_json_lenient::from_str(&new_contents).log_err()
+                        else {
+                            continue;
                         };
-                    })?;
+                        tracked_file.update(&mut cx, |tracked_file: &mut TrackedFile<T>, cx| {
+                            if tracked_file.parsed_contents != new_contents {
+                                tracked_file.parsed_contents = new_contents;
+                                cx.notify();
+                            };
+                        })?;
+                    }
                 }
                 anyhow::Ok(())
             })
