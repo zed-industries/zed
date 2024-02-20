@@ -165,6 +165,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             );
             let static_source = StaticSource::new(runnables_file_rx, cx);
             let oneshot_source = OneshotSource::new(cx);
+
             project.update(cx, |project, cx| {
                 project.runnable_inventory().update(cx, |inventory, cx| {
                     inventory.add_source(oneshot_source, cx);

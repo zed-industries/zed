@@ -20,6 +20,7 @@ impl OneshotRunnable {
         }
     }
 }
+
 impl Runnable for OneshotRunnable {
     fn id(&self) -> &runnable::RunnableId {
         &self.id
@@ -40,6 +41,7 @@ impl Runnable for OneshotRunnable {
         if command.is_empty() {
             return None;
         }
+
         let args = command.split_off(1);
         let command = command.into_iter().next().unwrap();
         Some(runnable::SpawnInTerminal {
@@ -54,10 +56,12 @@ impl Runnable for OneshotRunnable {
         })
     }
 }
+
 impl OneshotSource {
     pub fn new(cx: &mut AppContext) -> Model<Box<dyn Source>> {
         cx.new_model(|_| Box::new(Self { runnables: vec![] }) as Box<dyn Source>)
     }
+
     pub fn spawn(&mut self, prompt: String) -> Arc<dyn runnable::Runnable> {
         let ret = Arc::new(OneshotRunnable::new(prompt));
         self.runnables.push(ret.clone());
