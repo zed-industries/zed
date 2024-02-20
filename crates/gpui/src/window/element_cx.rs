@@ -167,7 +167,7 @@ pub struct ElementContext<'a> {
     #[deref]
     #[deref_mut]
     pub(crate) cx: WindowContext<'a>,
-    pub(crate) pre_paint_pass: bool,
+    pub(crate) painting_dry_run: bool,
     pub(crate) in_layout: bool,
 }
 
@@ -182,7 +182,7 @@ impl<'a> WindowContext<'a> {
     ) -> R {
         f(&mut ElementContext {
             cx: WindowContext::new(self.app, self.window),
-            pre_paint_pass,
+            painting_dry_run: pre_paint_pass,
             in_layout: false,
         })
     }
@@ -676,7 +676,7 @@ impl<'a> ElementContext<'a> {
         corner_radii: Corners<Pixels>,
         shadows: &[BoxShadow],
     ) {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return;
         }
 
@@ -709,7 +709,7 @@ impl<'a> ElementContext<'a> {
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return;
         }
 
@@ -736,7 +736,7 @@ impl<'a> ElementContext<'a> {
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return;
         }
 
@@ -761,7 +761,7 @@ impl<'a> ElementContext<'a> {
         width: Pixels,
         style: &UnderlineStyle,
     ) {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return;
         }
 
@@ -801,7 +801,7 @@ impl<'a> ElementContext<'a> {
         width: Pixels,
         style: &StrikethroughStyle,
     ) {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return;
         }
 
@@ -844,7 +844,7 @@ impl<'a> ElementContext<'a> {
         font_size: Pixels,
         color: Hsla,
     ) -> Result<()> {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return Ok(());
         }
 
@@ -908,7 +908,7 @@ impl<'a> ElementContext<'a> {
         glyph_id: GlyphId,
         font_size: Pixels,
     ) -> Result<()> {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return Ok(());
         }
 
@@ -966,7 +966,7 @@ impl<'a> ElementContext<'a> {
         path: SharedString,
         color: Hsla,
     ) -> Result<()> {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return Ok(());
         }
 
@@ -1015,7 +1015,7 @@ impl<'a> ElementContext<'a> {
         data: Arc<ImageData>,
         grayscale: bool,
     ) -> Result<()> {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return Ok(());
         }
 
@@ -1148,7 +1148,7 @@ impl<'a> ElementContext<'a> {
 
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
-        if !self.pre_paint_pass {
+        if !self.painting_dry_run {
             return;
         }
 
@@ -1172,7 +1172,7 @@ impl<'a> ElementContext<'a> {
         focus_handle: Option<FocusHandle>,
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
-        if !self.pre_paint_pass {
+        if !self.painting_dry_run {
             let window = &mut self.window;
             let focus_id = focus_handle.as_ref().map(|handle| handle.id);
             window
@@ -1183,7 +1183,7 @@ impl<'a> ElementContext<'a> {
 
         let result = f(focus_handle, self);
 
-        if !self.pre_paint_pass {
+        if !self.painting_dry_run {
             self.window.next_frame.dispatch_tree.pop_node();
         }
 
@@ -1234,7 +1234,7 @@ impl<'a> ElementContext<'a> {
     ///
     /// [element_input_handler]: crate::ElementInputHandler
     pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return;
         }
 
@@ -1257,7 +1257,7 @@ impl<'a> ElementContext<'a> {
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return;
         }
 
@@ -1289,7 +1289,7 @@ impl<'a> ElementContext<'a> {
         &mut self,
         listener: impl Fn(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
-        if self.pre_paint_pass {
+        if self.painting_dry_run {
             return;
         }
 

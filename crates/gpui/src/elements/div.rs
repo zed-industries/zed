@@ -1447,7 +1447,7 @@ impl Interactivity {
                             cx.add_opaque_layer(interactive_bounds.bounds);
                         }
 
-                        if !cx.pre_paint_pass {
+                        if !cx.painting_dry_run {
                             if !cx.has_active_drag() {
                                 if let Some(mouse_cursor) = style.mouse_cursor {
                                     let mouse_position = &cx.mouse_position();
