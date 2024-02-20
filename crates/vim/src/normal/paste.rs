@@ -3,7 +3,7 @@ use std::cmp;
 use editor::{
     display_map::ToDisplayPoint, movement, scroll::Autoscroll, ClipboardSelection, DisplayPoint,
 };
-use gpui::{impl_actions, ViewContext};
+use gpui::{impl_actions, AppContext, ViewContext};
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
 use settings::Settings;
@@ -26,6 +26,16 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
     workspace.register_action(paste);
 }
 
+fn system_clipboard_is_newer(vim: &Vim, cx: &mut AppContext) -> bool {
+    cx.read_from_clipboard().is_some_and(|item| {
+        if let Some(last_state) = vim.workspace_state.registers.get(".system.") {
+            last_state != item.text()
+        } else {
+            true
+        }
+    })
+}
+
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
@@ -36,6 +46,9 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
 
                 let (clipboard_text, clipboard_selections): (String, Option<_>) =
                     if VimSettings::get_global(cx).use_system_clipboard == UseSystemClipboard::Never
+                        || VimSettings::get_global(cx).use_system_clipboard
+                            == UseSystemClipboard::OnYank
+                            && !system_clipboard_is_newer(vim, cx)
                     {
                         (
                             vim.workspace_state
@@ -217,6 +230,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
         UseSystemClipboard, VimSettings,
     };
+    use gpui::ClipboardItem;
     use indoc::indoc;
     use settings::SettingsStore;
 
@@ -307,7 +321,6 @@ mod test {
             .await;
     }
 
-    // cargo test -p vim test_yank_system_clipboard_never
     #[gpui::test]
     async fn test_yank_system_clipboard_never(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
@@ -315,6 +328,42 @@ mod test {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
                 s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox jˇumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["v", "i", "w", "y"]);
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox ˇjumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("p");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox jjumpˇsumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        assert_eq!(cx.read_from_clipboard(), None);
+    }
+
+    #[gpui::test]
+    async fn test_yank_system_clipboard_on_yank(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::OnYank)
             });
         });
 
@@ -342,7 +391,31 @@ mod test {
                 the lazy dog"},
             Mode::Normal,
         );
-        assert_eq!(cx.read_from_clipboard(), None);
+        assert_eq!(
+            cx.read_from_clipboard().map(|item| item.text().clone()),
+            Some("jumps".into())
+        );
+        cx.simulate_keystrokes(["d", "d", "p"]);
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                the lazy dog
+                ˇfox jjumpsumps over"},
+            Mode::Normal,
+        );
+        assert_eq!(
+            cx.read_from_clipboard().map(|item| item.text().clone()),
+            Some("jumps".into())
+        );
+        cx.write_to_clipboard(ClipboardItem::new("test-copy".to_string()));
+        cx.simulate_keystroke("shift-p");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                the lazy dog
+                test-copˇyfox jjumpsumps over"},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]

@@ -16,7 +16,7 @@ use crate::{
     motion::{start_of_line, Motion},
     object::Object,
     state::{Mode, Operator},
-    utils::copy_selections_content,
+    utils::{copy_selections_content, yank_selections_content},
     Vim,
 };
 
@@ -357,7 +357,7 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |vim, editor, cx| {
             let line_mode = editor.selections.line_mode;
-            copy_selections_content(vim, editor, line_mode, cx);
+            yank_selections_content(vim, editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     if line_mode {
