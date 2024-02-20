@@ -45,7 +45,7 @@ impl RunnablesModalDelegate {
         let oneshot_source = self
             .inventory
             .update(cx, |this, _| this.source::<OneshotSource>())?;
-        oneshot_source.update(cx, |this, cx| {
+        oneshot_source.update(cx, |this, _| {
             let Some(this) = this.as_any().downcast_mut::<OneshotSource>() else {
                 return None;
             };
