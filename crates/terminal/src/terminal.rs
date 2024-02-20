@@ -52,7 +52,7 @@ use std::{
 use thiserror::Error;
 
 #[cfg(unix)]
-use os::unix::prelude::AsRawFd;
+use std::os::unix::prelude::AsRawFd;
 
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
