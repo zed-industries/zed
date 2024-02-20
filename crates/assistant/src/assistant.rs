@@ -32,7 +32,6 @@ actions!(
         ResetKey,
         InlineAssist,
         ToggleIncludeConversation,
-        ToggleRetrieveContext,
     ]
 );
 

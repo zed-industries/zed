@@ -17,7 +17,6 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
-ai.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
@@ -93,7 +92,6 @@ runnables_ui.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 search.workspace = true
-semantic_index.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

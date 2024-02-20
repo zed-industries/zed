@@ -455,10 +455,6 @@
     // "font_family": "Zed Mono",
     // ---
   },
-  // Difference settings for semantic_index
-  "semantic_index": {
-    "enabled": true
-  },
   // Settings specific to our elixir integration
   "elixir": {
     // Change the LSP zed uses for elixir.

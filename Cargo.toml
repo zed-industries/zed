@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/activity_indicator",
-    "crates/ai",
     "crates/assets",
     "crates/assistant",
     "crates/audio",
@@ -68,7 +67,6 @@ members = [
     "crates/runnable",
     "crates/runnables_ui",
     "crates/search",
-    "crates/semantic_index",
     "crates/settings",
     "crates/snippet",
     "crates/sqlez",
@@ -162,7 +160,6 @@ rpc = { path = "crates/rpc" }
 runnable = { path = "crates/runnable" }
 runnables_ui = { path = "crates/runnables_ui" }
 search = { path = "crates/search" }
-semantic_index = { path = "crates/semantic_index" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
