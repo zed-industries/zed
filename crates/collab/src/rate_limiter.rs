@@ -1,7 +1,10 @@
 use crate::db::UserId;
+use crate::{Database, Error};
+use anyhow::Result;
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::any::TypeId;
+use std::io;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -19,22 +22,26 @@ trait RateLimit: 'static {
 
 struct RateLimiter {
     buckets: DashMap<(UserId, TypeId), Arc<Mutex<Bucket>>>,
+    db: Arc<Database>,
 }
 
 impl RateLimiter {
-    pub fn new() -> Self {
+    pub fn new(db: Arc<Database>) -> Self {
         RateLimiter {
             buckets: DashMap::new(),
+            db,
         }
     }
 
-    pub fn allow<K: RateLimit>(&self, user_id: UserId) -> bool {
+    pub async fn allow<K: RateLimit>(&self, user_id: UserId) -> bool {
         let type_id = K::type_id();
-        let user_key = (user_id, type_id);
+        let bucket_key = (user_id, type_id);
+
+        if !self.buckets.contains_key(&bucket_key) {}
 
         let bucket = self
             .buckets
-            .entry(user_key)
+            .entry(bucket_key)
             .or_insert_with(|| {
                 Arc::new(Mutex::new(Bucket::new(K::capacity(), K::refill_duration())))
             })
@@ -43,6 +50,13 @@ impl RateLimiter {
 
         let allowed = bucket.lock().allow();
         allowed
+    }
+
+    pub async fn load_bucket<K: RateLimit>(
+        &self,
+        user_id: UserId,
+    ) -> Result<Option<Bucket>, Error> {
+        self.db.transaction(|tx| todo!()).await
     }
 }
 
