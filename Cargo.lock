@@ -2990,6 +2990,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "discord_ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "language",
+ "workspace",
+]
+
+[[package]]
 name = "dlib"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11937,6 +11946,7 @@ dependencies = [
  "ctor",
  "db",
  "diagnostics",
+ "discord_ui",
  "editor",
  "env_logger",
  "extension",
