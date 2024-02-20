@@ -25,6 +25,7 @@ mod go;
 mod haskell;
 mod html;
 mod json;
+mod julia;
 mod lua;
 mod nu;
 mod ocaml;
@@ -92,6 +93,7 @@ pub fn init(
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("html", tree_sitter_html::language()),
+        ("julia", tree_sitter_julia::language()),
         ("json", tree_sitter_json::language()),
         ("lua", tree_sitter_lua::language()),
         ("markdown", tree_sitter_markdown::language()),
@@ -194,6 +196,7 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
+    language("julia", vec![Arc::new(julia::JuliaLspAdapter)]);
     language(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(

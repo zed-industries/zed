@@ -1,0 +1,18 @@
+name = "Julia"
+grammar = "julia"
+path_suffixes = ["jl"]
+line_comments = ["# "]
+autoclose_before = ""
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = [
+        "comment",
+        "string",
+    ] },
+    { start = "'", end = "'", close = true, newline = false, not_in = [
+        "comment",
+        "string",
+    ] },
+]
+collapsed_placeholder = "# ..."

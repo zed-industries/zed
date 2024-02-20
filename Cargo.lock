@@ -4961,6 +4961,7 @@ dependencies = [
  "tree-sitter-heex",
  "tree-sitter-html",
  "tree-sitter-json 0.20.0",
+ "tree-sitter-julia",
  "tree-sitter-lua",
  "tree-sitter-markdown",
  "tree-sitter-nix",
@@ -10023,6 +10024,15 @@ dependencies = [
 name = "tree-sitter-json"
 version = "0.20.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-json?rev=40a81c01a40ac48744e0c8ccabbaba1920441199#40a81c01a40ac48744e0c8ccabbaba1920441199"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-julia"
+version = "0.20.0"
+source = "git+https://github.com/tree-sitter/tree-sitter-julia?rev=e84f10db8eeb8b9807786bfc658808edaa1b4fa2#e84f10db8eeb8b9807786bfc658808edaa1b4fa2"
 dependencies = [
  "cc",
  "tree-sitter",
