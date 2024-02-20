@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<svg width="14px" height="14px" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
   <path d="M 8.875 7.464 L 8.875 9.291 C 6.555 9.291 5.87 9.291 3.55 9.291 L 3.55 9.008 L 8.875 4.249 L 8.875 3.966 L 3.55 3.966 L 3.55 5.819" stroke="black" stroke-width="1.25" style=""/>
   <circle cx="0.443" cy="6.63" r="0.443" fill="black" style=""/>
   <circle cx="1.331" cy="4.702" r="0.443" fill="black" fill-opacity="0.75" style=""/>
