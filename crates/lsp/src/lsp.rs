@@ -891,8 +891,13 @@ impl LanguageServer {
                         executor
                             .spawn(async move {
                                 let response = match result {
-                                    Ok(response) => serde_json::from_str(&response)
-                                        .context("failed to deserialize response"),
+                                    Ok(response) => match serde_json::from_str(&response) {
+                                        Ok(deserialized) => Ok(deserialized),
+                                        Err(error) => {
+                                            log::error!("failed to deserialize response from language server: {}. Response from language server: {:?}", error, response);
+                                            Err(error).context("failed to deserialize response")
+                                        }
+                                    }
                                     Err(error) => Err(anyhow!("{}", error.message)),
                                 };
                                 _ = tx.send(response);
