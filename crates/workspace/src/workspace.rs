@@ -1280,7 +1280,19 @@ impl Workspace {
                     let Some(keystroke) = keystrokes.borrow_mut().pop() else {
                         return Ok(());
                     };
-                    cx.update(|cx| cx.dispatch_keystroke(keystroke))?;
+                    cx.update(|cx| {
+                        let focused = cx.focused();
+                        cx.dispatch_keystroke(keystroke.clone());
+                        if cx.focused() != focused {
+                            // dispatch_keystroke may cause the focus to change.
+                            // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
+                            // And we need that to happen before the next keystroke to keep vim mode happy...
+                            // (Note that the tests always do this implicitly, so you must manually test with something like:
+                            //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
+                            // )
+                            cx.draw();
+                        }
+                    })?;
                 }
                 keystrokes.borrow_mut().clear();
                 Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))

@@ -950,7 +950,7 @@ impl<'a> WindowContext<'a> {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
-    pub(crate) fn draw(&mut self) {
+    pub fn draw(&mut self) {
         self.window.dirty.set(false);
         self.window.drawing = true;
 
