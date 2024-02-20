@@ -23,6 +23,7 @@ use debounced_delay::DebouncedDelay;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
+    select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
@@ -97,6 +98,7 @@ pub use runnable_inventory::Inventory;
 pub use worktree::*;
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
+const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
@@ -3361,7 +3363,8 @@ impl Project {
     ) -> Task<Vec<WorktreeId>> {
         let key = (worktree_id, adapter_name);
         if let Some(server_id) = self.language_server_ids.remove(&key) {
-            log::info!("stopping language server {}", key.1 .0);
+            let name = key.1 .0;
+            log::info!("stopping language server {name}");
 
             // Remove other entries for this language server as well
             let mut orphaned_worktrees = vec![worktree_id];
@@ -3395,31 +3398,58 @@ impl Project {
 
             let server_state = self.language_servers.remove(&server_id);
             cx.emit(Event::LanguageServerRemoved(server_id));
-            cx.spawn(move |this, mut cx| async move {
-                let server = match server_state {
-                    Some(LanguageServerState::Starting(task)) => task.await,
-                    Some(LanguageServerState::Running { server, .. }) => Some(server),
-                    None => None,
-                };
-
-                if let Some(server) = server {
-                    if let Some(shutdown) = server.shutdown() {
-                        shutdown.await;
-                    }
-                }
-
-                if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
-                        this.language_server_statuses.remove(&server_id);
-                        cx.notify();
-                    })
-                    .ok();
-                }
-
+            cx.spawn(move |this, cx| async move {
+                Self::shutdown_language_server(this, server_state, name, server_id, cx).await;
                 orphaned_worktrees
             })
         } else {
             Task::ready(Vec::new())
+        }
+    }
+
+    async fn shutdown_language_server(
+        this: WeakModel<Project>,
+        server_state: Option<LanguageServerState>,
+        name: Arc<str>,
+        server_id: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) {
+        let server = match server_state {
+            Some(LanguageServerState::Starting(task)) => {
+                let mut timer = cx
+                    .background_executor()
+                    .timer(SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT)
+                    .fuse();
+
+                select! {
+                    server = task.fuse() => server,
+                    _ = timer => {
+                        log::info!(
+                            "timeout waiting for language server {} to finish launching before stopping",
+                            name
+                        );
+                        None
+                    },
+                }
+            }
+
+            Some(LanguageServerState::Running { server, .. }) => Some(server),
+
+            None => None,
+        };
+
+        if let Some(server) = server {
+            if let Some(shutdown) = server.shutdown() {
+                shutdown.await;
+            }
+        }
+
+        if let Some(this) = this.upgrade() {
+            this.update(&mut cx, |this, cx| {
+                this.language_server_statuses.remove(&server_id);
+                cx.notify();
+            })
+            .ok();
         }
     }
 
