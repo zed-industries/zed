@@ -134,7 +134,6 @@ impl Object {
             Object::Word { .. } if current_mode == Mode::VisualLine => Mode::Visual,
             Object::Word { .. } => current_mode,
             Object::Sentence
-            | Object::Paragraph
             | Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
@@ -143,6 +142,7 @@ impl Object {
             | Object::SquareBrackets
             | Object::CurlyBrackets
             | Object::AngleBrackets => Mode::Visual,
+            Object::Paragraph => Mode::VisualLine,
         }
     }
 
