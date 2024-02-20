@@ -104,7 +104,7 @@ pub struct BufferSnapshot {
     pub version: clock::Global,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct HistoryEntry {
     transaction: Transaction,
     first_edit_at: Instant,
@@ -112,7 +112,7 @@ pub struct HistoryEntry {
     suppress_grouping: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Transaction {
     pub id: TransactionId,
     pub edit_ids: Vec<clock::Lamport>,
@@ -122,6 +122,9 @@ pub struct Transaction {
 impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
+    }
+    pub fn version(&self) -> &clock::Global {
+        &self.transaction.start
     }
 }
 

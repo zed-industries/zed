@@ -36,8 +36,8 @@ use language::{
     language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
     markdown, point_to_lsp,
     proto::{
-        deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
-        serialize_anchor, serialize_version, split_operations,
+        deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
+        serialize_version, split_operations,
     },
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability,
     CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
@@ -7862,7 +7862,6 @@ impl Project {
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: Some(buffer.saved_mtime().into()),
-            fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
         })?)
     }
 
@@ -7955,9 +7954,6 @@ impl Project {
                             buffer_id: buffer_id.into(),
                             version: language::proto::serialize_version(buffer.saved_version()),
                             mtime: Some(buffer.saved_mtime().into()),
-                            fingerprint: language::proto::serialize_fingerprint(
-                                buffer.saved_version_fingerprint(),
-                            ),
                             line_ending: language::proto::serialize_line_ending(
                                 buffer.line_ending(),
                             ) as i32,
@@ -8802,7 +8798,6 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let fingerprint = deserialize_fingerprint(&envelope.payload.fingerprint)?;
         let version = deserialize_version(&envelope.payload.version);
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let mtime = envelope
@@ -8823,7 +8818,7 @@ impl Project {
                 });
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, fingerprint, mtime, cx);
+                    buffer.did_save(version, mtime, cx);
                 });
             }
             Ok(())
@@ -8838,7 +8833,6 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         let version = deserialize_version(&payload.version);
-        let fingerprint = deserialize_fingerprint(&payload.fingerprint)?;
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
@@ -8861,7 +8855,7 @@ impl Project {
                 });
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
+                    buffer.did_reload(version, line_ending, mtime, cx);
                 });
             }
             Ok(())
