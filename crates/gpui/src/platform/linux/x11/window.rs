@@ -244,7 +244,7 @@ impl X11WindowState {
                 gpu::Context::init_windowed(
                     &raw,
                     gpu::ContextDesc {
-                        validation: cfg!(debug_assertions),
+                        validation: false,
                         capture: false,
                     },
                 )
