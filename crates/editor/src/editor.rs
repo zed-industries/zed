@@ -4119,22 +4119,29 @@ impl Editor {
                     let scope = snapshot.language_scope_at(selection_head).unwrap();
                     let mut bracket_pair = None;
                     for (pair, enabled) in scope.brackets() {
-                        let text = snapshot.text_for_range(Point::new(selection_head.row, selection_head.column-1)..Point::new(selection_head.row, selection_head.column+1)).collect::<String>();
-                        if enabled && pair.close && text.starts_with(pair.start.as_str()) && text.ends_with(pair.end.as_str()) {
+                        let text = snapshot
+                            .text_for_range(
+                                Point::new(selection_head.row, selection_head.column - 1)
+                                    ..Point::new(selection_head.row, selection_head.column + 1),
+                            )
+                            .collect::<String>();
+                        if enabled
+                            && pair.close
+                            && text.starts_with(pair.start.as_str())
+                            && text.ends_with(pair.end.as_str())
+                        {
                             bracket_pair = Some(pair.clone());
                             break;
                         }
                     }
                     if let Some(pair) = bracket_pair {
-                        let start = snapshot.anchor_after(selection_head));
-                        let end = snapshot.anchor_after(selection_head));
-                        self.autoclose_regions.push(
-                            AutocloseRegion {
-                                selection_id: selection.id,
-                                range: start..end,
-                                pair: pair,
-                            },
-                        );
+                        let start = snapshot.anchor_after(selection_head);
+                        let end = snapshot.anchor_after(selection_head);
+                        self.autoclose_regions.push(AutocloseRegion {
+                            selection_id: selection.id,
+                            range: start..end,
+                            pair,
+                        });
                     }
                 }
             }
