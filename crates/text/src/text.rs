@@ -123,8 +123,8 @@ impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
     }
-    pub fn version(&self) -> &clock::Global {
-        &self.transaction.start
+    pub fn transaction(&self) -> &Transaction {
+        &self.transaction
     }
 }
 

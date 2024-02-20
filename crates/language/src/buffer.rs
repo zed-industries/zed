@@ -54,6 +54,8 @@ use theme::SyntaxTheme;
 use util::RandomCharIter;
 use util::RangeExt;
 
+use self::proto::serialize_transaction;
+
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
@@ -87,7 +89,7 @@ pub struct Buffer {
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
-    saved_undo_top: Option<HistoryEntry>,
+    saved_undo_top: Option<Transaction>,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -400,6 +402,7 @@ pub trait LocalFile: File {
         &self,
         buffer_id: BufferId,
         version: &clock::Global,
+        undo_top: Option<&Transaction>,
         line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut AppContext,
@@ -573,6 +576,7 @@ impl Buffer {
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
             .into();
+        //his.saved_undo_top = message.saved_undo_top.und;
         Ok(this)
     }
 
@@ -586,6 +590,7 @@ impl Buffer {
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
             saved_mtime: Some(self.saved_mtime.into()),
+            saved_undo_top: self.saved_undo_top.as_ref().map(serialize_transaction),
         }
     }
 
@@ -778,7 +783,10 @@ impl Buffer {
     ) {
         self.saved_version = version;
         self.saved_mtime = mtime;
-        self.saved_undo_top = self.peek_undo_stack().cloned();
+        self.saved_undo_top = self
+            .peek_undo_stack()
+            .map(|entry| entry.transaction())
+            .cloned();
         cx.emit(Event::Saved);
         cx.notify();
     }
@@ -836,11 +844,15 @@ impl Buffer {
         self.saved_version = version;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
-        self.saved_undo_top = self.peek_undo_stack().cloned();
+        self.saved_undo_top = self
+            .peek_undo_stack()
+            .map(|entry| entry.transaction())
+            .cloned();
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
+                self.saved_undo_top.as_ref(),
                 self.line_ending(),
                 self.saved_mtime,
                 cx,
@@ -1499,7 +1511,7 @@ impl Buffer {
     }
 
     fn content_differs(&self) -> bool {
-        self.peek_undo_stack() != self.saved_undo_top.as_ref()
+        self.peek_undo_stack().map(|entry| entry.transaction()) != self.saved_undo_top.as_ref()
     }
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {

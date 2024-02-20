@@ -28,7 +28,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    proto::{deserialize_version, serialize_line_ending, serialize_version},
+    proto::{deserialize_version, serialize_line_ending, serialize_transaction, serialize_version},
     Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, Unclipped,
 };
 use lsp::LanguageServerId;
@@ -58,7 +58,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use text::BufferId;
+use text::{BufferId, Transaction};
 use util::{
     paths::{PathMatcher, HOME},
     ResultExt,
@@ -1096,6 +1096,9 @@ impl LocalWorktree {
         let text = buffer.as_rope().clone();
         // todo: po: this should be a "current" fingerprint
         let version = buffer.version();
+        let saved_undo_top = buffer
+            .peek_undo_stack()
+            .map(|entry| serialize_transaction(entry.transaction()));
         let save = self.write_file(path.as_ref(), text, buffer.line_ending(), cx);
         let fs = Arc::clone(&self.fs);
         let abs_path = self.absolutize(&path);
@@ -1157,6 +1160,7 @@ impl LocalWorktree {
                     buffer_id,
                     version: serialize_version(&version),
                     mtime: Some(mtime.into()),
+                    saved_undo_top,
                 })?;
             }
 
@@ -2922,6 +2926,7 @@ impl language::LocalFile for File {
         &self,
         buffer_id: BufferId,
         version: &clock::Global,
+        saved_undo_top: Option<&Transaction>,
         line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut AppContext,
@@ -2937,6 +2942,7 @@ impl language::LocalFile for File {
                     mtime: Some(mtime.into()),
 
                     line_ending: serialize_line_ending(line_ending) as i32,
+                    saved_undo_top: saved_undo_top.map(serialize_transaction),
                 })
                 .log_err();
         }

@@ -634,6 +634,7 @@ message BufferSaved {
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
     reserved 5;
+    optional Transaction saved_undo_top = 6;
 }
 
 message BufferReloaded {
@@ -643,6 +644,7 @@ message BufferReloaded {
     Timestamp mtime = 4;
     reserved 5;
     LineEnding line_ending = 6;
+    optional Transaction saved_undo_top = 7;
 }
 
 message ReloadBuffers {
@@ -1433,6 +1435,7 @@ message BufferState {
     repeated VectorClockEntry saved_version = 6;
     reserved 7;
     Timestamp saved_mtime = 8;
+    optional Transaction saved_undo_top = 9;
 }
 
 message BufferChunk {
