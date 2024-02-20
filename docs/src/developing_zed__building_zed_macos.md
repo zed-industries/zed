@@ -1,4 +1,4 @@
-# Building Zed
+# Building Zed for macOS
 
 ## Repository
 

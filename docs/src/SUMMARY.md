@@ -19,6 +19,8 @@
 
 - [How to Contribute]()
 - [Building from Source](./developing_zed__building_zed.md)
+  - [macOS](./developing_zed__building_zed_macos.md)
+  - [Linux](./developing_zed__building_zed_linux.md)
 - [Local Collaboration](./developing_zed__local_collaboration.md)
 - [Adding Languages](./developing_zed__adding_languages.md)
 - [Adding UI]()
