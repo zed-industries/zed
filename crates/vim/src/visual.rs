@@ -9,7 +9,7 @@ use editor::{
     Bias, DisplayPoint, Editor,
 };
 use gpui::{actions, ViewContext, WindowContext};
-use language::{Selection, SelectionGoal};
+use language::{Point, Selection, SelectionGoal};
 use workspace::Workspace;
 
 use crate::{
@@ -278,6 +278,15 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                                     selection.end = range.end;
                                 }
                             }
+                        }
+
+                        // In the visual selection result of a paragraph object, the cursor is
+                        // placed at the start of the last line
+                        if object == Object::Paragraph {
+                            let start_of_selection_end_line =
+                                Point::new(selection.end.to_point(map).row, 0)
+                                    .to_display_point(map);
+                            selection.end = start_of_selection_end_line;
                         }
                     });
                 });
