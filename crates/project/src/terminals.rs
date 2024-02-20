@@ -57,6 +57,7 @@ impl Project {
             env,
             Some(settings.blinking.clone()),
             settings.alternate_scroll,
+            settings.max_scroll_history_lines,
             window,
             completion_tx,
         )

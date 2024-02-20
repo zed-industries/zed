@@ -290,6 +290,10 @@ pub struct SpawnRunnable {
     pub env: HashMap<String, String>,
 }
 
+// https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
+const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
+const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+
 pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<AlacTermEvent>,
@@ -303,6 +307,7 @@ impl TerminalBuilder {
         env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
+        max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
     ) -> Result<TerminalBuilder> {
@@ -335,8 +340,18 @@ impl TerminalBuilder {
         std::env::set_var("LC_ALL", "en_US.UTF-8");
         std::env::set_var("ZED_TERM", "true");
 
+        let scrolling_history = if runnable.is_some() {
+            // Runnables like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
+            // After the runnable finishes, we do not allow appending to that terminal, so small runnables output should not
+            // cause excessive memory usage over time.
+            MAX_SCROLL_HISTORY_LINES
+        } else {
+            max_scroll_history_lines
+                .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
+                .min(MAX_SCROLL_HISTORY_LINES)
+        };
         let config = Config {
-            scrolling_history: 10000,
+            scrolling_history,
             ..Config::default()
         };
 
