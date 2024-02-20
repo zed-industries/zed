@@ -1,0 +1,15 @@
+[package]
+name = "discord_ui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/discord_ui.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+language.workspace = true
+workspace.workspace = true

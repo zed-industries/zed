@@ -177,6 +177,7 @@ impl Toolbar {
     }
 
     pub fn set_active_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        println!("New Active Item!");
         self.active_item = item.map(|item| item.boxed_clone());
         self.hidden = self
             .active_item
@@ -194,6 +195,7 @@ impl Toolbar {
     }
 
     pub fn focus_changed(&mut self, focused: bool, cx: &mut ViewContext<Self>) {
+        // println!("Focus Changed!");
         for (toolbar_item, _) in self.items.iter_mut() {
             toolbar_item.focus_changed(focused, cx);
         }
