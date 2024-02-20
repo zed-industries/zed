@@ -79,6 +79,6 @@ impl Source for OneshotSource {
         _path: Option<&std::path::Path>,
         _cx: &mut gpui::ModelContext<Box<dyn Source>>,
     ) -> Vec<Arc<dyn runnable::Runnable>> {
-        self.runnables.drain(0..self.runnables.len()).collect()
+        self.runnables.clone()
     }
 }
