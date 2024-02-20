@@ -7555,6 +7555,7 @@ dependencies = [
  "gpui",
  "language",
  "lazy_static",
+ "linkify",
  "pulldown-cmark",
  "smallvec",
  "smol",

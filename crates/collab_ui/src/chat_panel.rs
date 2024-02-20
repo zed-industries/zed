@@ -371,9 +371,9 @@ impl ChatPanel {
                         .px_1()
                         .py_0p5()
                         .mb_1()
-                        .overflow_hidden()
                         .child(
                             div()
+                                .overflow_hidden()
                                 .max_h_12()
                                 .child(reply_to_message_body.element(body_element_id, cx)),
                         ),
@@ -840,18 +840,21 @@ impl Render for ChatPanel {
 
                 el.when_some(reply_message, |el, reply_message| {
                     el.child(
-                        div()
+                        h_flex()
                             .when(!self.is_scrolled_to_bottom, |el| {
                                 el.border_t_1().border_color(cx.theme().colors().border)
                             })
-                            .flex()
-                            .w_full()
-                            .items_start()
+                            .justify_between()
                             .overflow_hidden()
+                            .items_start()
                             .py_1()
                             .px_2()
                             .bg(cx.theme().colors().background)
-                            .child(self.render_replied_to_message(None, &reply_message, cx))
+                            .child(
+                                div().flex_shrink().overflow_hidden().child(
+                                    self.render_replied_to_message(None, &reply_message, cx),
+                                ),
+                            )
                             .child(
                                 IconButton::new("close-reply-preview", IconName::Close)
                                     .shape(ui::IconButtonShape::Square)
@@ -1090,6 +1093,107 @@ mod tests {
                     .into()
                 ),
                 (ranges[3].clone(), Highlight::SelfMention)
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_render_markdown_with_auto_detect_links() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body: "Here is a link https://zed.dev to zeds website".to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar_uri: "avatar_fgh".into(),
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: Vec::new(),
+            reply_to_message_id: None,
+        };
+
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) =
+            marked_text_ranges("Here is a link «https://zed.dev» to zeds website", false);
+        assert_eq!(message.text, body);
+        assert_eq!(1, ranges.len());
+        assert_eq!(
+            message.highlights,
+            vec![(
+                ranges[0].clone(),
+                HighlightStyle {
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: 1.0.into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+                .into()
+            ),]
+        );
+    }
+
+    #[gpui::test]
+    fn test_render_markdown_with_auto_detect_links_and_additional_formatting() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body: "**Here is a link https://zed.dev to zeds website**".to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar_uri: "avatar_fgh".into(),
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: Vec::new(),
+            reply_to_message_id: None,
+        };
+
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) = marked_text_ranges(
+            "«Here is a link »«https://zed.dev»« to zeds website»",
+            false,
+        );
+        assert_eq!(message.text, body);
+        assert_eq!(3, ranges.len());
+        assert_eq!(
+            message.highlights,
+            vec![
+                (
+                    ranges[0].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (
+                    ranges[1].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        underline: Some(gpui::UnderlineStyle {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (
+                    ranges[2].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
             ]
         );
     }
