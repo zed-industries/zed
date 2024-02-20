@@ -45,12 +45,14 @@ use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
-    os::unix::prelude::AsRawFd,
     path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 use thiserror::Error;
+
+#[cfg(unix)]
+use std::os::unix::prelude::AsRawFd;
 
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
@@ -376,8 +378,12 @@ impl TerminalBuilder {
             }
         };
 
-        let fd = pty.file().as_raw_fd();
-        let shell_pid = pty.child().id();
+        #[cfg(unix)]
+        let (fd, shell_pid) = (pty.file().as_raw_fd(), pty.child().id());
+
+        // todo!(windows)
+        #[cfg(windows)]
+        let (fd, shell_pid) = (-1, 0);
 
         //And connect them together
         let event_loop = EventLoop::new(
@@ -641,7 +647,11 @@ impl Terminal {
 
     /// Updates the cached process info, returns whether the Zed-relevant info has changed
     fn update_process_info(&mut self) -> bool {
+        #[cfg(unix)]
         let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
+        // todo!(windows)
+        #[cfg(windows)]
+        let mut pid = -1;
         if pid < 0 {
             pid = self.shell_pid as i32;
         }
