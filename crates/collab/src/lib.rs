@@ -4,6 +4,7 @@ pub mod auth;
 pub mod db;
 pub mod env;
 pub mod executor;
+mod rate_limiter;
 pub mod rpc;
 
 #[cfg(test)]
@@ -15,6 +16,7 @@ use aws_config::{BehaviorVersion, Region};
 use axum::{http::StatusCode, response::IntoResponse};
 use db::Database;
 use executor::Executor;
+pub use rate_limiter::*;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
