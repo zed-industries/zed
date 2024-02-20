@@ -11,3 +11,4 @@ brackets = [
     { start = "'", end = "'", close = false, newline = false },
     { start = "`", end = "`", close = false, newline = false },
 ]
+prettier_parser_name = "markdown"

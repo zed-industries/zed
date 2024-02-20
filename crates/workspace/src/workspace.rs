@@ -51,6 +51,7 @@ pub use persistence::{
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use runnable::SpawnInTerminal;
 use serde::Deserialize;
 use settings::Settings;
 use shared_screen::SharedScreen;
@@ -109,7 +110,6 @@ actions!(
         FollowNextCollaborator,
         NewTerminal,
         NewCenterTerminal,
-        ToggleTerminalFocus,
         NewSearch,
         Feedback,
         Restart,
@@ -469,6 +469,7 @@ pub enum Event {
     PaneAdded(View<Pane>),
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
+    SpawnRunnable(SpawnInTerminal),
 }
 
 pub enum OpenVisible {

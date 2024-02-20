@@ -80,7 +80,7 @@ impl CommandPalette {
             previous_focus_handle,
         );
 
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
         Self { picker }
     }
 }

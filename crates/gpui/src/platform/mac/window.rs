@@ -319,6 +319,7 @@ struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
     native_window: id,
+    native_window_was_closed: bool,
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
@@ -565,6 +566,7 @@ impl MacWindow {
                 handle,
                 executor,
                 native_window,
+                native_window_was_closed: false,
                 native_view: NonNull::new_unchecked(native_view),
                 display_link: None,
                 renderer: renderer::new_renderer(
@@ -732,13 +734,18 @@ impl Drop for MacWindow {
         this.renderer.destroy();
         let window = this.native_window;
         this.display_link.take();
-        this.executor
-            .spawn(async move {
-                unsafe {
-                    window.close();
-                }
-            })
-            .detach();
+        unsafe {
+            this.native_window.setDelegate_(nil);
+        }
+        if !this.native_window_was_closed {
+            this.executor
+                .spawn(async move {
+                    unsafe {
+                        window.close();
+                    }
+                })
+                .detach();
+        }
     }
 }
 
@@ -1511,10 +1518,9 @@ extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
         let close_callback = {
             let window_state = get_window_state(this);
-            window_state
-                .as_ref()
-                .try_lock()
-                .and_then(|mut window_state| window_state.close_callback.take())
+            let mut lock = window_state.as_ref().lock();
+            lock.native_window_was_closed = true;
+            lock.close_callback.take()
         };
 
         if let Some(callback) = close_callback {

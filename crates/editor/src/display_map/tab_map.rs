@@ -9,6 +9,9 @@ use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 
+/// Keeps track of hard tabs in a text buffer.
+///
+/// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct TabMap(TabSnapshot);
 
 impl TabMap {
