@@ -21,8 +21,14 @@ pub fn default_settings() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/default.json")
 }
 
+#[cfg(target_os = "macos")]
+pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-macos.json";
+
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-linux.json";
+
 pub fn default_keymap() -> Cow<'static, str> {
-    asset_str::<SettingsAssets>("keymaps/default.json")
+    asset_str::<SettingsAssets>(DEFAULT_KEYMAP_PATH)
 }
 
 pub fn vim_keymap() -> Cow<'static, str> {

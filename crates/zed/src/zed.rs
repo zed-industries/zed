@@ -26,6 +26,7 @@ use runnable::static_source::StaticSource;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -570,7 +571,7 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
 }
 
 pub fn load_default_keymap(cx: &mut AppContext) {
-    KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+    KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
         KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
     }
