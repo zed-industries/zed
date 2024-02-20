@@ -318,6 +318,17 @@ impl Server {
                         app_state.config.google_ai_api_key.clone(),
                     )
                 }
+            })
+            .add_request_handler({
+                let app_state = app_state.clone();
+                move |request, response, session| {
+                    count_tokens_with_language_model(
+                        request,
+                        response,
+                        session,
+                        app_state.config.google_ai_api_key.clone(),
+                    )
+                }
             });
 
         Arc::new(server)
@@ -520,7 +531,6 @@ impl Server {
                     let duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     match result {
                         Err(error) => {
-                            dbg!(&error);
                             tracing::error!(%error, ?duration_ms, "error handling message");
                         }
                         Ok(()) => tracing::info!(?duration_ms, "finished handling message"),
@@ -3230,28 +3240,7 @@ async fn complete_with_open_ai(
         &session.http_client,
         OPEN_AI_API_URL,
         &api_key,
-        open_ai::Request {
-            model: open_ai::Model::from_id(&request.model).unwrap_or(open_ai::Model::FourTurbo),
-            messages: request
-                .messages
-                .into_iter()
-                .map(|message| {
-                    let role = LanguageModelRole::from_i32(message.role)
-                        .ok_or_else(|| anyhow!("invalid role {}", message.role))?;
-                    Ok(open_ai::RequestMessage {
-                        role: match role {
-                            LanguageModelRole::LanguageModelUser => open_ai::Role::User,
-                            LanguageModelRole::LanguageModelAssistant => open_ai::Role::Assistant,
-                            LanguageModelRole::LanguageModelSystem => open_ai::Role::System,
-                        },
-                        content: message.content,
-                    })
-                })
-                .collect::<Result<Vec<open_ai::RequestMessage>>>()?,
-            stream: true,
-            stop: request.stop,
-            temperature: request.temperature,
-        },
+        crate::ai::language_model_request_to_open_ai(request)?,
     )
     .await
     .context("open_ai::stream_completion request failed")?;
@@ -3287,41 +3276,13 @@ async fn complete_with_google_ai(
     session: Session,
     api_key: Arc<str>,
 ) -> Result<()> {
-    const GOOGLE_AI_API_URL: &str = "https://generativelanguage.googleapis.com";
-
-    let db = session.db().await;
-    let flags = db.get_user_flags(session.user_id).await?;
-    if !flags.iter().any(|flag| flag == "google-ai") {
-        return Err(anyhow!("permission denied"))?;
-    }
+    authorize_access_to_google_ai(&session).await?;
 
     let mut stream = google_ai::stream_generate_content(
         &session.http_client,
-        GOOGLE_AI_API_URL,
+        google_ai::API_URL,
         api_key.as_ref(),
-        google_ai::GenerateContentRequest {
-            contents: request
-                .messages
-                .into_iter()
-                .map(|message| {
-                    let role = LanguageModelRole::from_i32(message.role)
-                        .ok_or_else(|| anyhow!("invalid role {}", message.role))?;
-
-                    Ok(google_ai::Content {
-                        parts: vec![google_ai::Part::TextPart(google_ai::TextPart {
-                            text: message.content,
-                        })],
-                        role: match role {
-                            LanguageModelRole::LanguageModelUser => google_ai::Role::User,
-                            LanguageModelRole::LanguageModelAssistant => google_ai::Role::Model,
-                            LanguageModelRole::LanguageModelSystem => google_ai::Role::User,
-                        },
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?,
-            generation_config: None,
-            safety_settings: None,
-        },
+        crate::ai::language_model_request_to_google_ai(request)?,
     )
     .await
     .context("google_ai::stream_generate_content request failed")?;
@@ -3359,6 +3320,44 @@ async fn complete_with_google_ai(
     }
 
     Ok(())
+}
+
+async fn count_tokens_with_language_model(
+    request: proto::CountTokensWithLanguageModel,
+    response: Response<proto::CountTokensWithLanguageModel>,
+    session: Session,
+    google_ai_api_key: Option<Arc<str>>,
+) -> Result<()> {
+    if !request.model.starts_with("gemini") {
+        return Err(anyhow!(
+            "counting tokens for model: {:?} is not supported",
+            request.model
+        ))?;
+    }
+
+    authorize_access_to_google_ai(&session).await?;
+
+    let api_key = google_ai_api_key
+        .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
+    let tokens_response = google_ai::count_tokens(
+        &session.http_client,
+        google_ai::API_URL,
+        &api_key,
+        crate::ai::count_tokens_request_to_google_ai(request)?,
+    )
+    .await?;
+    response.send(proto::CountTokensResponse {
+        token_count: tokens_response.total_tokens as u32,
+    })?;
+    Ok(())
+}
+
+async fn authorize_access_to_google_ai(session: &Session) -> Result<(), Error> {
+    let db = session.db().await;
+    let flags = db.get_user_flags(session.user_id).await?;
+    Ok(if !flags.iter().any(|flag| flag == "google-ai") {
+        return Err(anyhow!("permission denied"))?;
+    })
 }
 
 /// Start receiving chat updates for a channel

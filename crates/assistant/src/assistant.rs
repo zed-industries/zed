@@ -6,7 +6,6 @@ mod prompts;
 mod saved_conversation;
 mod streaming_diff;
 
-use anyhow::Result;
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AssistantSettings, OpenAiModel, ZedDotDevModel};
 use chrono::{DateTime, Local};
@@ -20,7 +19,6 @@ use std::{
     fmt::{self, Display},
     sync::Arc,
 };
-use tiktoken_rs::ChatCompletionRequestMessage;
 
 actions!(
     assistant,
@@ -101,7 +99,12 @@ impl LanguageModel {
     pub fn max_token_count(&self) -> usize {
         match self {
             LanguageModel::OpenAi(model) => tiktoken_rs::model::get_context_size(model.id()),
-            LanguageModel::ZedDotDev(_) => 30720, // TODO: Base this on the selected model.
+            LanguageModel::ZedDotDev(model) => match model {
+                ZedDotDevModel::GptThreePointFiveTurbo
+                | ZedDotDevModel::GptFour
+                | ZedDotDevModel::GptFourTurbo => tiktoken_rs::model::get_context_size(model.id()),
+                ZedDotDevModel::Custom(_) => 30720, // TODO: Base this on the selected model.
+            },
         }
     }
 

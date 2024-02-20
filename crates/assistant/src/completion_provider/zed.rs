@@ -68,17 +68,21 @@ impl ZedDotDevCompletionProvider {
             | crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptThreePointFiveTurbo) => {
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            crate::LanguageModel::ZedDotDev(ZedDotDevModel::Custom(custom)) => self
-                .client
-                .request(proto::CountTokensWithLanguageModel {
-                    model: request.model.id().to_string(),
+            crate::LanguageModel::ZedDotDev(ZedDotDevModel::Custom(model)) => {
+                let request = self.client.request(proto::CountTokensWithLanguageModel {
+                    model,
                     messages: request
                         .messages
                         .iter()
                         .map(|message| message.to_proto())
                         .collect(),
-                })
-                .boxed(),
+                });
+                async move {
+                    let response = request.await?;
+                    Ok(response.token_count as usize)
+                }
+                .boxed()
+            }
         }
     }
 

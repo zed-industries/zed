@@ -3,6 +3,8 @@ use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, S
 use serde::{Deserialize, Serialize};
 use util::http::HttpClient;
 
+pub const API_URL: &str = "https://generativelanguage.googleapis.com";
+
 pub async fn stream_generate_content<T: HttpClient>(
     client: &T,
     api_url: &str,
@@ -13,6 +15,7 @@ pub async fn stream_generate_content<T: HttpClient>(
         "{}/v1beta/models/gemini-pro:streamGenerateContent?alt=sse&key={}",
         api_url, api_key
     );
+
     let request = serde_json::to_string(&request)?;
     let mut response = client.post_json(&uri, request.into()).await?;
     if response.status().is_success() {
@@ -46,43 +49,25 @@ pub async fn stream_generate_content<T: HttpClient>(
     }
 }
 
-pub async fn get_token_count<T: HttpClient>(
+pub async fn count_tokens<T: HttpClient>(
     client: &T,
     api_url: &str,
     api_key: &str,
-    request: GenerateContentRequest,
-) -> Result<usize> {
+    request: CountTokensRequest,
+) -> Result<CountTokensResponse> {
     let uri = format!(
-        "{}/v1beta/models/gemini-pro:computeTokens&key={}",
+        "{}/v1beta/models/gemini-pro:countTokens?key={}",
         api_url, api_key
     );
     let request = serde_json::to_string(&request)?;
     let mut response = client.post_json(&uri, request.into()).await?;
+    let mut text = String::new();
+    response.body_mut().read_to_string(&mut text).await?;
     if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
-        Ok(reader
-            .lines()
-            .filter_map(|line| async move {
-                match line {
-                    Ok(line) => {
-                        if let Some(line) = line.strip_prefix("data: ") {
-                            match serde_json::from_str(line) {
-                                Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(error))),
-                            }
-                        } else {
-                            None
-                        }
-                    }
-                    Err(error) => Some(Err(anyhow!(error))),
-                }
-            })
-            .boxed())
+        Ok(serde_json::from_str::<CountTokensResponse>(&text)?)
     } else {
-        let mut text = String::new();
-        response.body_mut().read_to_string(&mut text).await?;
         Err(anyhow!(
-            "error during streamGenerateContent, status code: {:?}, body: {}",
+            "error during countTokens, status code: {:?}, body: {}",
             response.status(),
             text
         ))
@@ -266,4 +251,16 @@ pub enum HarmProbability {
 pub struct SafetyRating {
     pub category: HarmCategory,
     pub probability: HarmProbability,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CountTokensRequest {
+    pub contents: Vec<Content>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CountTokensResponse {
+    pub total_tokens: usize,
 }

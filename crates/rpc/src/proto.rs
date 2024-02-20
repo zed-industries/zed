@@ -302,10 +302,7 @@ request_messages!(
     (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
     (CompleteWithLanguageModel, LanguageModelResponse),
-    (
-        CountTokensWithLanguageModel,
-        CountTokensWithLanguageModelResponse
-    ),
+    (CountTokensWithLanguageModel, CountTokensResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
