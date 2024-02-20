@@ -106,7 +106,7 @@ pub fn init(
         ("php", tree_sitter_php::language_php()),
         ("prisma", tree_sitter_prisma_io::language()),
         ("proto", tree_sitter_proto::language()),
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),

@@ -631,6 +631,7 @@ dependencies = [
  "async-global-executor",
  "async-io 1.13.0",
  "async-lock 2.8.0",
+ "async-process",
  "crossbeam-utils",
  "futures-channel",
  "futures-core",
@@ -2249,6 +2250,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-std",
  "async-tar",
  "clock",
  "collections",
@@ -5852,15 +5854,6 @@ dependencies = [
 
 [[package]]
 name = "ntapi"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c28774a7fd2fbb4f0babd8237ce554b73af68021b5f695a3cebd6c59bac0980f"
-dependencies = [
- "winapi 0.3.9",
-]
-
-[[package]]
-name = "ntapi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8a3895c6391c39d7fe7ebc444a87eb2991b2a0bc718fdabd071eec617fc68e4"
@@ -6858,11 +6851,11 @@ dependencies = [
 [[package]]
 name = "procinfo"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/wezterm?rev=5cd757e5f2eb039ed0c6bb6512223e69d5efc64d#5cd757e5f2eb039ed0c6bb6512223e69d5efc64d"
+source = "git+https://github.com/zed-industries/wezterm?rev=0c13436f4fa8b126f46dd4a20106419b41666897#0c13436f4fa8b126f46dd4a20106419b41666897"
 dependencies = [
  "libc",
  "log",
- "ntapi 0.3.7",
+ "ntapi",
  "winapi 0.3.9",
 ]
 
@@ -9340,7 +9333,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "core-foundation-sys 0.8.6",
  "libc",
- "ntapi 0.4.1",
+ "ntapi",
  "once_cell",
  "rayon",
  "winapi 0.3.9",
@@ -10195,7 +10188,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-gitcommit"
 version = "0.3.3"
-source = "git+https://github.com/gbprod/tree-sitter-gitcommit#e8d9eda4e5ea0b08aa39d48dab0f6553058fbe0f"
+source = "git+https://github.com/gbprod/tree-sitter-gitcommit#7c01af8d227b5344f62aade2ff00f19bd0c458ca"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -10249,7 +10242,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-haskell"
 version = "0.14.0"
-source = "git+https://github.com/tree-sitter/tree-sitter-haskell?rev=cf98de23e4285b8e6bcb57b050ef2326e2cc284b#cf98de23e4285b8e6bcb57b050ef2326e2cc284b"
+source = "git+https://github.com/tree-sitter/tree-sitter-haskell?rev=8a99848fc734f9c4ea523b3f2a07df133cbbcec2#8a99848fc734f9c4ea523b3f2a07df133cbbcec2"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -10436,7 +10429,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-svelte"
 version = "0.10.2"
-source = "git+https://github.com/Himujjal/tree-sitter-svelte?rev=697bb515471871e85ff799ea57a76298a71a9cca#697bb515471871e85ff799ea57a76298a71a9cca"
+source = "git+https://github.com/Himujjal/tree-sitter-svelte?rev=bd60db7d3d06f89b6ec3b287c9a6e9190b5564bd#bd60db7d3d06f89b6ec3b287c9a6e9190b5564bd"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -10462,8 +10455,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-uiua"
-version = "0.3.3"
-source = "git+https://github.com/shnarazk/tree-sitter-uiua?rev=9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2#9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"
+version = "0.10.0"
+source = "git+https://github.com/shnarazk/tree-sitter-uiua?rev=21dc2db39494585bf29a3f86d5add6e9d11a22ba#21dc2db39494585bf29a3f86d5add6e9d11a22ba"
 dependencies = [
  "cc",
  "tree-sitter",

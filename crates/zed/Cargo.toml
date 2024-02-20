@@ -143,7 +143,6 @@ tree-sitter-ocaml.workspace = true
 tree-sitter-php.workspace = true
 tree-sitter-prisma-io.workspace = true
 tree-sitter-proto.workspace = true
-tree-sitter-purescript.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-racket.workspace = true
 tree-sitter-ruby.workspace = true
@@ -165,6 +164,9 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+tree-sitter-purescript.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
