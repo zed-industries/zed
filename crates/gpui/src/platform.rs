@@ -412,7 +412,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    pub(crate) fn flush_pending_input(&mut self, input: &str, cx: &mut WindowContext) {
+    pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
         self.handler.replace_text_in_range(None, input, cx);
     }
 }

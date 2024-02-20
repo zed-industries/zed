@@ -29,11 +29,10 @@ use gpui::{
     actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView,
     AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
     DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, KeyDownEvent,
-    KeyUpEvent, Keystroke, LayoutId, ManagedView, Model, ModelContext, ParentElement,
-    PathPromptOptions, Pixels, PlatformInput, Point, PromptLevel, Render, SharedString, Size,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke,
+    LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point,
+    PromptLevel, Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -60,10 +59,11 @@ pub use status_bar::StatusItemView;
 use std::{
     any::TypeId,
     borrow::Cow,
+    cell::RefCell,
     cmp, env,
     path::{Path, PathBuf},
-    sync::Weak,
-    sync::{atomic::AtomicUsize, Arc},
+    rc::Rc,
+    sync::{atomic::AtomicUsize, Arc, Weak},
     time::Duration,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
@@ -505,6 +505,7 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
+    dispatching_keystrokes: Rc<RefCell<Vec<Keystroke>>>,
     _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
@@ -760,6 +761,7 @@ impl Workspace {
             project: project.clone(),
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
+            dispatching_keystrokes: Default::default(),
             window_edited: false,
             active_call,
             database_id: workspace_id,
@@ -1259,21 +1261,31 @@ impl Workspace {
     }
 
     fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
-        let keystrokes: Vec<Keystroke> = action
+        let mut keystrokes: Vec<Keystroke> = action
             .0
             .split(" ")
             .flat_map(|k| Keystroke::parse(k).log_err())
             .collect();
+        keystrokes.reverse();
 
-        cx.window_context().defer(move |cx| {
-            for keystroke in keystrokes {
-                cx.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
-                    keystroke: keystroke.clone(),
-                    is_held: false,
-                }));
-                cx.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
-            }
-        })
+        self.dispatching_keystrokes
+            .borrow_mut()
+            .append(&mut keystrokes);
+
+        let keystrokes = self.dispatching_keystrokes.clone();
+        cx.window_context()
+            .spawn(|mut cx| async move {
+                // limit to 100 keystrokes to avoid infinite recursion.
+                for _ in 0..100 {
+                    let Some(keystroke) = keystrokes.borrow_mut().pop() else {
+                        return Ok(());
+                    };
+                    cx.update(|cx| cx.dispatch_keystroke(keystroke))?;
+                }
+                keystrokes.borrow_mut().clear();
+                Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
+            })
+            .detach_and_log_err(cx);
     }
 
     fn save_all_internal(
