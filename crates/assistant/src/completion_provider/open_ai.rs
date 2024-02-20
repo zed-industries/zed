@@ -52,6 +52,14 @@ impl OpenAiCompletionProvider {
         self.default_model.clone()
     }
 
+    pub fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AppContext,
+    ) -> BoxFuture<'static, Result<usize>> {
+        count_open_ai_tokens(request, cx.background_executor())
+    }
+
     pub fn complete(
         &self,
         request: LanguageModelRequest,
@@ -99,6 +107,34 @@ impl OpenAiCompletionProvider {
             temperature: request.temperature,
         }
     }
+}
+
+pub fn count_open_ai_tokens(
+    request: LanguageModelRequest,
+    background_executor: &gpui::BackgroundExecutor,
+) -> BoxFuture<'static, Result<usize>> {
+    background_executor
+        .spawn(async move {
+            let messages = request
+                .messages
+                .into_iter()
+                .filter_map(|message| {
+                    Some(tiktoken_rs::ChatCompletionRequestMessage {
+                        role: match message.role {
+                            Role::User => "user".into(),
+                            Role::Assistant => "assistant".into(),
+                            Role::System => "system".into(),
+                        },
+                        content: Some(message.content),
+                        name: None,
+                        function_call: None,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages)
+        })
+        .boxed()
 }
 
 impl Into<open_ai::Role> for Role {

@@ -1479,36 +1479,15 @@ impl Conversation {
     }
 
     fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
-        let messages = self
-            .messages(cx)
-            .into_iter()
-            .filter_map(|message| {
-                Some(tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(
-                        self.buffer
-                            .read(cx)
-                            .text_for_range(message.offset_range)
-                            .collect(),
-                    ),
-                    name: None,
-                    function_call: None,
-                })
-            })
-            .collect::<Vec<_>>();
-        let model = self.model.clone();
+        let request = self.to_completion_request(cx);
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(200))
                     .await;
+
                 let token_count = cx
-                    .background_executor()
-                    .spawn(async move { model.count_tokens(&messages) })
+                    .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
                     .await?;
 
                 this.update(&mut cx, |this, cx| {
@@ -1578,17 +1557,7 @@ impl Conversation {
                 return Default::default();
             }
 
-            let request = LanguageModelRequest {
-                model: self.model.clone(),
-                messages: self
-                    .messages(cx)
-                    .filter(|message| matches!(message.status, MessageStatus::Done))
-                    .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
-                    .collect(),
-                stop: vec![],
-                temperature: 1.0,
-            };
-
+            let request = self.to_completion_request(cx);
             let stream = CompletionProvider::global(cx).complete(request);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -1669,6 +1638,23 @@ impl Conversation {
         }
 
         user_messages
+    }
+
+    fn to_completion_request(
+        &mut self,
+        cx: &mut ModelContext<Conversation>,
+    ) -> LanguageModelRequest {
+        let request = LanguageModelRequest {
+            model: self.model.clone(),
+            messages: self
+                .messages(cx)
+                .filter(|message| matches!(message.status, MessageStatus::Done))
+                .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
+                .collect(),
+            stop: vec![],
+            temperature: 1.0,
+        };
+        request
     }
 
     fn cancel_last_assist(&mut self) -> bool {

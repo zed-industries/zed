@@ -105,15 +105,6 @@ impl LanguageModel {
         }
     }
 
-    pub fn count_tokens(&self, messages: &[ChatCompletionRequestMessage]) -> Result<usize> {
-        match self {
-            LanguageModel::OpenAi(model) => {
-                tiktoken_rs::num_tokens_from_messages(&model.id(), &messages)
-            }
-            LanguageModel::ZedDotDev(_) => Ok(10),
-        }
-    }
-
     pub fn id(&self) -> &str {
         match self {
             LanguageModel::OpenAi(model) => model.id(),

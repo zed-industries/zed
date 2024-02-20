@@ -150,6 +150,8 @@ messages!(
     (ChannelMessageSent, Foreground),
     (CompleteWithLanguageModel, Background),
     (CopyProjectEntry, Foreground),
+    (CountTokensWithLanguageModel, Background),
+    (CountTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -300,6 +302,10 @@ request_messages!(
     (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
     (CompleteWithLanguageModel, LanguageModelResponse),
+    (
+        CountTokensWithLanguageModel,
+        CountTokensWithLanguageModelResponse
+    ),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),

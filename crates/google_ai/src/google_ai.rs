@@ -46,6 +46,49 @@ pub async fn stream_generate_content<T: HttpClient>(
     }
 }
 
+pub async fn get_token_count<T: HttpClient>(
+    client: &T,
+    api_url: &str,
+    api_key: &str,
+    request: GenerateContentRequest,
+) -> Result<usize> {
+    let uri = format!(
+        "{}/v1beta/models/gemini-pro:computeTokens&key={}",
+        api_url, api_key
+    );
+    let request = serde_json::to_string(&request)?;
+    let mut response = client.post_json(&uri, request.into()).await?;
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
+        Ok(reader
+            .lines()
+            .filter_map(|line| async move {
+                match line {
+                    Ok(line) => {
+                        if let Some(line) = line.strip_prefix("data: ") {
+                            match serde_json::from_str(line) {
+                                Ok(response) => Some(Ok(response)),
+                                Err(error) => Some(Err(anyhow!(error))),
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    Err(error) => Some(Err(anyhow!(error))),
+                }
+            })
+            .boxed())
+    } else {
+        let mut text = String::new();
+        response.body_mut().read_to_string(&mut text).await?;
+        Err(anyhow!(
+            "error during streamGenerateContent, status code: {:?}, body: {}",
+            response.status(),
+            text
+        ))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Task {
     #[serde(rename = "generateContent")]

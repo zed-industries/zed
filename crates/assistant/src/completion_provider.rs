@@ -124,6 +124,19 @@ impl CompletionProvider {
         }
     }
 
+    pub fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AppContext,
+    ) -> BoxFuture<'static, Result<usize>> {
+        match self {
+            CompletionProvider::OpenAi(provider) => provider.count_tokens(request, cx),
+            CompletionProvider::ZedDotDev(provider) => provider.count_tokens(request, cx),
+            #[cfg(test)]
+            CompletionProvider::Fake(_) => unimplemented!(),
+        }
+    }
+
     pub fn complete(
         &self,
         request: LanguageModelRequest,

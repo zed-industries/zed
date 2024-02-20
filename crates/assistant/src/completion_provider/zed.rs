@@ -1,11 +1,13 @@
-use anyhow::Result;
+use crate::{
+    assistant_settings::ZedDotDevModel, count_open_ai_tokens, CompletionProvider,
+    LanguageModelRequest,
+};
+use anyhow::{anyhow, Result};
 use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AppContext, Task};
 use std::{future, sync::Arc};
 use util::ResultExt;
-
-use crate::{assistant_settings::ZedDotDevModel, CompletionProvider, LanguageModelRequest};
 
 pub struct ZedDotDevCompletionProvider {
     client: Arc<Client>,
@@ -52,6 +54,32 @@ impl ZedDotDevCompletionProvider {
     pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
+    }
+
+    pub fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AppContext,
+    ) -> BoxFuture<'static, Result<usize>> {
+        match request.model {
+            crate::LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
+            crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptFour)
+            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptFourTurbo)
+            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptThreePointFiveTurbo) => {
+                count_open_ai_tokens(request, cx.background_executor())
+            }
+            crate::LanguageModel::ZedDotDev(ZedDotDevModel::Custom(custom)) => self
+                .client
+                .request(proto::CountTokensWithLanguageModel {
+                    model: request.model.id().to_string(),
+                    messages: request
+                        .messages
+                        .iter()
+                        .map(|message| message.to_proto())
+                        .collect(),
+                })
+                .boxed(),
+        }
     }
 
     pub fn complete(
