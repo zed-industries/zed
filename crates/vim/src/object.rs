@@ -476,8 +476,8 @@ fn paragraph(
     relative_to: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    let mut paragraph_start = movement::start_of_paragraph(map, relative_to, true, 1);
-    let mut paragraph_end = movement::end_of_paragraph(map, relative_to, true, 1);
+    let mut paragraph_start = start_of_paragraph(map, relative_to);
+    let mut paragraph_end = end_of_paragraph(map, relative_to);
 
     let paragraph_end_row = paragraph_end.row();
     let paragraph_ends_with_eof = paragraph_end_row == map.max_buffer_row();
@@ -494,17 +494,58 @@ fn paragraph(
             if paragraph_start_row != 0 {
                 let previous_paragraph_last_line_start =
                     Point::new(paragraph_start_row - 1, 0).to_display_point(map);
-                paragraph_start =
-                    movement::start_of_paragraph(map, previous_paragraph_last_line_start, true, 1);
+                paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
             }
         } else {
             let next_paragraph_start = Point::new(paragraph_end_row + 1, 0).to_display_point(map);
-            paragraph_end = movement::end_of_paragraph(map, next_paragraph_start, true, 1);
+            paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
     }
 
     let range = paragraph_start..paragraph_end;
     Some(range)
+}
+
+/// Returns a position of the start of the current paragraph, where a paragraph
+/// is defined as a run of non-blank lines or a run of blank lines.
+pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == 0 {
+        return DisplayPoint::zero();
+    }
+
+    let is_current_line_blank = map.buffer_snapshot.is_line_blank(point.row);
+
+    for row in (0..point.row).rev() {
+        let blank = map.buffer_snapshot.is_line_blank(row);
+        if blank != is_current_line_blank {
+            return Point::new(row + 1, 0).to_display_point(map);
+        }
+    }
+
+    DisplayPoint::zero()
+}
+
+/// Returns a position of the end of the current paragraph, where a paragraph
+/// is defined as a run of non-blank lines or a run of blank lines.
+/// The trailing newline is excluded from the paragraph.
+pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == map.max_buffer_row() {
+        return map.max_point();
+    }
+
+    let is_current_line_blank = map.buffer_snapshot.is_line_blank(point.row);
+
+    for row in point.row + 1..map.max_buffer_row() + 1 {
+        let blank = map.buffer_snapshot.is_line_blank(row);
+        if blank != is_current_line_blank {
+            let previous_row = row - 1;
+            return Point::new(previous_row, map.line_len(previous_row)).to_display_point(map);
+        }
+    }
+
+    map.max_point()
 }
 
 fn surrounding_markers(

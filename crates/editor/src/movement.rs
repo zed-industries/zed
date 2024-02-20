@@ -306,12 +306,9 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
 
 /// Returns a position of the start of the current paragraph, where a paragraph
 /// is defined as a run of non-blank lines.
-/// When `vim_style` is `true`, a run of blank lines is also regarded as a
-/// paragraph.
 pub fn start_of_paragraph(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
-    vim_style: bool,
     mut count: usize,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
@@ -319,29 +316,18 @@ pub fn start_of_paragraph(
         return DisplayPoint::zero();
     }
 
-    if vim_style {
-        let is_current_line_blank = map.buffer_snapshot.is_line_blank(point.row);
-
-        for row in (0..point.row).rev() {
-            let blank = map.buffer_snapshot.is_line_blank(row);
-            if blank != is_current_line_blank {
-                return Point::new(row + 1, 0).to_display_point(map);
+    let mut found_non_blank_line = false;
+    for row in (0..point.row + 1).rev() {
+        let blank = map.buffer_snapshot.is_line_blank(row);
+        if found_non_blank_line && blank {
+            if count <= 1 {
+                return Point::new(row, 0).to_display_point(map);
             }
+            count -= 1;
+            found_non_blank_line = false;
         }
-    } else {
-        let mut found_non_blank_line = false;
-        for row in (0..point.row + 1).rev() {
-            let blank = map.buffer_snapshot.is_line_blank(row);
-            if found_non_blank_line && blank {
-                if count <= 1 {
-                    return Point::new(row, 0).to_display_point(map);
-                }
-                count -= 1;
-                found_non_blank_line = false;
-            }
 
-            found_non_blank_line |= !blank;
-        }
+        found_non_blank_line |= !blank;
     }
 
     DisplayPoint::zero()
@@ -349,12 +335,9 @@ pub fn start_of_paragraph(
 
 /// Returns a position of the end of the current paragraph, where a paragraph
 /// is defined as a run of non-blank lines.
-/// When `vim_style` is `true`, a run of blank lines is also regarded as a
-/// paragraph and the trailing newline is excluded from the paragraph.
 pub fn end_of_paragraph(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
-    vim_style: bool,
     mut count: usize,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
@@ -362,30 +345,18 @@ pub fn end_of_paragraph(
         return map.max_point();
     }
 
-    if vim_style {
-        let is_current_line_blank = map.buffer_snapshot.is_line_blank(point.row);
-
-        for row in point.row + 1..map.max_buffer_row() + 1 {
-            let blank = map.buffer_snapshot.is_line_blank(row);
-            if blank != is_current_line_blank {
-                let previous_row = row - 1;
-                return Point::new(previous_row, map.line_len(previous_row)).to_display_point(map);
+    let mut found_non_blank_line = false;
+    for row in point.row..map.max_buffer_row() + 1 {
+        let blank = map.buffer_snapshot.is_line_blank(row);
+        if found_non_blank_line && blank {
+            if count <= 1 {
+                return Point::new(row, 0).to_display_point(map);
             }
+            count -= 1;
+            found_non_blank_line = false;
         }
-    } else {
-        let mut found_non_blank_line = false;
-        for row in point.row..map.max_buffer_row() + 1 {
-            let blank = map.buffer_snapshot.is_line_blank(row);
-            if found_non_blank_line && blank {
-                if count <= 1 {
-                    return Point::new(row, 0).to_display_point(map);
-                }
-                count -= 1;
-                found_non_blank_line = false;
-            }
 
-            found_non_blank_line |= !blank;
-        }
+        found_non_blank_line |= !blank;
     }
 
     map.max_point()
