@@ -1412,14 +1412,14 @@ impl ProjectSearchBar {
 
         active_project_search.update(cx, |project_view, cx| {
             let mut views = vec![&project_view.query_editor];
+            if project_view.replace_enabled {
+                views.push(&project_view.replacement_editor);
+            }
             if project_view.filters_enabled {
                 views.extend([
                     &project_view.included_files_editor,
                     &project_view.excluded_files_editor,
                 ]);
-            }
-            if project_view.replace_enabled {
-                views.push(&project_view.replacement_editor);
             }
             let current_index = match views
                 .iter()
@@ -1427,10 +1427,7 @@ impl ProjectSearchBar {
                 .find(|(_, view)| view.focus_handle(cx).is_focused(cx))
             {
                 Some((index, _)) => index,
-
-                None => {
-                    return;
-                }
+                None => return,
             };
 
             let new_index = match direction {
@@ -1849,11 +1846,9 @@ impl Render for ProjectSearchBar {
 
         let replace_line = search.replace_enabled.then(|| {
             let replace_column = h_flex()
+                .flex_1()
                 .min_w(rems(MIN_INPUT_WIDTH_REMS))
                 .max_w(rems(MAX_INPUT_WIDTH_REMS))
-                .flex_1()
-                // We're giving this a fixed height to match the height of the search input,
-                // which has an icon inside that is increasing its height.
                 .h_8()
                 .px_2()
                 .py_1()
@@ -1900,6 +1895,7 @@ impl Render for ProjectSearchBar {
                         .flex_1()
                         .min_w(rems(MIN_INPUT_WIDTH_REMS))
                         .max_w(rems(MAX_INPUT_WIDTH_REMS))
+                        .h_8()
                         .px_2()
                         .py_1()
                         .border_1()
@@ -1925,11 +1921,9 @@ impl Render for ProjectSearchBar {
                 .child(
                     h_flex()
                         .flex_1()
-                        // We're giving this a fixed height to match the height of the first filter input,
-                        // which has an icon inside that is increasing its height.
-                        .h_8()
                         .min_w(rems(MIN_INPUT_WIDTH_REMS))
                         .max_w(rems(MAX_INPUT_WIDTH_REMS))
+                        .h_8()
                         .px_2()
                         .py_1()
                         .border_1()
