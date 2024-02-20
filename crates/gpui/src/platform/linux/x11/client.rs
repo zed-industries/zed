@@ -11,7 +11,8 @@ use crate::platform::{
     LinuxPlatformInner, PlatformWindow, X11Display, X11Window, X11WindowState, XcbAtoms,
 };
 use crate::{
-    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, Size, WindowOptions,
+    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
+    TouchPhase, WindowOptions,
 };
 
 pub(crate) struct X11ClientState {
@@ -106,6 +107,14 @@ impl Client for X11Client {
                     window.request_refresh();
                 }
                 xcb::Event::Present(xcb::present::Event::IdleNotify(_ev)) => {}
+                xcb::Event::X(x::Event::FocusIn(ev)) => {
+                    let window = self.get_window(ev.event());
+                    window.set_focused(true);
+                }
+                xcb::Event::X(x::Event::FocusOut(ev)) => {
+                    let window = self.get_window(ev.event());
+                    window.set_focused(false);
+                }
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
                     let window = self.get_window(ev.event());
                     let modifiers = super::modifiers_from_state(ev.state());
@@ -154,6 +163,15 @@ impl Client for X11Client {
                             position,
                             modifiers,
                             click_count: 1,
+                        }));
+                    } else if ev.detail() >= 4 && ev.detail() <= 5 {
+                        // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
+                        let delta_x = if ev.detail() == 4 { 1.0 } else { -1.0 };
+                        window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Lines(Point::new(0.0, delta_x)),
+                            modifiers,
+                            touch_phase: TouchPhase::default(),
                         }));
                     } else {
                         log::warn!("Unknown button press: {ev:?}");

@@ -115,7 +115,6 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-
 
       - name: configure linux
         shell: bash -euxo pipefail {0}

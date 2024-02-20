@@ -276,7 +276,7 @@ impl LinuxTextSystemState {
                 CacheKey::new(
                     font.id(),
                     params.glyph_id.0 as u16,
-                    params.font_size.into(),
+                    (params.font_size * params.scale_factor).into(),
                     (0.0, 0.0),
                 )
                 .0,
@@ -308,7 +308,7 @@ impl LinuxTextSystemState {
                     CacheKey::new(
                         font.id(),
                         params.glyph_id.0 as u16,
-                        params.font_size.into(),
+                        (params.font_size * params.scale_factor).into(),
                         (0.0, 0.0),
                     )
                     .0,

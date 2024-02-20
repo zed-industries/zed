@@ -413,10 +413,7 @@ impl PlatformInputHandler {
     }
 
     pub(crate) fn flush_pending_input(&mut self, input: &str, cx: &mut WindowContext) {
-        let Some(range) = self.handler.selected_text_range(cx) else {
-            return;
-        };
-        self.handler.replace_text_in_range(Some(range), input, cx);
+        self.handler.replace_text_in_range(None, input, cx);
     }
 }
 

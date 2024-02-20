@@ -11,6 +11,9 @@ use fsevent::StreamFlags;
 #[cfg(not(target_os = "macos"))]
 use notify::{Config, EventKind, Watcher};
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 use futures::{future::BoxFuture, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
@@ -21,7 +24,6 @@ use std::io::Write;
 use std::sync::Arc;
 use std::{
     io,
-    os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     pin::Pin,
     time::{Duration, SystemTime},
@@ -239,8 +241,16 @@ impl Fs for RealFs {
         } else {
             symlink_metadata
         };
+
+        #[cfg(unix)]
+        let inode = metadata.ino();
+
+        // todo!(windows)
+        #[cfg(windows)]
+        let inode = 0;
+
         Ok(Some(Metadata {
-            inode: metadata.ino(),
+            inode,
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
