@@ -45,11 +45,11 @@ impl RunnablesModalDelegate {
         let oneshot_source = self
             .inventory
             .update(cx, |this, _| this.source::<OneshotSource>())?;
-        oneshot_source.update(cx, |this, _| {
+        oneshot_source.update(cx, |this, cx| {
             let Some(this) = this.as_any().downcast_mut::<OneshotSource>() else {
                 return None;
             };
-            Some(this.spawn(self.last_prompt.clone()))
+            this.spawn(self.last_prompt.clone(), cx)
         })
     }
 }
@@ -178,14 +178,15 @@ impl PickerDelegate for RunnablesModalDelegate {
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        let Some(runnable) = self
-            .matches
-            .get(current_match_index)
-            .map(|current_match| {
-                let ix = current_match.candidate_id;
-                self.candidates[ix].clone()
+        let Some(runnable) = secondary
+            .then(|| self.spawn_oneshot(cx))
+            .flatten()
+            .or_else(|| {
+                self.matches.get(current_match_index).map(|current_match| {
+                    let ix = current_match.candidate_id;
+                    self.candidates[ix].clone()
+                })
             })
-            .or_else(|| secondary.then(|| self.spawn_oneshot(cx)).flatten())
         else {
             return;
         };

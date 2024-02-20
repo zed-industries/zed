@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use gpui::{AppContext, Model};
 use runnable::{Runnable, RunnableId, Source};
+use settings::Settings;
+use terminal::terminal_settings::{Shell, TerminalSettings};
 use ui::Context;
 
 pub struct OneshotSource {
@@ -11,13 +13,23 @@ pub struct OneshotSource {
 #[derive(Clone)]
 struct OneshotRunnable {
     id: RunnableId,
+    shell: String,
+    args: Vec<String>,
 }
 
 impl OneshotRunnable {
-    fn new(prompt: String) -> Self {
-        Self {
+    fn new(prompt: String, cx: &mut AppContext) -> Option<Self> {
+        let (shell, args) = match TerminalSettings::get_global(cx).shell.clone() {
+            Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, vec![])),
+            Shell::Program(shell) => Some((shell, vec![])),
+            Shell::WithArguments { program, args } => Some((program, args)),
+        }?;
+
+        Some(Self {
             id: RunnableId(prompt),
-        }
+            shell,
+            args,
+        })
     }
 }
 
@@ -35,15 +47,13 @@ impl Runnable for OneshotRunnable {
     }
 
     fn exec(&self, cwd: Option<std::path::PathBuf>) -> Option<runnable::SpawnInTerminal> {
-        let mut command = shlex::Shlex::new(&self.id.0)
-            .into_iter()
-            .collect::<Vec<String>>();
-        if command.is_empty() {
+        let escaped = self.id().0.clone();
+        if escaped.is_empty() {
             return None;
         }
-
-        let args = command.split_off(1);
-        let command = command.into_iter().next().unwrap();
+        let command = self.shell.clone();
+        let mut args = self.args.clone();
+        args.extend(["-c".to_owned(), escaped]);
         Some(runnable::SpawnInTerminal {
             id: self.id().clone(),
             label: self.name().to_owned(),
@@ -62,10 +72,14 @@ impl OneshotSource {
         cx.new_model(|_| Box::new(Self { runnables: vec![] }) as Box<dyn Source>)
     }
 
-    pub fn spawn(&mut self, prompt: String) -> Arc<dyn runnable::Runnable> {
-        let ret = Arc::new(OneshotRunnable::new(prompt));
+    pub fn spawn(
+        &mut self,
+        prompt: String,
+        cx: &mut AppContext,
+    ) -> Option<Arc<dyn runnable::Runnable>> {
+        let ret = Arc::new(OneshotRunnable::new(prompt, cx)?);
         self.runnables.push(ret.clone());
-        ret
+        Some(ret)
     }
 }
 
