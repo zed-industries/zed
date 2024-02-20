@@ -215,8 +215,10 @@ mod test {
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
+        UseSystemClipboard, VimSettings,
     };
     use indoc::indoc;
+    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {
@@ -303,6 +305,44 @@ mod test {
             the lazy doover
             the lazy dog"})
             .await;
+    }
+
+    // cargo test -p vim test_yank_system_clipboard_never
+    #[gpui::test]
+    async fn test_yank_system_clipboard_never(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        // copy in visual mode
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox jˇumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["v", "i", "w", "y"]);
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox ˇjumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("p");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox jjumpˇsumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        assert_eq!(cx.read_from_clipboard(), None);
     }
 
     #[gpui::test]
