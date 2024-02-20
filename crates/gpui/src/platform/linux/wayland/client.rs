@@ -30,11 +30,11 @@ use xkbcommon::xkb::{Keycode, KEYMAP_COMPILE_NO_FLAGS};
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
-use crate::ScrollDelta;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformDisplay, PlatformInput, Point, ScrollWheelEvent, TouchPhase, WindowOptions,
+    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
+    ScrollWheelEvent, TouchPhase, WindowOptions,
 };
 
 const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
@@ -495,13 +495,24 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
     }
 }
 
-fn linux_button_to_gpui(button: u32) -> MouseButton {
-    match button {
-        0x110 => MouseButton::Left,
-        0x111 => MouseButton::Right,
-        0x112 => MouseButton::Middle,
-        _ => unimplemented!(), // todo!(linux)
-    }
+fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
+    // These values are coming from <linux/input-event-codes.h>.
+    const BTN_LEFT: u32 = 0x110;
+    const BTN_RIGHT: u32 = 0x111;
+    const BTN_MIDDLE: u32 = 0x112;
+    const BTN_SIDE: u32 = 0x113;
+    const BTN_EXTRA: u32 = 0x114;
+    const BTN_FORWARD: u32 = 0x115;
+    const BTN_BACK: u32 = 0x116;
+
+    Some(match button {
+        BTN_LEFT => MouseButton::Left,
+        BTN_RIGHT => MouseButton::Right,
+        BTN_MIDDLE => MouseButton::Middle,
+        BTN_BACK | BTN_SIDE => MouseButton::Navigate(NavigationDirection::Back),
+        BTN_FORWARD | BTN_EXTRA => MouseButton::Navigate(NavigationDirection::Forward),
+        _ => return None,
+    })
 }
 
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
@@ -555,16 +566,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 ..
             } => {
                 let focused_window = &state.mouse_focused_window;
-                let mouse_location = &state.mouse_location;
-                if let (Some(focused_window), Some(mouse_location)) =
-                    (focused_window, mouse_location)
+                let mouse_location = state.mouse_location;
+                let button = linux_button_to_gpui(button);
+                if let (Some(focused_window), Some(mouse_location), Some(button)) =
+                    (focused_window, mouse_location, button)
                 {
                     match button_state {
                         wl_pointer::ButtonState::Pressed => {
-                            state.button_pressed = Some(linux_button_to_gpui(button));
+                            state.button_pressed = Some(button);
                             focused_window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
-                                button: linux_button_to_gpui(button),
-                                position: *mouse_location,
+                                button,
+                                position: mouse_location,
                                 modifiers: state.modifiers,
                                 click_count: 1,
                             }));
@@ -572,8 +584,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         wl_pointer::ButtonState::Released => {
                             state.button_pressed = None;
                             focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
-                                button: linux_button_to_gpui(button),
-                                position: *mouse_location,
+                                button,
+                                position: mouse_location,
                                 modifiers: Modifiers::default(),
                                 click_count: 1,
                             }));
