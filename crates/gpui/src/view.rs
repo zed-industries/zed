@@ -367,7 +367,7 @@ impl Element for AnyView {
                 }
             }
 
-            if let Some(mut element) = state.element.take() {
+            if let Some(mut element) = state.element.as_mut() {
                 element.paint(cx);
             } else {
                 let mut element = (self.request_layout)(self, cx).1;

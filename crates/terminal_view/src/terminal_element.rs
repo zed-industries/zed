@@ -854,7 +854,7 @@ impl Element for TerminalElement {
                     });
                 }
 
-                if let Some(mut element) = layout.hyperlink_tooltip.take() {
+                if let Some(element) = layout.hyperlink_tooltip.as_mut() {
                     element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
                 }
             });
