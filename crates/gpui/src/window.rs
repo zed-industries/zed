@@ -1,13 +1,5 @@
 use crate::{
-    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
-    AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
-    WindowOptions, WindowTextSystem,
+    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten, Global, GlobalElementId, Hsla, IntoElement, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds, WindowOptions, WindowTextSystem
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -17,20 +9,10 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
-    any::{Any, TypeId},
-    borrow::{Borrow, BorrowMut},
-    cell::{Cell, RefCell},
-    fmt::{Debug, Display},
-    future::Future,
-    hash::{Hash, Hasher},
-    marker::PhantomData,
-    mem,
-    rc::Rc,
-    sync::{
+    any::{Any, TypeId}, borrow::{Borrow, BorrowMut}, cell::{Cell, RefCell}, collections::HashMap, fmt::{Debug, Display}, future::Future, hash::{Hash, Hasher}, marker::PhantomData, mem, rc::Rc, sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
-    },
-    time::{Duration, Instant},
+    }, time::{Duration, Instant}
 };
 use util::{measure, ResultExt};
 
@@ -950,6 +932,7 @@ impl<'a> WindowContext<'a> {
         }
 
         let root_view = self.window.root_view.take().unwrap();
+
         self.with_element_context(|cx| {
             cx.with_z_index(0, |cx| {
                 cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {

@@ -38,9 +38,10 @@ use crate::{
     util::FluentBuilder, ArenaBox, AvailableSpace, Bounds, ElementContext, ElementId, LayoutId,
     Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
 };
+use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, ops::DerefMut};
+use std::{any::Any, fmt::Debug, hash::{Hash, Hasher, SipHasher}, ops::DerefMut};
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -222,7 +223,8 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 
 /// A globally unique identifier for an element, used to track state across frames.
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
-pub(crate) struct GlobalElementId(SmallVec<[ElementId; 32]>);
+pub(crate) struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
+
 
 trait ElementObject {
     fn element_id(&self) -> Option<ElementId>;

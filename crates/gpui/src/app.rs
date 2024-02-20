@@ -241,6 +241,7 @@ pub struct AppContext {
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
+    pub(crate) screen_reader_enabled: bool,
 }
 
 impl AppContext {
@@ -299,6 +300,7 @@ impl AppContext {
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
+                screen_reader_enabled: false,
             }),
         });
 
@@ -313,6 +315,7 @@ impl AppContext {
 
         app
     }
+
 
     /// Quit the application gracefully. Handlers registered with [`ModelContext::on_app_quit`]
     /// will be given 100ms to complete before exiting.

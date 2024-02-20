@@ -29,14 +29,7 @@ use smallvec::SmallVec;
 use util::post_inc;
 
 use crate::{
-    prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
-    Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
-    EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
-    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
-    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    access_kit::AccessKitState, prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask, Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext, StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -70,6 +63,7 @@ pub(crate) struct Frame {
     pub(crate) requested_cursor_style: Option<CursorStyle>,
     pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
+    pub(crate) accesskit: Option<AccessKitState>,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
@@ -96,6 +90,7 @@ impl Frame {
             requested_cursor_style: None,
             view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
+            accesskit: None,
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -385,6 +380,7 @@ impl<'a> ElementContext<'a> {
             f(self)
         }
     }
+
 
     /// Updates the cursor style at the platform level.
     pub fn set_cursor_style(&mut self, style: CursorStyle) {

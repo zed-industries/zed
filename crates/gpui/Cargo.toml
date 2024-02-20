@@ -68,6 +68,7 @@ usvg = { version = "0.14", features = [] }
 util.workspace = true
 uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
+accesskit = { version = "0.12" }
 
 [dev-dependencies]
 backtrace = "0.3"
@@ -93,6 +94,7 @@ log.workspace = true
 media.workspace = true
 metal = "0.21.0"
 objc = "0.2"
+accesskit_macos = "0.11.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 flume = "0.11"

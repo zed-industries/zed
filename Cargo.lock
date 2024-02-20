@@ -3,6 +3,34 @@
 version = 3
 
 [[package]]
+name = "accesskit"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cb10ed32c63247e4e39a8f42e8e30fb9442fbf7878c8e4a9849e7e381619bea"
+
+[[package]]
+name = "accesskit_consumer"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9846654e84f26a31d269c0a8ea44fd8848319ee9cdf8908de18f51356f61f598"
+dependencies = [
+ "accesskit",
+]
+
+[[package]]
+name = "accesskit_macos"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee4354e6f1a880a3a368fe6339fb4c1b94ccd2c8a053f6752abb09f4497758b3"
+dependencies = [
+ "accesskit",
+ "accesskit_consumer",
+ "icrate",
+ "objc2",
+ "once_cell",
+]
+
+[[package]]
 name = "activity_indicator"
 version = "0.1.0"
 dependencies = [
@@ -1455,6 +1483,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "block-sys"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae85a0696e7ea3b835a453750bf002770776609115e6d25c6d2ff28a8200f7e7"
+dependencies = [
+ "objc-sys",
+]
+
+[[package]]
+name = "block2"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e58aa60e59d8dbfcc36138f5f18be5f24394d33b38b24f7fd0b1caa33095f22f"
+dependencies = [
+ "block-sys",
+ "objc2",
 ]
 
 [[package]]
@@ -4070,6 +4117,8 @@ dependencies = [
 name = "gpui"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
+ "accesskit_macos",
  "anyhow",
  "as-raw-xcb-connection",
  "ashpd",
@@ -4498,6 +4547,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "icrate"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e286f4b975ac6c054971a0600a9b76438b332edace54bff79c71c9d3adfc9772"
+dependencies = [
+ "block2",
+ "objc2",
 ]
 
 [[package]]
@@ -6100,6 +6159,28 @@ dependencies = [
  "malloc_buf",
  "objc_exception",
 ]
+
+[[package]]
+name = "objc-sys"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7c71324e4180d0899963fc83d9d241ac39e699609fc1025a850aadac8257459"
+
+[[package]]
+name = "objc2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a9c7f0d511a4ce26b078183179dca908171cfc69f88986fe36c5138e1834476"
+dependencies = [
+ "objc-sys",
+ "objc2-encode",
+]
+
+[[package]]
+name = "objc2-encode"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ff06a6505cde0766484f38d8479ac8e6d31c66fbc2d5492f65ca8c091456379"
 
 [[package]]
 name = "objc_exception"

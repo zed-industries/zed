@@ -222,6 +222,22 @@ unsafe fn build_classes() {
             accepts_first_mouse as extern "C" fn(&Object, Sel, id) -> BOOL,
         );
 
+        // AccesKit integration poitns
+        decl.add_method(
+            sel!(accessibilityChildren),
+            accessibility_children as extern "C" fn(&mut Object, Sel) -> id,
+        );
+
+        decl.add_method(
+            sel!(accessibilityFocusedUIElement),
+            accessibility_focused as extern "C" fn(&mut Object, Sel) -> id,
+        );
+
+        decl.add_method(
+            sel!(accessibilityHitTest:),
+            accessibility_hit_test as extern "C" fn(&mut Object, Sel, NSPoint) -> id,
+        );
+
         decl.register()
     };
 }
@@ -343,6 +359,7 @@ struct MacWindowState {
     input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
+    accesskit: Option<accesskit_macos::Adapter>
 }
 
 impl MacWindowState {
@@ -467,6 +484,30 @@ impl MacWindowState {
             msg_send![self.native_window, convertPointToScreen: point]
         }
     }
+
+    fn get_accesskit_adapter(&mut self) -> &accesskit_macos::Adapter {
+        self.accesskit.get_or_insert_with(|| {
+            fn handler() -> (accesskit::TreeUpdate, bool) {
+                todo!()
+            }
+
+            let (initial_state, focused) = handler();// self.handler.accesskit_tree();
+
+            struct Handler {}
+            impl accesskit::ActionHandler for Handler {
+                fn do_action(&mut self, _action: accesskit::ActionRequest) {
+                    todo!();
+                }
+            }
+
+            let action_handler = Box::new(Handler {});
+
+            // SAFETY: The view pointer is based on a valid borrowed reference
+            // to the view.
+            unsafe { accesskit_macos::Adapter::new(self.native_view.as_ptr() as *mut _, initial_state, self.is_active, action_handler) }
+        })
+    }
+
 }
 
 unsafe impl Send for MacWindowState {}
@@ -541,6 +582,8 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
+            // let accesskit_adapter = accesskit_macos::Adapter::new(native_view, accesskit::TreeUpdate { nodes: Default::default(), tree: Default::default(), focus: accesskit::NodeId(0) }, false, action_handler);
+
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
@@ -570,6 +613,7 @@ impl MacWindow {
                 input_during_keydown: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
+                accesskit: None,
             })));
 
             (*native_window).set_ivar(
@@ -1734,6 +1778,36 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
         } else {
             NO
         }
+    }
+}
+
+extern "C" fn accessibility_children(this: &mut Object, _: Sel) -> id {
+    unsafe {
+        let state = get_window_state(this);
+        let mut lock = state.as_ref().lock();
+        let adapter = lock.get_accesskit_adapter();
+        adapter.view_children() as *mut _
+    }
+}
+extern "C" fn accessibility_focused(this: &mut Object, _: Sel) -> id {
+    unsafe {
+        let state = get_window_state(this);
+        let mut lock = state.as_ref().lock();
+        let adapter = lock.get_accesskit_adapter();
+        adapter.focus() as *mut _
+    }
+}
+extern "C" fn accessibility_hit_test(this: &mut Object, _: Sel, point: NSPoint) -> id {
+    unsafe {
+        let state = get_window_state(this);
+        let mut lock = state.as_ref().lock();
+        let adapter = lock.get_accesskit_adapter();
+
+        let point = accesskit_macos::NSPoint {
+            x: point.x,
+            y: point.y,
+        };
+        adapter.hit_test(point) as *mut _
     }
 }
 

@@ -67,6 +67,7 @@
 mod action;
 mod app;
 
+mod access_kit;
 mod arena;
 mod assets;
 mod color;
