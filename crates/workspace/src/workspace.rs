@@ -29,10 +29,10 @@ use gpui::{
     actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView,
     AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
     DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
-    ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
-    Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke,
+    LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point,
+    PromptLevel, Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -59,10 +59,11 @@ pub use status_bar::StatusItemView;
 use std::{
     any::TypeId,
     borrow::Cow,
+    cell::RefCell,
     cmp, env,
     path::{Path, PathBuf},
-    sync::Weak,
-    sync::{atomic::AtomicUsize, Arc},
+    rc::Rc,
+    sync::{atomic::AtomicUsize, Arc, Weak},
     time::Duration,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
@@ -157,6 +158,9 @@ pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct SendKeystrokes(pub String);
+
 impl_actions!(
     workspace,
     [
@@ -168,6 +172,7 @@ impl_actions!(
         Save,
         SaveAll,
         SwapPaneInDirection,
+        SendKeystrokes,
     ]
 );
 
@@ -499,6 +504,7 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
+    dispatching_keystrokes: Rc<RefCell<Vec<Keystroke>>>,
     _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
@@ -754,6 +760,7 @@ impl Workspace {
             project: project.clone(),
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
+            dispatching_keystrokes: Default::default(),
             window_edited: false,
             active_call,
             database_id: workspace_id,
@@ -1249,6 +1256,46 @@ impl Workspace {
 
     fn save_all(&mut self, action: &SaveAll, cx: &mut ViewContext<Self>) {
         self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx)
+            .detach_and_log_err(cx);
+    }
+
+    fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
+        let mut keystrokes: Vec<Keystroke> = action
+            .0
+            .split(" ")
+            .flat_map(|k| Keystroke::parse(k).log_err())
+            .collect();
+        keystrokes.reverse();
+
+        self.dispatching_keystrokes
+            .borrow_mut()
+            .append(&mut keystrokes);
+
+        let keystrokes = self.dispatching_keystrokes.clone();
+        cx.window_context()
+            .spawn(|mut cx| async move {
+                // limit to 100 keystrokes to avoid infinite recursion.
+                for _ in 0..100 {
+                    let Some(keystroke) = keystrokes.borrow_mut().pop() else {
+                        return Ok(());
+                    };
+                    cx.update(|cx| {
+                        let focused = cx.focused();
+                        cx.dispatch_keystroke(keystroke.clone());
+                        if cx.focused() != focused {
+                            // dispatch_keystroke may cause the focus to change.
+                            // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
+                            // And we need that to happen before the next keystroke to keep vim mode happy...
+                            // (Note that the tests always do this implicitly, so you must manually test with something like:
+                            //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
+                            // )
+                            cx.draw();
+                        }
+                    })?;
+                }
+                keystrokes.borrow_mut().clear();
+                Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
+            })
             .detach_and_log_err(cx);
     }
 
@@ -3461,6 +3508,7 @@ impl Workspace {
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))
+            .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {

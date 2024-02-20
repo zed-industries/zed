@@ -950,7 +950,7 @@ impl<'a> WindowContext<'a> {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
-    pub(crate) fn draw(&mut self) {
+    pub fn draw(&mut self) {
         self.window.dirty.set(false);
         self.window.drawing = true;
 
@@ -1097,6 +1097,38 @@ impl<'a> WindowContext<'a> {
             .platform_window
             .draw(&self.window.rendered_frame.scene);
         self.window.needs_present.set(false);
+    }
+
+    /// Dispatch a given keystroke as though the user had typed it.
+    /// You can create a keystroke with Keystroke::parse("").
+    pub fn dispatch_keystroke(&mut self, mut keystroke: Keystroke) -> bool {
+        if keystroke.ime_key.is_none()
+            && !keystroke.modifiers.command
+            && !keystroke.modifiers.control
+            && !keystroke.modifiers.function
+        {
+            keystroke.ime_key = Some(if keystroke.modifiers.shift {
+                keystroke.key.to_uppercase().clone()
+            } else {
+                keystroke.key.clone()
+            })
+        }
+        if self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+        })) {
+            return true;
+        }
+
+        if let Some(input) = keystroke.ime_key {
+            if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                input_handler.dispatch_input(&input, self);
+                self.window.platform_window.set_input_handler(input_handler);
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1423,7 +1455,7 @@ impl<'a> WindowContext<'a> {
 
         if !input.is_empty() {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
-                input_handler.flush_pending_input(&input, self);
+                input_handler.dispatch_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler)
             }
         }
