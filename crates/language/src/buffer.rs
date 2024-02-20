@@ -576,7 +576,12 @@ impl Buffer {
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
             .into();
-        //his.saved_undo_top = message.saved_undo_top.und;
+        this.saved_undo_top = Some(
+            message
+                .saved_undo_top
+                .and_then(|entry| proto::deserialize_transaction(entry).ok())
+                .ok_or_else(|| anyhow!("invalid saved_undo_top"))?,
+        );
         Ok(this)
     }
 
