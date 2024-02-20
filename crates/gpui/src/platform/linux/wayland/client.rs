@@ -1,7 +1,9 @@
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::Mutex;
+use smol::Timer;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::protocol::wl_callback::WlCallback;
@@ -46,12 +48,20 @@ pub(crate) struct WaylandClientState {
     platform_inner: Rc<LinuxPlatformInner>,
     wl_seat: Option<wl_seat::WlSeat>,
     keymap_state: Option<xkb::State>,
+    repeat: KeyRepeat,
     modifiers: Modifiers,
     scroll_direction: f64,
     mouse_location: Option<Point<Pixels>>,
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<Rc<WaylandWindowState>>,
     keyboard_focused_window: Option<Rc<WaylandWindowState>>,
+}
+
+pub(crate) struct KeyRepeat {
+    rate: i32,
+    delay: i32,
+    current_id: u64,
+    current_keysym: Option<xkb::Keysym>,
 }
 
 pub(crate) struct WaylandClient {
@@ -74,6 +84,12 @@ impl WaylandClient {
             platform_inner: Rc::clone(&linux_platform_inner),
             wl_seat: None,
             keymap_state: None,
+            repeat: KeyRepeat {
+                rate: 4,
+                delay: 1000,
+                current_id: 0,
+                current_keysym: None,
+            },
             modifiers: Modifiers {
                 shift: false,
                 control: false,
@@ -355,6 +371,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
         qh: &QueueHandle<Self>,
     ) {
         match event {
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                state.repeat.rate = rate;
+                state.repeat.delay = delay;
+            }
             wl_keyboard::Event::Keymap {
                 format: WEnum::Value(format),
                 fd,
@@ -422,32 +442,57 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                     (key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127)).then_some(key_utf8);
 
                 let focused_window = &state.keyboard_focused_window;
-                if let Some(focused_window) = focused_window {
-                    match key_state {
-                        wl_keyboard::KeyState::Pressed => {
-                            focused_window.handle_input(PlatformInput::KeyDown(KeyDownEvent {
-                                keystroke: Keystroke {
-                                    modifiers: state.modifiers,
-                                    key,
-                                    ime_key,
-                                },
-                                is_held: false, // todo!(linux)
-                            }));
+                let Some(focused_window) = focused_window else {
+                    return;
+                };
+                match key_state {
+                    wl_keyboard::KeyState::Pressed => {
+                        let input = PlatformInput::KeyDown(KeyDownEvent {
+                            keystroke: Keystroke {
+                                modifiers: state.modifiers,
+                                key,
+                                ime_key,
+                            },
+                            is_held: false, // todo!(linux)
+                        });
+
+                        focused_window.handle_input(input);
+
+                        if !key_sym.is_modifier_key() {
+                            state.repeat.current_id += 1;
+                            state.repeat.current_keysym = Some(key_sym);
+
+                            let rate = state.repeat.rate;
+                            let delay = state.repeat.delay;
+                            let id = state.repeat.current_id;
+                            let keysym = state.repeat.current_keysym;
+
+                            // state.platform_inner.foreground_executor.spawn(async move {
+                            //     Timer::after(Duration::from_millis(delay as u64)).await;
+                            //     if id == state.repeat.current_id &&
+                            //          state.repeat.current_keysym.is_some() {
+                            //
+                            //          focused_window.handle_input(input);
+                            //     }
+                            // });
                         }
-                        wl_keyboard::KeyState::Released => {
-                            focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                                keystroke: Keystroke {
-                                    modifiers: state.modifiers,
-                                    key,
-                                    ime_key,
-                                },
-                            }));
-                        }
-                        _ => {}
                     }
+                    wl_keyboard::KeyState::Released => {
+                        focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
+                            keystroke: Keystroke {
+                                modifiers: state.modifiers,
+                                key,
+                                ime_key,
+                            },
+                        }));
+
+                        if !key_sym.is_modifier_key() {
+                            state.repeat.current_keysym = None;
+                        }
+                    }
+                    _ => {}
                 }
             }
-            wl_keyboard::Event::Leave { .. } => {}
             _ => {}
         }
     }
