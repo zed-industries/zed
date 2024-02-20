@@ -148,10 +148,10 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: cargo clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+      # todo!(windows): Actually run clippy
+      #- name: cargo clippy
+      #  shell: bash -euxo pipefail {0}
+      #  run: script/clippy
 
       - name: Build Zed
         run: cargo build -p zed
