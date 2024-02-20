@@ -4111,39 +4111,37 @@ impl Editor {
                 ranges: tabstops,
             });
 
+
             // Gets whether the currently entered snipper ends with a surround
-            let snapshot = self.buffer.read(cx).snapshot(cx);
-            let selection = self.selections.first::<Point>(cx);
-            let start_column = snapshot.indent_size_for_line(selection.start.row).len;
-            let scope = snapshot
-                .language_scope_at(Point::new(selection.start.row, start_column))
-                .unwrap();
-            let mut bracket_pair = None;
-            for (pair, enabled) in scope.brackets() {
-                if enabled && pair.close && snippet.text.ends_with(pair.end.as_str()) {
-                    bracket_pair = Some(pair.clone());
-                    break;
+            if self.autoclose_regions.is_empty() {
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                for selection in &mut self.selections.all::<Point>(cx) {
+                    let selection_head = selection.head();
+                    let scope = snapshot.language_scope_at(selection_head).unwrap();
+                    let mut bracket_pair = None;
+                    for (pair, enabled) in scope.brackets() {
+                        let text = snapshot.text_for_range(Point::new(selection_head.row, selection_head.column-1)..Point::new(selection_head.row, selection_head.column+1)).collect::<String>();
+                        if enabled && pair.close && text.starts_with(pair.start.as_str()) && text.ends_with(pair.end.as_str()) {
+                            bracket_pair = Some(pair.clone());
+                            break;
+                        }
+                    }
+                    if let Some(pair) = bracket_pair {
+                        let start = snapshot.anchor_after(selection_head));
+                        let end = snapshot.anchor_after(selection_head));
+                        self.autoclose_regions.push(
+                            AutocloseRegion {
+                                selection_id: selection.id,
+                                range: start..end,
+                                pair: pair,
+                            },
+                        );
+                    }
                 }
             }
 
-            // If it ends with an available surround, insert the auto close region
-            if self.autoclose_regions.is_empty() {
-                if let Some(pair) = bracket_pair {
-                    let start = snapshot
-                        .anchor_after(Point::new(selection.start.row, selection.start.column));
-                    let end =
-                        snapshot.anchor_after(Point::new(selection.end.row, selection.end.column));
-                    self.autoclose_regions.insert(
-                        0,
-                        AutocloseRegion {
-                            selection_id: selection.id,
-                            range: start..end,
-                            pair: pair,
-                        },
-                    );
-                }
-            }
         }
+
 
         Ok(())
     }
