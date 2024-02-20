@@ -29,6 +29,8 @@ git submodule update --init --recursive
 
 ## Backend Dependencies
 
+# Note: This section is still in development. The instructions are not yet complete.
+
 If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
 
 - Install [Postgres](https://www.postgresql.org/download/linux/)
