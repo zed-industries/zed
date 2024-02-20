@@ -97,24 +97,7 @@ impl RopeFingerprint {
         } else if self.summary != other.text_summary() {
             false
         } else {
-            for edit in other.edits_since::<usize>(&self.current_version) {
-                let Some(range) = Some(edit.old)
-                    .filter(|range| range.is_empty())
-                    .or_else(|| Some(edit.new).filter(|range| range.is_empty()))
-                else {
-                    continue;
-                };
-                if self
-                    .base_text
-                    .bytes_in_range(range.clone())
-                    .flatten()
-                    .ne(other.bytes_in_range(range).flatten())
-                {
-                    return false;
-                }
-            }
-            // self.current_version = other.version();
-            true
+            other.peek_undo_stack().is_none()
         }
     }
 }
