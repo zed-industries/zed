@@ -23,8 +23,8 @@ use wayland_protocols::xdg::decoration::zv1::client::{
     zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
-use xkbcommon::xkb;
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
+use xkbcommon::xkb::{self, Keysym};
 use xkbcommon::xkb::{Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use crate::platform::linux::client::Client;
@@ -456,7 +456,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let key_utf32 = keymap_state.key_get_utf32(keycode);
                 let key_utf8 = keymap_state.key_get_utf8(keycode);
                 let key_sym = keymap_state.key_get_one_sym(keycode);
-                let key = xkb::keysym_get_name(key_sym).to_lowercase();
+                let key = match key_sym {
+                    Keysym::Return => "enter".to_owned(),
+                    Keysym::Prior => "pageup".to_owned(),
+                    Keysym::Next => "pagedown".to_owned(),
+                    _ => xkb::keysym_get_name(key_sym).to_lowercase(),
+                };
 
                 // Ignore control characters (and DEL) for the purposes of ime_key,
                 // but if key_utf32 is 0 then assume it isn't one
