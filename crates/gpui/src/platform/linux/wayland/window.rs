@@ -41,6 +41,7 @@ struct WaylandWindowInner {
     bounds: Bounds<i32>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
+    decoration_state: WaylandDecorationState,
 }
 
 struct RawWindow {
@@ -96,6 +97,9 @@ impl WaylandWindowInner {
             bounds,
             scale: 1.0,
             input_handler: None,
+
+            // On wayland, decorations are by default provided by the client
+            decoration_state: WaylandDecorationState::Client,
         }
     }
 }
@@ -185,6 +189,20 @@ impl WaylandWindowState {
     pub fn rescale(&self, scale: f32) {
         let bounds = self.inner.lock().bounds;
         self.set_size_and_scale(bounds.size.width, bounds.size.height, scale)
+    }
+
+    /// Notifies the window of the state of the decorations.
+    ///
+    /// # Note
+    ///
+    /// This API is indirectly called by the wayland compositor and
+    /// not meant to be called by a user who wishes to change the state
+    /// of the decorations. This is because the state of the decorations
+    /// is managed by the compositor and not the client.
+    pub fn set_decoration_state(&self, state: WaylandDecorationState) {
+        self.inner.lock().decoration_state = state;
+        log::trace!("Window decorations are now handled by {:?}", state);
+        // todo!(linux) - Handle this properly
     }
 
     pub fn close(&self) {
@@ -376,4 +394,13 @@ impl PlatformWindow for WaylandWindow {
     fn set_graphics_profiler_enabled(&self, enabled: bool) {
         //todo!(linux)
     }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum WaylandDecorationState {
+    /// Decorations are to be provided by the client
+    Client,
+
+    /// Decorations are provided by the server
+    Server,
 }
