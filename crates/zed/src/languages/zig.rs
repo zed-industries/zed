@@ -6,7 +6,7 @@ use futures::{io::BufReader, StreamExt};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
-use std::env::consts::ARCH;
+use std::env::consts::{ARCH, OS};
 use std::{any::Any, path::PathBuf};
 use util::async_maybe;
 use util::github::latest_github_release;
@@ -30,7 +30,7 @@ impl LspAdapter for ZlsAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
             latest_github_release("zigtools/zls", true, false, delegate.http_client()).await?;
-        let asset_name = format!("zls-{ARCH}-macos.tar.gz");
+        let asset_name = format!("zls-{ARCH}-{OS}.tar.gz");
         let asset = release
             .assets
             .iter()

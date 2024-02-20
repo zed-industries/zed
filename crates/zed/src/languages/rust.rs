@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
@@ -38,7 +38,13 @@ impl LspAdapter for RustLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
+        let os = match consts::OS {
+            "macos" => "apple-darwin",
+            "linux" => "unknown-linux-gnu",
+            "windows" => "pc-windows-msvc",
+            other => bail!("Running on unsupported os: {other}"),
+        };
+        let asset_name = format!("rust-analyzer-{}-{os}.gz", consts::ARCH);
         let asset = release
             .assets
             .iter()
