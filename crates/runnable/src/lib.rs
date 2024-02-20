@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// Runnable identifier, unique within the application.
 /// Based on it, runnable reruns and terminal tabs are managed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RunnableId(String);
+pub struct RunnableId(pub String);
 
 /// Contains all information needed by Zed to spawn a new terminal tab for the given runnable.
 #[derive(Debug, Clone)]
