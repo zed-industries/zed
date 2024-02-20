@@ -4111,8 +4111,7 @@ impl Editor {
                 ranges: tabstops,
             });
 
-
-            // Gets whether the currently entered snipper ends with a surround
+            // Check whether the just-entered snippet ends with an auto-closable bracket.
             if self.autoclose_regions.is_empty() {
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 for selection in &mut self.selections.all::<Point>(cx) {
@@ -4139,10 +4138,7 @@ impl Editor {
                     }
                 }
             }
-
         }
-
-
         Ok(())
     }
 
