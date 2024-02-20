@@ -542,6 +542,13 @@ impl TerminalPanel {
             terminal_to_replace.set_terminal(new_terminal, cx);
         });
         self.activate_terminal_view(terminal_item_index, cx);
+        let task_workspace = self.workspace.clone();
+        cx.spawn(|_, mut cx| async move {
+            task_workspace
+                .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
+                .ok()
+        })
+        .detach();
         Some(())
     }
 }
