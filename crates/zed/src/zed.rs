@@ -422,8 +422,8 @@ fn quit(_: &Quit, cx: &mut AppContext) {
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        cx.update(|cx| {
-            workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+        cx.update(|mut cx| {
+            workspace_windows.sort_by_key(|window| window.is_active(&mut cx) == Some(false));
         })
         .log_err();
 

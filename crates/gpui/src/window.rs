@@ -2528,11 +2528,11 @@ impl<V: 'static + Render> WindowHandle<V> {
 
     /// Check if this window is 'active'.
     ///
-    /// Will return `None` if the window is closed.
-    pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
-        cx.windows
-            .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active.get()))
+    /// Will return `None` if the window is closed or currently
+    /// borrowed.
+    pub fn is_active(&self, cx: &mut AppContext) -> Option<bool> {
+        cx.update_window(self.any_handle, |_, cx| cx.is_window_active())
+            .ok()
     }
 }
 
