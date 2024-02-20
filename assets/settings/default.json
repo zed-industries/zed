@@ -551,9 +551,9 @@
     //     }
     // }
   },
-  // Vim setttings
+  // Vim settings
   "vim": {
-    "use_system_clipboard": "on_yank"
+    "use_system_clipboard": "always"
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

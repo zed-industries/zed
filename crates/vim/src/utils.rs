@@ -84,20 +84,35 @@ fn copy_selections_content_internal(
     }
 
     let setting = VimSettings::get_global(cx).use_system_clipboard;
-    if setting == UseSystemClipboard::Always || setting == UseSystemClipboard::OnYank && is_yank {
-        cx.write_to_clipboard(ClipboardItem::new(text.clone()).with_metadata(clipboard_selections));
-        vim.workspace_state
-            .registers
-            .insert(".system.".to_string(), text.clone());
+    if let Some(register) = vim.update_state(|state| state.register.take()) {
+        if register == "+" {
+            cx.write_to_clipboard(
+                ClipboardItem::new(text.clone()).with_metadata(clipboard_selections),
+            );
+            vim.workspace_state
+                .registers
+                .insert(".system.".to_string(), text.clone());
+        }
+        vim.workspace_state.registers.insert(register, text);
     } else {
-        vim.workspace_state.registers.insert(
-            ".system.".to_string(),
-            cx.read_from_clipboard()
-                .map(|item| item.text().clone())
-                .unwrap_or_default(),
-        );
+        if setting == UseSystemClipboard::Always || setting == UseSystemClipboard::OnYank && is_yank
+        {
+            cx.write_to_clipboard(
+                ClipboardItem::new(text.clone()).with_metadata(clipboard_selections),
+            );
+            vim.workspace_state
+                .registers
+                .insert(".system.".to_string(), text.clone());
+        } else {
+            vim.workspace_state.registers.insert(
+                ".system.".to_string(),
+                cx.read_from_clipboard()
+                    .map(|item| item.text().clone())
+                    .unwrap_or_default(),
+            );
+        }
+        vim.workspace_state.registers.insert("\"".to_string(), text);
     }
-    vim.workspace_state.registers.insert("\"".to_string(), text);
     if !is_yank || vim.state().mode == Mode::Visual {
         return;
     }
