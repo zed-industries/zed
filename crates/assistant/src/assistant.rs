@@ -101,7 +101,7 @@ impl LanguageModel {
     pub fn max_token_count(&self) -> usize {
         match self {
             LanguageModel::OpenAi(model) => tiktoken_rs::model::get_context_size(model.id()),
-            LanguageModel::ZedDotDev(_) => 100,
+            LanguageModel::ZedDotDev(_) => 30720, // TODO: Base this on the selected model.
         }
     }
 
