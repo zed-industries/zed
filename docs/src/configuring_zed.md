@@ -956,9 +956,71 @@ See Buffer Font Features
 
 ## Theme
 
-- Description: The name of the Zed theme to use for the UI.
+- Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
 - Setting: `theme`
 - Default: `One Dark`
+
+### Theme Object
+
+- Description: Specify the theme using an object that includes the `mode`, `dark`, and `light` themes.
+- Setting: `theme`
+- Default:
+
+```json
+"theme": {
+  "mode": "dark",
+  "dark": "One Dark",
+  "light": "One Light"
+},
+```
+
+### Mode
+
+- Description: Specify theme mode.
+- Setting: `mode`
+- Default: `dark`
+
+**Options**
+
+1. Set the theme to dark mode
+
+```json
+{
+  "mode": "dark"
+}
+```
+
+2. Set the theme to light mode
+
+```json
+{
+  "mode": "light"
+}
+```
+
+3. Set the theme to system mode
+
+```json
+{
+  "mode": "system"
+}
+```
+
+### Dark
+
+- Description: The name of the dark Zed theme to use for the UI.
+- Setting: `dark`
+- Default: `One Dark`
+
+**Options**
+
+Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
+
+### Light
+
+- Description: The name of the light Zed theme to use for the UI.
+- Setting: `light`
+- Default: `One Light`
 
 **Options**
 
