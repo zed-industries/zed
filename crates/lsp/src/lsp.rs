@@ -210,7 +210,7 @@ impl LanguageServer {
             cx,
             move |notification| {
                 log::info!(
-                    "{} unhandled notification {}:\n{}",
+                    "Language server with id {} sent unhandled notification {}:\n{}",
                     server_id,
                     notification.method,
                     serde_json::to_string_pretty(
