@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use gpui::{AppContext, ViewContext, WindowContext};
-use modal::RunnablesModal;
+use modal::TasksModal;
 pub use oneshot_source::OneshotSource;
-use runnable::Runnable;
+use task::Task;
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -15,19 +15,18 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace
                 .register_action(|workspace, _: &modal::Spawn, cx| {
-                    let inventory = workspace.project().read(cx).runnable_inventory().clone();
+                    let inventory = workspace.project().read(cx).task_inventory().clone();
                     let workspace_handle = workspace.weak_handle();
-                    workspace.toggle_modal(cx, |cx| {
-                        RunnablesModal::new(inventory, workspace_handle, cx)
-                    })
+                    workspace
+                        .toggle_modal(cx, |cx| TasksModal::new(inventory, workspace_handle, cx))
                 })
                 .register_action(move |workspace, _: &modal::Rerun, cx| {
-                    if let Some(runnable) = workspace.project().update(cx, |project, cx| {
+                    if let Some(task) = workspace.project().update(cx, |project, cx| {
                         project
-                            .runnable_inventory()
-                            .update(cx, |inventory, cx| inventory.last_scheduled_runnable(cx))
+                            .task_inventory()
+                            .update(cx, |inventory, cx| inventory.last_scheduled_task(cx))
                     }) {
-                        schedule_runnable(workspace, runnable.as_ref(), cx)
+                        schedule_task(workspace, task.as_ref(), cx)
                     };
                 });
         },
@@ -35,27 +34,23 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-fn schedule_runnable(
-    workspace: &Workspace,
-    runnable: &dyn Runnable,
-    cx: &mut ViewContext<'_, Workspace>,
-) {
-    let cwd = match runnable.cwd() {
+fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_, Workspace>) {
+    let cwd = match task.cwd() {
         Some(cwd) => Some(cwd.to_path_buf()),
-        None => runnable_cwd(workspace, cx).log_err().flatten(),
+        None => task_cwd(workspace, cx).log_err().flatten(),
     };
-    let spawn_in_terminal = runnable.exec(cwd);
+    let spawn_in_terminal = task.exec(cwd);
     if let Some(spawn_in_terminal) = spawn_in_terminal {
         workspace.project().update(cx, |project, cx| {
-            project.runnable_inventory().update(cx, |inventory, _| {
-                inventory.last_scheduled_runnable = Some(runnable.id().clone());
+            project.task_inventory().update(cx, |inventory, _| {
+                inventory.last_scheduled_task = Some(task.id().clone());
             })
         });
-        cx.emit(workspace::Event::SpawnRunnable(spawn_in_terminal));
+        cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));
     }
 }
 
-fn runnable_cwd(workspace: &Workspace, cx: &mut WindowContext) -> anyhow::Result<Option<PathBuf>> {
+fn task_cwd(workspace: &Workspace, cx: &mut WindowContext) -> anyhow::Result<Option<PathBuf>> {
     let project = workspace.project().read(cx);
     let available_worktrees = project
         .worktrees()
@@ -82,7 +77,7 @@ fn runnable_cwd(workspace: &Workspace, cx: &mut WindowContext) -> anyhow::Result
             });
             anyhow::ensure!(
                 cwd_for_active_entry.is_some(),
-                "Cannot determine runnable cwd for multiple worktrees"
+                "Cannot determine task cwd for multiple worktrees"
             );
             cwd_for_active_entry
         }

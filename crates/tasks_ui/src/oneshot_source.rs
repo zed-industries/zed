@@ -1,28 +1,26 @@
 use std::sync::Arc;
 
 use gpui::{AppContext, Model};
-use runnable::{Runnable, RunnableId, Source};
+use task::{Source, SpawnInTerminal, Task, TaskId};
 use ui::Context;
 
 pub struct OneshotSource {
-    runnables: Vec<Arc<dyn runnable::Runnable>>,
+    tasks: Vec<Arc<dyn Task>>,
 }
 
 #[derive(Clone)]
-struct OneshotRunnable {
-    id: RunnableId,
+struct OneshotTask {
+    id: TaskId,
 }
 
-impl OneshotRunnable {
+impl OneshotTask {
     fn new(prompt: String) -> Self {
-        Self {
-            id: RunnableId(prompt),
-        }
+        Self { id: TaskId(prompt) }
     }
 }
 
-impl Runnable for OneshotRunnable {
-    fn id(&self) -> &runnable::RunnableId {
+impl Task for OneshotTask {
+    fn id(&self) -> &TaskId {
         &self.id
     }
 
@@ -34,11 +32,11 @@ impl Runnable for OneshotRunnable {
         None
     }
 
-    fn exec(&self, cwd: Option<std::path::PathBuf>) -> Option<runnable::SpawnInTerminal> {
+    fn exec(&self, cwd: Option<std::path::PathBuf>) -> Option<SpawnInTerminal> {
         if self.id().0.is_empty() {
             return None;
         }
-        Some(runnable::SpawnInTerminal {
+        Some(SpawnInTerminal {
             id: self.id().clone(),
             label: self.name().to_owned(),
             command: self.id().0.clone(),
@@ -54,12 +52,12 @@ impl Runnable for OneshotRunnable {
 
 impl OneshotSource {
     pub fn new(cx: &mut AppContext) -> Model<Box<dyn Source>> {
-        cx.new_model(|_| Box::new(Self { runnables: vec![] }) as Box<dyn Source>)
+        cx.new_model(|_| Box::new(Self { tasks: Vec::new() }) as Box<dyn Source>)
     }
 
-    pub fn spawn(&mut self, prompt: String) -> Arc<dyn runnable::Runnable> {
-        let ret = Arc::new(OneshotRunnable::new(prompt));
-        self.runnables.push(ret.clone());
+    pub fn spawn(&mut self, prompt: String) -> Arc<dyn Task> {
+        let ret = Arc::new(OneshotTask::new(prompt));
+        self.tasks.push(ret.clone());
         ret
     }
 }
@@ -69,11 +67,11 @@ impl Source for OneshotSource {
         self
     }
 
-    fn runnables_for_path(
+    fn tasks_for_path(
         &mut self,
         _path: Option<&std::path::Path>,
         _cx: &mut gpui::ModelContext<Box<dyn Source>>,
-    ) -> Vec<Arc<dyn runnable::Runnable>> {
-        self.runnables.clone()
+    ) -> Vec<Arc<dyn Task>> {
+        self.tasks.clone()
     }
 }

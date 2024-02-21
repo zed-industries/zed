@@ -6898,7 +6898,6 @@ dependencies = [
  "regex",
  "release_channel",
  "rpc",
- "runnable",
  "schemars",
  "serde",
  "serde_derive",
@@ -6908,6 +6907,7 @@ dependencies = [
  "similar",
  "smol",
  "sum_tree",
+ "task",
  "tempfile",
  "terminal",
  "text",
@@ -7754,49 +7754,6 @@ dependencies = [
  "spki 0.7.2",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "runnable"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "futures 0.3.28",
- "gpui",
- "parking_lot 0.11.2",
- "schemars",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
- "smol",
- "util",
-]
-
-[[package]]
-name = "runnables_ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "db",
- "editor",
- "fs",
- "futures 0.3.28",
- "fuzzy",
- "gpui",
- "log",
- "menu",
- "picker",
- "project",
- "runnable",
- "schemars",
- "serde",
- "serde_json",
- "theme",
- "ui",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -9372,6 +9329,49 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69758bda2e78f098e4ccb393021a0963bb3442eac05f135c30f61b7370bbafae"
 
 [[package]]
+name = "task"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
+ "gpui",
+ "parking_lot 0.11.2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "smol",
+ "util",
+]
+
+[[package]]
+name = "tasks_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui",
+ "log",
+ "menu",
+ "picker",
+ "project",
+ "schemars",
+ "serde",
+ "serde_json",
+ "task",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9422,7 +9422,6 @@ dependencies = [
  "ordered-float 2.10.0",
  "procinfo",
  "rand 0.8.5",
- "runnable",
  "schemars",
  "serde",
  "serde_derive",
@@ -9431,6 +9430,7 @@ dependencies = [
  "shellexpand",
  "smallvec",
  "smol",
+ "task",
  "theme",
  "thiserror",
  "util",
@@ -9457,7 +9457,6 @@ dependencies = [
  "procinfo",
  "project",
  "rand 0.8.5",
- "runnable",
  "search",
  "serde",
  "serde_derive",
@@ -9466,6 +9465,7 @@ dependencies = [
  "shellexpand",
  "smallvec",
  "smol",
+ "task",
  "terminal",
  "theme",
  "thiserror",
@@ -11724,7 +11724,6 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "project",
- "runnable",
  "schemars",
  "serde",
  "serde_derive",
@@ -11732,6 +11731,7 @@ dependencies = [
  "settings",
  "smallvec",
  "sqlez",
+ "task",
  "terminal",
  "theme",
  "ui",
@@ -11985,8 +11985,6 @@ dependencies = [
  "rope",
  "rpc",
  "rsa 0.4.0",
- "runnable",
- "runnables_ui",
  "rust-embed",
  "schemars",
  "search",
@@ -12000,6 +11998,8 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
+ "task",
+ "tasks_ui",
  "tempfile",
  "terminal_view",
  "text",
