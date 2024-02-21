@@ -918,7 +918,7 @@ impl LanguageServer {
                                     Ok(response) => match serde_json::from_str(&response) {
                                         Ok(deserialized) => Ok(deserialized),
                                         Err(error) => {
-                                            log::error!("failed to deserialize response from language server: {}. Response from language server: {:?}", error, response);
+                                            log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
                                             Err(error).context("failed to deserialize response")
                                         }
                                     }
