@@ -45,6 +45,7 @@ if [[ -n $zyp ]]; then
     vulkan-validationlayers
     wayland-devel
     libxkbcommon-x11-devel
+    openssl-devel
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
