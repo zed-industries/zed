@@ -194,21 +194,66 @@ pub fn generate_marked_text(
     unmarked_text: &str,
     ranges: &[Range<usize>],
     indicate_cursors: bool,
+    line_mode: bool,
 ) -> String {
+    let ranges = if line_mode {
+        let newline_positions = unmarked_text
+            .as_bytes()
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, byte)| if *byte == b'\n' { Some(pos) } else { None })
+            .collect::<Vec<_>>();
+
+        ranges
+            .iter()
+            .map(|range| {
+                let max_position = unmarked_text.len();
+                let (start, end) = if range.start <= range.end {
+                    (
+                        find_previous_position(range.start, &newline_positions)
+                            .map(|pos| std::cmp::min(pos + 1, range.end))
+                            .unwrap_or(0),
+                        find_next_position(range.end, &newline_positions).unwrap_or(max_position),
+                    )
+                } else {
+                    (
+                        find_next_position(range.start, &newline_positions).unwrap_or(max_position),
+                        find_previous_position(range.end, &newline_positions)
+                            .map(|pos| pos + 1)
+                            .unwrap_or(0),
+                    )
+                };
+                let cursor_pos = range.end;
+                (start..end, cursor_pos)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        ranges
+            .iter()
+            .map(|range| (range.clone(), range.end))
+            .collect::<Vec<_>>()
+    };
+
     let mut marked_text = unmarked_text.to_string();
-    for range in ranges.iter().rev() {
+    for (range, cursor) in ranges.iter().rev() {
         if indicate_cursors {
             match range.start.cmp(&range.end) {
                 Ordering::Less => {
-                    marked_text.insert_str(range.end, "ˇ»");
+                    marked_text.insert(range.end, '»');
+                    marked_text.insert(*cursor, 'ˇ');
                     marked_text.insert(range.start, '«');
                 }
                 Ordering::Equal => {
-                    marked_text.insert(range.start, 'ˇ');
+                    if line_mode {
+                        marked_text.insert_str(range.start, "«ˇ»");
+                    } else {
+                        marked_text.insert(range.start, 'ˇ');
+                    }
                 }
                 Ordering::Greater => {
                     marked_text.insert(range.start, '»');
-                    marked_text.insert_str(range.end, "«ˇ");
+                    marked_text.insert(*cursor, 'ˇ');
+                    marked_text.insert(range.end, '«');
                 }
             }
         } else {
@@ -217,6 +262,18 @@ pub fn generate_marked_text(
         }
     }
     marked_text
+}
+
+fn find_previous_position(target: usize, positions: &[usize]) -> Option<usize> {
+    positions
+        .iter()
+        .cloned()
+        .take_while(|pos| *pos < target)
+        .last()
+}
+
+fn find_next_position(target: usize, positions: &[usize]) -> Option<usize> {
+    positions.iter().cloned().find(|pos| *pos >= target)
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -264,8 +321,34 @@ mod tests {
         assert_eq!(ranges[3], 23..23);
 
         assert_eq!(
-            generate_marked_text(&text, &ranges, true),
+            generate_marked_text(&text, &ranges, true, false),
             "one «ˇtwo» «threeˇ» «ˇfour» fiveˇ six"
+        );
+    }
+
+    #[test]
+    fn test_marked_text_for_line_mode() {
+        let (text, ranges) =
+            marked_text_ranges("«The quick ˇ»brown fox jumps over the lazy dog.", true);
+        assert_eq!(text, "The quick brown fox jumps over the lazy dog.");
+        assert_eq!(ranges, vec![0..10]);
+        assert_eq!(
+            generate_marked_text(&text, &ranges, true, true),
+            "«The quick ˇbrown fox jumps over the lazy dog.»"
+        );
+
+        let (text, ranges) = marked_text_ranges(
+            "«The quick ˇ»\n brown «\nˇ» fox \n jump«ˇs »\n«ˇ»\n o«ˇver \n th»e lazy dog.",
+            true,
+        );
+        assert_eq!(
+            text,
+            "The quick \n brown \n fox \n jumps \n\n over \n the lazy dog."
+        );
+        assert_eq!(ranges, vec![0..10, 18..19, 32..30, 33..33, 44..36]);
+        assert_eq!(
+            generate_marked_text(&text, &ranges, true, true),
+            "«The quick ˇ»\n« brown \nˇ fox »\n« jumpˇs »\n«ˇ»\n« oˇver \n the lazy dog.»"
         );
     }
 }

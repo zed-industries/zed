@@ -281,7 +281,17 @@ impl EditorTestContext {
     }
 
     pub fn editor_state(&mut self) -> String {
-        generate_marked_text(self.buffer_text().as_str(), &self.editor_selections(), true)
+        generate_marked_text(
+            self.buffer_text().as_str(),
+            &self.editor_selections(),
+            true,
+            self.line_mode(),
+        )
+    }
+
+    fn line_mode(&mut self) -> bool {
+        self.editor
+            .update(&mut self.cx, |editor, _cx| editor.selections.line_mode)
     }
 
     #[track_caller]
@@ -317,8 +327,12 @@ impl EditorTestContext {
 
     #[track_caller]
     pub fn assert_editor_selections(&mut self, expected_selections: Vec<Range<usize>>) {
-        let expected_marked_text =
-            generate_marked_text(&self.buffer_text(), &expected_selections, true);
+        let expected_marked_text = generate_marked_text(
+            &self.buffer_text(),
+            &expected_selections,
+            true,
+            self.line_mode(),
+        );
         self.assert_selections(expected_selections, expected_marked_text)
     }
 
@@ -346,8 +360,12 @@ impl EditorTestContext {
         expected_marked_text: String,
     ) {
         let actual_selections = self.editor_selections();
-        let actual_marked_text =
-            generate_marked_text(&self.buffer_text(), &actual_selections, true);
+        let actual_marked_text = generate_marked_text(
+            &self.buffer_text(),
+            &actual_selections,
+            true,
+            self.line_mode(),
+        );
         if expected_selections != actual_selections {
             panic!(
                 indoc! {"

@@ -418,7 +418,7 @@ impl NeovimConnection {
                     }
                 }
             }
-            Some(Mode::Visual) | Some(Mode::VisualLine) | Some(Mode::VisualBlock) => {
+            Some(Mode::Visual) | Some(Mode::VisualBlock) => {
                 if selection_col > cursor_col {
                     let selection_line_length =
                         self.read_position("echo strlen(getline(line('v')))").await;
@@ -442,11 +442,11 @@ impl NeovimConnection {
                     Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col),
                 )
             }
-            Some(Mode::Insert) | Some(Mode::Normal) | None => selections
+            Some(Mode::Insert) | Some(Mode::Normal) | Some(Mode::VisualLine) | None => selections
                 .push(Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col)),
         }
 
-        let ranges = encode_ranges(&text, &selections);
+        let ranges = encode_ranges(&text, &selections, mode == Some(Mode::VisualLine));
         let state = NeovimData::Get {
             mode,
             state: ranges.clone(),
@@ -596,7 +596,7 @@ fn parse_state(marked_text: &str) -> (String, Vec<Range<Point>>) {
 }
 
 #[cfg(feature = "neovim")]
-fn encode_ranges(text: &str, point_ranges: &Vec<Range<Point>>) -> String {
+fn encode_ranges(text: &str, point_ranges: &Vec<Range<Point>>, line_mode: bool) -> String {
     let byte_ranges = point_ranges
         .into_iter()
         .map(|range| {
@@ -622,5 +622,5 @@ fn encode_ranges(text: &str, point_ranges: &Vec<Range<Point>>) -> String {
             byte_range
         })
         .collect::<Vec<_>>();
-    util::test::generate_marked_text(text, &byte_ranges[..], true)
+    util::test::generate_marked_text(text, &byte_ranges[..], true, line_mode)
 }

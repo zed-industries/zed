@@ -566,7 +566,7 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["shift-v"]).await;
-        cx.assert_shared_state(indoc! { "The «qˇ»uick brown
+        cx.assert_shared_state(indoc! { "«The qˇuick brown»
             fox jumps over
             the lazy dog"})
             .await;
@@ -995,6 +995,24 @@ mod test {
             k"
         })
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_line_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        let initial_state = "The quick brown fox\njumps\nover the lazˇy dog.";
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-v", "k"]).await;
+        cx.assert_shared_state("The quick brown fox\n«jumpsˇ\nover the lazy dog.»")
+            .await;
+        assert_eq!(cx.mode(), Mode::VisualLine);
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-v", "2", "k"]).await;
+        cx.assert_shared_state("«The quick brˇown fox\njumps\nover the lazy dog.»")
+            .await;
+        assert_eq!(cx.mode(), Mode::VisualLine);
     }
 
     #[gpui::test]
