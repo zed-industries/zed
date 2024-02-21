@@ -10,6 +10,32 @@
     "type" @context
     name: (_) @name) @item
 
+(property_signature
+  name: (_) @name
+  "?"? @context
+  type: (type_annotation
+    ":" @context
+    [
+      (_)
+      (predefined_type) @context
+      (type_identifier) @context
+      (generic_type) @context
+      (function_type
+        parameters: (formal_parameters
+          "(" @context
+          ")" @context)
+        "=>" @context
+        return_type: (_) @context)
+    ]) @type) @item
+
+(method_signature
+  "get"? @context
+  name: (_) @name
+  parameters: (formal_parameters
+    "(" @context
+    ")" @context)
+  return_type: (_) @context) @item
+
 (function_declaration
     "async"? @context
     "function" @context
@@ -27,6 +53,12 @@
         ["let" "const"] @context
         (variable_declarator
             name: (_) @name) @item))
+
+(statement_block
+  (lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+      name: (_) @name) @item))
 
 (program
     (lexical_declaration

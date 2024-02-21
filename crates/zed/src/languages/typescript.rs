@@ -377,8 +377,15 @@ mod tests {
         .await;
 
         let text = r#"
+            interface A {
+              b?: string
+              // Nested objects are included
+              c: {
+                d: Array<string>
+              }
+            }
             function a() {
-              // local variables are omitted
+              // local variables are included
               let a1 = 1;
               // all functions are included
               async function a2() {}
@@ -403,7 +410,12 @@ mod tests {
                 .map(|item| (item.text.as_str(), item.depth))
                 .collect::<Vec<_>>(),
             &[
+                ("interface A", 0),
+                ("b?: string", 1),
+                ("c:", 1),
+                ("d: Array<string>", 2),
                 ("function a()", 0),
+                ("let a1", 1),
                 ("async function a2()", 1),
                 ("let b", 0),
                 ("function getB()", 0),
