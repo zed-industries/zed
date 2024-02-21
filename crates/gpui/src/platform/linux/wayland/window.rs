@@ -1,11 +1,13 @@
 use std::any::Any;
-use std::ffi::c_void;
+use std::ffi::{c_void, CString};
+use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use blade_graphics as gpu;
 use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot;
+
 use parking_lot::Mutex;
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
@@ -15,12 +17,13 @@ use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
 use crate::platform::blade::BladeRenderer;
+use crate::platform::linux::gtk_utils::{AsGtkDialog, GtkDialogFuture};
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
-    WindowAppearance, WindowBounds, WindowOptions,
+    px, size, Bounds, ForegroundExecutor, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
+    PromptLevel, Size, WindowAppearance, WindowBounds, WindowOptions
 };
 
 #[derive(Default)]
@@ -106,6 +109,7 @@ impl WaylandWindowInner {
 
 pub(crate) struct WaylandWindowState {
     conn: Arc<wayland_client::Connection>,
+    executor: ForegroundExecutor,
     inner: Mutex<WaylandWindowInner>,
     pub(crate) callbacks: Mutex<Callbacks>,
     pub(crate) surface: Arc<wl_surface::WlSurface>,
@@ -116,6 +120,7 @@ pub(crate) struct WaylandWindowState {
 impl WaylandWindowState {
     pub(crate) fn new(
         conn: &Arc<wayland_client::Connection>,
+        executor: ForegroundExecutor,
         wl_surf: Arc<wl_surface::WlSurface>,
         viewport: Option<wp_viewport::WpViewport>,
         toplevel: Arc<xdg_toplevel::XdgToplevel>,
@@ -140,6 +145,7 @@ impl WaylandWindowState {
 
         Self {
             conn: Arc::clone(conn),
+            executor,
             surface: Arc::clone(&wl_surf),
             inner: Mutex::new(WaylandWindowInner::new(&Arc::clone(conn), &wl_surf, bounds)),
             callbacks: Mutex::new(Callbacks::default()),
@@ -308,8 +314,77 @@ impl PlatformWindow for WaylandWindow {
         msg: &str,
         detail: Option<&str>,
         answers: &[&str],
-    ) -> Receiver<usize> {
-        unimplemented!()
+    ) -> oneshot::Receiver<usize> {
+        let (done_tx, done_rx) = oneshot::channel();
+        let msg = msg.to_string();
+        let detail = detail.unwrap_or_default().to_string();
+        let mut ans: Vec<String> = Vec::new();
+        let mut ans_idx: Vec<usize> = Vec::new();
+
+        let latest_non_cancel_label = answers
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, &ref label)| label != &"Cancel")
+            .filter(|&(label_index, _)| label_index > 0);
+
+        for (ix, answer) in answers
+            .iter()
+            .enumerate()
+            .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
+        {
+            ans.push(answer.to_string());
+            ans_idx.push(ix);
+        }
+        if let Some((ix, answer)) = latest_non_cancel_label {
+            ans.push(answer.to_string());
+            ans_idx.push(ix);
+        }
+
+        self.0.executor.spawn(async move {
+            let dialog = move || unsafe {
+                let gtk_level = match level {
+                    PromptLevel::Info => gtk_sys::GTK_MESSAGE_INFO,
+                    PromptLevel::Warning => gtk_sys::GTK_MESSAGE_WARNING,
+                    PromptLevel::Critical => gtk_sys::GTK_MESSAGE_ERROR,
+                };
+                let title = match level {
+                    PromptLevel::Info => "Info",
+                    PromptLevel::Warning => "Warning",
+                    PromptLevel::Critical => "Critical",
+                };
+                let dialog = gtk_sys::gtk_message_dialog_new(
+                    ptr::null_mut(),
+                    gtk_sys::GTK_DIALOG_MODAL,
+                    gtk_level,
+                    gtk_sys::GTK_BUTTONS_NONE,
+                    CString::new(msg).unwrap_or_default().as_ptr(),
+                ) as *mut gtk_sys::GtkDialog;
+
+                gtk_sys::gtk_window_set_title(dialog as _, CString::new(title).unwrap_or_default().as_ptr());
+
+                if detail.len() > 0 {
+                    gtk_sys::gtk_message_dialog_format_secondary_text(dialog as *mut _, CString::new(detail).unwrap_or_default().as_ptr());
+                }
+
+                for (ix, answer) in ans.iter().enumerate()
+                {
+                    gtk_sys::gtk_dialog_add_button(dialog, CString::new(answer.to_string()).unwrap_or_default().as_ptr(), ans_idx[ix] as i32);
+                }
+
+                gtk_sys::gtk_window_set_keep_above(dialog as *mut _, glib_sys::gboolean::from(true));
+                dialog
+            };
+
+            let future = GtkDialogFuture::new(dialog, |dialog, res| unsafe {
+                gtk_sys::gtk_widget_destroy(dialog.gtk_dialog_ptr().cast());
+                res
+            });
+
+            let res = Box::pin(future).await;
+            let _ = done_tx.send(res as usize);
+        }).detach();
+        done_rx
     }
 
     fn activate(&self) {

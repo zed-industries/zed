@@ -3,8 +3,8 @@
 
 use crate::{
     platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBounds, WindowOptions, X11Display,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel, Scene,
+    Size, WindowAppearance, WindowBounds, WindowOptions, X11Display, ForegroundExecutor
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -15,14 +15,10 @@ use xcb::{
     Xid as _,
 };
 
-use std::{
-    ffi::c_void,
-    mem,
-    num::NonZeroU32,
-    ptr::NonNull,
-    rc::Rc,
-    sync::{self, Arc},
-};
+use std::{ffi::c_void, mem, num::NonZeroU32, ptr, ptr::NonNull, rc::Rc, sync::{self, Arc}};
+use std::ffi::CString;
+use futures::channel::oneshot;
+use crate::platform::linux::gtk_utils::{AsGtkDialog, GtkDialogFuture};
 
 #[derive(Default)]
 struct Callbacks {
@@ -91,6 +87,7 @@ pub(crate) struct X11WindowState {
     x_window: x::Window,
     callbacks: Mutex<Callbacks>,
     inner: Mutex<LinuxWindowInner>,
+    executor: ForegroundExecutor,
 }
 
 #[derive(Clone)]
@@ -140,6 +137,7 @@ impl X11WindowState {
         x_main_screen_index: i32,
         x_window: x::Window,
         atoms: &XcbAtoms,
+        executor: ForegroundExecutor,
     ) -> Self {
         let x_screen_index = options
             .display_id
@@ -264,6 +262,7 @@ impl X11WindowState {
                 renderer: BladeRenderer::new(gpu, gpu_extent),
                 input_handler: None,
             }),
+            executor,
         }
     }
 
@@ -410,12 +409,81 @@ impl PlatformWindow for X11Window {
     //todo!(linux)
     fn prompt(
         &self,
-        _level: PromptLevel,
-        _msg: &str,
-        _detail: Option<&str>,
-        _answers: &[&str],
+        level: PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[&str],
     ) -> futures::channel::oneshot::Receiver<usize> {
-        unimplemented!()
+        let (done_tx, done_rx) = oneshot::channel();
+        let msg = msg.to_string();
+        let detail = detail.unwrap_or_default().to_string();
+        let mut ans: Vec<String> = Vec::new();
+        let mut ans_idx: Vec<usize> = Vec::new();
+
+        let latest_non_cancel_label = answers
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, &ref label)| label != &"Cancel")
+            .filter(|&(label_index, _)| label_index > 0);
+
+        for (ix, answer) in answers
+            .iter()
+            .enumerate()
+            .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
+        {
+            ans.push(answer.to_string());
+            ans_idx.push(ix);
+        }
+        if let Some((ix, answer)) = latest_non_cancel_label {
+            ans.push(answer.to_string());
+            ans_idx.push(ix);
+        }
+
+        self.0.executor.spawn(async move {
+            let dialog = move || unsafe {
+                let gtk_level = match level {
+                    PromptLevel::Info => gtk_sys::GTK_MESSAGE_INFO,
+                    PromptLevel::Warning => gtk_sys::GTK_MESSAGE_WARNING,
+                    PromptLevel::Critical => gtk_sys::GTK_MESSAGE_ERROR,
+                };
+                let title = match level {
+                    PromptLevel::Info => "Info",
+                    PromptLevel::Warning => "Warning",
+                    PromptLevel::Critical => "Critical",
+                };
+                let dialog = gtk_sys::gtk_message_dialog_new(
+                    ptr::null_mut(),
+                    gtk_sys::GTK_DIALOG_MODAL,
+                    gtk_level,
+                    gtk_sys::GTK_BUTTONS_NONE,
+                    CString::new(msg).unwrap_or_default().as_ptr(),
+                ) as *mut gtk_sys::GtkDialog;
+
+                gtk_sys::gtk_window_set_title(dialog as _, CString::new(title).unwrap_or_default().as_ptr());
+
+                if detail.len() > 0 {
+                    gtk_sys::gtk_message_dialog_format_secondary_text(dialog as *mut _, CString::new(detail).unwrap_or_default().as_ptr());
+                }
+
+                for (ix, answer) in ans.iter().enumerate()
+                {
+                    gtk_sys::gtk_dialog_add_button(dialog, CString::new(answer.to_string()).unwrap_or_default().as_ptr(), ans_idx[ix] as i32);
+                }
+
+                gtk_sys::gtk_window_set_keep_above(dialog as *mut _, glib_sys::gboolean::from(true));
+                dialog
+            };
+
+            let future = GtkDialogFuture::new(dialog, |dialog, res| unsafe {
+                gtk_sys::gtk_widget_destroy(dialog.gtk_dialog_ptr().cast());
+                res
+            });
+
+            let res = Box::pin(future).await;
+            let _ = done_tx.send(res as usize);
+        }).detach();
+        done_rx
     }
 
     fn activate(&self) {

@@ -6,6 +6,7 @@ mod text_system;
 mod util;
 mod wayland;
 mod x11;
+mod gtk_utils;
 
 pub(crate) use dispatcher::*;
 pub(crate) use platform::*;

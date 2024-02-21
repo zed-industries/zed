@@ -11,8 +11,8 @@ use crate::platform::{
     LinuxPlatformInner, PlatformWindow, X11Display, X11Window, X11WindowState, XcbAtoms,
 };
 use crate::{
-    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
-    TouchPhase, WindowOptions,
+    AnyWindowHandle, Bounds, DisplayId, ForegroundExecutor, PlatformDisplay, PlatformInput, Point,
+    ScrollDelta, Size, TouchPhase, WindowOptions
 };
 
 pub(crate) struct X11ClientState {
@@ -238,6 +238,7 @@ impl Client for X11Client {
         &self,
         _handle: AnyWindowHandle,
         options: WindowOptions,
+        executor: ForegroundExecutor,
     ) -> Box<dyn PlatformWindow> {
         let x_window = self.xcb_connection.generate_id();
 
@@ -247,6 +248,7 @@ impl Client for X11Client {
             self.x_root_index,
             x_window,
             &self.atoms,
+            executor,
         ));
         window_ptr.request_refresh();
 

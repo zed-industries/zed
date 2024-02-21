@@ -115,3 +115,6 @@ blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.10.0"
+gtk-sys = "0.18.0"
+gobject-sys = "0.19.0"
+glib-sys = "0.19.0"

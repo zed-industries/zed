@@ -211,7 +211,7 @@ impl Platform for LinuxPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        self.client.open_window(handle, options)
+        self.client.open_window(handle, options, self.foreground_executor())
     }
 
     fn open_url(&self, url: &str) {

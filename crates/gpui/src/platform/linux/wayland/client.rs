@@ -30,7 +30,7 @@ use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
+    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, ForegroundExecutor, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
     ScrollWheelEvent, TouchPhase, WindowOptions,
@@ -137,6 +137,7 @@ impl Client for WaylandClient {
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
+        executor: ForegroundExecutor,
     ) -> Box<dyn PlatformWindow> {
         let mut state = self.state.lock();
 
@@ -182,6 +183,7 @@ impl Client for WaylandClient {
 
         let window_state = Rc::new(WaylandWindowState::new(
             &self.conn,
+            executor,
             wl_surface.clone(),
             viewport,
             Arc::new(toplevel),
