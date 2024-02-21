@@ -381,7 +381,9 @@
         "ctrl-k shift-left": ["workspace::SwapPaneInDirection", "Left"],
         "ctrl-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
         "ctrl-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
-        "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "Down"]
+        "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
+        "alt-t": "task::Rerun",
+        "alt-shift-t": "task::Spawn"
       }
     },
     // Bindings from Sublime Text
