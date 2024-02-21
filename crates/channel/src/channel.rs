@@ -11,7 +11,10 @@ pub use channel_chat::{
     mentions_to_proto, ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId,
     MessageParams,
 };
-pub use channel_store::{Channel, ChannelEvent, ChannelId, ChannelMembership, ChannelStore};
+pub use channel_store::{
+    Channel, ChannelBufferHandle, ChannelBufferId, ChannelEvent, ChannelId, ChannelMembership,
+    ChannelStore,
+};
 
 #[cfg(test)]
 mod channel_store_tests;

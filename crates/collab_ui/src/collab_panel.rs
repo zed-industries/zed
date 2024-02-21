@@ -3,11 +3,13 @@ mod contact_finder;
 
 use self::channel_modal::ChannelModal;
 use crate::{
-    channel_view::ChannelView, chat_panel::ChatPanel, face_pile::FacePile,
+    channel_view::ChannelBufferView, chat_panel::ChatPanel, face_pile::FacePile,
     CollaborationPanelSettings,
 };
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
+use channel::{
+    Channel, ChannelBufferHandle, ChannelBufferId, ChannelEvent, ChannelId, ChannelStore,
+};
 use client::{Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
@@ -68,19 +70,6 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(cx);
-        });
-        workspace.register_action(|_, _: &OpenChannelNotes, cx| {
-            let channel_id = ActiveCall::global(cx)
-                .read(cx)
-                .room()
-                .and_then(|room| room.read(cx).channel_id());
-
-            if let Some(channel_id) = channel_id {
-                let workspace = cx.view().clone();
-                cx.window_context().defer(move |cx| {
-                    ChannelView::open(channel_id, None, workspace, cx).detach_and_log_err(cx)
-                });
-            }
         });
     })
     .detach();
@@ -173,10 +162,13 @@ enum ListEntry {
     Channel {
         channel: Arc<Channel>,
         depth: usize,
+        is_unread: bool,
         has_children: bool,
     },
-    ChannelNotes {
-        channel_id: ChannelId,
+    ChannelBuffer {
+        handle: ChannelBufferHandle,
+        depth: usize,
+        is_unread: bool,
     },
     ChannelChat {
         channel_id: ChannelId,
@@ -382,7 +374,8 @@ impl CollabPanel {
 
                 if query.is_empty() {
                     if let Some(channel_id) = room.channel_id() {
-                        self.entries.push(ListEntry::ChannelNotes { channel_id });
+                        // todo!()
+                        // self.entries.push(ListEntry::ChannelBuffer { channel_id });
                         self.entries.push(ListEntry::ChannelChat { channel_id });
                     }
                 }
@@ -568,6 +561,7 @@ impl CollabPanel {
                     .map_or(false, |next_channel| {
                         next_channel.parent_path.ends_with(&[channel.id])
                     });
+                let buffers = channel_store.buffers_for_channel(channel.id);
 
                 match &self.channel_editing_state {
                     Some(ChannelEditingState::Create {
@@ -578,6 +572,7 @@ impl CollabPanel {
                             channel: channel.clone(),
                             depth,
                             has_children: false,
+                            is_unread: false,
                         });
                         self.entries
                             .push(ListEntry::ChannelEditor { depth: depth + 1 });
@@ -592,8 +587,22 @@ impl CollabPanel {
                         self.entries.push(ListEntry::Channel {
                             channel: channel.clone(),
                             depth,
-                            has_children,
+                            is_unread: self.is_channel_collapsed(channel.id)
+                                && buffers
+                                    .iter()
+                                    .any(|buffer| channel_store.is_buffer_unread(&buffer)),
+                            has_children: has_children || !buffers.is_empty(),
                         });
+                    }
+                }
+
+                if collapse_depth != Some(depth) {
+                    for handle in buffers {
+                        self.entries.push(ListEntry::ChannelBuffer {
+                            is_unread: channel_store.is_buffer_unread(&handle),
+                            depth: depth + 1,
+                            handle,
+                        })
                     }
                 }
             }
@@ -953,25 +962,33 @@ impl CollabPanel {
         }
     }
 
-    fn render_channel_notes(
+    fn render_channel_buffer(
         &self,
-        channel_id: ChannelId,
+        buffer: ChannelBufferHandle,
+        depth: usize,
+        is_unread: bool,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        ListItem::new("channel-notes")
-            .selected(is_selected)
-            .on_click(cx.listener(move |this, _, cx| {
-                this.open_channel_notes(channel_id, cx);
-            }))
-            .start_slot(
-                h_flex()
-                    .gap_1()
-                    .child(render_tree_branch(false, true, cx))
-                    .child(IconButton::new(0, IconName::File)),
-            )
-            .child(Label::new("notes"))
-            .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
+        let name = buffer.name.clone();
+
+        ListItem::new(ElementId::NamedInteger(
+            "buffer-notes".into(),
+            buffer.id.0 as usize,
+        ))
+        .indent_level(depth + 1)
+        .indent_step_size(px(20.))
+        .selected(is_selected)
+        .on_click(cx.listener(move |this, _, cx| {
+            this.open_channel_notes(buffer.clone(), cx);
+        }))
+        .start_slot(IconButton::new(0, IconName::File))
+        .child(
+            div()
+                .when(is_unread, |el| el.font_weight(FontWeight::BOLD))
+                .child(Label::new(name)),
+        )
+        .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
     }
 
     fn render_channel_chat(
@@ -1116,13 +1133,6 @@ impl CollabPanel {
             }
 
             context_menu = context_menu
-                .entry(
-                    "Open Notes",
-                    None,
-                    cx.handler_for(&this, move |this, cx| {
-                        this.open_channel_notes(channel_id, cx)
-                    }),
-                )
                 .entry(
                     "Open Chat",
                     None,
@@ -1399,9 +1409,7 @@ impl CollabPanel {
                             Some(call_channel == channel.id)
                         })
                         .unwrap_or(false);
-                        if is_active {
-                            self.open_channel_notes(channel.id, cx)
-                        } else {
+                        if !is_active {
                             self.join_channel(channel.id, cx)
                         }
                     }
@@ -1421,8 +1429,8 @@ impl CollabPanel {
                     ListEntry::ChannelInvite(channel) => {
                         self.respond_to_channel_invite(channel.id, true, cx)
                     }
-                    ListEntry::ChannelNotes { channel_id } => {
-                        self.open_channel_notes(*channel_id, cx)
+                    ListEntry::ChannelBuffer { handle, .. } => {
+                        self.open_channel_notes(handle.clone(), cx)
                     }
                     ListEntry::ChannelChat { channel_id } => {
                         self.join_channel_chat(*channel_id, cx)
@@ -1689,9 +1697,9 @@ impl CollabPanel {
             })
     }
 
-    fn open_channel_notes(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+    fn open_channel_notes(&mut self, buffer: ChannelBufferHandle, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
-            ChannelView::open(channel_id, None, workspace, cx).detach();
+            ChannelBufferView::open(buffer, None, workspace, cx).detach();
         }
     }
 
@@ -1988,9 +1996,18 @@ impl CollabPanel {
             ListEntry::Channel {
                 channel,
                 depth,
+                is_unread,
                 has_children,
             } => self
-                .render_channel(channel, *depth, *has_children, is_selected, ix, cx)
+                .render_channel(
+                    channel,
+                    *depth,
+                    *is_unread,
+                    *has_children,
+                    is_selected,
+                    ix,
+                    cx,
+                )
                 .into_any_element(),
             ListEntry::ChannelEditor { depth } => {
                 self.render_channel_editor(*depth, cx).into_any_element()
@@ -2024,8 +2041,12 @@ impl CollabPanel {
             ListEntry::ParticipantScreen { peer_id, is_last } => self
                 .render_participant_screen(*peer_id, *is_last, is_selected, cx)
                 .into_any_element(),
-            ListEntry::ChannelNotes { channel_id } => self
-                .render_channel_notes(*channel_id, is_selected, cx)
+            ListEntry::ChannelBuffer {
+                handle,
+                depth,
+                is_unread,
+            } => self
+                .render_channel_buffer(handle.clone(), *depth, *is_unread, is_selected, cx)
                 .into_any_element(),
             ListEntry::ChannelChat { channel_id } => self
                 .render_channel_chat(*channel_id, is_selected, cx)
@@ -2378,6 +2399,7 @@ impl CollabPanel {
         &self,
         channel: &Channel,
         depth: usize,
+        is_unread: bool,
         has_children: bool,
         is_selected: bool,
         ix: usize,
@@ -2401,9 +2423,6 @@ impl CollabPanel {
             == Some(proto::ChannelVisibility::Public);
         let disclosed =
             has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
-
-        let has_messages_notification = channel_store.has_new_messages(channel_id);
-        let has_notes_notification = channel_store.has_channel_buffer_changed(channel_id);
 
         const FACEPILE_LIMIT: usize = 3;
         let participants = self.channel_store.read(cx).channel_participants(channel_id);
@@ -2478,9 +2497,7 @@ impl CollabPanel {
                         }),
                     )
                     .on_click(cx.listener(move |this, _, cx| {
-                        if is_active {
-                            this.open_channel_notes(channel_id, cx)
-                        } else {
+                        if !is_active {
                             this.join_channel(channel_id, cx)
                         }
                     }))
@@ -2501,8 +2518,8 @@ impl CollabPanel {
                     .child(
                         h_flex()
                             .id(channel_id as usize)
-                            .child(Label::new(channel.name.clone()))
-                            .children(face_pile.map(|face_pile| face_pile.p_1())),
+                            .when(is_unread, |el| el.font_weight(FontWeight::BOLD))
+                            .child(Label::new(channel.name.clone())),
                     ),
             )
             .child(
@@ -2511,48 +2528,7 @@ impl CollabPanel {
                     .right(rems(0.))
                     .z_index(1)
                     .h_full()
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap_1()
-                            .px_1()
-                            .child(
-                                IconButton::new("channel_chat", IconName::MessageBubbles)
-                                    .style(ButtonStyle::Filled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_messages_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.join_channel_chat(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel chat", cx))
-                                    .when(!has_messages_notification, |this| {
-                                        this.visible_on_hover("")
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("channel_notes", IconName::File)
-                                    .style(ButtonStyle::Filled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_notes_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.open_channel_notes(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel notes", cx))
-                                    .when(!has_notes_notification, |this| {
-                                        this.visible_on_hover("")
-                                    }),
-                            ),
-                    ),
+                    .children(face_pile.map(|face_pile| face_pile.p_1())),
             )
             .tooltip({
                 let channel_store = self.channel_store.clone();
@@ -2757,12 +2733,13 @@ impl PartialEq for ListEntry {
                     return channel_1.id == channel_2.id;
                 }
             }
-            ListEntry::ChannelNotes { channel_id } => {
-                if let ListEntry::ChannelNotes {
-                    channel_id: other_id,
+            ListEntry::ChannelBuffer { handle, .. } => {
+                if let ListEntry::ChannelBuffer {
+                    handle: other_handle,
+                    ..
                 } = other
                 {
-                    return channel_id == other_id;
+                    return handle == other_handle;
                 }
             }
             ListEntry::ChannelChat { channel_id } => {

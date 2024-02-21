@@ -5,7 +5,7 @@ use crate::{
 use call::ActiveCall;
 use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
 use client::{Collaborator, ParticipantIndex, UserId};
-use collab_ui::channel_view::ChannelView;
+use collab_ui::channel_view::ChannelBufferView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
@@ -161,15 +161,15 @@ async fn test_channel_notes_participant_indices(
 
     // Clients A, B, and C open the channel notes
     let channel_view_a = cx_a
-        .update(|cx| ChannelView::open(channel_id, None, workspace_a.clone(), cx))
+        .update(|cx| ChannelBufferView::open(channel_id, None, workspace_a.clone(), cx))
         .await
         .unwrap();
     let channel_view_b = cx_b
-        .update(|cx| ChannelView::open(channel_id, None, workspace_b.clone(), cx))
+        .update(|cx| ChannelBufferView::open(channel_id, None, workspace_b.clone(), cx))
         .await
         .unwrap();
     let channel_view_c = cx_c
-        .update(|cx| ChannelView::open(channel_id, None, workspace_c.clone(), cx))
+        .update(|cx| ChannelBufferView::open(channel_id, None, workspace_c.clone(), cx))
         .await
         .unwrap();
 

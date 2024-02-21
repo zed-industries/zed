@@ -6,7 +6,7 @@ use backtrace::Backtrace;
 use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, UserStore};
-use collab_ui::channel_view::ChannelView;
+use collab_ui::channel_view::ChannelBufferView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
@@ -341,10 +341,11 @@ fn main() {
                     let workspace_window =
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     let workspace = workspace_window.root_view(&cx)?;
-                    cx.update_window(workspace_window.into(), |_, cx| {
-                        ChannelView::open(channel_id, heading, workspace, cx)
-                    })?
-                    .await?;
+                    // todo!()
+                    // cx.update_window(workspace_window.into(), |_, cx| {
+                    //     ChannelBufferView::open(channel_id, heading, workspace, cx)
+                    // })?
+                    // .await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -395,10 +396,11 @@ fn main() {
                             let workspace_window =
                                 workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                             let workspace = workspace_window.root_view(&cx)?;
-                            cx.update_window(workspace_window.into(), |_, cx| {
-                                ChannelView::open(channel_id, heading, workspace, cx)
-                            })?
-                            .await?;
+                            // todo!()
+                            // cx.update_window(workspace_window.into(), |_, cx| {
+                            //     // ChannelBufferView::open(channel_id, heading, workspace, cx)
+                            // })?
+                            // .await?;
                             anyhow::Ok(())
                         });
                         cx.update(|cx| open_notes_task.detach_and_log_err(cx))

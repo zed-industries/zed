@@ -1,4 +1,4 @@
-use crate::{Channel, ChannelId, ChannelStore};
+use crate::{Channel, ChannelBufferHandle, ChannelStore};
 use anyhow::Result;
 use client::{Client, Collaborator, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashMap;
@@ -20,7 +20,7 @@ pub(crate) fn init(client: &Arc<Client>) {
 }
 
 pub struct ChannelBuffer {
-    pub channel_id: ChannelId,
+    pub handle: ChannelBufferHandle,
     connected: bool,
     collaborators: HashMap<PeerId, Collaborator>,
     user_store: Model<UserStore>,
@@ -43,15 +43,16 @@ impl EventEmitter<ChannelBufferEvent> for ChannelBuffer {}
 
 impl ChannelBuffer {
     pub(crate) async fn new(
-        channel: Arc<Channel>,
+        handle: ChannelBufferHandle,
         client: Arc<Client>,
         user_store: Model<UserStore>,
         channel_store: Model<ChannelStore>,
         mut cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
+        // todo!() send buffer_id.
         let response = client
             .request(proto::JoinChannelBuffer {
-                channel_id: channel.id,
+                channel_id: handle.channel_id,
             })
             .await?;
         let buffer_id = BufferId::new(response.buffer_id)?;
@@ -63,24 +64,24 @@ impl ChannelBuffer {
             .collect::<Result<Vec<_>, _>>()?;
 
         let buffer = cx.new_model(|cx| {
-            let capability = channel_store.read(cx).channel_capability(channel.id);
+            let capability = channel_store.read(cx).channel_capability(handle.channel_id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
         buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
 
-        let subscription = client.subscribe_to_entity(channel.id)?;
+        let subscription = client.subscribe_to_entity(handle.channel_id)?;
 
         anyhow::Ok(cx.new_model(|cx| {
             cx.subscribe(&buffer, Self::on_buffer_update).detach();
             cx.on_release(Self::release).detach();
             let mut this = Self {
+                handle,
                 buffer,
                 buffer_epoch: response.epoch,
                 client,
                 connected: true,
                 collaborators: Default::default(),
                 acknowledge_task: None,
-                channel_id: channel.id,
                 subscription: Some(subscription.set_model(&cx.handle(), &mut cx.to_async())),
                 user_store,
                 channel_store,
@@ -95,9 +96,10 @@ impl ChannelBuffer {
             if let Some(task) = self.acknowledge_task.take() {
                 task.detach();
             }
+            // todo!()
             self.client
                 .send(proto::LeaveChannelBuffer {
-                    channel_id: self.channel_id,
+                    channel_id: self.handle.channel_id,
                 })
                 .log_err();
         }
@@ -189,9 +191,10 @@ impl ChannelBuffer {
                     }
                 }
                 let operation = language::proto::serialize_operation(operation);
+                // todo!()
                 self.client
                     .send(proto::UpdateChannelBuffer {
-                        channel_id: self.channel_id,
+                        channel_id: self.handle.channel_id,
                         operations: vec![operation],
                     })
                     .log_err();
@@ -240,12 +243,12 @@ impl ChannelBuffer {
     pub fn channel(&self, cx: &AppContext) -> Option<Arc<Channel>> {
         self.channel_store
             .read(cx)
-            .channel_for_id(self.channel_id)
+            .channel_for_id(self.handle.channel_id)
             .cloned()
     }
 
     pub(crate) fn disconnect(&mut self, cx: &mut ModelContext<Self>) {
-        log::info!("channel buffer {} disconnected", self.channel_id);
+        log::info!("channel buffer {} disconnected", self.handle);
         if self.connected {
             self.connected = false;
             self.subscription.take();

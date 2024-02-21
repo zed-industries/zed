@@ -3383,8 +3383,14 @@ fn build_channels_update(
         if buffer.is_notes {
             notes_ids.insert(buffer.id, buffer.channel_id);
         }
+        update.buffers.push(proto::ChannelBuffer {
+            id: buffer.id.into(),
+            channel_id: buffer.channel_id.into(),
+            name: buffer.name,
+            is_notes: buffer.is_notes,
+        })
     }
-    // TODO: this can be removed after zed 0.123.x is retired
+
     let mut latest_notes_versions = Vec::new();
     for version in &channels.latest_buffer_versions {
         if let Some(channel_id) = notes_ids.get(&version.buffer_id) {

@@ -1,3 +1,4 @@
+mod buffer_index;
 mod channel_index;
 
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
@@ -19,6 +20,9 @@ use rpc::{
 use std::{mem, sync::Arc, time::Duration};
 use util::{async_maybe, maybe, ResultExt};
 
+use self::buffer_index::BufferIndex;
+pub use self::buffer_index::ChannelBufferHandle;
+
 pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let channel_store =
         cx.new_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
@@ -28,6 +32,14 @@ pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppCont
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type ChannelId = u64;
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ChannelBufferId(pub u64);
+
+impl ChannelBufferId {
+    pub fn from_proto(id: u64) -> Self {
+        Self(id)
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 struct NotesVersion {
@@ -37,6 +49,7 @@ struct NotesVersion {
 
 pub struct ChannelStore {
     pub channel_index: ChannelIndex,
+    buffer_index: BufferIndex,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channel_states: HashMap<ChannelId, ChannelState>,
@@ -64,9 +77,7 @@ pub struct Channel {
 #[derive(Default)]
 pub struct ChannelState {
     latest_chat_message: Option<u64>,
-    latest_notes_versions: Option<NotesVersion>,
     observed_chat_message: Option<u64>,
-    observed_notes_versions: Option<NotesVersion>,
     role: Option<ChannelRole>,
 }
 
@@ -197,6 +208,7 @@ impl ChannelStore {
         Self {
             channel_invitations: Vec::default(),
             channel_index: ChannelIndex::default(),
+            buffer_index: Default::default(),
             channel_participants: Default::default(),
             outgoing_invites: Default::default(),
             opened_buffers: Default::default(),
@@ -295,16 +307,16 @@ impl ChannelStore {
 
     pub fn open_channel_buffer(
         &mut self,
-        channel_id: ChannelId,
+        buffer: ChannelBufferHandle,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         let channel_store = cx.handle();
         self.open_channel_resource(
-            channel_id,
+            buffer.channel_id,
             |this| &mut this.opened_buffers,
-            |channel, cx| ChannelBuffer::new(channel, client, user_store, channel_store, cx),
+            |channel, cx| ChannelBuffer::new(buffer, client, user_store, channel_store, cx),
             cx,
         )
     }
@@ -336,10 +348,8 @@ impl ChannelStore {
         })
     }
 
-    pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> bool {
-        self.channel_states
-            .get(&channel_id)
-            .is_some_and(|state| state.has_channel_buffer_changed())
+    pub fn is_buffer_unread(&self, handle: &ChannelBufferHandle) -> bool {
+        self.buffer_index.is_unread(handle.id)
     }
 
     pub fn has_new_messages(&self, channel_id: ChannelId) -> bool {
@@ -389,31 +399,27 @@ impl ChannelStore {
         cx.notify();
     }
 
-    pub fn acknowledge_notes_version(
+    pub fn update_observed_notes_version(
         &mut self,
-        channel_id: ChannelId,
+        buffer_id: ChannelBufferId,
         epoch: u64,
         version: &clock::Global,
         cx: &mut ModelContext<Self>,
     ) {
-        self.channel_states
-            .entry(channel_id)
-            .or_insert_with(|| Default::default())
-            .acknowledge_notes_version(epoch, version);
+        self.buffer_index
+            .update_observed_version(buffer_id, epoch, version);
         cx.notify()
     }
 
     pub fn update_latest_notes_version(
         &mut self,
-        channel_id: ChannelId,
+        buffer_id: ChannelBufferId,
         epoch: u64,
         version: &clock::Global,
         cx: &mut ModelContext<Self>,
     ) {
-        self.channel_states
-            .entry(channel_id)
-            .or_insert_with(|| Default::default())
-            .update_latest_notes_version(epoch, version);
+        self.buffer_index
+            .update_latest_version(buffer_id, epoch, version);
         cx.notify()
     }
 
@@ -818,6 +824,10 @@ impl ChannelStore {
         self.outgoing_invites.contains(&(channel_id, user_id))
     }
 
+    pub fn buffers_for_channel(&self, channel_id: ChannelId) -> Vec<ChannelBufferHandle> {
+        self.buffer_index.for_channel(channel_id)
+    }
+
     async fn handle_update_channels(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateChannels>,
@@ -839,10 +849,10 @@ impl ChannelStore {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            for buffer_version in message.payload.observed_channel_buffer_version {
+            for buffer_version in message.payload.observed_buffer_versions {
                 let version = language::proto::deserialize_version(&buffer_version.version);
-                this.acknowledge_notes_version(
-                    buffer_version.channel_id,
+                this.update_observed_notes_version(
+                    ChannelBufferId::from_proto(buffer_version.buffer_id),
                     buffer_version.epoch,
                     &version,
                     cx,
@@ -887,7 +897,7 @@ impl ChannelStore {
                     let channel_buffer = buffer.read(cx);
                     let buffer = channel_buffer.buffer().read(cx);
                     buffer_versions.push(proto::ChannelBufferVersion {
-                        channel_id: channel_buffer.channel_id,
+                        channel_id: channel_buffer.handle.channel_id,
                         epoch: channel_buffer.epoch(),
                         version: language::proto::serialize_version(&buffer.version()),
                     });
@@ -914,13 +924,13 @@ impl ChannelStore {
                         };
 
                         channel_buffer.update(cx, |channel_buffer, cx| {
-                            let channel_id = channel_buffer.channel_id;
+                            let channel_id = channel_buffer.handle.channel_id;
                             if let Some(remote_buffer) = response
                                 .buffers
                                 .iter_mut()
                                 .find(|buffer| buffer.channel_id == channel_id)
                             {
-                                let channel_id = channel_buffer.channel_id;
+                                let channel_id = channel_buffer.handle.channel_id;
                                 let remote_version =
                                     language::proto::deserialize_version(&remote_buffer.version);
 
@@ -1033,6 +1043,8 @@ impl ChannelStore {
 
         let channels_changed = !payload.channels.is_empty()
             || !payload.delete_channels.is_empty()
+            || !payload.buffers.is_empty()
+            || !payload.deleted_buffers.is_empty()
             || !payload.latest_channel_message_ids.is_empty()
             || !payload.latest_channel_buffer_versions.is_empty();
 
@@ -1074,13 +1086,27 @@ impl ChannelStore {
                     }
                 }
             }
+            drop(index);
 
-            for latest_buffer_version in payload.latest_channel_buffer_versions {
+            for buffer in payload.buffers {
+                self.buffer_index
+                    .insert(ChannelBufferHandle::from_proto(buffer))
+            }
+
+            for latest_buffer_version in payload.latest_buffer_versions {
                 let version = language::proto::deserialize_version(&latest_buffer_version.version);
-                self.channel_states
-                    .entry(latest_buffer_version.channel_id)
-                    .or_default()
-                    .update_latest_notes_version(latest_buffer_version.epoch, &version)
+                let buffer_id = ChannelBufferId::from_proto(latest_buffer_version.buffer_id);
+                self.update_latest_notes_version(
+                    buffer_id,
+                    latest_buffer_version.epoch,
+                    &version,
+                    cx,
+                )
+            }
+
+            for buffer_id in payload.deleted_buffers {
+                self.buffer_index
+                    .delete(ChannelBufferId::from_proto(buffer_id))
             }
 
             for latest_channel_message in payload.latest_channel_message_ids {
@@ -1090,6 +1116,7 @@ impl ChannelStore {
                     .update_latest_message_id(latest_channel_message.message_id);
             }
         }
+        dbg!(&self.buffer_index);
 
         cx.notify();
         if payload.channel_participants.is_empty() {
@@ -1142,22 +1169,6 @@ impl ChannelState {
         self.role = Some(role);
     }
 
-    fn has_channel_buffer_changed(&self) -> bool {
-        if let Some(latest_version) = &self.latest_notes_versions {
-            if let Some(observed_version) = &self.observed_notes_versions {
-                latest_version.epoch > observed_version.epoch
-                    || (latest_version.epoch == observed_version.epoch
-                        && latest_version
-                            .version
-                            .changed_since(&observed_version.version))
-            } else {
-                true
-            }
-        } else {
-            false
-        }
-    }
-
     fn has_new_messages(&self) -> bool {
         let latest_message_id = self.latest_chat_message;
         let observed_message_id = self.observed_chat_message;
@@ -1179,31 +1190,5 @@ impl ChannelState {
     fn update_latest_message_id(&mut self, message_id: u64) {
         self.latest_chat_message =
             Some(message_id.max(self.latest_chat_message.unwrap_or_default()));
-    }
-
-    fn acknowledge_notes_version(&mut self, epoch: u64, version: &clock::Global) {
-        if let Some(existing) = &mut self.observed_notes_versions {
-            if existing.epoch == epoch {
-                existing.version.join(version);
-                return;
-            }
-        }
-        self.observed_notes_versions = Some(NotesVersion {
-            epoch,
-            version: version.clone(),
-        });
-    }
-
-    fn update_latest_notes_version(&mut self, epoch: u64, version: &clock::Global) {
-        if let Some(existing) = &mut self.latest_notes_versions {
-            if existing.epoch == epoch {
-                existing.version.join(version);
-                return;
-            }
-        }
-        self.latest_notes_versions = Some(NotesVersion {
-            epoch,
-            version: version.clone(),
-        });
     }
 }

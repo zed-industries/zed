@@ -1,7 +1,7 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::{ActiveCall, ParticipantLocation};
 use collab_ui::{
-    channel_view::ChannelView,
+    channel_view::ChannelBufferView,
     notifications::project_shared_notification::ProjectSharedNotification,
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
@@ -1907,7 +1907,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
     // Client A opens the notes for channel 1.
     let channel_notes_1_a = cx_a
-        .update(|cx| ChannelView::open(channel_1_id, None, workspace_a.clone(), cx))
+        .update(|cx| ChannelBufferView::open(channel_1_id, None, workspace_a.clone(), cx))
         .await
         .unwrap();
     channel_notes_1_a.update(cx_a, |notes, cx| {
@@ -1941,7 +1941,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         workspace
             .active_item(cx)
             .expect("no active item")
-            .downcast::<ChannelView>()
+            .downcast::<ChannelBufferView>()
             .expect("active item is not a channel view")
     });
     channel_notes_1_b.update(cx_b, |notes, cx| {
@@ -1953,7 +1953,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
     //  Client A opens the notes for channel 2.
     let channel_notes_2_a = cx_a
-        .update(|cx| ChannelView::open(channel_2_id, None, workspace_a.clone(), cx))
+        .update(|cx| ChannelBufferView::open(channel_2_id, None, workspace_a.clone(), cx))
         .await
         .unwrap();
     channel_notes_2_a.update(cx_a, |notes, cx| {
@@ -1970,7 +1970,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         workspace
             .active_item(cx)
             .expect("no active item")
-            .downcast::<ChannelView>()
+            .downcast::<ChannelBufferView>()
             .expect("active item is not a channel view")
     });
     channel_notes_2_b.update(cx_b, |notes, cx| {
@@ -2051,14 +2051,14 @@ async fn test_following_to_channel_notes_other_workspace(
     let (workspace_a2, cx_a2) = client_a.build_test_workspace(&mut cx_a2).await;
     cx_a2.update(|cx| cx.activate_window());
     cx_a2
-        .update(|cx| ChannelView::open(channel, None, workspace_a2, cx))
+        .update(|cx| ChannelBufferView::open(channel, None, workspace_a2, cx))
         .await
         .unwrap();
     cx_a2.run_until_parked();
 
     // b should follow a to the channel notes
     workspace_b.update(cx_b, |workspace, cx| {
-        let editor = workspace.active_item_as::<ChannelView>(cx).unwrap();
+        let editor = workspace.active_item_as::<ChannelBufferView>(cx).unwrap();
         assert_eq!(editor.read(cx).channel(cx).unwrap().id, channel);
     });
 

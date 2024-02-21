@@ -1,6 +1,6 @@
 use anyhow::Result;
 use call::report_call_event_for_channel;
-use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId, ChannelStore};
+use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelBufferHandle, ChannelStore};
 use client::{
     proto::{self, PeerId},
     Collaborator, ParticipantIndex,
@@ -32,10 +32,10 @@ use workspace::{
 actions!(collab, [CopyLink]);
 
 pub fn init(cx: &mut AppContext) {
-    register_followable_item::<ChannelView>(cx)
+    register_followable_item::<ChannelBufferView>(cx)
 }
 
-pub struct ChannelView {
+pub struct ChannelBufferView {
     pub editor: View<Editor>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -46,16 +46,16 @@ pub struct ChannelView {
     _reparse_subscription: Option<Subscription>,
 }
 
-impl ChannelView {
+impl ChannelBufferView {
     pub fn open(
-        channel_id: ChannelId,
+        buffer: ChannelBufferHandle,
         link_position: Option<String>,
         workspace: View<Workspace>,
         cx: &mut WindowContext,
     ) -> Task<Result<View<Self>>> {
         let pane = workspace.read(cx).active_pane().clone();
         let channel_view = Self::open_in_pane(
-            channel_id,
+            buffer.clone(),
             link_position,
             pane.clone(),
             workspace.clone(),
@@ -66,7 +66,7 @@ impl ChannelView {
             pane.update(&mut cx, |pane, cx| {
                 report_call_event_for_channel(
                     "open channel notes",
-                    channel_id,
+                    buffer.channel_id,
                     &workspace.read(cx).app_state().client,
                     cx,
                 );
@@ -77,7 +77,7 @@ impl ChannelView {
     }
 
     pub fn open_in_pane(
-        channel_id: ChannelId,
+        buffer: ChannelBufferHandle,
         link_position: Option<String>,
         pane: View<Pane>,
         workspace: View<Workspace>,
@@ -90,7 +90,7 @@ impl ChannelView {
         let language_registry = workspace.app_state().languages.clone();
         let markdown = language_registry.language_for_name("Markdown");
         let channel_buffer =
-            channel_store.update(cx, |store, cx| store.open_channel_buffer(channel_id, cx));
+            channel_store.update(cx, |store, cx| store.open_channel_buffer(buffer, cx));
 
         cx.spawn(|mut cx| async move {
             let channel_buffer = channel_buffer.await?;
@@ -304,7 +304,7 @@ impl ChannelView {
                     self.channel_store.update(cx, |store, cx| {
                         let channel_buffer = self.channel_buffer.read(cx);
                         store.update_latest_notes_version(
-                            channel_buffer.channel_id,
+                            channel_buffer.handle.id,
                             channel_buffer.epoch(),
                             &channel_buffer.buffer().read(cx).version(),
                             cx,
@@ -316,11 +316,11 @@ impl ChannelView {
         }
     }
 
-    fn acknowledge_buffer_version(&mut self, cx: &mut ViewContext<ChannelView>) {
+    fn acknowledge_buffer_version(&mut self, cx: &mut ViewContext<ChannelBufferView>) {
         self.channel_store.update(cx, |store, cx| {
             let channel_buffer = self.channel_buffer.read(cx);
-            store.acknowledge_notes_version(
-                channel_buffer.channel_id,
+            store.update_observed_notes_version(
+                channel_buffer.handle.id,
                 channel_buffer.epoch(),
                 &channel_buffer.buffer().read(cx).version(),
                 cx,
@@ -332,9 +332,9 @@ impl ChannelView {
     }
 }
 
-impl EventEmitter<EditorEvent> for ChannelView {}
+impl EventEmitter<EditorEvent> for ChannelBufferView {}
 
-impl Render for ChannelView {
+impl Render for ChannelBufferView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .size_full()
@@ -343,13 +343,13 @@ impl Render for ChannelView {
     }
 }
 
-impl FocusableView for ChannelView {
+impl FocusableView for ChannelBufferView {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.editor.read(cx).focus_handle(cx)
     }
 }
 
-impl Item for ChannelView {
+impl Item for ChannelBufferView {
     type Event = EditorEvent;
 
     fn act_as_type<'a>(
@@ -441,7 +441,7 @@ impl Item for ChannelView {
     }
 }
 
-impl FollowableItem for ChannelView {
+impl FollowableItem for ChannelBufferView {
     fn remote_id(&self) -> Option<workspace::ViewId> {
         self.remote_id
     }
@@ -454,7 +454,8 @@ impl FollowableItem for ChannelView {
 
         Some(proto::view::Variant::ChannelView(
             proto::view::ChannelView {
-                channel_id: channel_buffer.channel_id,
+                buffer: Some(channel_buffer.handle.to_proto()),
+                channel_id: channel_buffer.handle.channel_id,
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
                     self.editor.read(cx).to_state_proto(cx)
                 {
@@ -480,7 +481,13 @@ impl FollowableItem for ChannelView {
             unreachable!()
         };
 
-        let open = ChannelView::open_in_pane(state.channel_id, None, pane, workspace, cx);
+        let open = ChannelBufferView::open_in_pane(
+            ChannelBufferHandle::from_proto(state.buffer?),
+            None,
+            pane,
+            workspace,
+            cx,
+        );
 
         Some(cx.spawn(|mut cx| async move {
             let this = open.await?;

@@ -1397,6 +1397,7 @@ message View {
     message ChannelView {
         uint64 channel_id = 1;
         Editor editor = 2;
+        ChannelBuffer buffer = 3;
     }
 }
 
