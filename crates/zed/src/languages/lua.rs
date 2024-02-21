@@ -30,6 +30,12 @@ impl super::LspAdapter for LuaLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
+        let os = match consts::OS {
+            "macos" => "darwin",
+            "linux" => "linux",
+            "windows" => "win32",
+            other => bail!("Running on unsupported os: {other}"),
+        };
         let platform = match consts::ARCH {
             "x86_64" => "x64",
             "aarch64" => "arm64",
@@ -43,7 +49,7 @@ impl super::LspAdapter for LuaLspAdapter {
         )
         .await?;
         let version = &release.tag_name;
-        let asset_name = format!("lua-language-server-{version}-darwin-{platform}.tar.gz");
+        let asset_name = format!("lua-language-server-{version}-{os}-{platform}.tar.gz");
         let asset = release
             .assets
             .iter()
@@ -77,11 +83,15 @@ impl super::LspAdapter for LuaLspAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        fs::set_permissions(
-            &binary_path,
-            <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-        )
-        .await?;
+        // todo!("windows")
+        #[cfg(not(windows))]
+        {
+            fs::set_permissions(
+                &binary_path,
+                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+            )
+            .await?;
+        }
         Ok(LanguageServerBinary {
             path: binary_path,
             arguments: Vec::new(),

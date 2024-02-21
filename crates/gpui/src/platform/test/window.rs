@@ -1,7 +1,7 @@
 use crate::{
-    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, KeyDownEvent, Keystroke,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, Size, TestPlatform, TileId, WindowAppearance, WindowBounds, WindowOptions,
+    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, Size,
+    TestPlatform, TileId, WindowAppearance, WindowBounds, WindowOptions,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -111,41 +111,6 @@ impl TestWindow {
         let result = callback(event);
         self.0.lock().input_callback = Some(callback);
         result
-    }
-
-    pub fn simulate_keystroke(&mut self, mut keystroke: Keystroke, is_held: bool) {
-        if keystroke.ime_key.is_none()
-            && !keystroke.modifiers.command
-            && !keystroke.modifiers.control
-            && !keystroke.modifiers.function
-        {
-            keystroke.ime_key = Some(if keystroke.modifiers.shift {
-                keystroke.key.to_ascii_uppercase().clone()
-            } else {
-                keystroke.key.clone()
-            })
-        }
-
-        if self.simulate_input(PlatformInput::KeyDown(KeyDownEvent {
-            keystroke: keystroke.clone(),
-            is_held,
-        })) {
-            return;
-        }
-
-        let mut lock = self.0.lock();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            panic!(
-                "simulate_keystroke {:?} input event was not handled and there was no active input",
-                &keystroke
-            );
-        };
-        drop(lock);
-        if let Some(text) = keystroke.ime_key.as_ref() {
-            input_handler.replace_text_in_range(None, &text);
-        }
-
-        self.0.lock().input_handler = Some(input_handler);
     }
 }
 

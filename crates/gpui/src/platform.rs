@@ -61,6 +61,10 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(LinuxPlatform::new())
 }
+#[cfg(target_os = "windows")]
+pub(crate) fn current_platform() -> Rc<dyn Platform> {
+    todo!("windows")
+}
 
 pub(crate) trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
@@ -412,11 +416,8 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    pub(crate) fn flush_pending_input(&mut self, input: &str, cx: &mut WindowContext) {
-        let Some(range) = self.handler.selected_text_range(cx) else {
-            return;
-        };
-        self.handler.replace_text_in_range(Some(range), input, cx);
+    pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
+        self.handler.replace_text_in_range(None, input, cx);
     }
 }
 

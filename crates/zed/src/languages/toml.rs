@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
@@ -28,7 +28,16 @@ impl LspAdapter for TaploLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
             latest_github_release("tamasfe/taplo", true, false, delegate.http_client()).await?;
-        let asset_name = format!("taplo-full-darwin-{arch}.gz", arch = std::env::consts::ARCH);
+        let asset_name = format!(
+            "taplo-full-{os}-{arch}.gz",
+            os = match std::env::consts::OS {
+                "macos" => "darwin",
+                "linux" => "linux",
+                "windows" => "windows",
+                other => bail!("Running on unsupported os: {other}"),
+            },
+            arch = std::env::consts::ARCH
+        );
 
         let asset = release
             .assets
@@ -63,11 +72,15 @@ impl LspAdapter for TaploLspAdapter {
 
             futures::io::copy(decompressed_bytes, &mut file).await?;
 
-            fs::set_permissions(
-                &binary_path,
-                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-            )
-            .await?;
+            // todo!("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &binary_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
         }
 
         Ok(LanguageServerBinary {

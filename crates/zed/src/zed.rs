@@ -23,8 +23,12 @@ use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
-use settings::{initial_local_settings_content, KeymapFile, Settings, SettingsStore};
+use settings::{
+    initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH,
+};
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
+use task::{oneshot_source::OneshotSource, static_source::StaticSource};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -54,6 +58,7 @@ actions!(
         OpenDefaultKeymap,
         OpenDefaultSettings,
         OpenKeymap,
+        OpenTasks,
         OpenLicenses,
         OpenLocalSettings,
         OpenLog,
@@ -151,6 +156,23 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 .unwrap_or(true)
         });
 
+        let project = workspace.project().clone();
+        if project.read(cx).is_local() {
+            let tasks_file_rx = watch_config_file(
+                &cx.background_executor(),
+                app_state.fs.clone(),
+                paths::TASKS.clone(),
+            );
+            let static_source = StaticSource::new(tasks_file_rx, cx);
+            let oneshot_source = OneshotSource::new(cx);
+
+            project.update(cx, |project, cx| {
+                project.task_inventory().update(cx, |inventory, cx| {
+                    inventory.add_source(oneshot_source, cx);
+                    inventory.add_source(static_source, cx);
+                })
+            });
+        }
         cx.spawn(|workspace_handle, mut cx| async move {
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -250,6 +272,15 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     open_settings_file(
                         &paths::SETTINGS,
                         || settings::initial_user_settings_content().as_ref().into(),
+                        cx,
+                    );
+                },
+            )
+            .register_action(
+                move |_: &mut Workspace, _: &OpenTasks, cx: &mut ViewContext<Workspace>| {
+                    open_settings_file(
+                        &paths::TASKS,
+                        || settings::initial_tasks_content().as_ref().into(),
                         cx,
                     );
                 },
@@ -395,8 +426,8 @@ fn quit(_: &Quit, cx: &mut AppContext) {
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        cx.update(|cx| {
-            workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+        cx.update(|mut cx| {
+            workspace_windows.sort_by_key(|window| window.is_active(&mut cx) == Some(false));
         })
         .log_err();
 
@@ -543,7 +574,7 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
 }
 
 pub fn load_default_keymap(cx: &mut AppContext) {
-    KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+    KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
         KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
     }

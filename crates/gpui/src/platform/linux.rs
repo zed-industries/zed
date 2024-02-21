@@ -3,6 +3,7 @@ mod client_dispatcher;
 mod dispatcher;
 mod platform;
 mod text_system;
+mod util;
 mod wayland;
 mod x11;
 

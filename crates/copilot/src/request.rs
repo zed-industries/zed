@@ -52,7 +52,7 @@ pub struct SignInConfirmParams {
 pub enum SignInStatus {
     #[serde(rename = "OK")]
     Ok {
-        user: String,
+        user: Option<String>,
     },
     MaybeOk {
         user: String,
