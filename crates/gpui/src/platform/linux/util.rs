@@ -17,7 +17,7 @@ impl Keystroke {
 
         // Ignore control characters (and DEL) for the purposes of ime_key,
         // but if key_utf32 is 0 then assume it isn't one
-        let ime_key = (key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127)).then_some(key_utf8);
+        let ime_key = ((key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127)) && key_utf8.len() > 0).then_some(key_utf8);
 
         Keystroke {
             modifiers,
