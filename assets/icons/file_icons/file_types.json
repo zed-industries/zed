@@ -74,6 +74,7 @@
     "j2k": "image",
     "java": "java",
     "jfif": "image",
+    "jl": "julia",
     "jp2": "image",
     "jpeg": "image",
     "jpg": "image",
@@ -240,6 +241,9 @@
     },
     "heroku": {
       "icon": "icons/file_icons/heroku.svg"
+    },
+    "julia": {
+      "icon": "icons/file_icons/julia.svg"
     },
     "go": {
       "icon": "icons/file_icons/go.svg"
