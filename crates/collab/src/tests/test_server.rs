@@ -478,7 +478,7 @@ impl TestServer {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(live_kit_test_server.create_api_client())),
             blob_store_client: None,
-            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone(), executor.clone())),
+            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             config: Config {
                 http_port: 0,

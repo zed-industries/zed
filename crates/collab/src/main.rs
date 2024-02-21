@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use axum::{routing::get, Extension, Router};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
-    Config, MigrateConfig, Result,
+    Config, MigrateConfig, RateLimiter, Result,
 };
 use db::Database;
 use std::{
@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
             rpc_server.start().await?;
 
             fetch_extensions_from_blob_store_periodically(state.clone());
+            RateLimiter::save_periodically(state.rate_limiter.clone(), state.executor.clone());
 
             let app = collab::api::routes(rpc_server.clone(), state.clone())
                 .merge(collab::rpc::routes(rpc_server.clone()))

@@ -1,11 +1,8 @@
-use crate::{db::UserId, Executor, Result};
-use crate::{Database, Error};
+use crate::{db::UserId, executor::Executor, Database, Error, Result};
 use anyhow::anyhow;
 use chrono::{DateTime, Duration, Utc};
-use dashmap::DashMap;
-use parking_lot::Mutex;
+use dashmap::{DashMap, DashSet};
 use sea_orm::prelude::DateTimeUtc;
-use std::any::TypeId;
 use std::sync::Arc;
 use util::ResultExt;
 
@@ -13,25 +10,34 @@ pub trait RateLimit: 'static {
     fn capacity() -> usize;
     fn refill_duration() -> Duration;
     fn db_name() -> &'static str;
-    fn type_id() -> TypeId {
-        TypeId::of::<Self>()
-    }
 }
 
 /// Used to enforce per-user rate limits
 pub struct RateLimiter {
-    buckets: DashMap<(UserId, TypeId), Arc<Mutex<RateBucket>>>,
+    buckets: DashMap<(UserId, String), RateBucket>,
+    dirty_buckets: DashSet<(UserId, String)>,
     db: Arc<Database>,
-    executor: Executor,
 }
 
 impl RateLimiter {
-    pub fn new(db: Arc<Database>, executor: Executor) -> Self {
+    pub fn new(db: Arc<Database>) -> Self {
         RateLimiter {
             buckets: DashMap::new(),
+            dirty_buckets: DashSet::new(),
             db,
-            executor,
         }
+    }
+
+    /// Spawns a new task that periodically saves rate limit data to the database.
+    pub fn save_periodically(rate_limiter: Arc<Self>, executor: Executor) {
+        const RATE_LIMITER_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+        executor.clone().spawn_detached(async move {
+            loop {
+                executor.sleep(RATE_LIMITER_SAVE_INTERVAL).await;
+                rate_limiter.save().await.log_err();
+            }
+        });
     }
 
     /// Returns an error if the user has exceeded the specified `RateLimit`.
@@ -41,51 +47,29 @@ impl RateLimiter {
     }
 
     async fn check_internal<T: RateLimit>(&self, user_id: UserId, now: DateTimeUtc) -> Result<()> {
-        let type_id = T::type_id();
-        let bucket_key = (user_id, type_id);
+        let bucket_key = (user_id, T::db_name().to_string());
 
         // Attempt to fetch the bucket from the database if it hasn't been cached.
         // For now, we keep buckets in memory for the lifetime of the process rather than expiring them,
         // but this enforces limits across restarts so long as the database is reachable.
         if !self.buckets.contains_key(&bucket_key) {
             if let Some(bucket) = self.load_bucket::<T>(user_id).await.log_err().flatten() {
-                self.buckets
-                    .insert(bucket_key, Arc::new(Mutex::new(bucket)));
+                self.buckets.insert(bucket_key.clone(), bucket);
+                self.dirty_buckets.insert(bucket_key.clone());
             }
         }
 
-        let bucket = self
+        let mut bucket = self
             .buckets
-            .entry(bucket_key)
-            .or_insert_with(|| {
-                Arc::new(Mutex::new(RateBucket::new(
-                    T::capacity(),
-                    T::refill_duration(),
-                    now,
-                )))
-            })
-            .value()
-            .clone();
+            .entry(bucket_key.clone())
+            .or_insert_with(|| RateBucket::new(T::capacity(), T::refill_duration(), now));
 
-        let mut lock = bucket.lock();
-        let allowed = lock.allow(now);
-        let token_count = lock.token_count;
-        let last_refill = lock.last_refill.naive_utc();
-        drop(lock);
-
-        // Perform a non-blocking save of the rate bucket to the database in its new state.
-        let db = self.db.clone();
-        self.executor.spawn_detached(async move {
-            db.save_rate_bucket(user_id, T::db_name(), token_count as i32, last_refill)
-                .await
-                .log_err();
-        });
-
-        if !allowed {
+        if bucket.value_mut().allow(now) {
+            self.dirty_buckets.insert(bucket_key);
+            Ok(())
+        } else {
             Err(anyhow!("rate limit exceeded"))?
         }
-
-        Ok(())
     }
 
     async fn load_bucket<K: RateLimit>(
@@ -103,8 +87,35 @@ impl RateLimiter {
                 last_refill: DateTime::from_naive_utc_and_offset(saved_bucket.last_refill, Utc),
             }))
     }
+
+    pub async fn save(&self) -> Result<()> {
+        let mut buckets = Vec::new();
+        self.dirty_buckets.retain(|key| {
+            if let Some(bucket) = self.buckets.get(&key) {
+                buckets.push(crate::db::rate_buckets::Model {
+                    user_id: key.0,
+                    rate_limit_name: key.1.clone(),
+                    token_count: bucket.token_count as i32,
+                    last_refill: bucket.last_refill.naive_utc(),
+                });
+            }
+            false
+        });
+
+        match self.db.save_rate_buckets(&buckets).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                for bucket in buckets {
+                    self.dirty_buckets
+                        .insert((bucket.user_id, bucket.rate_limit_name));
+                }
+                Err(err)
+            }
+        }
+    }
 }
 
+#[derive(Clone)]
 struct RateBucket {
     capacity: usize,
     token_count: usize,
@@ -152,7 +163,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_rate_limiter(cx: &mut TestAppContext) {
-        let executor = Executor::Deterministic(cx.executor());
         let test_db = TestDb::sqlite(cx.executor().clone());
         let db = test_db.db().clone();
         let user_1 = db
@@ -182,7 +192,7 @@ mod tests {
 
         let mut now = Utc::now();
 
-        let rate_limiter = RateLimiter::new(db.clone(), executor.clone());
+        let rate_limiter = RateLimiter::new(db.clone());
 
         // User 1 can access resource A two times before being rate-limited.
         rate_limiter
@@ -219,12 +229,11 @@ mod tests {
             .await
             .unwrap_err();
 
-        // Ensure pending saves to the database are flushed.
-        cx.run_until_parked();
+        rate_limiter.save().await.unwrap();
 
         // Rate limits are reloaded from the database, so user A is still rate-limited
         // for resource A.
-        let rate_limiter = RateLimiter::new(db.clone(), executor);
+        let rate_limiter = RateLimiter::new(db.clone());
         rate_limiter
             .check_internal::<RateLimitA>(user_1, now)
             .await

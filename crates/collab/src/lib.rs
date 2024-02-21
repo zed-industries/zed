@@ -196,7 +196,7 @@ impl AppState {
             db: db.clone(),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            rate_limiter: Arc::new(RateLimiter::new(db, executor.clone())),
+            rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             config,
         };
