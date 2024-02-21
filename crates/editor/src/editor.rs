@@ -4121,17 +4121,13 @@ impl Editor {
                     };
 
                     let mut bracket_pair = None;
+                    let next_chars = snapshot.chars_at(selection_head).collect::<String>();
+                    let prev_chars = snapshot.reversed_chars_at(selection_head).collect::<String>();
                     for (pair, enabled) in scope.brackets() {
-                        let text = snapshot
-                            .text_for_range(
-                                Point::new(selection_head.row, selection_head.column - 1)
-                                    ..Point::new(selection_head.row, selection_head.column + 1),
-                            )
-                            .collect::<String>();
                         if enabled
                             && pair.close
-                            && text.starts_with(pair.start.as_str())
-                            && text.ends_with(pair.end.as_str())
+                            && prev_chars.starts_with(pair.start.as_str())
+                            && next_chars.starts_with(pair.end.as_str())
                         {
                             bracket_pair = Some(pair.clone());
                             break;
