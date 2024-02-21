@@ -494,6 +494,9 @@
     "Elixir": {
       "tab_size": 2
     },
+    "Gleam": {
+      "tab_size": 2
+    },
     "Go": {
       "tab_size": 4,
       "hard_tabs": true,
