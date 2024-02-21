@@ -4,6 +4,7 @@ pub mod lsp_command;
 pub mod lsp_ext_command;
 mod prettier_support;
 pub mod project_settings;
+mod runnable_inventory;
 pub mod search;
 pub mod terminals;
 pub mod worktree;
@@ -22,6 +23,7 @@ use debounced_delay::DebouncedDelay;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
+    select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
@@ -57,7 +59,8 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
-use rpc::{ErrorCode, ErrorExt};
+
+use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
@@ -91,9 +94,11 @@ use util::{
 pub use fs::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
+pub use runnable_inventory::Inventory;
 pub use worktree::*;
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
+const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
@@ -153,6 +158,7 @@ pub struct Project {
     default_prettier: DefaultPrettier,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
+    runnables: Model<Inventory>,
 }
 
 pub enum LanguageServerToQuery {
@@ -615,6 +621,8 @@ impl Project {
                 .detach();
             let copilot_lsp_subscription =
                 Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
+            let runnables = Inventory::new(cx);
+
             Self {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
@@ -665,6 +673,7 @@ impl Project {
                 default_prettier: DefaultPrettier::default(),
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
+                runnables,
             }
         })
     }
@@ -688,7 +697,10 @@ impl Project {
             .await?;
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
-
+            let runnables = Inventory::new(cx);
+            // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
+            // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
+            // That's because Worktree's identifier is entity id, which should probably be changed.
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
                 let worktree =
@@ -770,6 +782,7 @@ impl Project {
                 default_prettier: DefaultPrettier::default(),
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
+                runnables,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1050,6 +1063,10 @@ impl Project {
                 .ok();
         }
         cx.notify();
+    }
+
+    pub fn runnable_inventory(&self) -> &Model<Inventory> {
+        &self.runnables
     }
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
@@ -3346,7 +3363,8 @@ impl Project {
     ) -> Task<Vec<WorktreeId>> {
         let key = (worktree_id, adapter_name);
         if let Some(server_id) = self.language_server_ids.remove(&key) {
-            log::info!("stopping language server {}", key.1 .0);
+            let name = key.1 .0;
+            log::info!("stopping language server {name}");
 
             // Remove other entries for this language server as well
             let mut orphaned_worktrees = vec![worktree_id];
@@ -3380,31 +3398,58 @@ impl Project {
 
             let server_state = self.language_servers.remove(&server_id);
             cx.emit(Event::LanguageServerRemoved(server_id));
-            cx.spawn(move |this, mut cx| async move {
-                let server = match server_state {
-                    Some(LanguageServerState::Starting(task)) => task.await,
-                    Some(LanguageServerState::Running { server, .. }) => Some(server),
-                    None => None,
-                };
-
-                if let Some(server) = server {
-                    if let Some(shutdown) = server.shutdown() {
-                        shutdown.await;
-                    }
-                }
-
-                if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
-                        this.language_server_statuses.remove(&server_id);
-                        cx.notify();
-                    })
-                    .ok();
-                }
-
+            cx.spawn(move |this, cx| async move {
+                Self::shutdown_language_server(this, server_state, name, server_id, cx).await;
                 orphaned_worktrees
             })
         } else {
             Task::ready(Vec::new())
+        }
+    }
+
+    async fn shutdown_language_server(
+        this: WeakModel<Project>,
+        server_state: Option<LanguageServerState>,
+        name: Arc<str>,
+        server_id: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) {
+        let server = match server_state {
+            Some(LanguageServerState::Starting(task)) => {
+                let mut timer = cx
+                    .background_executor()
+                    .timer(SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT)
+                    .fuse();
+
+                select! {
+                    server = task.fuse() => server,
+                    _ = timer => {
+                        log::info!(
+                            "timeout waiting for language server {} to finish launching before stopping",
+                            name
+                        );
+                        None
+                    },
+                }
+            }
+
+            Some(LanguageServerState::Running { server, .. }) => Some(server),
+
+            None => None,
+        };
+
+        if let Some(server) = server {
+            if let Some(shutdown) = server.shutdown() {
+                shutdown.await;
+            }
+        }
+
+        if let Some(this) = this.upgrade() {
+            this.update(&mut cx, |this, cx| {
+                this.language_server_statuses.remove(&server_id);
+                cx.notify();
+            })
+            .ok();
         }
     }
 

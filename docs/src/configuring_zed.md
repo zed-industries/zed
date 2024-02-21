@@ -245,8 +245,8 @@ To override settings for a language, add an entry for that language server's nam
 "lsp": {
   "rust-analyzer": {
     "initialization_options": {
-      "checkOnSave": {
-        "command": "clippy" // rust-analyzer.checkOnSave.command
+      "check": {
+        "command": "clippy" // rust-analyzer.check.command (default: "check")
       }
     }
   }

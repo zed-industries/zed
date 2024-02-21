@@ -14,7 +14,9 @@ mod c;
 mod clojure;
 mod csharp;
 mod css;
+mod dart;
 mod deno;
+mod dockerfile;
 mod elixir;
 mod elm;
 mod erlang;
@@ -73,6 +75,7 @@ pub fn init(
         ("clojure", tree_sitter_clojure::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
+        ("dockerfile", tree_sitter_dockerfile::language()),
         ("elixir", tree_sitter_elixir::language()),
         ("elm", tree_sitter_elm::language()),
         (
@@ -80,7 +83,7 @@ pub fn init(
             tree_sitter_embedded_template::language(),
         ),
         ("erlang", tree_sitter_erlang::language()),
-        ("gitcommit", tree_sitter_gitcommit::language()),
+        ("git_commit", tree_sitter_gitcommit::language()),
         ("gleam", tree_sitter_gleam::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
@@ -104,7 +107,7 @@ pub fn init(
         ("php", tree_sitter_php::language_php()),
         ("prisma", tree_sitter_prisma_io::language()),
         ("proto", tree_sitter_proto::language()),
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
@@ -119,6 +122,7 @@ pub fn init(
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
         ("zig", tree_sitter_zig::language()),
+        ("dart", tree_sitter_dart::language()),
     ]);
 
     let language = |asset_dir_name: &'static str, adapters| {
@@ -150,6 +154,13 @@ pub fn init(
             Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
+    );
+
+    language(
+        "dockerfile",
+        vec![Arc::new(dockerfile::DockerfileLspAdapter::new(
+            node_runtime.clone(),
+        ))],
     );
 
     match &ElixirSettings::get(None, cx).lsp {
@@ -319,6 +330,7 @@ pub fn init(
             node_runtime.clone(),
         ))],
     );
+    language("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 }
 
 #[cfg(any(test, feature = "test-support"))]

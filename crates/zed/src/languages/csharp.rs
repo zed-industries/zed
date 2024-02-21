@@ -81,11 +81,15 @@ impl super::LspAdapter for OmniSharpAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        fs::set_permissions(
-            &binary_path,
-            <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-        )
-        .await?;
+        // todo!("windows")
+        #[cfg(not(windows))]
+        {
+            fs::set_permissions(
+                &binary_path,
+                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+            )
+            .await?;
+        }
         Ok(LanguageServerBinary {
             path: binary_path,
             arguments: server_binary_arguments(),

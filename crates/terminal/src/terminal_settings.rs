@@ -35,6 +35,7 @@ pub struct TerminalSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub detect_venv: VenvSettings,
+    pub max_scroll_history_lines: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -146,6 +147,14 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: on
     pub detect_venv: Option<VenvSettings>,
+    /// The maximum number of lines to keep in the scrollback history.
+    /// Maximum allowed value is 100_000, all values above that will be treated as 100_000.
+    /// 0 disables the scrolling.
+    /// Existing terminals will not pick up this change until they are recreated.
+    /// See <a href="https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213">Alacritty documentation</a> for more information.
+    ///
+    /// Default: 10_000
+    pub max_scroll_history_lines: Option<usize>,
 }
 
 impl settings::Settings for TerminalSettings {

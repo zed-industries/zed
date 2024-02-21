@@ -123,6 +123,8 @@ use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
+use crate::hover_links::find_url;
+
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
@@ -7366,6 +7368,28 @@ impl Editor {
             Ok::<(), anyhow::Error>(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn open_url(&mut self, _: &OpenUrl, cx: &mut ViewContext<Self>) {
+        let position = self.selections.newest_anchor().head();
+        let Some((buffer, buffer_position)) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)
+        else {
+            return;
+        };
+
+        cx.spawn(|editor, mut cx| async move {
+            if let Some((_, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+                editor.update(&mut cx, |_, cx| {
+                    cx.open_url(&url);
+                })
+            } else {
+                Ok(())
+            }
+        })
+        .detach();
     }
 
     pub fn navigate_to_hover_links(

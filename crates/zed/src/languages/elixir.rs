@@ -356,11 +356,15 @@ impl LspAdapter for NextLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            fs::set_permissions(
-                &binary_path,
-                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-            )
-            .await?;
+            // todo!("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &binary_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
         }
 
         Ok(LanguageServerBinary {

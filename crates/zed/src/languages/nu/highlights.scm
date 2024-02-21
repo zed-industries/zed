@@ -2,7 +2,6 @@
 ;;; keywords
 [
     "def"
-    "def-env"
     "alias"
     "export-env"
     "export"
@@ -46,22 +45,22 @@
     "for" @keyword
     "in" @keyword
 )
-(overlay_list "list" @keyword)
-(overlay_hide "hide" @keyword)
-(overlay_new "new" @keyword)
+(overlay_list "list" @keyword.storage.modifier)
+(overlay_hide "hide" @keyword.storage.modifier)
+(overlay_new "new" @keyword.storage.modifier)
 (overlay_use
-    "use" @keyword
+    "use" @keyword.storage.modifier
     "as" @keyword
 )
-(ctrl_error "make" @keyword)
+(ctrl_error "make" @keyword.storage.modifier)
 
 ;;; ---
 ;;; literals
-(val_number) @constant
+(val_number) @constant.numeric
 (val_duration
     unit: [
         "ns" "µs" "us" "ms" "sec" "min" "hr" "day" "wk"
-    ] @variable
+    ] @variable.parameter
 )
 (val_filesize
     unit: [
@@ -73,7 +72,6 @@
         "tb" "tB" "Tb" "TB"
         "pb" "pB" "Pb" "PB"
         "eb" "eB" "Eb" "EB"
-        "zb" "zB" "Zb" "ZB"
 
         "kib" "kiB" "kIB" "kIb" "Kib" "KIb" "KIB"
         "mib" "miB" "mIB" "mIb" "Mib" "MIb" "MIB"
@@ -81,28 +79,27 @@
         "tib" "tiB" "tIB" "tIb" "Tib" "TIb" "TIB"
         "pib" "piB" "pIB" "pIb" "Pib" "PIb" "PIB"
         "eib" "eiB" "eIB" "eIb" "Eib" "EIb" "EIB"
-        "zib" "ziB" "zIB" "zIb" "Zib" "ZIb" "ZIB"
-    ] @variable
+    ] @variable.parameter
 )
 (val_binary
     [
        "0b"
        "0o"
        "0x"
-    ] @constant
+    ] @constant.numeric
     "[" @punctuation.bracket
     digit: [
         "," @punctuation.delimiter
-        (hex_digit) @constant
+        (hex_digit) @constant.number
     ]
     "]" @punctuation.bracket
-) @constant
+) @constant.numeric
 (val_bool) @constant.builtin
 (val_nothing) @constant.builtin
 (val_string) @string
-(val_date) @constant
-(inter_escape_sequence) @constant
-(escape_sequence) @constant
+(val_date) @constant.number
+(inter_escape_sequence) @constant.character.escape
+(escape_sequence) @constant.character.escape
 (val_interpolated [
     "$\""
     "$\'"
@@ -111,7 +108,7 @@
 ] @string)
 (unescaped_interpolated_content) @string
 (escaped_interpolated_content) @string
-(expr_interpolated ["(" ")"] @variable)
+(expr_interpolated ["(" ")"] @variable.parameter)
 
 ;;; ---
 ;;; operators
@@ -144,22 +141,7 @@
     "not-in"
     "starts-with"
     "ends-with"
-] @operator)
-
-(expr_binary opr: ([
-    "and"
-    "or"
-    "xor"
-    "bit-or"
-    "bit-xor"
-    "bit-and"
-    "bit-shl"
-    "bit-shr"
-    "in"
-    "not-in"
-    "starts-with"
-    "ends-with"
-]) @keyword)
+] @operator )
 
 (where_command [
     "+"
@@ -245,18 +227,18 @@
 ;;; ---
 ;;; identifiers
 (param_rest
-    name: (_) @variable)
+    name: (_) @variable.parameter)
 (param_opt
-    name: (_) @variable)
+    name: (_) @variable.parameter)
 (parameter
-    param_name: (_) @variable)
+    param_name: (_) @variable.parameter)
 (param_cmd
     (cmd_identifier) @string)
-(param_long_flag) @variable
-(param_short_flag) @variable
+(param_long_flag) @variable.parameter
+(param_short_flag) @variable.parameter
 
-(short_flag) @variable
-(long_flag) @variable
+(short_flag) @variable.parameter
+(long_flag) @variable.parameter
 
 (scope_pattern [(wild_card) @function])
 
@@ -271,29 +253,29 @@
 
 (path
   ["." "?"] @punctuation.delimiter
-) @variable
+) @variable.parameter
 
-(val_variable
-  "$" @operator
+(val_variable 
+  "$" @variable.parameter
   [
-   (identifier) @variable
-   "in" @type.builtin
-   "nu" @type.builtin
-   "env" @type.builtin
-   "nothing" @type.builtin
-   ]  ; If we have a special styling, use it here
+   (identifier) @namespace
+   "in"
+   "nu"
+   "env"
+   "nothing"
+   ] @special
 )
 ;;; ---
 ;;; types
 (flat_type) @type.builtin
 (list_type
-    "list" @type
+    "list" @type.enum
     ["<" ">"] @punctuation.bracket
 )
 (collection_type
-    ["record" "table"] @type
+    ["record" "table"] @type.enum
     "<" @punctuation.bracket
-    key: (_) @variable
+    key: (_) @variable.parameter 
     ["," ":"] @punctuation.delimiter
     ">" @punctuation.bracket
 )

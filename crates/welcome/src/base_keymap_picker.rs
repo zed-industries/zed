@@ -55,7 +55,7 @@ impl BaseKeymapSelector {
         delegate: BaseKeymapSelectorDelegate,
         cx: &mut ViewContext<BaseKeymapSelector>,
     ) -> Self {
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
         Self { picker }
     }
 }
