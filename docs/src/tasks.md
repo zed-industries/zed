@@ -2,17 +2,17 @@
 
 Zed supports ways to spawn (and rerun) commands using its integrated terminal to output the results.
 
-Currently, two kinds of tasks are supposed, but more will be added in the future.
+Currently, two kinds of tasks are supported, but more will be added in the future.
 
 ## Static tasks
 
 Tasks, defined in a config file (`tasks.json` in the Zed config directory) that do not depend on the current editor or its content.
 
-Config file can be opened with `zed::OpenTasks` action ("zed: open tasks" in the command pane), it will have a configuration example with all options commented.
+Config file can be opened with `zed::OpenTasks` action ("zed: open tasks" in the command palette), it will have a configuration example with all options commented.
 
 Every task from that file can be spawned via the task modal, that is opened with `task::Spawn` action ("tasks: spawn" in the command pane).
 
-Last task spawned via that modal can be rerun with `task::Rerun` ("tasks: rerun" in the command pane) command.
+Last task spawned via that modal can be rerun with `task::Rerun` ("tasks: rerun" in the command palette) command.
 
 ## Oneshot tasks
 
