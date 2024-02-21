@@ -24,8 +24,7 @@ use wayland_protocols::xdg::decoration::zv1::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
-use xkbcommon::xkb::{self, Keysym};
-use xkbcommon::xkb::{Keycode, KEYMAP_COMPILE_NO_FLAGS};
+use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
@@ -453,41 +452,27 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
             } => {
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
-                let key_utf32 = keymap_state.key_get_utf32(keycode);
-                let key_utf8 = keymap_state.key_get_utf8(keycode);
-                let key_sym = keymap_state.key_get_one_sym(keycode);
-                let key = match key_sym {
-                    Keysym::Return => "enter".to_owned(),
-                    Keysym::Prior => "pageup".to_owned(),
-                    Keysym::Next => "pagedown".to_owned(),
-                    _ => xkb::keysym_get_name(key_sym).to_lowercase(),
-                };
-
-                // Ignore control characters (and DEL) for the purposes of ime_key,
-                // but if key_utf32 is 0 then assume it isn't one
-                let ime_key =
-                    (key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127)).then_some(key_utf8);
 
                 let focused_window = &state.keyboard_focused_window;
                 if let Some(focused_window) = focused_window {
                     match key_state {
                         wl_keyboard::KeyState::Pressed => {
                             focused_window.handle_input(PlatformInput::KeyDown(KeyDownEvent {
-                                keystroke: Keystroke {
-                                    modifiers: state.modifiers,
-                                    key,
-                                    ime_key,
-                                },
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
                                 is_held: false, // todo!(linux)
                             }));
                         }
                         wl_keyboard::KeyState::Released => {
                             focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                                keystroke: Keystroke {
-                                    modifiers: state.modifiers,
-                                    key,
-                                    ime_key,
-                                },
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
                             }));
                         }
                         _ => {}

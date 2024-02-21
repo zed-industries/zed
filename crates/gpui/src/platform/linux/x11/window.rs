@@ -338,7 +338,9 @@ impl X11WindowState {
         if let PlatformInput::KeyDown(event) = input {
             let mut inner = self.inner.lock();
             if let Some(ref mut input_handler) = inner.input_handler {
-                input_handler.replace_text_in_range(None, &event.keystroke.key);
+                if let Some(ime_key) = &event.keystroke.ime_key {
+                    input_handler.replace_text_in_range(None, ime_key);
+                }
             }
         }
     }
