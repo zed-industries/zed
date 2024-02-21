@@ -38,7 +38,7 @@ use crate::{
 
 const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
 
-pub(crate) struct WaylandClientState {
+pub(crate) struct WaylandClientStateInner {
     compositor: Option<wl_compositor::WlCompositor>,
     buffer: Option<wl_buffer::WlBuffer>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
@@ -57,6 +57,9 @@ pub(crate) struct WaylandClientState {
     keyboard_focused_window: Option<Rc<WaylandWindowState>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct WaylandClientState(Arc<Mutex<WaylandClientStateInner>>);
+
 pub(crate) struct KeyRepeat {
     rate: i32,
     delay: i32,
@@ -67,14 +70,14 @@ pub(crate) struct KeyRepeat {
 pub(crate) struct WaylandClient {
     platform_inner: Rc<LinuxPlatformInner>,
     conn: Arc<Connection>,
-    state: Mutex<WaylandClientState>,
+    state: WaylandClientState,
     event_queue: Mutex<EventQueue<WaylandClientState>>,
     qh: Arc<QueueHandle<WaylandClientState>>,
 }
 
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>, conn: Arc<Connection>) -> Self {
-        let state = WaylandClientState {
+        let state = WaylandClientState(Arc::new(Mutex::new(WaylandClientStateInner {
             compositor: None,
             buffer: None,
             wm_base: None,
@@ -85,8 +88,8 @@ impl WaylandClient {
             wl_seat: None,
             keymap_state: None,
             repeat: KeyRepeat {
-                rate: 4,
-                delay: 1000,
+                rate: 10,
+                delay: 500,
                 current_id: 0,
                 current_keysym: None,
             },
@@ -102,13 +105,13 @@ impl WaylandClient {
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
-        };
+        })));
         let event_queue: EventQueue<WaylandClientState> = conn.new_event_queue();
         let qh = event_queue.handle();
         Self {
             platform_inner: linux_platform_inner,
             conn,
-            state: Mutex::new(state),
+            state,
             event_queue: Mutex::new(event_queue),
             qh: Arc::new(qh),
         }
@@ -121,15 +124,15 @@ impl Client for WaylandClient {
         let mut eq = self.event_queue.lock();
         let _registry = display.get_registry(&self.qh, ());
 
-        eq.roundtrip(&mut self.state.lock()).unwrap();
+        eq.roundtrip(&mut self.state.clone()).unwrap();
 
         on_finish_launching();
         while !self.platform_inner.state.lock().quit_requested {
             eq.flush().unwrap();
-            eq.dispatch_pending(&mut self.state.lock()).unwrap();
+            eq.dispatch_pending(&mut self.state.clone()).unwrap();
             if let Some(guard) = self.conn.prepare_read() {
                 guard.read().unwrap();
-                eq.dispatch_pending(&mut self.state.lock()).unwrap();
+                eq.dispatch_pending(&mut self.state.clone()).unwrap();
             }
             if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
                 runnable.run();
@@ -150,7 +153,7 @@ impl Client for WaylandClient {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let mut state = self.state.lock();
+        let mut state = self.state.0.lock();
 
         let wm_base = state.wm_base.as_ref().unwrap();
         let compositor = state.compositor.as_ref().unwrap();
@@ -193,6 +196,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let mut state = state.0.lock();
         if let wl_registry::Event::Global {
             name, interface, ..
         } = event
@@ -250,6 +254,7 @@ impl Dispatch<WlCallback, Arc<WlSurface>> for WaylandClientState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let mut state = state.0.lock();
         if let wl_callback::Event::Done { .. } = event {
             for window in &state.windows {
                 if window.1.surface.id() == surf.id() {
@@ -271,6 +276,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let mut state = state.0.lock();
         if let xdg_surface::Event::Configure { serial, .. } = event {
             xdg_surface.ack_configure(serial);
             for window in &state.windows {
@@ -293,6 +299,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let mut state = state.0.lock();
         if let xdg_toplevel::Event::Configure {
             width,
             height,
@@ -363,13 +370,14 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientState {
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
     fn event(
-        state: &mut Self,
+        state_container: &mut Self,
         keyboard: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event,
         data: &(),
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let mut state = state_container.0.lock();
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 state.repeat.rate = rate;
@@ -400,10 +408,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 state.keymap_state = Some(xkb::State::new(&keymap));
             }
             wl_keyboard::Event::Enter { surface, .. } => {
+                let mut keyboard_focused_window = None;
                 for window in &state.windows {
                     if window.1.surface.id() == surface.id() {
-                        state.keyboard_focused_window = Some(Rc::clone(&window.1));
+                        keyboard_focused_window = Some(Rc::clone(&window.1));
                     }
+                }
+                if keyboard_focused_window.is_some() {
+                    state.keyboard_focused_window = keyboard_focused_window;
                 }
             }
             wl_keyboard::Event::Modifiers {
@@ -415,14 +427,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
             } => {
                 let keymap_state = state.keymap_state.as_mut().unwrap();
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
-                state.modifiers.shift =
+
+                let shift =
                     keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
-                state.modifiers.alt =
+                let alt =
                     keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
-                state.modifiers.control =
+                let control =
                     keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
-                state.modifiers.command =
+                let command =
                     keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+
+                state.modifiers.shift = shift;
+                state.modifiers.alt = alt;
+                state.modifiers.control = control;
+                state.modifiers.command = command;
             }
             wl_keyboard::Event::Key {
                 key,
@@ -456,7 +474,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             is_held: false, // todo!(linux)
                         });
 
-                        focused_window.handle_input(input);
+                        focused_window.handle_input(input.clone());
 
                         if !key_sym.is_modifier_key() {
                             state.repeat.current_id += 1;
@@ -466,15 +484,35 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             let delay = state.repeat.delay;
                             let id = state.repeat.current_id;
                             let keysym = state.repeat.current_keysym;
+                            let state_container = state_container.clone();
 
-                            // state.platform_inner.foreground_executor.spawn(async move {
-                            //     Timer::after(Duration::from_millis(delay as u64)).await;
-                            //     if id == state.repeat.current_id &&
-                            //          state.repeat.current_keysym.is_some() {
-                            //
-                            //          focused_window.handle_input(input);
-                            //     }
-                            // });
+                            state
+                                .platform_inner
+                                .foreground_executor
+                                .spawn(async move {
+                                    let mut wait_time = Duration::from_millis(delay as u64);
+
+                                    loop {
+                                        Timer::after(wait_time).await;
+
+                                        let state = state_container.0.lock();
+                                        let is_repeating = id == state.repeat.current_id
+                                            && state.repeat.current_keysym.is_some()
+                                            && state.keyboard_focused_window.is_some();
+                                        if !is_repeating {
+                                            return;
+                                        }
+
+                                        state
+                                            .keyboard_focused_window
+                                            .as_ref()
+                                            .unwrap()
+                                            .handle_input(input.clone());
+
+                                        wait_time = Duration::from_millis(1000 / rate as u64);
+                                    }
+                                })
+                                .detach();
                         }
                     }
                     wl_keyboard::KeyState::Released => {
@@ -516,6 +554,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let mut state = state.0.lock();
         match event {
             wl_pointer::Event::Enter {
                 surface,
@@ -523,11 +562,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 surface_y,
                 ..
             } => {
+                let mut mouse_focused_window = None;
                 for window in &state.windows {
                     if window.1.surface.id() == surface.id() {
-                        state.mouse_focused_window = Some(Rc::clone(&window.1));
+                        mouse_focused_window = Some(Rc::clone(&window.1));
                     }
                 }
+                if mouse_focused_window.is_some() {
+                    state.mouse_focused_window = mouse_focused_window;
+                }
+
                 state.mouse_location = Some(Point {
                     x: Pixels::from(surface_x),
                     y: Pixels::from(surface_y),
@@ -539,50 +583,53 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 surface_y,
                 ..
             } => {
-                let focused_window = &state.mouse_focused_window;
-                if let Some(focused_window) = focused_window {
-                    state.mouse_location = Some(Point {
-                        x: Pixels::from(surface_x),
-                        y: Pixels::from(surface_y),
-                    });
-                    focused_window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
+                if state.mouse_focused_window.is_none() {
+                    return;
+                }
+                state.mouse_location = Some(Point {
+                    x: Pixels::from(surface_x),
+                    y: Pixels::from(surface_y),
+                });
+                state.mouse_focused_window.as_ref().unwrap().handle_input(
+                    PlatformInput::MouseMove(MouseMoveEvent {
                         position: state.mouse_location.unwrap(),
                         pressed_button: state.button_pressed,
                         modifiers: state.modifiers,
-                    }))
-                }
+                    }),
+                );
             }
             wl_pointer::Event::Button {
                 button,
                 state: WEnum::Value(button_state),
                 ..
             } => {
-                let focused_window = &state.mouse_focused_window;
-                let mouse_location = &state.mouse_location;
-                if let (Some(focused_window), Some(mouse_location)) =
-                    (focused_window, mouse_location)
-                {
-                    match button_state {
-                        wl_pointer::ButtonState::Pressed => {
-                            state.button_pressed = Some(linux_button_to_gpui(button));
-                            focused_window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
+                if state.mouse_focused_window.is_none() || state.mouse_location.is_none() {
+                    return;
+                }
+                match button_state {
+                    wl_pointer::ButtonState::Pressed => {
+                        state.button_pressed = Some(linux_button_to_gpui(button));
+                        state.mouse_focused_window.as_ref().unwrap().handle_input(
+                            PlatformInput::MouseDown(MouseDownEvent {
                                 button: linux_button_to_gpui(button),
-                                position: *mouse_location,
+                                position: state.mouse_location.unwrap(),
                                 modifiers: state.modifiers,
                                 click_count: 1,
-                            }));
-                        }
-                        wl_pointer::ButtonState::Released => {
-                            state.button_pressed = None;
-                            focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
+                            }),
+                        );
+                    }
+                    wl_pointer::ButtonState::Released => {
+                        state.button_pressed = None;
+                        state.mouse_focused_window.as_ref().unwrap().handle_input(
+                            PlatformInput::MouseUp(MouseUpEvent {
                                 button: linux_button_to_gpui(button),
-                                position: *mouse_location,
+                                position: state.mouse_location.unwrap(),
                                 modifiers: Modifiers::default(),
                                 click_count: 1,
-                            }));
-                        }
-                        _ => {}
+                            }),
+                        );
                     }
+                    _ => {}
                 }
             }
             wl_pointer::Event::AxisRelativeDirection {
@@ -649,6 +696,7 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Wayland
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let mut state = state.0.lock();
         if let wp_fractional_scale_v1::Event::PreferredScale { scale, .. } = event {
             for window in &state.windows {
                 if window.0.id() == *id {
