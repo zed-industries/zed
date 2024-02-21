@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 
             run_migrations().await?;
 
-            let state = AppState::new(config).await?;
+            let state = AppState::new(config, Executor::Production).await?;
 
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
@@ -50,10 +50,10 @@ async fn main() -> Result<()> {
                 .db
                 .create_server(&state.config.zed_environment)
                 .await?;
-            let rpc_server = collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
+            let rpc_server = collab::rpc::Server::new(epoch, state.clone());
             rpc_server.start().await?;
 
-            fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
+            fetch_extensions_from_blob_store_periodically(state.clone());
 
             let app = collab::api::routes(rpc_server.clone(), state.clone())
                 .merge(collab::rpc::routes(rpc_server.clone()))

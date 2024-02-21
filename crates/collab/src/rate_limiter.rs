@@ -1,4 +1,4 @@
-use crate::db::UserId;
+use crate::{db::UserId, Executor};
 use crate::{Database, Error};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
@@ -9,7 +9,7 @@ use std::any::TypeId;
 use std::sync::Arc;
 use util::ResultExt;
 
-trait RateLimit: 'static {
+pub trait RateLimit: 'static {
     fn capacity() -> usize;
     fn refill_duration() -> Duration;
     fn db_name() -> &'static str;
@@ -18,19 +18,24 @@ trait RateLimit: 'static {
     }
 }
 
-struct RateLimiter {
+/// Used to enforce per-user rate limits
+pub struct RateLimiter {
     buckets: DashMap<(UserId, TypeId), Arc<Mutex<RateBucket>>>,
     db: Arc<Database>,
+    executor: Executor,
 }
 
 impl RateLimiter {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(db: Arc<Database>, executor: Executor) -> Self {
         RateLimiter {
             buckets: DashMap::new(),
             db,
+            executor,
         }
     }
 
+    /// Returns true if the user has not exceeded the specified `RateLimit`.
+    /// Attempts to read the from the database if no cached RateBucket currently exists.
     pub async fn allow<T: RateLimit>(&self, user_id: UserId) -> bool {
         let type_id = T::type_id();
         let bucket_key = (user_id, type_id);
@@ -57,7 +62,20 @@ impl RateLimiter {
             .value()
             .clone();
 
-        let allowed = bucket.lock().allow();
+        let mut lock = bucket.lock();
+        let allowed = lock.allow();
+        let token_count = lock.token_count;
+        let last_refill = lock.last_refill.naive_utc();
+        drop(lock);
+
+        // Perorm a non-blocking save of the rate bucket to the database in its new state.
+        let db = self.db.clone();
+        self.executor.spawn_detached(async move {
+            db.save_rate_bucket(user_id, T::db_name(), token_count as i32, last_refill)
+                .await
+                .log_err();
+        });
+
         allowed
     }
 

@@ -164,11 +164,13 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
+    pub rate_limiter: Arc<RateLimiter>,
+    pub executor: Executor,
     pub config: Config,
 }
 
 impl AppState {
-    pub async fn new(config: Config) -> Result<Arc<Self>> {
+    pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
         let mut db_options = db::ConnectOptions::new(config.database_url.clone());
         db_options.max_connections(config.database_max_connections);
         let mut db = Database::new(db_options, Executor::Production).await?;
@@ -189,10 +191,13 @@ impl AppState {
             None
         };
 
+        let db = Arc::new(db);
         let this = Self {
-            db: Arc::new(db),
+            db: db.clone(),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
+            rate_limiter: Arc::new(RateLimiter::new(db, executor.clone())),
+            executor,
             config,
         };
         Ok(Arc::new(this))

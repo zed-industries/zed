@@ -8,7 +8,7 @@ use crate::{
         RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
-    AppState, Error, Result,
+    AppState, Error, RateLimiter, Result,
 };
 use anyhow::{anyhow, Context as _};
 use async_tungstenite::tungstenite::{
@@ -127,6 +127,7 @@ struct Session {
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     http_client: IsahcHttpClient,
+    rate_limiter: Arc<RateLimiter>,
     _executor: Executor,
 }
 
@@ -175,7 +176,6 @@ pub struct Server {
     peer: Arc<Peer>,
     pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    executor: Executor,
     handlers: HashMap<TypeId, MessageHandler>,
     teardown: watch::Sender<()>,
 }
@@ -202,12 +202,11 @@ where
 }
 
 impl Server {
-    pub fn new(id: ServerId, app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
+    pub fn new(id: ServerId, app_state: Arc<AppState>) -> Arc<Self> {
         let mut server = Self {
             id: parking_lot::Mutex::new(id),
             peer: Peer::new(id.0 as u32),
             app_state: app_state.clone(),
-            executor,
             connection_pool: Default::default(),
             handlers: Default::default(),
             teardown: watch::channel(()).0,
@@ -338,12 +337,12 @@ impl Server {
         let server_id = *self.id.lock();
         let app_state = self.app_state.clone();
         let peer = self.peer.clone();
-        let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
+        let timeout = self.app_state.executor.sleep(CLEANUP_TIMEOUT);
         let pool = self.connection_pool.clone();
         let live_kit_client = self.app_state.live_kit_client.clone();
 
         let span = info_span!("start server");
-        self.executor.spawn_detached(
+        self.app_state.executor.spawn_detached(
             async move {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
@@ -696,7 +695,8 @@ impl Server {
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone(),
                 http_client: IsahcHttpClient::new().map_err(|error| anyhow!(error))?,
-                _executor: executor.clone()
+                rate_limiter: this.app_state.rate_limiter.clone(),
+                _executor: executor.clone(),
             };
             update_user_contacts(user_id, &session).await?;
 
