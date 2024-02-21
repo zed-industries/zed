@@ -651,6 +651,9 @@ impl ExtensionStore {
                 let Ok(relative_path) = language_path.strip_prefix(&extension_dir) else {
                     continue;
                 };
+                if !language_path.is_dir() {
+                    continue;
+                }
                 let config = fs.load(&language_path.join("config.toml")).await?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
