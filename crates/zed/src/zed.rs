@@ -95,7 +95,7 @@ pub fn build_window_options(
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
-            traffic_light_position: Some(point(px(8.), px(10.))),
+            traffic_light_position: Some(point(px(9.), px(10.))),
         }),
         center: false,
         focus: false,
