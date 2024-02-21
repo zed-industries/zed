@@ -126,6 +126,8 @@ pub struct RecentProjectsDelegate {
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
+    // Flag to reset index when there is a new query vs not reset index when user delete an item
+    reset_selected_match_index: bool,
 }
 
 impl RecentProjectsDelegate {
@@ -136,6 +138,7 @@ impl RecentProjectsDelegate {
             selected_match_index: 0,
             matches: Default::default(),
             render_paths,
+            reset_selected_match_index: true,
         }
     }
 }
@@ -190,14 +193,17 @@ impl PickerDelegate for RecentProjectsDelegate {
         ));
         self.matches.sort_unstable_by_key(|m| m.candidate_id);
 
-        self.selected_match_index = self
-            .matches
-            .iter()
-            .enumerate()
-            .rev()
-            .max_by_key(|(_, m)| OrderedFloat(m.score))
-            .map(|(ix, _)| ix)
-            .unwrap_or(0);
+        if self.reset_selected_match_index {
+            self.selected_match_index = self
+                .matches
+                .iter()
+                .enumerate()
+                .rev()
+                .max_by_key(|(_, m)| OrderedFloat(m.score))
+                .map(|(ix, _)| ix)
+                .unwrap_or(0);
+        }
+        self.reset_selected_match_index = true;
         Task::ready(())
     }
 
@@ -296,6 +302,8 @@ impl RecentProjectsDelegate {
                     .unwrap_or_default();
                 this.update(&mut cx, move |picker, cx| {
                     picker.delegate.workspaces = workspaces;
+                    picker.delegate.set_selected_index(ix - 1, cx);
+                    picker.delegate.reset_selected_match_index = false;
                     picker.update_matches(picker.query(cx), cx)
                 })
             })
