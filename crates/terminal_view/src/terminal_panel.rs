@@ -320,7 +320,7 @@ impl TerminalPanel {
             let command = std::mem::take(&mut spawn_runnable.command);
             let args = std::mem::take(&mut spawn_runnable.args);
             spawn_runnable.command = shell;
-            user_args.extend(["-c".to_owned(), command]);
+            user_args.extend(["-i".to_owned(), "-c".to_owned(), command]);
             user_args.extend(args);
             spawn_runnable.args = user_args;
         }
