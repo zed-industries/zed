@@ -253,23 +253,25 @@ impl PickerDelegate for RecentProjectsDelegate {
                         }),
                 )
                 .when(!is_current_workspace, |el| {
-                    el.end_hover_slot::<AnyElement>(
-                        div()
-                            .child(
-                                IconButton::new("delete", IconName::Close)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(move |this, _event, cx| {
-                                        cx.stop_propagation();
-                                        cx.prevent_default();
+                    let delete_button = div()
+                        .child(
+                            IconButton::new("delete", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener(move |this, _event, cx| {
+                                    cx.stop_propagation();
+                                    cx.prevent_default();
 
-                                        this.delegate.delete_recent_project(ix, cx)
-                                    }))
-                                    .tooltip(|cx| {
-                                        Tooltip::text("Delete From Recent Projects...", cx)
-                                    }),
-                            )
-                            .into_any_element(),
-                    )
+                                    this.delegate.delete_recent_project(ix, cx)
+                                }))
+                                .tooltip(|cx| Tooltip::text("Delete From Recent Projects...", cx)),
+                        )
+                        .into_any_element();
+
+                    if self.selected_index() == ix {
+                        el.end_slot::<AnyElement>(delete_button)
+                    } else {
+                        el.end_hover_slot::<AnyElement>(delete_button)
+                    }
                 })
                 .tooltip(move |cx| {
                     let tooltip_highlighted_location = tooltip_highlighted_location.clone();
