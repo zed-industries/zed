@@ -2,13 +2,11 @@ use std::path::PathBuf;
 
 use gpui::{AppContext, ViewContext, WindowContext};
 use modal::TasksModal;
-pub use oneshot_source::OneshotSource;
 use task::Task;
 use util::ResultExt;
 use workspace::Workspace;
 
 mod modal;
-mod oneshot_source;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(

@@ -28,8 +28,7 @@ use settings::{
     DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::static_source::StaticSource;
-use tasks_ui::OneshotSource;
+use task::{oneshot_source::OneshotSource, static_source::StaticSource};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,

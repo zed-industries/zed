@@ -1,9 +1,11 @@
+//! A source of tasks, based on ad-hoc user command prompt input.
+
 use std::sync::Arc;
 
-use gpui::{AppContext, Model};
-use task::{Source, SpawnInTerminal, Task, TaskId};
-use ui::Context;
+use crate::{Source, SpawnInTerminal, Task, TaskId};
+use gpui::{AppContext, Context, Model};
 
+/// A storage and source of tasks generated out of user command prompt inputs.
 pub struct OneshotSource {
     tasks: Vec<Arc<dyn Task>>,
 }
@@ -51,10 +53,12 @@ impl Task for OneshotTask {
 }
 
 impl OneshotSource {
+    /// Initializes the oneshot source, preparing to store user prompts.
     pub fn new(cx: &mut AppContext) -> Model<Box<dyn Source>> {
         cx.new_model(|_| Box::new(Self { tasks: Vec::new() }) as Box<dyn Source>)
     }
 
+    /// Spawns a certain task based on the user prompt.
     pub fn spawn(&mut self, prompt: String) -> Arc<dyn Task> {
         let ret = Arc::new(OneshotTask::new(prompt));
         self.tasks.push(ret.clone());

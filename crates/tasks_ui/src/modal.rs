@@ -8,12 +8,12 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
-use task::Task;
+use task::{oneshot_source::OneshotSource, Task};
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::{schedule_task, OneshotSource};
+use crate::schedule_task;
 
 actions!(task, [Spawn, Rerun]);
 
