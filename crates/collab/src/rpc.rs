@@ -1324,7 +1324,7 @@ async fn set_room_participant_role(
             .await?;
 
         let live_kit_room = room.live_kit_room.clone();
-        let can_publish = ChannelRole::from(request.role()).can_publish_to_rooms();
+        let can_publish = ChannelRole::from(request.role()).can_use_microphone();
         room_updated(&room, &session.peer);
         (live_kit_room, can_publish)
     };

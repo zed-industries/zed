@@ -1085,6 +1085,7 @@ enum ChannelRole {
     Member = 1;
     Guest = 2;
     Banned = 3;
+    Talker = 4;
 }
 
 message SetChannelMemberRole {
