@@ -14,6 +14,7 @@
 - [Workflows]()
 - [Collaboration]()
 - [Using AI]()
+- [Tasks](./tasks.md)
 
 # Contributing to Zed
 
