@@ -1,4 +1,4 @@
-//! A source of runnables, based on a static configuration, deserialized from the runnables config file, and related infrastructure for tracking changes to the file.
+//! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
 use std::{
     path::{Path, PathBuf},
@@ -12,20 +12,20 @@ use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::{Runnable, Source, StaticRunnable};
+use crate::{Source, StaticTask, Task};
 use futures::channel::mpsc::UnboundedReceiver;
 
-/// The source of runnables defined in a runnables config file.
+/// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
-    runnables: Vec<StaticRunnable>,
+    tasks: Vec<StaticTask>,
     _definitions: Model<TrackedFile<DefinitionProvider>>,
     _subscription: Subscription,
 }
 
-/// Static runnable definition from the runnables config file.
+/// Static task definition from the tasks config file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct Definition {
-    /// Human readable name of the runnable to display in the UI.
+    /// Human readable name of the task to display in the UI.
     pub label: String,
     /// Executable command to spawn.
     pub command: String,
@@ -41,20 +41,20 @@ pub(crate) struct Definition {
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     #[serde(default)]
     pub use_new_terminal: bool,
-    /// Whether to allow multiple instances of the same runnable to be run, or rather wait for the existing ones to finish.
+    /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
     pub allow_concurrent_runs: bool,
 }
 
-/// A group of Runnables defined in a JSON file.
+/// A group of Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DefinitionProvider {
     version: String,
-    runnables: Vec<Definition>,
+    tasks: Vec<Definition>,
 }
 
 impl DefinitionProvider {
-    /// Generates JSON schema of Runnables JSON definition format.
+    /// Generates JSON schema of Tasks JSON definition format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
         let schema = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
@@ -107,33 +107,32 @@ impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
 }
 
 impl StaticSource {
-    /// Initializes the static source, reacting on runnables config changes.
+    /// Initializes the static source, reacting on tasks config changes.
     pub fn new(
-        runnables_file_tracker: UnboundedReceiver<String>,
+        tasks_file_tracker: UnboundedReceiver<String>,
         cx: &mut AppContext,
     ) -> Model<Box<dyn Source>> {
-        let definitions =
-            TrackedFile::new(DefinitionProvider::default(), runnables_file_tracker, cx);
+        let definitions = TrackedFile::new(DefinitionProvider::default(), tasks_file_tracker, cx);
         cx.new_model(|cx| {
             let _subscription = cx.observe(
                 &definitions,
                 |source: &mut Box<(dyn Source + 'static)>, new_definitions, cx| {
                     if let Some(static_source) = source.as_any().downcast_mut::<Self>() {
-                        static_source.runnables = new_definitions
+                        static_source.tasks = new_definitions
                             .read(cx)
                             .get()
-                            .runnables
+                            .tasks
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(id, definition)| StaticRunnable::new(id, definition))
+                            .map(|(id, definition)| StaticTask::new(id, definition))
                             .collect();
                         cx.notify();
                     }
                 },
             );
             Box::new(Self {
-                runnables: Vec::new(),
+                tasks: Vec::new(),
                 _definitions: definitions,
                 _subscription,
             })
@@ -142,15 +141,15 @@ impl StaticSource {
 }
 
 impl Source for StaticSource {
-    fn runnables_for_path(
+    fn tasks_for_path(
         &mut self,
         _: Option<&Path>,
         _: &mut ModelContext<Box<dyn Source>>,
-    ) -> Vec<Arc<dyn Runnable>> {
-        self.runnables
+    ) -> Vec<Arc<dyn Task>> {
+        self.tasks
             .clone()
             .into_iter()
-            .map(|runnable| Arc::new(runnable) as Arc<dyn Runnable>)
+            .map(|task| Arc::new(task) as Arc<dyn Task>)
             .collect()
     }
 

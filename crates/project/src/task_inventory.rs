@@ -1,14 +1,14 @@
-//! Project-wide storage of the runnables available, capable of updating itself from the sources set.
+//! Project-wide storage of the tasks available, capable of updating itself from the sources set.
 
 use std::{any::TypeId, path::Path, sync::Arc};
 
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use runnable::{Runnable, RunnableId, Source};
+use task::{Source, Task, TaskId};
 
-/// Inventory tracks available runnables for a given project.
+/// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
-    pub last_scheduled_runnable: Option<RunnableId>,
+    pub last_scheduled_task: Option<TaskId>,
 }
 
 struct SourceInInventory {
@@ -21,11 +21,11 @@ impl Inventory {
     pub(crate) fn new(cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|_| Self {
             sources: Vec::new(),
-            last_scheduled_runnable: None,
+            last_scheduled_task: None,
         })
     }
 
-    /// Registers a new runnables source, that would be fetched for available runnables.
+    /// Registers a new tasks source, that would be fetched for available tasks.
     pub fn add_source(&mut self, source: Model<Box<dyn Source>>, cx: &mut ModelContext<Self>) {
         let _subscription = cx.observe(&source, |_, _, cx| {
             cx.notify();
@@ -55,29 +55,25 @@ impl Inventory {
     }
 
     /// Pulls its sources to list runanbles for the path given (up to the source to decide what to return for no path).
-    pub fn list_runnables(
-        &self,
-        path: Option<&Path>,
-        cx: &mut AppContext,
-    ) -> Vec<Arc<dyn Runnable>> {
-        let mut runnables = Vec::new();
+    pub fn list_tasks(&self, path: Option<&Path>, cx: &mut AppContext) -> Vec<Arc<dyn Task>> {
+        let mut tasks = Vec::new();
         for source in &self.sources {
-            runnables.extend(
+            tasks.extend(
                 source
                     .source
-                    .update(cx, |source, cx| source.runnables_for_path(path, cx)),
+                    .update(cx, |source, cx| source.tasks_for_path(path, cx)),
             );
         }
-        runnables
+        tasks
     }
 
-    /// Returns the last scheduled runnable, if any of the sources contains one with the matching id.
-    pub fn last_scheduled_runnable(&self, cx: &mut AppContext) -> Option<Arc<dyn Runnable>> {
-        self.last_scheduled_runnable.as_ref().and_then(|id| {
+    /// Returns the last scheduled task, if any of the sources contains one with the matching id.
+    pub fn last_scheduled_task(&self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
+        self.last_scheduled_task.as_ref().and_then(|id| {
             // TODO straighten the `Path` story to understand what has to be passed here: or it will break in the future.
-            self.list_runnables(None, cx)
+            self.list_tasks(None, cx)
                 .into_iter()
-                .find(|runnable| runnable.id() == id)
+                .find(|task| task.id() == id)
         })
     }
 }
