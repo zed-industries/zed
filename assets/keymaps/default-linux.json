@@ -68,14 +68,10 @@
         "end": "editor::MoveToEndOfLine",
         "left": "editor::MoveLeft",
         "right": "editor::MoveRight",
-        "ctrl-p": "editor::MoveUp",
-        "ctrl-n": "editor::MoveDown",
-        "ctrl-b": "editor::MoveLeft",
-        "ctrl-f": "editor::MoveRight",
         "ctrl-shift-l": "editor::NextScreen", // todo!(linux): What is this
-        "alt-left": "editor::MoveToPreviousWordStart",
+        "ctrl-left": "editor::MoveToPreviousWordStart",
         "alt-b": "editor::MoveToPreviousWordStart",
-        "alt-right": "editor::MoveToNextWordEnd",
+        "ctrl-right": "editor::MoveToNextWordEnd",
         "alt-f": "editor::MoveToNextWordEnd",
         "ctrl-e": "editor::MoveToEndOfLine",
         "ctrl-home": "editor::MoveToBeginning",
@@ -88,9 +84,9 @@
         "ctrl-shift-b": "editor::SelectLeft",
         "shift-right": "editor::SelectRight",
         "ctrl-shift-f": "editor::SelectRight",
-        "alt-shift-left": "editor::SelectToPreviousWordStart",
+        "ctrl-shift-left": "editor::SelectToPreviousWordStart",
         "alt-shift-b": "editor::SelectToPreviousWordStart",
-        "alt-shift-right": "editor::SelectToNextWordEnd",
+        "ctrl-shift-right": "editor::SelectToNextWordEnd",
         "alt-shift-f": "editor::SelectToNextWordEnd",
         "ctrl-shift-up": "editor::SelectToStartOfParagraph",
         "ctrl-shift-down": "editor::SelectToEndOfParagraph",
@@ -172,7 +168,7 @@
         "enter": "search::SelectNextMatch",
         "shift-enter": "search::SelectPrevMatch",
         "alt-enter": "search::SelectAllMatches",
-        "alt-tab": "search::CycleMode"
+        "alt-tab": "search::CycleMode"  // todo!(linux): conflicts with window switcher
       }
     },
     {
@@ -193,7 +189,7 @@
       "context": "ProjectSearchBar",
       "bindings": {
         "escape": "project_search::ToggleFocus",
-        "alt-tab": "search::CycleMode",
+        "alt-tab": "search::CycleMode", // todo!(linux): conflicts with window switcher
         "ctrl-shift-h": "search::ToggleReplace",
         "ctrl-alt-g": "search::ActivateRegexMode",
         "ctrl-alt-s": "search::ActivateSemanticMode",
@@ -218,7 +214,7 @@
       "context": "ProjectSearchView",
       "bindings": {
         "escape": "project_search::ToggleFocus",
-        "alt-tab": "search::CycleMode",
+        "alt-tab": "search::CycleMode", // todo!(linux): conflicts with window switcher
         "ctrl-shift-h": "search::ToggleReplace",
         "ctrl-alt-g": "search::ActivateRegexMode",
         "ctrl-alt-s": "search::ActivateSemanticMode",
@@ -228,10 +224,8 @@
     {
       "context": "Pane",
       "bindings": {
-        "ctrl-{": "pane::ActivatePrevItem",
-        "ctrl-}": "pane::ActivateNextItem",
-        "ctrl-alt-left": "pane::ActivatePrevItem",
-        "ctrl-alt-right": "pane::ActivateNextItem",
+        "ctrl-shift-tab": "pane::ActivatePrevItem",
+        "ctrl-tab": "pane::ActivateNextItem",
         "ctrl-w": "pane::CloseActiveItem",
         "ctrl-alt-t": "pane::CloseInactiveItems",
         "ctrl-alt-shift-w": "workspace::CloseInactiveTabsAndPanes",
@@ -244,7 +238,7 @@
         "alt-enter": "search::SelectAllMatches",
         "ctrl-alt-c": "search::ToggleCaseSensitive",
         "ctrl-alt-w": "search::ToggleWholeWord",
-        "alt-tab": "search::CycleMode",
+        "alt-tab": "search::CycleMode", // todo!(linux): conflicts with window switcher
         "ctrl-alt-f": "project_search::ToggleFilters",
         "ctrl-alt-g": "search::ActivateRegexMode",
         "ctrl-alt-s": "search::ActivateSemanticMode",
