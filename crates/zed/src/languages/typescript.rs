@@ -237,6 +237,9 @@ impl LspAdapter for EsLintLspAdapter {
                     "name": workspace_root.file_name()
                         .unwrap_or_else(|| workspace_root.as_os_str()),
                 },
+                "experimental": {
+                    "useFlatConfig": workspace_root.join("eslint.config.js").exists()
+                }
             }
         })
     }
