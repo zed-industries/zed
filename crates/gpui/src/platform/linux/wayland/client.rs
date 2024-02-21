@@ -92,7 +92,7 @@ impl WaylandClient {
             wl_seat: None,
             keymap_state: None,
             repeat: KeyRepeat {
-                rate: 10,
+                rate: 16,
                 delay: 500,
                 current_id: 0,
                 current_keysym: None,
@@ -488,13 +488,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 state: WEnum::Value(key_state),
                 ..
             } => {
-                let keymap_state = state.keymap_state.as_ref().unwrap();
-                let keycode = Keycode::from(key + MIN_KEYCODE);
-
                 let focused_window = &state.keyboard_focused_window;
                 let Some(focused_window) = focused_window else {
                     return;
                 };
+
+                let keymap_state = state.keymap_state.as_ref().unwrap();
+                let keycode = Keycode::from(key + MIN_KEYCODE);
+                let keysym = keymap_state.key_get_one_sym(keycode);
+
                 match key_state {
                     wl_keyboard::KeyState::Pressed => {
                         let input = PlatformInput::KeyDown(KeyDownEvent {
@@ -504,9 +506,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                         focused_window.handle_input(input.clone());
 
-                        if !key_sym.is_modifier_key() {
+                        if !keysym.is_modifier_key() {
                             state.repeat.current_id += 1;
-                            state.repeat.current_keysym = Some(key_sym);
+                            state.repeat.current_keysym = Some(keysym);
 
                             let rate = state.repeat.rate;
                             let delay = state.repeat.delay;
@@ -548,7 +550,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
                         }));
 
-                        if !key_sym.is_modifier_key() {
+                        if !keysym.is_modifier_key() {
                             state.repeat.current_keysym = None;
                         }
                     }
@@ -638,16 +640,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 state: WEnum::Value(button_state),
                 ..
             } => {
+                let button = linux_button_to_gpui(button);
+                let Some(button) = button else { return };
                 if state.mouse_focused_window.is_none() || state.mouse_location.is_none() {
                     return;
                 }
-                let button = linux_button_to_gpui(button);
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
-                        state.button_pressed = Some(linux_button_to_gpui(button));
+                        state.button_pressed = Some(button);
                         state.mouse_focused_window.as_ref().unwrap().handle_input(
                             PlatformInput::MouseDown(MouseDownEvent {
-                                button: linux_button_to_gpui(button),
+                                button,
                                 position: state.mouse_location.unwrap(),
                                 modifiers: state.modifiers,
                                 click_count: 1,
@@ -658,7 +661,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         state.button_pressed = None;
                         state.mouse_focused_window.as_ref().unwrap().handle_input(
                             PlatformInput::MouseUp(MouseUpEvent {
-                                button: linux_button_to_gpui(button),
+                                button,
                                 position: state.mouse_location.unwrap(),
                                 modifiers: Modifiers::default(),
                                 click_count: 1,
@@ -755,6 +758,7 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let mut state = state.0.lock();
         if let zxdg_toplevel_decoration_v1::Event::Configure { mode, .. } = event {
             for window in &state.windows {
                 if window.0.id() == *surface_id {
