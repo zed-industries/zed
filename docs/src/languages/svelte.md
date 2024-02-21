@@ -51,8 +51,8 @@ Use
     }
   }
 }
+```
 
 to override these settings.
 
 See https://github.com/microsoft/vscode/blob/main/extensions/typescript-language-features/package.json for more information.
-```
