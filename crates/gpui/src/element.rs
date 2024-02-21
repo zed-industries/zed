@@ -61,7 +61,13 @@ pub trait Element: 'static + IntoElement {
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext);
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        dry_run: bool,
+        state: &mut Self::State,
+        cx: &mut ElementContext,
+    );
 
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
@@ -229,7 +235,7 @@ trait ElementObject {
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
 
-    fn paint(&mut self, cx: &mut ElementContext);
+    fn paint(&mut self, dry_run: bool, cx: &mut ElementContext);
 
     fn measure(
         &mut self,
@@ -386,15 +392,18 @@ impl<E: Element> DrawableElement<E> {
     fn draw(
         mut self,
         origin: Point<Pixels>,
+        dry_run: bool,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> Option<E::State> {
-        self.measure(available_space, cx);
-        cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
+        if dry_run {
+            self.measure(available_space, cx);
+        }
+        cx.with_absolute_element_offset(origin, |cx| self.paint(dry_run, cx))
     }
 }
 
-impl<E> ElementObject for Option<DrawableElement<E>>
+impl<E> ElementObject for DrawableElement<E>
 where
     E: Element,
     E::State: 'static,
@@ -407,8 +416,8 @@ where
         DrawableElement::request_layout(self.as_mut().unwrap(), cx)
     }
 
-    fn paint(&mut self, cx: &mut ElementContext) {
-        DrawableElement::paint(self.take().unwrap(), cx);
+    fn paint(&mut self, dry_run: bool, cx: &mut ElementContext) {
+        DrawableElement::paint(self.as_mut().unwrap(), dry_run, cx);
     }
 
     fn measure(
@@ -425,7 +434,7 @@ where
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) {
-        DrawableElement::draw(self.take().unwrap(), origin, available_space, cx);
+        DrawableElement::draw(self.as_mut().unwrap(), origin, available_space, cx);
     }
 }
 
