@@ -48,10 +48,7 @@ pub(crate) struct Definition {
 
 /// A group of Runnables defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DefinitionProvider {
-    version: String,
-    runnables: Vec<Definition>,
-}
+pub struct DefinitionProvider(Vec<Definition>);
 
 impl DefinitionProvider {
     /// Generates JSON schema of Runnables JSON definition format.
@@ -122,7 +119,7 @@ impl StaticSource {
                         static_source.runnables = new_definitions
                             .read(cx)
                             .get()
-                            .runnables
+                            .0
                             .clone()
                             .into_iter()
                             .enumerate()
