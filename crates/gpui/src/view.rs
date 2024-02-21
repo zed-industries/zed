@@ -253,7 +253,9 @@ impl AnyView {
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> AnyElement {
-        cx.in_layout(true);
+        let original_disallow = cx.disallow_adding_opaque_layers;
+        cx.disallow_adding_opaque_layers = true;
+
         let element = cx.paint_view(self.entity_id(), |cx| {
             cx.with_absolute_element_offset(origin, |cx| {
                 let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
@@ -261,7 +263,9 @@ impl AnyView {
                 rendered_element
             })
         });
-        cx.in_layout(false);
+
+        cx.disallow_adding_opaque_layers = original_disallow;
+
         element
     }
 

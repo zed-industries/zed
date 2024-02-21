@@ -349,7 +349,7 @@ impl<E: Element> DrawableElement<E> {
         cx: &mut ElementContext,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementDrawPhase::Start) {
-            self.request_layout(cx);
+            cx.with_z_index_reset(|cx| self.request_layout(cx));
         }
 
         let layout_id = match &mut self.phase {

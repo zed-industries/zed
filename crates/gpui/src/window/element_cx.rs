@@ -168,7 +168,7 @@ pub struct ElementContext<'a> {
     #[deref_mut]
     pub(crate) cx: WindowContext<'a>,
     pub(crate) painting_dry_run: bool,
-    pub(crate) in_layout: bool,
+    pub(crate) disallow_adding_opaque_layers: bool,
 }
 
 impl<'a> WindowContext<'a> {
@@ -177,13 +177,13 @@ impl<'a> WindowContext<'a> {
     /// and declarative APIs, which is not recommended.
     pub fn with_element_context<R>(
         &mut self,
-        pre_paint_pass: bool,
+        painting_dry_run: bool,
         f: impl FnOnce(&mut ElementContext) -> R,
     ) -> R {
         f(&mut ElementContext {
             cx: WindowContext::new(self.app, self.window),
-            painting_dry_run: pre_paint_pass,
-            in_layout: false,
+            painting_dry_run,
+            disallow_adding_opaque_layers: false,
         })
     }
 }
@@ -320,10 +320,6 @@ impl<'a> VisualContext for ElementContext<'a> {
 }
 
 impl<'a> ElementContext<'a> {
-    pub(crate) fn in_layout(&mut self, in_layout: bool) {
-        self.in_layout = in_layout;
-    }
-
     pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
         let view_id = self.parent_view_id();
         let grafted_view_ids = self
@@ -489,10 +485,6 @@ impl<'a> ElementContext<'a> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn with_z_index<R>(&mut self, z_index: u16, f: impl FnOnce(&mut Self) -> R) -> R {
-        // if self.in_layout {
-        //     panic!("Don't push z-index in layout");
-        // }
-
         let new_stacking_order_id = post_inc(
             self.window_mut()
                 .next_frame
@@ -511,6 +503,27 @@ impl<'a> ElementContext<'a> {
         self.window_mut().next_frame.z_index_stack.pop();
 
         self.window_mut().next_frame.next_stacking_order_ids.pop();
+
+        result
+    }
+
+    pub(crate) fn with_z_index_reset<R>(&mut self, continuation: impl FnOnce(&mut Self) -> R) -> R {
+        let frame = &self.window_mut().next_frame;
+        let original_next_stacking_order_id = *frame.next_stacking_order_ids.last().unwrap();
+        let original_stacking_order_ids_len = frame.next_stacking_order_ids.len();
+
+        let original_disallow = self.disallow_adding_opaque_layers;
+        self.disallow_adding_opaque_layers = true;
+
+        let result = continuation(self);
+
+        self.disallow_adding_opaque_layers = original_disallow;
+
+        let frame = &mut self.window_mut().next_frame;
+        frame
+            .next_stacking_order_ids
+            .truncate(original_stacking_order_ids_len);
+        *frame.next_stacking_order_ids.last_mut().unwrap() = original_next_stacking_order_id;
 
         result
     }
@@ -1148,13 +1161,9 @@ impl<'a> ElementContext<'a> {
 
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
-        if !self.painting_dry_run {
+        if self.disallow_adding_opaque_layers || !self.painting_dry_run {
             return;
         }
-
-        // if self.in_layout {
-        //     panic!("Don't add an opaque layer during layout");
-        // }
 
         let stacking_order = self.window.next_frame.z_index_stack.clone();
         let view_id = self.parent_view_id();
