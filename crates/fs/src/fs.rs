@@ -245,7 +245,6 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let inode = metadata.ino();
 
-        // todo!("windows")
         #[cfg(windows)]
         let inode = file_id(path);
 
