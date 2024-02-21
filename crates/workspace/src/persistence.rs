@@ -430,7 +430,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        async fn delete_stale_workspace(id: WorkspaceId) -> Result<()> {
+        pub async fn delete_workspace_by_id(id: WorkspaceId) -> Result<()> {
             DELETE FROM workspaces
             WHERE workspace_id IS ?
         }
@@ -447,7 +447,7 @@ impl WorkspaceDb {
             {
                 result.push((id, location));
             } else {
-                delete_tasks.push(self.delete_stale_workspace(id));
+                delete_tasks.push(self.delete_workspace_by_id(id));
             }
         }
 

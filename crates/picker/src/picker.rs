@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, list, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, Length, ListState, MouseButton, MouseDownEvent, Render, Task,
+    div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
+    EventEmitter, FocusHandle, FocusableView, Length, ListState, Render, Task,
     UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{sync::Arc, time::Duration};
@@ -103,7 +103,7 @@ impl<D: PickerDelegate> Picker<D> {
         let mut this = Self {
             delegate,
             editor,
-            element_container: Self::crate_element_container(is_uniform, cx),
+            element_container: Self::create_element_container(is_uniform, cx),
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
@@ -117,7 +117,7 @@ impl<D: PickerDelegate> Picker<D> {
         this
     }
 
-    fn crate_element_container(is_uniform: bool, cx: &mut ViewContext<Self>) -> ElementContainer {
+    fn create_element_container(is_uniform: bool, cx: &mut ViewContext<Self>) -> ElementContainer {
         if is_uniform {
             ElementContainer::UniformList(UniformListScrollHandle::new())
         } else {
@@ -311,12 +311,10 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn render_element(&self, cx: &mut ViewContext<Self>, ix: usize) -> impl IntoElement {
         div()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, cx| {
-                    this.handle_click(ix, event.modifiers.command, cx)
-                }),
-            )
+            .id(("item", ix))
+            .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
+                this.handle_click(ix, event.down.modifiers.command, cx)
+            }))
             .children(
                 self.delegate
                     .render_match(ix, ix == self.delegate.selected_index(), cx),
