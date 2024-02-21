@@ -1,5 +1,5 @@
 use language::BufferSnapshot;
-use std::ops::Range;
+use std::{fmt::Write, ops::Range};
 
 pub fn generate_content_prompt(
     user_prompt: String,
@@ -8,76 +8,88 @@ pub fn generate_content_prompt(
     range: Range<usize>,
     project_name: Option<String>,
 ) -> anyhow::Result<String> {
-    todo!()
+    let mut prompt = String::new();
 
-    // let mut prompt = String::new();
+    let content_type = match language_name {
+        None | Some("Markdown" | "Plain Text") => {
+            writeln!(prompt, "You are an expert engineer.")?;
+            "Text"
+        }
+        Some(language_name) => {
+            writeln!(prompt, "You are an expert {language_name} engineer.")?;
+            writeln!(
+                prompt,
+                "Your answer MUST always and only be valid {}.",
+                language_name
+            )?;
+            "Code"
+        }
+    };
 
-    // match language_name {
-    //     None | Some("Markdown" | "Plain Text") => writeln!(prompt, "You are an expert engineer.")?,
-    //     Some(language_name) => writeln!(prompt, "You are an expert {language_name} engineer.")?,
-    // }
+    if let Some(project_name) = project_name {
+        writeln!(
+            prompt,
+            "You are currently working inside the '{project_name}' project in code editor Zed."
+        )?;
+    }
 
-    // if let Some(project_name) = project_name {
-    //     writeln!(
-    //         prompt,
-    //         "You are currently working inside the '{project_name}' project in code editor Zed."
-    //     )?;
-    // }
+    // Include file content.
+    for chunk in buffer.text_for_range(0..range.start) {
+        prompt.push_str(chunk);
+    }
 
-    // let prefix = buffer.text_for_range(0..range.start).collect::<String>();
+    if range.is_empty() {
+        prompt.push_str("<|START|>");
+    } else {
+        prompt.push_str("<|START|");
+    }
 
-    // let mut selected_window = String::new();
-    // if start == end {
-    //     write!(selected_window, "<|START|>").unwrap();
-    // } else {
-    //     write!(selected_window, "<|START|").unwrap();
-    // }
+    for chunk in buffer.text_for_range(range.clone()) {
+        prompt.push_str(chunk);
+    }
 
-    // write!(
-    //     selected_window,
-    //     "{}",
-    //     buffer.text_for_range(start..end).collect::<String>()
-    // )
-    // .unwrap();
+    if !range.is_empty() {
+        prompt.push_str("|END|>");
+    }
 
-    // if start != end {
-    //     write!(selected_window, "|END|>").unwrap();
-    // }
+    for chunk in buffer.text_for_range(range.end..buffer.len()) {
+        prompt.push_str(chunk);
+    }
 
-    // let end_window = buffer.text_for_range(end..buffer.len()).collect::<String>();
+    prompt.push('\n');
 
-    // Ok(prompt)
+    if range.is_empty() {
+        writeln!(
+            prompt,
+            "Assume the cursor is located where the `<|START|>` span is."
+        )
+        .unwrap();
+        writeln!(
+            prompt,
+            "{content_type} can't be replaced, so assume your answer will be inserted at the cursor.",
+        )
+        .unwrap();
+        writeln!(
+            prompt,
+            "Generate {content_type} based on the users prompt: {user_prompt}",
+        )
+        .unwrap();
+    } else {
+        writeln!(prompt, "Modify the user's selected {content_type} based upon the users prompt: '{user_prompt}'").unwrap();
+        writeln!(prompt, "You must reply with only the adjusted {content_type} (within the '<|START|' and '|END|>' spans) not the entire file.").unwrap();
+        writeln!(
+            prompt,
+            "Double check that you only return code and not the '<|START|' and '|END|'> spans"
+        )
+        .unwrap();
+    }
 
-    // Using new Prompt Templates
-    // let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAiLanguageModel::load(model));
+    writeln!(prompt, "Never make remarks about the output.").unwrap();
+    writeln!(
+        prompt,
+        "Do not return anything else, except the generated {content_type}."
+    )
+    .unwrap();
 
-    // let args = PromptArguments {
-    //     model: openai_model,
-    //     language_name: lang_name.clone(),
-    //     project_name,
-    //     reserved_tokens: 1000,
-    //     buffer: Some(buffer),
-    //     selected_range: Some(range),
-    //     user_prompt: Some(user_prompt.clone()),
-    // };
-
-    // let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
-    //     (PromptPriority::Mandatory, Box::new(EngineerPreamble {})),
-    //     (
-    //         PromptPriority::Ordered { order: 1 },
-    //         Box::new(RepositoryContext {}),
-    //     ),
-    //     (
-    //         PromptPriority::Ordered { order: 0 },
-    //         Box::new(FileContext {}),
-    //     ),
-    //     (
-    //         PromptPriority::Mandatory,
-    //         Box::new(GenerateInlineContent {}),
-    //     ),
-    // ];
-    // let chain = PromptChain::new(args, templates);
-    // let (prompt, _) = chain.generate(true)?;
-
-    // anyhow::Ok(prompt)
+    Ok(prompt)
 }
