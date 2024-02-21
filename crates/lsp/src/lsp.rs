@@ -179,6 +179,13 @@ impl LanguageServer {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
 
+        log::info!(
+            "starting language server. binary path: {:?}, working directory: {:?}, args: {:?}",
+            binary.path,
+            working_dir,
+            &binary.arguments
+        );
+
         let mut server = process::Command::new(&binary.path)
             .current_dir(working_dir)
             .args(binary.arguments)
