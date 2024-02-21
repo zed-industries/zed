@@ -247,7 +247,7 @@ impl Fs for RealFs {
 
         // todo!("windows")
         #[cfg(windows)]
-        let inode = 0;
+        let inode = file_id(path);
 
         Ok(Some(Metadata {
             inode,
@@ -1335,6 +1335,34 @@ pub fn copy_recursive<'a>(
         }
     }
     .boxed()
+}
+
+#[cfg(target_os = "windows")]
+fn file_id(path: impl AsRef<Path>) -> u64 {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+
+    use windows_sys::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+        },
+    };
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .expect("Getting file id error: unable to open file!");
+
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
+    // This function supports Windows XP+
+    let ret = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
+    if ret == 0 {
+        panic!("Getting file id error: {}", std::io::Error::last_os_error());
+    };
+
+    ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64)
 }
 
 #[cfg(test)]
