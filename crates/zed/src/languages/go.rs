@@ -70,7 +70,12 @@ impl super::LspAdapter for GoLspAdapter {
 
         let delegate = delegate.clone();
         Some(cx.spawn(|cx| async move {
-            let install_output = process::Command::new("go").args(["version"]).output().await;
+            let install_output = cx
+                .update(|cx| delegate.build_command(OsStr::new("go"), cx))?
+                .await
+                .args(["version"])
+                .output()
+                .await;
             if install_output.is_err() {
                 if DID_SHOW_NOTIFICATION
                     .compare_exchange(false, true, SeqCst, SeqCst)

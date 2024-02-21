@@ -22,6 +22,7 @@ pub mod markdown;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
+use futures::future::BoxFuture;
 use gpui::{AppContext, AsyncAppContext, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
@@ -38,6 +39,7 @@ use serde_json::Value;
 use std::{
     any::Any,
     cell::RefCell,
+    ffi::OsStr,
     fmt::Debug,
     hash::Hash,
     mem,
@@ -240,6 +242,11 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn build_command<'a>(
+        &'a self,
+        command: &'a OsStr,
+        cx: &AppContext,
+    ) -> BoxFuture<'a, smol::process::Command>;
 }
 
 #[async_trait]

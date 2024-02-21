@@ -29,7 +29,6 @@ use util::{paths::PathExt, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture}
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
-    login_shell_env_loaded: Shared<Task<()>>,
     #[allow(clippy::type_complexity)]
     lsp_binary_paths: Mutex<
         HashMap<LanguageServerName, Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>,
@@ -116,7 +115,7 @@ struct LspBinaryStatusSender {
 }
 
 impl LanguageRegistry {
-    pub fn new(login_shell_env_loaded: Task<()>) -> Self {
+    pub fn new() -> Self {
         Self {
             state: RwLock::new(LanguageRegistryState {
                 next_language_server_id: 0,
@@ -130,7 +129,6 @@ impl LanguageRegistry {
                 reload_count: 0,
             }),
             language_server_download_dir: None,
-            login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_paths: Default::default(),
             executor: None,
             lsp_binary_status_tx: Default::default(),
@@ -139,7 +137,7 @@ impl LanguageRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
-        Self::new(Task::ready(()))
+        Self::new()
     }
 
     pub fn set_executor(&mut self, executor: BackgroundExecutor) {
@@ -552,14 +550,11 @@ impl LanguageRegistry {
         let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
         let root_path = root_path.clone();
         let adapter = adapter.clone();
-        let login_shell_env_loaded = self.login_shell_env_loaded.clone();
         let lsp_binary_statuses = self.lsp_binary_status_tx.clone();
 
         let task = {
             let container_dir = container_dir.clone();
             cx.spawn(move |mut cx| async move {
-                login_shell_env_loaded.await;
-
                 let entry = this
                     .lsp_binary_paths
                     .lock()

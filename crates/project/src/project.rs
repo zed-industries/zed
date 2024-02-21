@@ -22,7 +22,7 @@ use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
-    future::{try_join_all, Shared},
+    future::{try_join_all, BoxFuture, Shared},
     select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -71,6 +71,8 @@ use smol::lock::Semaphore;
 use std::{
     cmp::{self, Ordering},
     convert::TryInto,
+    env,
+    ffi::OsStr,
     hash::Hash,
     mem,
     num::NonZeroU32,
@@ -502,11 +504,6 @@ impl ProjectEntryId {
 pub enum FormatTrigger {
     Save,
     Manual,
-}
-
-struct ProjectLspAdapterDelegate {
-    project: Model<Project>,
-    http_client: Arc<dyn HttpClient>,
 }
 
 // Currently, formatting operations are represented differently depending on
@@ -2803,7 +2800,7 @@ impl Project {
 
     fn start_language_server(
         &mut self,
-        worktree: &Model<Worktree>,
+        worktree_handle: &Model<Worktree>,
         adapter: Arc<CachedLspAdapter>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
@@ -2812,7 +2809,7 @@ impl Project {
             return;
         }
 
-        let worktree = worktree.read(cx);
+        let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
         let worktree_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
@@ -2826,7 +2823,7 @@ impl Project {
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
-            ProjectLspAdapterDelegate::new(self, cx),
+            ProjectLspAdapterDelegate::new(self, worktree_handle, cx),
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -2836,6 +2833,7 @@ impl Project {
         let project_settings =
             ProjectSettings::get(Some((worktree_id.to_proto() as usize, Path::new(""))), cx);
         let lsp = project_settings.lsp.get(&adapter.name.0);
+        // TODO: here is where we want to get the `binary_path` override options too
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
         let server_id = pending_server.server_id;
@@ -9298,10 +9296,17 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
     }
 }
 
+struct ProjectLspAdapterDelegate {
+    project: Model<Project>,
+    worktree: Model<Worktree>,
+    http_client: Arc<dyn HttpClient>,
+}
+
 impl ProjectLspAdapterDelegate {
-    fn new(project: &Project, cx: &ModelContext<Project>) -> Arc<Self> {
+    fn new(project: &Project, worktree: &Model<Worktree>, cx: &ModelContext<Project>) -> Arc<Self> {
         Arc::new(Self {
             project: cx.handle(),
+            worktree: worktree.clone(),
             http_client: project.client.http_client(),
         })
     }
@@ -9315,6 +9320,41 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
+    }
+
+    fn build_command<'a>(
+        &'a self,
+        command: &'a OsStr,
+        cx: &AppContext,
+    ) -> BoxFuture<'a, smol::process::Command> {
+        let worktree_abs_path = self.worktree.read(cx).abs_path();
+        async move {
+            let shell_env = load_login_shell_environment(&worktree_abs_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to determine load login shell environment in {worktree_abs_path:?}"
+                    )
+                }).log_err();
+            let command_path = if let Some(shell_env) = shell_env.as_ref() {
+                let shell_path = shell_env.get("PATH");
+                let command_path = which::which_in(command, shell_path, &worktree_abs_path)
+                    .with_context(|| {
+                        format!(
+                            "failed to determine path for command {command:?} in env {shell_env:?}"
+                        )
+                    });
+                command_path.log_err().unwrap_or_else(|| PathBuf::from(&command))
+            } else {
+                PathBuf::from(command)
+            };
+            log::info!("resolved language server command {command:?} to {command_path:?}, cwd: {worktree_abs_path:?}");
+            let mut command = smol::process::Command::new(command_path);
+            command.envs(shell_env.unwrap_or_default());
+            command.current_dir(&worktree_abs_path);
+            command
+        }
+        .boxed()
     }
 }
 
@@ -9422,4 +9462,44 @@ fn include_text(server: &lsp::LanguageServer) -> bool {
             lsp::TextDocumentSyncSaveOptions::SaveOptions(options) => options.include_text,
         })
         .unwrap_or(false)
+}
+
+async fn load_login_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
+    let marker = "ZED_LOGIN_SHELL_START";
+    let shell = env::var("SHELL").context(
+        "SHELL environment variable is not assigned so we can't source login environment variables",
+    )?;
+    let output = smol::process::Command::new(&shell)
+        .args([
+            "-l",
+            "-i",
+            "-c",
+            &format!("cd {}; echo {marker}; /usr/bin/env -0", dir.display()),
+        ])
+        .output()
+        .await
+        .context("failed to spawn login shell to source login environment variables")?;
+    if !output.status.success() {
+        Err(anyhow!("login shell exited with error"))?;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    if let Some(env_output_start) = stdout.find(marker) {
+        let mut parsed_env = HashMap::default();
+        let env_output = &stdout[env_output_start + marker.len()..];
+        for line in env_output.split_terminator('\0') {
+            if let Some(separator_index) = line.find('=') {
+                let key = line[..separator_index].to_string();
+                let value = line[separator_index + 1..].to_string();
+                parsed_env.insert(key, value);
+            }
+        }
+        Ok(parsed_env)
+    } else {
+        Err(anyhow!(
+            "failed to parse output of `env` command in login shell: {}",
+            stdout
+        ))
+    }
 }
