@@ -498,11 +498,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 match key_state {
                     wl_keyboard::KeyState::Pressed => {
                         let input = PlatformInput::KeyDown(KeyDownEvent {
-                            keystroke: Keystroke::from_xkb(
-                                keymap_state,
-                                state.modifiers,
-                                keycode,
-                            ),
+                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
                             is_held: false, // todo!(linux)
                         });
 
@@ -549,11 +545,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                     }
                     wl_keyboard::KeyState::Released => {
                         focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke::from_xkb(
-                                keymap_state,
-                                state.modifiers,
-                                keycode,
-                            ),
+                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
                         }));
 
                         if !key_sym.is_modifier_key() {
@@ -646,10 +638,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 state: WEnum::Value(button_state),
                 ..
             } => {
-<<<<<<< HEAD
                 if state.mouse_focused_window.is_none() || state.mouse_location.is_none() {
                     return;
                 }
+                let button = linux_button_to_gpui(button);
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
                         state.button_pressed = Some(linux_button_to_gpui(button));
@@ -668,29 +660,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                             PlatformInput::MouseUp(MouseUpEvent {
                                 button: linux_button_to_gpui(button),
                                 position: state.mouse_location.unwrap(),
-=======
-                let focused_window = &state.mouse_focused_window;
-                let mouse_location = state.mouse_location;
-                let button = linux_button_to_gpui(button);
-                if let (Some(focused_window), Some(mouse_location), Some(button)) =
-                    (focused_window, mouse_location, button)
-                {
-                    match button_state {
-                        wl_pointer::ButtonState::Pressed => {
-                            state.button_pressed = Some(button);
-                            focused_window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
-                                button,
-                                position: mouse_location,
-                                modifiers: state.modifiers,
-                                click_count: 1,
-                            }));
-                        }
-                        wl_pointer::ButtonState::Released => {
-                            state.button_pressed = None;
-                            focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
-                                button,
-                                position: mouse_location,
->>>>>>> main
                                 modifiers: Modifiers::default(),
                                 click_count: 1,
                             }),
