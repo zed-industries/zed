@@ -4116,7 +4116,10 @@ impl Editor {
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 for selection in &mut self.selections.all::<Point>(cx) {
                     let selection_head = selection.head();
-                    let scope = snapshot.language_scope_at(selection_head).unwrap();
+                    let Some(scope) = snapshot.language_scope_at(selection_head) else {
+                        continue;
+                    };
+
                     let mut bracket_pair = None;
                     for (pair, enabled) in scope.brackets() {
                         let text = snapshot
