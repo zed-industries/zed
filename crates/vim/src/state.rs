@@ -41,7 +41,6 @@ pub enum Operator {
     Object { around: bool },
     FindForward { before: bool },
     FindBackward { after: bool },
-    ChooseRegister,
 }
 
 #[derive(Default, Clone)]
@@ -55,7 +54,6 @@ pub struct EditorState {
     pub post_count: Option<usize>,
 
     pub operator_stack: Vec<Operator>,
-    pub register: Option<String>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -153,9 +151,7 @@ impl EditorState {
         !matches!(self.mode, Mode::Insert)
             || matches!(
                 self.operator_stack.last(),
-                Some(Operator::FindForward { .. })
-                    | Some(Operator::FindBackward { .. })
-                    | Some(Operator::ChooseRegister)
+                Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. })
             )
     }
 
@@ -225,18 +221,16 @@ impl Operator {
             Operator::FindForward { before: true } => "t",
             Operator::FindBackward { after: false } => "F",
             Operator::FindBackward { after: true } => "T",
-            Operator::ChooseRegister => "Q",
         }
     }
 
     pub fn context_flags(&self) -> &'static [&'static str] {
         match self {
             Operator::Object { .. } => &["VimObject"],
-            Operator::FindForward { .. }
-            | Operator::FindBackward { .. }
-            | Operator::Replace
-            | Operator::ChooseRegister => &["VimWaiting"],
-            Operator::Change | Operator::Delete | Operator::Yank => &[],
+            Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace => {
+                &["VimWaiting"]
+            }
+            _ => &[],
         }
     }
 }

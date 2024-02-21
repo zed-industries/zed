@@ -96,10 +96,6 @@
           }
         }
       ],
-      "\"": [
-        "vim::PushOperator",
-        "ChooseRegister"
-      ],
       ";": "vim::RepeatFind",
       ",": "vim::RepeatFindReversed",
       "ctrl-o": "pane::GoBack",

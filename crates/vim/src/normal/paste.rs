@@ -44,25 +44,21 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let register = vim
-                    .update_state(|state| state.register.take())
-                    .unwrap_or("\"".to_string());
-                dbg!(&register);
-                dbg!(&vim.workspace_state.registers);
-                let clipboard_setting = VimSettings::get_global(cx).use_system_clipboard;
-                let use_system_clipboard = register == "+"
-                    || (register == "\"" && clipboard_setting == UseSystemClipboard::Always)
-                    || (register == "\""
-                        && clipboard_setting == UseSystemClipboard::OnYank
-                        && system_clipboard_is_newer(vim, cx));
-
-                // use the sytem clipboard if:
-                //  register == "+"
-                //  register == "\"" && use_system_clipboard == Always
-                //  register == "\"" && use_system_clipboard == OnYank && is_newers
-
                 let (clipboard_text, clipboard_selections): (String, Option<_>) =
-                    if use_system_clipboard {
+                    if VimSettings::get_global(cx).use_system_clipboard == UseSystemClipboard::Never
+                        || VimSettings::get_global(cx).use_system_clipboard
+                            == UseSystemClipboard::OnYank
+                            && !system_clipboard_is_newer(vim, cx)
+                    {
+                        (
+                            vim.workspace_state
+                                .registers
+                                .get("\"")
+                                .cloned()
+                                .unwrap_or_else(|| "".to_string()),
+                            None,
+                        )
+                    } else {
                         if let Some(item) = cx.read_from_clipboard() {
                             let clipboard_selections = item
                                 .metadata::<Vec<ClipboardSelection>>()
@@ -74,15 +70,6 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                         } else {
                             ("".into(), None)
                         }
-                    } else {
-                        (
-                            vim.workspace_state
-                                .registers
-                                .get(&register)
-                                .cloned()
-                                .unwrap_or_else(|| "".to_string()),
-                            None,
-                        )
                     };
 
                 if clipboard_text.is_empty() {

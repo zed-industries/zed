@@ -164,10 +164,7 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
 
         Vim::update(cx, |vim, cx| match vim.active_operator() {
             Some(
-                Operator::FindForward { .. }
-                | Operator::FindBackward { .. }
-                | Operator::Replace
-                | Operator::ChooseRegister,
+                Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace,
             ) => {}
             Some(_) => {
                 vim.clear_operator(cx);
@@ -468,11 +465,7 @@ impl Vim {
     }
     fn clear_operator(&mut self, cx: &mut WindowContext) {
         self.take_count(cx);
-        self.update_state(|state| {
-            state.operator_stack.clear();
-            dbg!("clear - oops");
-            state.register = None;
-        });
+        self.update_state(|state| state.operator_stack.clear());
         self.sync_vim_settings(cx);
     }
 
@@ -511,10 +504,6 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
-            Some(Operator::ChooseRegister) => Vim::update(cx, |vim, cx| {
-                vim.update_state(|state| state.register = dbg!(Some(text.to_string())));
-                vim.pop_operator(cx);
-            }),
             _ => {}
         }
     }
@@ -585,7 +574,7 @@ impl Vim {
             editor.set_cursor_shape(state.cursor_shape(), cx);
             editor.set_clip_at_line_ends(state.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
-            editor.set_input_enabled(dbg!(!state.vim_controlled()));
+            editor.set_input_enabled(!state.vim_controlled());
             editor.set_autoindent(state.should_autoindent());
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
             if editor.is_focused(cx) {
