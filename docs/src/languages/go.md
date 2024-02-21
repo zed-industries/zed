@@ -22,6 +22,7 @@ Zed sets the following initialization options for inlay hints:
 to make the language server send back inlay hints when Zed has them enabled in the settings.
 
 Use
+
 ```json
 "lsp": {
     "$LANGUAGE_SERVER_NAME": {
@@ -33,6 +34,7 @@ Use
     }
 }
 ```
+
 to override these settings.
 
 See https://github.com/golang/tools/blob/master/gopls/doc/inlayHints.md for more information.
@@ -49,5 +51,5 @@ TODO: https://github.com/zed-industries/zed/pull/7139
 # Go Work
 
 - Tree Sitter:
-[tree-sitter-go-work](https://github.com/d1y/tree-sitter-go-work)
+  [tree-sitter-go-work](https://github.com/d1y/tree-sitter-go-work)
 - Language Server: N/A
