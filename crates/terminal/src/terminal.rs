@@ -45,12 +45,14 @@ use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
-    os::unix::prelude::AsRawFd,
     path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 use thiserror::Error;
+
+#[cfg(unix)]
+use std::os::unix::prelude::AsRawFd;
 
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
@@ -288,6 +290,10 @@ pub struct SpawnRunnable {
     pub env: HashMap<String, String>,
 }
 
+// https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
+const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
+const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+
 pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<AlacTermEvent>,
@@ -301,6 +307,7 @@ impl TerminalBuilder {
         env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
+        max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
     ) -> Result<TerminalBuilder> {
@@ -333,8 +340,18 @@ impl TerminalBuilder {
         std::env::set_var("LC_ALL", "en_US.UTF-8");
         std::env::set_var("ZED_TERM", "true");
 
+        let scrolling_history = if runnable.is_some() {
+            // Runnables like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
+            // After the runnable finishes, we do not allow appending to that terminal, so small runnables output should not
+            // cause excessive memory usage over time.
+            MAX_SCROLL_HISTORY_LINES
+        } else {
+            max_scroll_history_lines
+                .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
+                .min(MAX_SCROLL_HISTORY_LINES)
+        };
         let config = Config {
-            scrolling_history: 10000,
+            scrolling_history,
             ..Config::default()
         };
 
@@ -376,8 +393,12 @@ impl TerminalBuilder {
             }
         };
 
-        let fd = pty.file().as_raw_fd();
-        let shell_pid = pty.child().id();
+        #[cfg(unix)]
+        let (fd, shell_pid) = (pty.file().as_raw_fd(), pty.child().id());
+
+        // todo!("windows")
+        #[cfg(windows)]
+        let (fd, shell_pid) = (-1, 0);
 
         //And connect them together
         let event_loop = EventLoop::new(
@@ -641,7 +662,11 @@ impl Terminal {
 
     /// Updates the cached process info, returns whether the Zed-relevant info has changed
     fn update_process_info(&mut self) -> bool {
+        #[cfg(unix)]
         let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
+        // todo!("windows")
+        #[cfg(windows)]
+        let mut pid = -1;
         if pid < 0 {
             pid = self.shell_pid as i32;
         }

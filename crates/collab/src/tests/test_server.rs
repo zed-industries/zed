@@ -273,7 +273,7 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
         });
 
         client

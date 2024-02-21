@@ -2088,21 +2088,16 @@ async fn update_followers(request: proto::UpdateFollowers, session: Session) -> 
     };
 
     // For now, don't send view update messages back to that view's current leader.
-    let connection_id_to_omit = request.variant.as_ref().and_then(|variant| match variant {
+    let peer_id_to_omit = request.variant.as_ref().and_then(|variant| match variant {
         proto::update_followers::Variant::UpdateView(payload) => payload.leader_id,
         _ => None,
     });
 
-    for follower_peer_id in request.follower_ids.iter().copied() {
-        let follower_connection_id = follower_peer_id.into();
-        if Some(follower_peer_id) != connection_id_to_omit
-            && connection_ids.contains(&follower_connection_id)
-        {
-            session.peer.forward_send(
-                session.connection_id,
-                follower_connection_id,
-                request.clone(),
-            )?;
+    for connection_id in connection_ids.iter().cloned() {
+        if Some(connection_id.into()) != peer_id_to_omit && connection_id != session.connection_id {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())?;
         }
     }
     Ok(())

@@ -147,7 +147,7 @@ impl EditorTestContext {
             self.add_assertion_context(format!("Simulated Keystroke: {:?}", keystroke_text));
         let keystroke = Keystroke::parse(keystroke_text).unwrap();
 
-        self.cx.dispatch_keystroke(self.window, keystroke, false);
+        self.cx.dispatch_keystroke(self.window, keystroke);
 
         keystroke_under_test_handle
     }

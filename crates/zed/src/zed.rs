@@ -23,9 +23,11 @@ use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use runnable::static_source::StaticSource;
+use runnables_ui::OneshotSource;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -162,11 +164,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 app_state.fs.clone(),
                 paths::RUNNABLES.clone(),
             );
-            let source = StaticSource::new(runnables_file_rx, cx);
+            let static_source = StaticSource::new(runnables_file_rx, cx);
+            let oneshot_source = OneshotSource::new(cx);
+
             project.update(cx, |project, cx| {
-                project
-                    .runnable_inventory()
-                    .update(cx, |inventory, cx| inventory.add_source(source, cx))
+                project.runnable_inventory().update(cx, |inventory, cx| {
+                    inventory.add_source(oneshot_source, cx);
+                    inventory.add_source(static_source, cx);
+                })
             });
         }
         cx.spawn(|workspace_handle, mut cx| async move {
@@ -422,8 +427,8 @@ fn quit(_: &Quit, cx: &mut AppContext) {
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        cx.update(|cx| {
-            workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+        cx.update(|mut cx| {
+            workspace_windows.sort_by_key(|window| window.is_active(&mut cx) == Some(false));
         })
         .log_err();
 
@@ -570,7 +575,7 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
 }
 
 pub fn load_default_keymap(cx: &mut AppContext) {
-    KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+    KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
         KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
     }

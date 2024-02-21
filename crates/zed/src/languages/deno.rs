@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
@@ -72,7 +72,13 @@ impl LspAdapter for DenoLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
             latest_github_release("denoland/deno", true, false, delegate.http_client()).await?;
-        let asset_name = format!("deno-{}-apple-darwin.zip", consts::ARCH);
+        let os = match consts::OS {
+            "macos" => "apple-darwin",
+            "linux" => "unknown-linux-gnu",
+            "windows" => "pc-windows-msvc",
+            other => bail!("Running on unsupported os: {other}"),
+        };
+        let asset_name = format!("deno-{}-{os}.zip", consts::ARCH);
         let asset = release
             .assets
             .iter()
