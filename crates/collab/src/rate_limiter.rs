@@ -1,27 +1,25 @@
 use crate::db::UserId;
 use crate::{Database, Error};
 use anyhow::Result;
+use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use parking_lot::Mutex;
+use sea_orm::prelude::DateTimeUtc;
 use std::any::TypeId;
-use std::io;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use util::ResultExt;
 
 trait RateLimit: 'static {
     fn capacity() -> usize;
     fn refill_duration() -> Duration;
-    fn id() -> &'static str;
+    fn db_name() -> &'static str;
     fn type_id() -> TypeId {
         TypeId::of::<Self>()
     }
 }
 
 struct RateLimiter {
-    buckets: DashMap<(UserId, TypeId), Arc<Mutex<Bucket>>>,
+    buckets: DashMap<(UserId, TypeId), Arc<Mutex<RateBucket>>>,
     db: Arc<Database>,
 }
 
@@ -33,17 +31,28 @@ impl RateLimiter {
         }
     }
 
-    pub async fn allow<K: RateLimit>(&self, user_id: UserId) -> bool {
-        let type_id = K::type_id();
+    pub async fn allow<T: RateLimit>(&self, user_id: UserId) -> bool {
+        let type_id = T::type_id();
         let bucket_key = (user_id, type_id);
 
-        if !self.buckets.contains_key(&bucket_key) {}
+        // Attempt to fetch the bucket from the database if it hasn't been cached
+        // For now, we keep buckets in memory for the lifetime of the process rather than expiring them,
+        // but this enforces limits across restarts so long as the database is reachable.
+        if !self.buckets.contains_key(&bucket_key) {
+            if let Some(bucket) = self.load_bucket::<T>(user_id).await.log_err().flatten() {
+                self.buckets
+                    .insert(bucket_key, Arc::new(Mutex::new(bucket)));
+            }
+        }
 
         let bucket = self
             .buckets
             .entry(bucket_key)
             .or_insert_with(|| {
-                Arc::new(Mutex::new(Bucket::new(K::capacity(), K::refill_duration())))
+                Arc::new(Mutex::new(RateBucket::new(
+                    T::capacity(),
+                    T::refill_duration(),
+                )))
             })
             .value()
             .clone();
@@ -52,36 +61,44 @@ impl RateLimiter {
         allowed
     }
 
-    pub async fn load_bucket<K: RateLimit>(
+    async fn load_bucket<K: RateLimit>(
         &self,
         user_id: UserId,
-    ) -> Result<Option<Bucket>, Error> {
-        self.db.transaction(|tx| todo!()).await
+    ) -> Result<Option<RateBucket>, Error> {
+        Ok(self
+            .db
+            .get_rate_bucket(user_id, K::db_name())
+            .await?
+            .map(|saved_bucket| RateBucket {
+                capacity: K::capacity(),
+                refill_time_per_token: K::refill_duration(),
+                token_count: saved_bucket.token_count as usize,
+                last_refill: DateTime::from_naive_utc_and_offset(saved_bucket.last_refill, Utc),
+            }))
     }
 }
 
-struct Bucket {
+struct RateBucket {
     capacity: usize,
-    tokens: AtomicUsize,
+    token_count: usize,
     refill_time_per_token: Duration,
-    last_refill: Instant,
+    last_refill: DateTimeUtc,
 }
 
-impl Bucket {
+impl RateBucket {
     fn new(capacity: usize, refill_duration: Duration) -> Self {
-        Bucket {
+        RateBucket {
             capacity,
-            tokens: AtomicUsize::new(capacity),
-            refill_time_per_token: refill_duration / capacity as u32,
-            last_refill: Instant::now(),
+            token_count: capacity,
+            refill_time_per_token: refill_duration / capacity as i32,
+            last_refill: Utc::now(),
         }
     }
 
     fn allow(&mut self) -> bool {
         self.refill();
-        let current_tokens = self.tokens.load(Ordering::SeqCst);
-        if current_tokens > 0 {
-            self.tokens.fetch_sub(1, Ordering::SeqCst);
+        if self.token_count > 0 {
+            self.token_count -= 1;
             true
         } else {
             false
@@ -89,34 +106,14 @@ impl Bucket {
     }
 
     fn refill(&mut self) {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_refill);
+        let now = Utc::now();
+        let elapsed = now - self.last_refill;
         if elapsed >= self.refill_time_per_token {
             let new_tokens =
-                (elapsed.as_millis() / self.refill_time_per_token.as_millis()) as usize;
+                elapsed.num_milliseconds() / self.refill_time_per_token.num_milliseconds();
 
-            let current_tokens = self.tokens.fetch_add(new_tokens, Ordering::SeqCst);
-            if current_tokens > self.capacity {
-                self.tokens.store(self.capacity, Ordering::SeqCst);
-            }
-            self.last_refill += self.refill_time_per_token * new_tokens as u32;
+            self.token_count = (self.token_count + new_tokens as usize).min(self.capacity);
+            self.last_refill = now;
         }
-    }
-}
-
-// Example implementation of RateLimit for a specific action type
-struct DownloadActionKey;
-
-impl RateLimit for DownloadActionKey {
-    fn capacity() -> usize {
-        5
-    }
-
-    fn refill_duration() -> Duration {
-        Duration::from_secs(60)
-    }
-
-    fn id() -> &'static str {
-        "download-action"
     }
 }

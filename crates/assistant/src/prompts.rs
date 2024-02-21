@@ -1,5 +1,5 @@
 use language::BufferSnapshot;
-use std::{fmt::Write, ops::Range};
+use std::ops::Range;
 
 pub fn generate_content_prompt(
     user_prompt: String,
