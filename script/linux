@@ -35,6 +35,22 @@ if [[ -n $dnf ]]; then
   exit 0
 fi
 
+# openSuse
+# https://software.opensuse.org/
+zyp=$(command -v zypper || true)
+if [[ -n $zyp ]]; then
+  deps=(
+    alsa-devel
+    fontconfig-devel
+    vulkan-validationlayers
+    wayland-devel
+    libxkbcommon-x11-devel
+    openssl-devel
+  )
+  $maysudo "$zyp" install -y "${deps[@]}"
+  exit 0
+fi
+
 # Arch, Manjaro, etc.
 # https://archlinux.org/packages
 pacman=$(command -v pacman || true)
