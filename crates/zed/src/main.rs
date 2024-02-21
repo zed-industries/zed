@@ -171,6 +171,7 @@ fn main() {
             node_runtime.clone(),
             cx,
         );
+        discord::init(cx);
         assistant::init(cx);
 
         extension::init(

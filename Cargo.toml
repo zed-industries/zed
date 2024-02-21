@@ -20,6 +20,7 @@ members = [
     "crates/copilot_ui",
     "crates/db",
     "crates/diagnostics",
+    "crates/discord",
     "crates/discord_ui",
     "crates/editor",
     "crates/extension",
@@ -115,6 +116,7 @@ copilot = { path = "crates/copilot" }
 copilot_ui = { path = "crates/copilot_ui" }
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
+discord = { path = "crates/discord" }
 discord_ui = { path = "crates/discord_ui" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
