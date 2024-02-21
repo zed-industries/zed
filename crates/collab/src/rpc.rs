@@ -8,7 +8,7 @@ use crate::{
         RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
-    AppState, Error, RateLimiter, Result,
+    AppState, Error, RateLimit, RateLimiter, Result,
 };
 use anyhow::{anyhow, Context as _};
 use async_tungstenite::tungstenite::{
@@ -3207,6 +3207,25 @@ async fn acknowledge_buffer_version(
     Ok(())
 }
 
+struct CompleteWithLanguageModelRateLimit;
+
+impl RateLimit for CompleteWithLanguageModelRateLimit {
+    fn capacity() -> usize {
+        std::env::var("COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120) // Picked arbitrarily
+    }
+
+    fn refill_duration() -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name() -> &'static str {
+        "complete-with-language-model"
+    }
+}
+
 async fn complete_with_language_model(
     request: proto::CompleteWithLanguageModel,
     response: StreamingResponse<proto::CompleteWithLanguageModel>,
@@ -3214,6 +3233,11 @@ async fn complete_with_language_model(
     open_ai_api_key: Option<Arc<str>>,
     google_ai_api_key: Option<Arc<str>>,
 ) -> Result<()> {
+    session
+        .rate_limiter
+        .check::<CompleteWithLanguageModelRateLimit>(session.user_id)
+        .await?;
+
     if request.model.starts_with("gpt") {
         let api_key =
             open_ai_api_key.ok_or_else(|| anyhow!("no OpenAI API key configured on the server"))?;
@@ -3322,6 +3346,25 @@ async fn complete_with_google_ai(
     Ok(())
 }
 
+struct CountTokensWithLanguageModelRateLimit;
+
+impl RateLimit for CountTokensWithLanguageModelRateLimit {
+    fn capacity() -> usize {
+        std::env::var("COUNT_TOKENS_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(600) // Picked arbitrarily
+    }
+
+    fn refill_duration() -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name() -> &'static str {
+        "complete-with-language-model"
+    }
+}
+
 async fn count_tokens_with_language_model(
     request: proto::CountTokensWithLanguageModel,
     response: Response<proto::CountTokensWithLanguageModel>,
@@ -3334,6 +3377,11 @@ async fn count_tokens_with_language_model(
             request.model
         ))?;
     }
+
+    session
+        .rate_limiter
+        .check::<CountTokensWithLanguageModelRateLimit>(session.user_id)
+        .await?;
 
     authorize_access_to_google_ai(&session).await?;
 

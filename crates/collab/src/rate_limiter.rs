@@ -1,6 +1,6 @@
-use crate::{db::UserId, Executor};
+use crate::{db::UserId, Executor, Result};
 use crate::{Database, Error};
-use anyhow::Result;
+use anyhow::anyhow;
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use parking_lot::Mutex;
@@ -36,7 +36,7 @@ impl RateLimiter {
 
     /// Returns true if the user has not exceeded the specified `RateLimit`.
     /// Attempts to read the from the database if no cached RateBucket currently exists.
-    pub async fn allow<T: RateLimit>(&self, user_id: UserId) -> bool {
+    pub async fn check<T: RateLimit>(&self, user_id: UserId) -> Result<()> {
         let type_id = T::type_id();
         let bucket_key = (user_id, type_id);
 
@@ -76,7 +76,11 @@ impl RateLimiter {
                 .log_err();
         });
 
-        allowed
+        if !allowed {
+            Err(anyhow!("rate limit exceeded"))?
+        }
+
+        Ok(())
     }
 
     async fn load_bucket<K: RateLimit>(
