@@ -212,7 +212,7 @@ impl AnyView {
     /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
     /// The one exception is when [WindowContext::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self) -> Self {
-        // self.cache = true;
+        self.cache = true;
         self
     }
 
@@ -385,12 +385,15 @@ impl Element for AnyView {
                 .last()
                 .copied()
                 .unwrap();
-            state.cache_key = Some(ViewCacheKey {
-                bounds,
-                stacking_order: cx.stacking_order().clone(),
-                content_mask: cx.content_mask(),
-                text_style: cx.text_style(),
-            });
+
+            if !cx.painting_dry_run {
+                state.cache_key = Some(ViewCacheKey {
+                    bounds,
+                    stacking_order: cx.stacking_order().clone(),
+                    content_mask: cx.content_mask(),
+                    text_style: cx.text_style(),
+                });
+            }
         })
     }
 }

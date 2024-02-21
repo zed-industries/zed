@@ -320,50 +320,53 @@ impl<'a> VisualContext for ElementContext<'a> {
 }
 
 impl<'a> ElementContext<'a> {
-    pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
-        let view_id = self.parent_view_id();
-        let grafted_view_ids = self
-            .cx
-            .window
-            .next_frame
-            .dispatch_tree
-            .reuse_view(view_id, &mut self.cx.window.rendered_frame.dispatch_tree);
-        for view_id in grafted_view_ids {
-            assert!(self.window.next_frame.reused_views.insert(view_id));
-
-            // Reuse the previous input handler requested during painting of the reused view.
-            if self
+    pub(crate) fn reuse_view(&mut self, stored_next_stacking_order_id: u16) {
+        if !self.painting_dry_run {
+            let view_id = self.parent_view_id();
+            let grafted_view_ids = self
+                .cx
                 .window
-                .rendered_frame
-                .requested_input_handler
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.requested_input_handler =
-                    self.window.rendered_frame.requested_input_handler.take();
-            }
+                .next_frame
+                .dispatch_tree
+                .reuse_view(view_id, &mut self.cx.window.rendered_frame.dispatch_tree);
 
-            // Reuse the tooltip previously requested during painting of the reused view.
-            if self
-                .window
-                .rendered_frame
-                .tooltip_request
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.tooltip_request =
-                    self.window.rendered_frame.tooltip_request.take();
-            }
+            for view_id in grafted_view_ids {
+                assert!(self.window.next_frame.reused_views.insert(view_id));
 
-            // Reuse the cursor styles previously requested during painting of the reused view.
-            if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
-                self.window.next_frame.cursor_styles.insert(view_id, style);
-                self.window.next_frame.requested_cursor_style = Some(style);
+                // Reuse the previous input handler requested during painting of the reused view.
+                if self
+                    .window
+                    .rendered_frame
+                    .requested_input_handler
+                    .as_ref()
+                    .map_or(false, |requested| requested.view_id == view_id)
+                {
+                    self.window.next_frame.requested_input_handler =
+                        self.window.rendered_frame.requested_input_handler.take();
+                }
+
+                // Reuse the tooltip previously requested during painting of the reused view.
+                if self
+                    .window
+                    .rendered_frame
+                    .tooltip_request
+                    .as_ref()
+                    .map_or(false, |requested| requested.view_id == view_id)
+                {
+                    self.window.next_frame.tooltip_request =
+                        self.window.rendered_frame.tooltip_request.take();
+                }
+
+                // Reuse the cursor styles previously requested during painting of the reused view.
+                if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
+                    self.window.next_frame.cursor_styles.insert(view_id, style);
+                    self.window.next_frame.requested_cursor_style = Some(style);
+                }
             }
         }
 
         debug_assert!(
-            next_stacking_order_id
+            stored_next_stacking_order_id
                 >= self
                     .window
                     .next_frame
@@ -377,7 +380,7 @@ impl<'a> ElementContext<'a> {
             .next_frame
             .next_stacking_order_ids
             .last_mut()
-            .unwrap() = next_stacking_order_id;
+            .unwrap() = stored_next_stacking_order_id;
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -603,84 +606,84 @@ impl<'a> ElementContext<'a> {
         S: 'static,
     {
         self.with_element_id(Some(id), |cx| {
-                let global_id = cx.window().element_id_stack.clone();
+            let global_id = cx.window().element_id_stack.clone();
 
-                if let Some(any) = cx
-                    .window_mut()
+            if let Some(any) = cx
+                .window_mut()
+                .next_frame
+                .element_states
+                .remove(&global_id)
+                .or_else(|| {
+                    cx.window_mut()
+                        .rendered_frame
+                        .element_states
+                        .remove(&global_id)
+                })
+            {
+                let ElementStateBox {
+                    inner,
+                    parent_view_id,
+                    #[cfg(debug_assertions)]
+                    type_name
+                } = any;
+                // Using the extra inner option to avoid needing to reallocate a new box.
+                let mut state_box = inner
+                    .downcast::<Option<S>>()
+                    .map_err(|_| {
+                        #[cfg(debug_assertions)]
+                        {
+                            anyhow::anyhow!(
+                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow::anyhow!(
+                                "invalid element state type for id, requested_type {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap();
+
+                // Actual: Option<AnyElement> <- View
+                // Requested: () <- AnyElement
+                let state = state_box
+                    .take()
+                    .expect("element state is already on the stack");
+                let (result, state) = f(Some(state), cx);
+                state_box.replace(state);
+                cx.window_mut()
                     .next_frame
                     .element_states
-                    .remove(&global_id)
-                    .or_else(|| {
-                        cx.window_mut()
-                            .rendered_frame
-                            .element_states
-                            .remove(&global_id)
-                    })
-                {
-                    let ElementStateBox {
-                        inner,
+                    .insert(global_id, ElementStateBox {
+                        inner: state_box,
                         parent_view_id,
                         #[cfg(debug_assertions)]
                         type_name
-                    } = any;
-                    // Using the extra inner option to avoid needing to reallocate a new box.
-                    let mut state_box = inner
-                        .downcast::<Option<S>>()
-                        .map_err(|_| {
-                            #[cfg(debug_assertions)]
-                            {
-                                anyhow::anyhow!(
-                                    "invalid element state type for id, requested_type {:?}, actual type: {:?}",
-                                    std::any::type_name::<S>(),
-                                    type_name
-                                )
-                            }
-
-                            #[cfg(not(debug_assertions))]
-                            {
-                                anyhow::anyhow!(
-                                    "invalid element state type for id, requested_type {:?}",
-                                    std::any::type_name::<S>(),
-                                )
-                            }
-                        })
-                        .unwrap();
-
-                    // Actual: Option<AnyElement> <- View
-                    // Requested: () <- AnyElement
-                    let state = state_box
-                        .take()
-                        .expect("element state is already on the stack");
-                    let (result, state) = f(Some(state), cx);
-                    state_box.replace(state);
-                    cx.window_mut()
-                        .next_frame
-                        .element_states
-                        .insert(global_id, ElementStateBox {
-                            inner: state_box,
+                    });
+                result
+            } else {
+                let (result, state) = f(None, cx);
+                let parent_view_id = cx.parent_view_id();
+                cx.window_mut()
+                    .next_frame
+                    .element_states
+                    .insert(global_id,
+                        ElementStateBox {
+                            inner: Box::new(Some(state)),
                             parent_view_id,
                             #[cfg(debug_assertions)]
-                            type_name
-                        });
-                    result
-                } else {
-                    let (result, state) = f(None, cx);
-                    let parent_view_id = cx.parent_view_id();
-                    cx.window_mut()
-                        .next_frame
-                        .element_states
-                        .insert(global_id,
-                            ElementStateBox {
-                                inner: Box::new(Some(state)),
-                                parent_view_id,
-                                #[cfg(debug_assertions)]
-                                type_name: std::any::type_name::<S>()
-                            }
+                            type_name: std::any::type_name::<S>()
+                        }
 
-                        );
-                    result
-                }
-            })
+                    );
+                result
+            }
+        })
     }
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
     pub fn paint_shadows(
