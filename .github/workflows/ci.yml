@@ -126,6 +126,36 @@ jobs:
 
       - name: Build Zed
         run: cargo build -p zed
+
+  # todo!(windows): Actually run the tests
+  windows_tests:
+    name: (Windows) Run Clippy and tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Restore from cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+      # todo!(windows): Actually run clippy
+      #- name: cargo clippy
+      #  shell: bash -euxo pipefail {0}
+      #  run: script/clippy
+
+      - name: Build Zed
+        run: cargo build -p zed
+
   bundle:
     name: Bundle macOS app
     runs-on:

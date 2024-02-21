@@ -208,25 +208,21 @@ impl X11WindowState {
                 });
             }
         }
-        xcb_connection
-            .send_and_check_request(&x::ChangeProperty {
-                mode: x::PropMode::Replace,
-                window: x_window,
-                property: atoms.wm_protocols,
-                r#type: x::ATOM_ATOM,
-                data: &[atoms.wm_del_window],
-            })
-            .unwrap();
+        xcb_connection.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window: x_window,
+            property: atoms.wm_protocols,
+            r#type: x::ATOM_ATOM,
+            data: &[atoms.wm_del_window],
+        });
 
         let fake_id = xcb_connection.generate_id();
-        xcb_connection
-            .send_and_check_request(&xcb::present::SelectInput {
-                eid: fake_id,
-                window: x_window,
-                //Note: also consider `IDLE_NOTIFY`
-                event_mask: xcb::present::EventMask::COMPLETE_NOTIFY,
-            })
-            .unwrap();
+        xcb_connection.send_request(&xcb::present::SelectInput {
+            eid: fake_id,
+            window: x_window,
+            //Note: also consider `IDLE_NOTIFY`
+            event_mask: xcb::present::EventMask::COMPLETE_NOTIFY,
+        });
 
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
@@ -244,7 +240,7 @@ impl X11WindowState {
                 gpu::Context::init_windowed(
                     &raw,
                     gpu::ContextDesc {
-                        validation: cfg!(debug_assertions),
+                        validation: false,
                         capture: false,
                     },
                 )
@@ -324,15 +320,13 @@ impl X11WindowState {
     }
 
     pub fn request_refresh(&self) {
-        self.xcb_connection
-            .send_and_check_request(&xcb::present::NotifyMsc {
-                window: self.x_window,
-                serial: 0,
-                target_msc: 0,
-                divisor: 1,
-                remainder: 0,
-            })
-            .unwrap();
+        self.xcb_connection.send_request(&xcb::present::NotifyMsc {
+            window: self.x_window,
+            serial: 0,
+            target_msc: 0,
+            divisor: 1,
+            remainder: 0,
+        });
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
@@ -344,7 +338,9 @@ impl X11WindowState {
         if let PlatformInput::KeyDown(event) = input {
             let mut inner = self.inner.lock();
             if let Some(ref mut input_handler) = inner.input_handler {
-                input_handler.replace_text_in_range(None, &event.keystroke.key);
+                if let Some(ime_key) = &event.keystroke.ime_key {
+                    input_handler.replace_text_in_range(None, ime_key);
+                }
             }
         }
     }

@@ -179,6 +179,13 @@ impl LanguageServer {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
 
+        log::info!(
+            "starting language server. binary path: {:?}, working directory: {:?}, args: {:?}",
+            binary.path,
+            working_dir,
+            &binary.arguments
+        );
+
         let mut server = process::Command::new(&binary.path)
             .current_dir(working_dir)
             .args(binary.arguments)
@@ -203,7 +210,7 @@ impl LanguageServer {
             cx,
             move |notification| {
                 log::info!(
-                    "{} unhandled notification {}:\n{}",
+                    "Language server with id {} sent unhandled notification {}:\n{}",
                     server_id,
                     notification.method,
                     serde_json::to_string_pretty(
@@ -911,7 +918,7 @@ impl LanguageServer {
                                     Ok(response) => match serde_json::from_str(&response) {
                                         Ok(deserialized) => Ok(deserialized),
                                         Err(error) => {
-                                            log::error!("failed to deserialize response from language server: {}. Response from language server: {:?}", error, response);
+                                            log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
                                             Err(error).context("failed to deserialize response")
                                         }
                                     }

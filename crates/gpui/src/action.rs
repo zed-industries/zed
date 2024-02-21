@@ -39,7 +39,7 @@ use std::any::{Any, TypeId};
 /// }
 /// register_action!(Paste);
 /// ```
-pub trait Action: 'static {
+pub trait Action: 'static + Send {
     /// Clone the action into a new box
     fn boxed_clone(&self) -> Box<dyn Action>;
 

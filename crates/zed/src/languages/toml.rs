@@ -72,11 +72,15 @@ impl LspAdapter for TaploLspAdapter {
 
             futures::io::copy(decompressed_bytes, &mut file).await?;
 
-            fs::set_permissions(
-                &binary_path,
-                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-            )
-            .await?;
+            // todo!("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &binary_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
         }
 
         Ok(LanguageServerBinary {

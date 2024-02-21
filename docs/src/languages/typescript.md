@@ -23,6 +23,7 @@ Zed sets the following initialization options for inlay hints:
 to make the language server send back inlay hints when Zed has them enabled in the settings.
 
 Use
+
 ```json
 "lsp": {
     "$LANGUAGE_SERVER_NAME": {
@@ -34,6 +35,7 @@ Use
     }
 }
 ```
+
 to override these settings.
 
 See https://github.com/typescript-language-server/typescript-language-server?tab=readme-ov-file#inlay-hints-textdocumentinlayhint for more information.

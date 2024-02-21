@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.124.0"
+version = "0.125.0"
 publish = false
 license = "GPL-3.0-or-later"
 
@@ -90,8 +90,8 @@ release_channel.workspace = true
 rope.workspace = true
 rpc.workspace = true
 rsa = "0.4"
-runnable.workspace = true
-runnables_ui.workspace = true
+task.workspace = true
+tasks_ui.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 search.workspace = true
