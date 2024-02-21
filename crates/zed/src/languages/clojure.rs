@@ -33,12 +33,18 @@ impl super::LspAdapter for ClojureLspAdapter {
             delegate.http_client(),
         )
         .await?;
+        let os = match consts::OS {
+            "macos" => "macos",
+            "linux" => "linux",
+            "windows" => "windows",
+            other => bail!("Running on unsupported os: {other}"),
+        };
         let platform = match consts::ARCH {
             "x86_64" => "amd64",
             "aarch64" => "aarch64",
             other => bail!("Running on unsupported platform: {other}"),
         };
-        let asset_name = format!("clojure-lsp-native-macos-{platform}.zip");
+        let asset_name = format!("clojure-lsp-native-{os}-{platform}.zip");
         let asset = release
             .assets
             .iter()

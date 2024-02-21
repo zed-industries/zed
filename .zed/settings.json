@@ -1,5 +1,9 @@
 {
   "languages": {
+    "Markdown": {
+      "tab_size": 2,
+      "formatter": "prettier"
+    },
     "TOML": {
       "formatter": "prettier",
       "format_on_save": "off"

@@ -215,6 +215,15 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     }
 
     let quad = b_quads[input.quad_id];
+    // Fast path when the quad is not rounded and doesn't have any border.
+    if (quad.corner_radii.top_left == 0.0 && quad.corner_radii.bottom_left == 0.0 &&
+        quad.corner_radii.top_right == 0.0 &&
+        quad.corner_radii.bottom_right == 0.0 && quad.border_widths.top == 0.0 &&
+        quad.border_widths.left == 0.0 && quad.border_widths.right == 0.0 &&
+        quad.border_widths.bottom == 0.0) {
+        return input.background_color;
+    }
+
     let half_size = quad.bounds.size / 2.0;
     let center = quad.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
