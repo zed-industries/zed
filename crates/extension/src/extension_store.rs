@@ -650,6 +650,12 @@ impl ExtensionStore {
                 let Ok(relative_path) = language_path.strip_prefix(&extension_dir) else {
                     continue;
                 };
+                let Ok(Some(fs_metadata)) = fs.metadata(&language_path).await else {
+                    continue;
+                };
+                if !fs_metadata.is_dir {
+                    continue;
+                }
                 let config = fs.load(&language_path.join("config.toml")).await?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
