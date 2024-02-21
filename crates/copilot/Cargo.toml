@@ -38,6 +38,9 @@ smol.workspace = true
 theme.workspace = true
 util.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+async-std = { version = "1.12.0", features = ["unstable"] }
+
 [dev-dependencies]
 clock.workspace = true
 collections = { workspace = true, features = ["test-support"] }

@@ -244,7 +244,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
-        runnables_ui::init(cx);
+        tasks_ui::init(cx);
         channel::init(&client, user_store.clone(), cx);
         search::init(cx);
         vim::init(cx);

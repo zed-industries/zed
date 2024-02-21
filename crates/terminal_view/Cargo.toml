@@ -23,9 +23,9 @@ lazy_static.workspace = true
 libc = "0.2"
 mio-extras = "2.0.6"
 ordered-float.workspace = true
-procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "5cd757e5f2eb039ed0c6bb6512223e69d5efc64d", default-features = false }
+procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "0c13436f4fa8b126f46dd4a20106419b41666897", default-features = false }
 project.workspace = true
-runnable.workspace = true
+task.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

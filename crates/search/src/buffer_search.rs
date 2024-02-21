@@ -38,7 +38,7 @@ pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MIN_INPUT_WIDTH_REMS: f32 = 15.;
-const MAX_INPUT_WIDTH_REMS: f32 = 25.;
+const MAX_INPUT_WIDTH_REMS: f32 = 30.;
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
@@ -217,7 +217,6 @@ impl Render for BufferSearchBar {
                     .flex_1()
                     .px_2()
                     .py_1()
-                    .gap_2()
                     .border_1()
                     .border_color(editor_border)
                     .min_w(rems(MIN_INPUT_WIDTH_REMS))

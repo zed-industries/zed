@@ -491,8 +491,8 @@ mod test {
             .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
             .unwrap();
 
-        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap(), false);
-        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap(), false);
+        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
 
         window
             .update(cx, |test_view, _| {
