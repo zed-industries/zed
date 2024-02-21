@@ -316,7 +316,7 @@ impl TerminalPanel {
             let command = std::mem::take(&mut spawn_task.command);
             let args = std::mem::take(&mut spawn_task.args);
             spawn_task.command = shell;
-            user_args.extend(["-c".to_owned(), command]);
+            user_args.extend(["-i".to_owned(), "-c".to_owned(), command]);
             user_args.extend(args);
             spawn_task.args = user_args;
         }
