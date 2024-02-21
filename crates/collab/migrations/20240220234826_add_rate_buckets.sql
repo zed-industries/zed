@@ -8,4 +8,4 @@ CREATE TABLE IF NOT EXISTS rate_buckets (
         FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
-CREATE INDEX idx_user_id_rate_limit ON rate_buckets (user_id, rate_limit);
+CREATE INDEX idx_user_id_rate_limit ON rate_buckets (user_id, rate_limit_name);

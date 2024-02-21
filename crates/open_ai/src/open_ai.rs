@@ -1,8 +1,7 @@
-use std::convert::TryFrom;
-
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
 use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -139,13 +138,14 @@ pub async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        if let Some(line) = line.strip_prefix("data: ") {
+                        let line = line.strip_prefix("data: ")?;
+                        if line == "[DONE]" {
+                            None
+                        } else {
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
                                 Err(error) => Some(Err(anyhow!(error))),
                             }
-                        } else {
-                            None
                         }
                     }
                     Err(error) => Some(Err(anyhow!(error))),

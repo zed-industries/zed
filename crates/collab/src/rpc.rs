@@ -606,19 +606,12 @@ impl Server {
             let handler = handler.clone();
             async move {
                 let peer = session.peer.clone();
-                let responded = Arc::new(AtomicBool::default());
                 let response = StreamingResponse {
                     peer: peer.clone(),
                     receipt,
                 };
                 match (handler)(envelope.payload, response, session).await {
-                    Ok(()) => {
-                        if responded.load(std::sync::atomic::Ordering::SeqCst) {
-                            Ok(())
-                        } else {
-                            Err(anyhow!("handler did not send a response"))?
-                        }
-                    }
+                    Ok(()) => Ok(()),
                     Err(error) => {
                         peer.respond_with_error(receipt, error.to_proto())?;
                         Err(error)
@@ -3361,7 +3354,7 @@ impl RateLimit for CountTokensWithLanguageModelRateLimit {
     }
 
     fn db_name() -> &'static str {
-        "complete-with-language-model"
+        "count-tokens-with-language-model"
     }
 }
 

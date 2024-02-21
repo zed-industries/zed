@@ -1,11 +1,11 @@
-use crate::db::{ProjectCollaboratorId, UserId};
+use crate::db::{RateBucketId, UserId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "rate_buckets")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: ProjectCollaboratorId,
+    pub id: RateBucketId,
     pub user_id: UserId,
     pub rate_limit_name: String,
     pub token_count: i32,
