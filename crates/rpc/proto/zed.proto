@@ -1007,7 +1007,7 @@ message UpdateChannels {
     repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
 
     repeated ChannelBuffer buffers = 10;
-    repeated uint64 deleted_files = 11;
+    repeated uint64 deleted_buffers = 11;
     repeated ChannelBufferVersion2 latest_buffer_versions = 12;
 }
 
