@@ -13,13 +13,13 @@
   variable_type_function: (IDENTIFIER)
 ] @variable
 
-;; better to use variable.parametr
-parameter: (IDENTIFIER) @property
+;; func parametr
+parameter: (IDENTIFIER) @variable.parametr
 
 [
   field_member: (IDENTIFIER)
   field_access: (IDENTIFIER)
-] @property
+] @variable
 
 ;; assume TitleCase is a type
 (
@@ -78,8 +78,8 @@ field_constant: (IDENTIFIER) @constant
 
 (BUILTINIDENTIFIER) @keyword
 
-((BUILTINIDENTIFIER) @keyword
-  (#any-of? @keyword "@import" "@cImport"))
+((BUILTINIDENTIFIER) @function
+  (#any-of? @function "@import" "@cImport"))
 
 (INTEGER) @number
 
@@ -170,7 +170,7 @@ field_constant: (IDENTIFIER) @constant
   "volatile"
   "allowzero"
   "noalias"
-] @property
+] @keyword
 
 [
   "addrspace"
@@ -188,7 +188,7 @@ field_constant: (IDENTIFIER) @constant
   "packed"
   "pub"
   "threadlocal"
-] @attribute
+] @keyword
 
 [
   "null"
