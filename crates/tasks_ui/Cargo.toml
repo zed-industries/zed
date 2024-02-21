@@ -1,5 +1,5 @@
 [package]
-name = "runnables_ui"
+name = "tasks_ui"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -17,7 +17,7 @@ log.workspace = true
 menu.workspace = true
 picker.workspace = true
 project.workspace = true
-runnable.workspace = true
+task.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

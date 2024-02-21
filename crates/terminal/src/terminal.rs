@@ -1,5 +1,7 @@
 pub mod mappings;
+
 pub use alacritty_terminal;
+
 pub mod terminal_settings;
 
 use alacritty_terminal::{
@@ -33,10 +35,10 @@ use mappings::mouse::{
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use procinfo::LocalProcessInfo;
-use runnable::RunnableId;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
+use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -179,6 +181,7 @@ impl TerminalSize {
         self.line_height
     }
 }
+
 impl Default for TerminalSize {
     fn default() -> Self {
         TerminalSize::new(
@@ -282,8 +285,8 @@ impl Display for TerminalError {
     }
 }
 
-pub struct SpawnRunnable {
-    pub id: RunnableId,
+pub struct SpawnTask {
+    pub id: TaskId,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -302,7 +305,7 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        runnable: Option<RunableState>,
+        task: Option<TaskState>,
         shell: Shell,
         env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
@@ -340,9 +343,9 @@ impl TerminalBuilder {
         std::env::set_var("LC_ALL", "en_US.UTF-8");
         std::env::set_var("ZED_TERM", "true");
 
-        let scrolling_history = if runnable.is_some() {
-            // Runnables like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
-            // After the runnable finishes, we do not allow appending to that terminal, so small runnables output should not
+        let scrolling_history = if task.is_some() {
+            // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
+            // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
             // cause excessive memory usage over time.
             MAX_SCROLL_HISTORY_LINES
         } else {
@@ -417,7 +420,7 @@ impl TerminalBuilder {
         let word_regex = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
 
         let terminal = Terminal {
-            runnable,
+            task,
             pty_tx: Notifier(pty_tx),
             completion_tx,
             term,
@@ -593,11 +596,11 @@ pub struct Terminal {
     hovered_word: bool,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
-    runnable: Option<RunableState>,
+    task: Option<TaskState>,
 }
 
-pub struct RunableState {
-    pub id: RunnableId,
+pub struct TaskState {
+    pub id: TaskId,
     pub label: String,
     pub completed: bool,
     pub completion_rx: Receiver<()>,
@@ -632,9 +635,9 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => match &mut self.runnable {
-                Some(runnable) => {
-                    runnable.completed = true;
+            AlacTermEvent::Exit => match &mut self.task {
+                Some(task) => {
+                    task.completed = true;
                     self.completion_tx.try_send(()).ok();
                 }
                 None => cx.emit(Event::CloseTerminal),
@@ -1361,8 +1364,8 @@ impl Terminal {
 
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
-        match &self.runnable {
-            Some(runnable_state) => truncate_and_trailoff(&runnable_state.label, MAX_CHARS),
+        match &self.task {
+            Some(task_state) => truncate_and_trailoff(&task_state.label, MAX_CHARS),
             None => self
                 .foreground_process_info
                 .as_ref()
@@ -1399,17 +1402,17 @@ impl Terminal {
         self.cmd_pressed && self.hovered_word
     }
 
-    pub fn runnable(&self) -> Option<&RunableState> {
-        self.runnable.as_ref()
+    pub fn task(&self) -> Option<&TaskState> {
+        self.task.as_ref()
     }
 
-    pub fn wait_for_completed_runnable(&self, cx: &mut AppContext) -> Task<()> {
-        match self.runnable() {
-            Some(runnable) => {
-                if runnable.completed {
+    pub fn wait_for_completed_task(&self, cx: &mut AppContext) -> Task<()> {
+        match self.task() {
+            Some(task) => {
+                if task.completed {
                     Task::ready(())
                 } else {
-                    let mut completion_receiver = runnable.completion_rx.clone();
+                    let mut completion_receiver = task.completion_rx.clone();
                     cx.spawn(|_| async move {
                         completion_receiver.next().await;
                     })
@@ -1642,7 +1645,7 @@ mod tests {
         assert_eq!(
             content.cells[content_index_for_mouse(
                 point(Pixels::from(-10.), Pixels::from(-10.)),
-                &content.size
+                &content.size,
             )]
             .c,
             cells[0][0]
@@ -1650,7 +1653,7 @@ mod tests {
         assert_eq!(
             content.cells[content_index_for_mouse(
                 point(Pixels::from(1000.), Pixels::from(1000.)),
-                &content.size
+                &content.size,
             )]
             .c,
             cells[9][9]

@@ -441,7 +441,7 @@ fn subscribe_for_terminal_events(
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
                 let terminal = this.terminal().read(cx);
-                if !terminal.runnable().is_some() {
+                if !terminal.task().is_some() {
                     if let Some(foreground_info) = &terminal.foreground_process_info {
                         let cwd = foreground_info.cwd.clone();
 
@@ -777,7 +777,7 @@ impl Item for TerminalView {
     ) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let icon = if terminal.runnable().is_some() {
+        let icon = if terminal.task().is_some() {
             IconName::Play
         } else {
             IconName::Terminal
@@ -817,8 +817,8 @@ impl Item for TerminalView {
     }
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
-        match self.terminal.read(cx).runnable() {
-            Some(runnable) => !runnable.completed,
+        match self.terminal.read(cx).task() {
+            Some(task) => !task.completed,
             None => self.has_bell(),
         }
     }
@@ -883,7 +883,7 @@ impl Item for TerminalView {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        if !self.terminal().read(cx).runnable().is_some() {
+        if !self.terminal().read(cx).task().is_some() {
             cx.background_executor()
                 .spawn(TERMINAL_DB.update_workspace_id(
                     workspace.database_id(),

@@ -22,14 +22,14 @@ use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
-use runnable::static_source::StaticSource;
-use runnables_ui::OneshotSource;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_local_settings_content, watch_config_file, KeymapFile, Settings, SettingsStore,
     DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
+use task::static_source::StaticSource;
+use tasks_ui::OneshotSource;
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -59,7 +59,7 @@ actions!(
         OpenDefaultKeymap,
         OpenDefaultSettings,
         OpenKeymap,
-        OpenRunnables,
+        OpenTasks,
         OpenLicenses,
         OpenLocalSettings,
         OpenLog,
@@ -159,16 +159,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
         let project = workspace.project().clone();
         if project.read(cx).is_local() {
-            let runnables_file_rx = watch_config_file(
+            let tasks_file_rx = watch_config_file(
                 &cx.background_executor(),
                 app_state.fs.clone(),
-                paths::RUNNABLES.clone(),
+                paths::TASKS.clone(),
             );
-            let static_source = StaticSource::new(runnables_file_rx, cx);
+            let static_source = StaticSource::new(tasks_file_rx, cx);
             let oneshot_source = OneshotSource::new(cx);
 
             project.update(cx, |project, cx| {
-                project.runnable_inventory().update(cx, |inventory, cx| {
+                project.task_inventory().update(cx, |inventory, cx| {
                     inventory.add_source(oneshot_source, cx);
                     inventory.add_source(static_source, cx);
                 })
@@ -278,10 +278,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 },
             )
             .register_action(
-                move |_: &mut Workspace, _: &OpenRunnables, cx: &mut ViewContext<Workspace>| {
+                move |_: &mut Workspace, _: &OpenTasks, cx: &mut ViewContext<Workspace>| {
                     open_settings_file(
-                        &paths::RUNNABLES,
-                        || settings::initial_runnables_content().as_ref().into(),
+                        &paths::TASKS,
+                        || settings::initial_tasks_content().as_ref().into(),
                         cx,
                     );
                 },
