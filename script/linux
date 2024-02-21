@@ -13,6 +13,7 @@ if [[ -n $apt ]]; then
     vulkan-validationlayers*
     libwayland-dev
     libxkbcommon-x11-dev
+    openssl
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -28,6 +29,7 @@ if [[ -n $dnf ]]; then
     vulkan-validation-layers
     wayland-devel
     libxkbcommon-x11-devel
+    openssl-devel
   )
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
@@ -43,6 +45,7 @@ if [[ -n $pacman ]]; then
     vulkan-validation-layers
     wayland
     libxkbcommon-x11
+    openssl
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
