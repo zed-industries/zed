@@ -1264,7 +1264,7 @@ impl Pane {
         cx.window_context().defer(move |cx| {
             let Ok(status_bar) = workspace.update(cx, |workspace, _| workspace.status_bar.clone())
             else {
-                return; 
+                return;
             };
 
             status_bar.update(cx, move |status_bar, cx| {
