@@ -77,6 +77,7 @@ num_cpus = "1.13.0"
 outline.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
+profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
