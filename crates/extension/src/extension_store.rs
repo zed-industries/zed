@@ -34,7 +34,7 @@ pub struct ExtensionsApiResponse {
     pub data: Vec<Extension>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Extension {
     pub id: Arc<str>,
     pub version: Arc<str>,
