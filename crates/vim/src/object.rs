@@ -5,6 +5,7 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint,
 };
+use regex::Regex;
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
 use language::{char_kind, CharKind, Selection};
 use serde::Deserialize;
@@ -27,6 +28,13 @@ pub enum Object {
     SquareBrackets,
     CurlyBrackets,
     AngleBrackets,
+    Tag,
+}
+
+struct htmlTag {
+    name: String,
+    start: DisplayPoint,
+    end: DisplayPoint,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -49,7 +57,8 @@ actions!(
         Parentheses,
         SquareBrackets,
         CurlyBrackets,
-        AngleBrackets
+        AngleBrackets,
+        Tag
     ]
 );
 
@@ -59,6 +68,9 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             object(Object::Word { ignore_punctuation }, cx)
         },
     );
+    workspace.register_action(|_: &mut Workspace, _: &Tag, cx: _| {
+            object(Object::Tag, cx)
+    });
     workspace
         .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
     workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
@@ -103,6 +115,7 @@ impl Object {
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
+            | Object::Tag
             | Object::Parentheses
             | Object::AngleBrackets
             | Object::CurlyBrackets
@@ -112,7 +125,7 @@ impl Object {
 
     pub fn always_expands_both_ways(self) -> bool {
         match self {
-            Object::Word { .. } | Object::Sentence => false,
+            Object::Word { .. } | Object::Tag | Object::Sentence => false,
             Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
@@ -131,6 +144,7 @@ impl Object {
             Object::Sentence
             | Object::Quotes
             | Object::BackQuotes
+            | Object::Tag
             | Object::DoubleQuotes
             | Object::VerticalBars
             | Object::Parentheses
@@ -153,7 +167,8 @@ impl Object {
                 } else {
                     in_word(map, relative_to, ignore_punctuation)
                 }
-            }
+            },
+            Object::Tag => surrounding_html_tag(map, relative_to, around),
             Object::Sentence => sentence(map, relative_to, around),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
@@ -229,6 +244,68 @@ fn in_word(
     Some(start..end)
 }
 
+
+
+fn surrounding_html_tag(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    surround: bool,
+) -> Option<Range<DisplayPoint>> {
+    // https://regexr.com/3t585
+    let re = Regex::new(r"<(/)?([^<>\s/]+)(?:[^<>]*?)(/)?>").unwrap();
+    let mut open_tag_stack: Vec<htmlTag> = Vec::new();
+    let mut final_stack: Vec<htmlTag> = Vec::new();
+    for cap in re.captures_iter(map.text().as_str()) {
+        // If it's a self-closing tag, skip
+        if let Some(matched) = cap.get(3) {
+            continue;
+        }
+        // If not have tag name ,skip
+        let tag_name: String = if let Some(tag_name) = cap.get(2) {
+            tag_name.as_str().to_string()
+        } else {
+            continue;
+        };
+
+        let is_opentag: bool = !cap.get(1).is_some();
+        if let Some(matched) = cap.get(0) {
+            let start = map.buffer_snapshot.clip_offset(matched.start(), Bias::Right);
+            let end = map.buffer_snapshot.clip_offset(matched.end(), Bias::Left);
+            let start_position = map.buffer_snapshot.offset_to_point(start);
+            let end_position = map.buffer_snapshot.offset_to_point(end);
+            let tag = htmlTag {
+                name: tag_name,
+                start: start_position.to_display_point(map),
+                end: end_position.to_display_point(map),
+            };
+
+            if is_opentag {
+                open_tag_stack.push(tag);
+            } else {
+                for i in (0..open_tag_stack.len()).rev() {
+                    let before_tag: &htmlTag = &open_tag_stack[i];
+                    if before_tag.name == tag.name {
+                        let match_tag = htmlTag {
+                            name: before_tag.name.clone(),
+                            start: if surround { before_tag.start } else { before_tag.end },
+                            end: if surround { tag.end } else { tag.start },
+                        };
+                        final_stack.push(match_tag);
+                        open_tag_stack.remove(i);
+                }
+            }
+        }
+        }
+        for tag in &final_stack {
+            if tag.start < relative_to && tag.end > relative_to {
+                println!("tag is {:?}",tag.name);
+                return Some(tag.start..tag.end)
+            }
+        }
+
+    }
+    None
+}
 /// Returns a range that surrounds the word and following whitespace
 /// relative_to is in.
 ///
