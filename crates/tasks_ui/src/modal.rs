@@ -180,16 +180,21 @@ impl PickerDelegate for TasksModalDelegate {
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        let Some(task) = secondary
-            .then(|| self.spawn_oneshot(cx))
-            .flatten()
-            .or_else(|| {
-                self.matches.get(current_match_index).map(|current_match| {
-                    let ix = current_match.candidate_id;
-                    self.candidates[ix].clone()
-                })
+
+        let task = if secondary {
+            if !self.last_prompt.trim().is_empty() {
+                self.spawn_oneshot(cx)
+            } else {
+                None
+            }
+        } else {
+            self.matches.get(current_match_index).map(|current_match| {
+                let ix = current_match.candidate_id;
+                self.candidates[ix].clone()
             })
-        else {
+        };
+
+        let Some(task) = task else {
             return;
         };
 

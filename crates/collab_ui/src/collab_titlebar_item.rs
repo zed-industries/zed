@@ -421,14 +421,20 @@ impl CollabTitlebarItem {
                 worktree.root_name()
             });
 
-            names.next().unwrap_or("")
+            names.next()
+        };
+        let is_project_selected = name.is_some();
+        let name = if let Some(name) = name {
+            util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
+        } else {
+            "Open recent project".to_string()
         };
 
-        let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
         let workspace = self.workspace.clone();
         popover_menu("project_name_trigger")
             .trigger(
                 Button::new("project_name_trigger", name)
+                    .when(!is_project_selected, |b| b.color(Color::Muted))
                     .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
@@ -689,6 +695,7 @@ impl CollabTitlebarItem {
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .action("Theme", theme_selector::Toggle.boxed_clone())
                             .separator()
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
@@ -714,6 +721,7 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Theme", theme_selector::Toggle.boxed_clone())
+                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .separator()
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
                     })

@@ -742,10 +742,12 @@ dependencies = [
  "anyhow",
  "client",
  "db",
+ "editor",
  "gpui",
  "isahc",
  "lazy_static",
  "log",
+ "markdown_preview",
  "menu",
  "project",
  "release_channel",
@@ -2065,6 +2067,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "extensions_ui",
  "feature_flags",
  "feedback",
  "futures 0.3.28",
@@ -11733,7 +11736,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.124.0"
+version = "0.125.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

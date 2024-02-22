@@ -6,7 +6,7 @@ use gpui::{
     IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext, WeakView,
 };
 use ui::prelude::*;
-use workspace::item::Item;
+use workspace::item::{Item, ItemHandle};
 use workspace::Workspace;
 
 use crate::{
@@ -22,6 +22,7 @@ pub struct MarkdownPreviewView {
     contents: ParsedMarkdown,
     selected_block: usize,
     list_state: ListState,
+    tab_description: String,
 }
 
 impl MarkdownPreviewView {
@@ -34,8 +35,9 @@ impl MarkdownPreviewView {
 
             if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
                 let workspace_handle = workspace.weak_handle();
+                let tab_description = editor.tab_description(0, cx);
                 let view: View<MarkdownPreviewView> =
-                    MarkdownPreviewView::new(editor, workspace_handle, cx);
+                    MarkdownPreviewView::new(editor, workspace_handle, tab_description, cx);
                 workspace.split_item(workspace::SplitDirection::Right, Box::new(view.clone()), cx);
                 cx.notify();
             }
@@ -45,6 +47,7 @@ impl MarkdownPreviewView {
     pub fn new(
         active_editor: View<Editor>,
         workspace: WeakView<Workspace>,
+        tab_description: Option<SharedString>,
         cx: &mut ViewContext<Workspace>,
     ) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
@@ -119,12 +122,17 @@ impl MarkdownPreviewView {
                 },
             );
 
+            let tab_description = tab_description
+                .map(|tab_description| format!("Preview {}", tab_description))
+                .unwrap_or("Markdown preview".to_string());
+
             Self {
                 selected_block: 0,
                 focus_handle: cx.focus_handle(),
                 workspace,
                 contents,
                 list_state,
+                tab_description: tab_description.into(),
             }
         })
     }
@@ -188,11 +196,13 @@ impl Item for MarkdownPreviewView {
             } else {
                 Color::Muted
             }))
-            .child(Label::new("Markdown preview").color(if selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
+            .child(
+                Label::new(self.tab_description.to_string()).color(if selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                }),
+            )
             .into_any()
     }
 

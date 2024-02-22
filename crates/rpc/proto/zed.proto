@@ -12,6 +12,14 @@ message Envelope {
     uint32 id = 1;
     optional uint32 responding_to = 2;
     optional PeerId original_sender_id = 3;
+
+    /*
+        When you are adding a new message type, instead of adding it in semantic order
+        and bumping the message ID's of everything that follows, add it at the end of the
+        file and bump the max number. See this
+        https://github.com/zed-industries/zed/pull/7890#discussion_r1496621823
+
+    */
     oneof payload {
         Hello hello = 4;
         Ack ack = 5;
@@ -49,6 +57,7 @@ message Envelope {
         GetDefinitionResponse get_definition_response = 33;
         GetTypeDefinition get_type_definition = 34;
         GetTypeDefinitionResponse get_type_definition_response = 35;
+
         GetReferences get_references = 36;
         GetReferencesResponse get_references_response = 37;
         GetDocumentHighlights get_document_highlights = 38;
@@ -186,10 +195,13 @@ message Envelope {
 
         UpdateUserChannels update_user_channels = 157;
 
-        CompleteWithLanguageModel complete_with_language_model = 163;
-        LanguageModelResponse language_model_response = 164;
-        CountTokensWithLanguageModel count_tokens_with_language_model = 165;
-        CountTokensResponse count_tokens_response = 166; // current max
+        GetImplementation get_implementation = 162;
+        GetImplementationResponse get_implementation_response = 163;
+
+        CompleteWithLanguageModel complete_with_language_model = 164;
+        LanguageModelResponse language_model_response = 165;
+        CountTokensWithLanguageModel count_tokens_with_language_model = 166;
+        CountTokensResponse count_tokens_response = 167; // current max
     }
 
     reserved 158 to 161;
@@ -509,6 +521,16 @@ message GetTypeDefinition {
  }
 
 message GetTypeDefinitionResponse {
+    repeated LocationLink links = 1;
+}
+message GetImplementation {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+ }
+
+message GetImplementationResponse {
     repeated LocationLink links = 1;
 }
 

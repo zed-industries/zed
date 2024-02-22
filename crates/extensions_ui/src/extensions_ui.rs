@@ -11,7 +11,7 @@ use settings::Settings;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 
 use workspace::{
     item::{Item, ItemEvent},
@@ -195,6 +195,7 @@ impl ExtensionsPage {
         .color(Color::Accent);
 
         let repository_url = extension.repository.clone();
+        let tooltip_text = Tooltip::text(repository_url.clone(), cx);
 
         div().w_full().child(
             v_flex()
@@ -269,7 +270,8 @@ impl ExtensionsPage {
                             .style(ButtonStyle::Filled)
                             .on_click(cx.listener(move |_, _, cx| {
                                 cx.open_url(&repository_url);
-                            })),
+                            }))
+                            .tooltip(move |_| tooltip_text.clone()),
                         ),
                 ),
         )
