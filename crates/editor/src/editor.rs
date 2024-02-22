@@ -7409,6 +7409,7 @@ impl Editor {
             let definitions = definitions.await?;
             editor.update(&mut cx, |editor, cx| {
                 editor.navigate_to_hover_links(
+                    Some(kind),
                     definitions.into_iter().map(HoverLink::Text).collect(),
                     split,
                     cx,
@@ -7441,8 +7442,9 @@ impl Editor {
         .detach();
     }
 
-    pub fn navigate_to_hover_links(
+    pub(crate) fn navigate_to_hover_links(
         &mut self,
+        kind: Option<GotoDefinitionKind>,
         mut definitions: Vec<HoverLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
@@ -7511,13 +7513,18 @@ impl Editor {
             cx.spawn(|editor, mut cx| async move {
                 let (title, location_tasks, workspace) = editor
                     .update(&mut cx, |editor, cx| {
+                        let tab_kind = match kind {
+                            Some(GotoDefinitionKind::Implementation) => "Implementations",
+                            _ => "Definitions",
+                        };
                         let title = definitions
                             .iter()
                             .find_map(|definition| match definition {
                                 HoverLink::Text(link) => link.origin.as_ref().map(|origin| {
                                     let buffer = origin.buffer.read(cx);
                                     format!(
-                                        "Definitions for {}",
+                                        "{} for {}",
+                                        tab_kind,
                                         buffer
                                             .text_for_range(origin.range.clone())
                                             .collect::<String>()
@@ -7526,7 +7533,7 @@ impl Editor {
                                 HoverLink::InlayHint(_, _) => None,
                                 HoverLink::Url(_) => None,
                             })
-                            .unwrap_or("Definitions".to_string());
+                            .unwrap_or(tab_kind.to_string());
                         let location_tasks = definitions
                             .into_iter()
                             .map(|definition| match definition {
