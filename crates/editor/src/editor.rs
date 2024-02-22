@@ -9656,25 +9656,21 @@ impl EditorSnapshot {
                 0.0.into()
             };
 
-            let left_gutter_padding = match (
-                show_git_gutter,
-                gutter_settings.code_actions,
-                gutter_settings.line_numbers,
-            ) {
-                (true, false, false) => em_width,
-                (false, false, true) => em_width * 2.0,
-                (true, true, _) => em_width * 4.0,
-                (true, false, _) => em_width * 2.0,
-                (false, true, _) => em_width * 4.0,
-                _ => 0.0.into(),
-            };
+            let git_gutter_left_padding = show_git_gutter.then_some(em_width);
+            let code_actions_left_padding = gutter_settings.code_actions.then_some(em_width * 4.0);
+            let line_numbers_left_padding = gutter_settings.line_numbers.then_some(em_width);
 
-            let right_gutter_padding = match (gutter_settings.line_numbers, gutter_settings.folds) {
-                (true, true) => em_width * 4.0,
-                (true, false) => em_width * 2.0,
-                (false, true) => em_width * 3.0,
-                (false, false) => 0.0.into(),
-            };
+            let left_gutter_padding = Pixels(0.0)
+                .max(git_gutter_left_padding.unwrap_or(0.0.into()))
+                .max(code_actions_left_padding.unwrap_or(0.0.into()))
+                .max(line_numbers_left_padding.unwrap_or(0.0.into()));
+
+            let line_number_right_padding = gutter_settings.line_numbers.then_some(em_width * 2.0);
+            let folds_right_padding = gutter_settings.folds.then_some(em_width * 3.0);
+
+            let right_gutter_padding = Pixels(0.0)
+                .max(line_number_right_padding.unwrap_or(0.0.into()))
+                .max(folds_right_padding.unwrap_or(0.0.into()));
 
             let gutter_width = line_gutter_width + left_gutter_padding + right_gutter_padding;
             let gutter_margin = -descent;
