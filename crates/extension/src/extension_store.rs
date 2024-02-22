@@ -1,7 +1,11 @@
+mod language_server_extension;
+
+#[cfg(test)]
+mod extension_store_test;
+
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use async_trait::async_trait;
 use collections::{BTreeMap, HashSet};
 use fs::{Fs, RemoveOptions};
 use futures::channel::mpsc::unbounded;
@@ -13,6 +17,8 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
     WASM_ENGINE,
 };
+use language_server_extension::LanguageServerExtension;
+use node_runtime::NodeRuntime;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -23,57 +29,13 @@ use std::{
     time::Duration,
 };
 use theme::{ThemeRegistry, ThemeSettings};
-use util::http::{AsyncBody, HttpClientWithUrl};
-use util::TryFutureExt;
-use util::{http::HttpClient, paths::EXTENSIONS_DIR, ResultExt};
+use util::{
+    http::{AsyncBody, HttpClient, HttpClientWithUrl},
+    paths::EXTENSIONS_DIR,
+    ResultExt, TryFutureExt,
+};
 use wasmtime::component::Component;
 use wasmtime_wasi::preview2::{command, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
-
-wasmtime::component::bindgen!({
-    async: true
-});
-
-struct WasmState {
-    table: ResourceTable,
-    ctx: WasiCtx,
-}
-
-#[async_trait]
-impl LanguageServerExtensionImports for WasmState {
-    #[must_use]
-    async fn npm_package_latest_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<String, String>> {
-        todo!()
-    }
-
-    async fn latest_github_release(
-        &mut self,
-        repo: String,
-    ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        Ok(Ok(GithubRelease {
-            version: "50".into(),
-            assets: vec![GithubReleaseAsset {
-                name: "the-asset".into(),
-                download_url: "the-url".into(),
-            }],
-        }))
-    }
-}
-
-impl WasiView for WasmState {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.ctx
-    }
-}
-
-#[cfg(test)]
-mod extension_store_test;
 
 #[derive(Deserialize)]
 pub struct ExtensionsApiResponse {
@@ -173,21 +135,31 @@ struct ExtensionChanges {
     themes: HashSet<Arc<str>>,
 }
 
+pub(crate) struct WasmState {
+    table: ResourceTable,
+    ctx: WasiCtx,
+    node_runtime: Arc<dyn NodeRuntime>,
+    http_client: Arc<dyn HttpClient>,
+}
+
 actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
     http_client: Arc<HttpClientWithUrl>,
+    // http_client: Arc<dyn HttpClient>,
+    node_runtime: Arc<dyn NodeRuntime>,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
 ) {
-    let store = cx.new_model(|cx| {
+    let store = cx.new_model(move |cx| {
         ExtensionStore::new(
             EXTENSIONS_DIR.clone(),
-            fs.clone(),
-            http_client.clone(),
-            language_registry.clone(),
+            fs,
+            http_client,
+            node_runtime,
+            language_registry,
             theme_registry,
             cx,
         )
@@ -210,6 +182,7 @@ impl ExtensionStore {
         extensions_dir: PathBuf,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         cx: &mut ModelContext<Self>,
@@ -234,7 +207,12 @@ impl ExtensionStore {
             wasm_linker: Arc::new(wasm_linker),
             wasm_store: Arc::new(AsyncMutex::new(wasmtime::Store::new(
                 &WASM_ENGINE,
-                WasmState { table, ctx },
+                WasmState {
+                    table,
+                    ctx,
+                    node_runtime,
+                    http_client: http_client.clone(),
+                },
             ))),
             language_server_extensions: Vec::new(),
             fs,
@@ -894,4 +872,14 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
         }
     }
     result
+}
+
+impl WasiView for WasmState {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+
+    fn ctx(&mut self) -> &mut WasiCtx {
+        &mut self.ctx
+    }
 }

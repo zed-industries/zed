@@ -24,6 +24,7 @@ futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
+node_runtime.workspace = true
 parking_lot.workspace = true
 schemars.workspace = true
 serde.workspace = true

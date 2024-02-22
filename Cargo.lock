@@ -3344,6 +3344,7 @@ dependencies = [
  "gpui",
  "language",
  "log",
+ "node_runtime",
  "parking_lot 0.11.2",
  "schemars",
  "serde",

@@ -1,12 +1,21 @@
 mod bindings;
+use bindings::{latest_github_release, Command, GithubReleaseOptions, Guest};
 
 struct Component;
 
-impl bindings::Guest for Component {
-    fn get_language_server_command() -> Result<bindings::Command, wit_bindgen::rt::string::String> {
-        let _release = bindings::latest_github_release("rust-lang/rust-analyzer")?;
+impl Guest for Component {
+    fn get_language_server_command() -> Result<Command, String> {
+        let release = latest_github_release(
+            "rust-lang/rust-analyzer",
+            GithubReleaseOptions {
+                require_assets: true,
+                pre_release: false,
+            },
+        )?;
 
-        Ok(bindings::Command {
+        println!("Download URL: {}", release.assets[0].download_url);
+
+        Ok(Command {
             command: "path/to/rust-analyzer".to_string(),
             args: vec!["--stdio".into()],
             env: vec![],

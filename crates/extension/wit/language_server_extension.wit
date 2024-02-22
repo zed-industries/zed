@@ -17,8 +17,13 @@ world language-server-extension {
         download-url: string,
     }
 
+    record github-release-options {
+        require-assets: bool,
+        pre-release: bool,
+    }
+
     import npm-package-latest-version: func(package-name: string) -> result<string, string>;
-    import latest-github-release: func(repo: string) -> result<github-release, string>;
+    import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 
     export get-language-server-command: func() -> result<command, string>;
 }

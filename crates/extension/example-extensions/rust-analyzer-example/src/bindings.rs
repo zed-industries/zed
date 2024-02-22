@@ -30,6 +30,17 @@ impl ::core::fmt::Debug for GithubRelease {
     f.debug_struct("GithubRelease").field("version", &self.version).field("assets", &self.assets).finish()
   }
 }
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GithubReleaseOptions {
+  pub require_assets: bool,
+  pub pre_release: bool,
+}
+impl ::core::fmt::Debug for GithubReleaseOptions {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    f.debug_struct("GithubReleaseOptions").field("require-assets", &self.require_assets).field("pre-release", &self.pre_release).finish()
+  }
+}
 #[allow(unused_unsafe, clippy::all)]
 pub fn npm_package_latest_version(package_name: &str,) -> Result<wit_bindgen::rt::string::String,wit_bindgen::rt::string::String>{
   
@@ -83,7 +94,7 @@ pub fn npm_package_latest_version(package_name: &str,) -> Result<wit_bindgen::rt
   }
 }
 #[allow(unused_unsafe, clippy::all)]
-pub fn latest_github_release(repo: &str,) -> Result<GithubRelease,wit_bindgen::rt::string::String>{
+pub fn latest_github_release(repo: &str,options: GithubReleaseOptions,) -> Result<GithubRelease,wit_bindgen::rt::string::String>{
   
   #[allow(unused_imports)]
   use wit_bindgen::rt::{alloc, vec::Vec, string::String};
@@ -95,66 +106,67 @@ pub fn latest_github_release(repo: &str,) -> Result<GithubRelease,wit_bindgen::r
     let vec0 = repo;
     let ptr0 = vec0.as_ptr() as i32;
     let len0 = vec0.len() as i32;
-    let ptr1 = ret_area.as_mut_ptr() as i32;
+    let GithubReleaseOptions{ require_assets:require_assets1, pre_release:pre_release1, } = options;
+    let ptr2 = ret_area.as_mut_ptr() as i32;
     #[cfg(target_arch = "wasm32")]
     #[link(wasm_import_module = "$root")]
     extern "C" {
       #[link_name = "latest-github-release"]
-      fn wit_import(_: i32, _: i32, _: i32, );
+      fn wit_import(_: i32, _: i32, _: i32, _: i32, _: i32, );
     }
     
     #[cfg(not(target_arch = "wasm32"))]
-    fn wit_import(_: i32, _: i32, _: i32, ){ unreachable!() }
-    wit_import(ptr0, len0, ptr1);
-    let l2 = i32::from(*((ptr1 + 0) as *const u8));
-    match l2 {
+    fn wit_import(_: i32, _: i32, _: i32, _: i32, _: i32, ){ unreachable!() }
+    wit_import(ptr0, len0, match require_assets1 { true => 1, false => 0 }, match pre_release1 { true => 1, false => 0 }, ptr2);
+    let l3 = i32::from(*((ptr2 + 0) as *const u8));
+    match l3 {
       0 => {
         let e = {
-          let l3 = *((ptr1 + 4) as *const i32);
-          let l4 = *((ptr1 + 8) as *const i32);
-          let len5 = l4 as usize;
-          let bytes5 = Vec::from_raw_parts(l3 as *mut _, len5, len5);
-          let l6 = *((ptr1 + 12) as *const i32);
-          let l7 = *((ptr1 + 16) as *const i32);
-          let base14 = l6;
-          let len14 = l7;
-          let mut result14 = Vec::with_capacity(len14 as usize);
-          for i in 0..len14 {
-            let base = base14 + i * 16;
-            let e14 = {
-              let l8 = *((base + 0) as *const i32);
-              let l9 = *((base + 4) as *const i32);
-              let len10 = l9 as usize;
-              let bytes10 = Vec::from_raw_parts(l8 as *mut _, len10, len10);
-              let l11 = *((base + 8) as *const i32);
-              let l12 = *((base + 12) as *const i32);
-              let len13 = l12 as usize;
-              let bytes13 = Vec::from_raw_parts(l11 as *mut _, len13, len13);
+          let l4 = *((ptr2 + 4) as *const i32);
+          let l5 = *((ptr2 + 8) as *const i32);
+          let len6 = l5 as usize;
+          let bytes6 = Vec::from_raw_parts(l4 as *mut _, len6, len6);
+          let l7 = *((ptr2 + 12) as *const i32);
+          let l8 = *((ptr2 + 16) as *const i32);
+          let base15 = l7;
+          let len15 = l8;
+          let mut result15 = Vec::with_capacity(len15 as usize);
+          for i in 0..len15 {
+            let base = base15 + i * 16;
+            let e15 = {
+              let l9 = *((base + 0) as *const i32);
+              let l10 = *((base + 4) as *const i32);
+              let len11 = l10 as usize;
+              let bytes11 = Vec::from_raw_parts(l9 as *mut _, len11, len11);
+              let l12 = *((base + 8) as *const i32);
+              let l13 = *((base + 12) as *const i32);
+              let len14 = l13 as usize;
+              let bytes14 = Vec::from_raw_parts(l12 as *mut _, len14, len14);
               
               GithubReleaseAsset{
-                name: wit_bindgen::rt::string_lift(bytes10),
-                download_url: wit_bindgen::rt::string_lift(bytes13),
+                name: wit_bindgen::rt::string_lift(bytes11),
+                download_url: wit_bindgen::rt::string_lift(bytes14),
               }
             };
-            result14.push(e14);
+            result15.push(e15);
           }
-          wit_bindgen::rt::dealloc(base14, (len14 as usize) * 16, 4);
+          wit_bindgen::rt::dealloc(base15, (len15 as usize) * 16, 4);
           
           GithubRelease{
-            version: wit_bindgen::rt::string_lift(bytes5),
-            assets: result14,
+            version: wit_bindgen::rt::string_lift(bytes6),
+            assets: result15,
           }
         };
         Ok(e)
       }
       1 => {
         let e = {
-          let l15 = *((ptr1 + 4) as *const i32);
-          let l16 = *((ptr1 + 8) as *const i32);
-          let len17 = l16 as usize;
-          let bytes17 = Vec::from_raw_parts(l15 as *mut _, len17, len17);
+          let l16 = *((ptr2 + 4) as *const i32);
+          let l17 = *((ptr2 + 8) as *const i32);
+          let len18 = l17 as usize;
+          let bytes18 = Vec::from_raw_parts(l16 as *mut _, len18, len18);
           
-          wit_bindgen::rt::string_lift(bytes17)
+          wit_bindgen::rt::string_lift(bytes18)
         };
         Err(e)
       }
@@ -336,7 +348,7 @@ static mut _RET_AREA: _RetArea = _RetArea([0; 28]);
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:language-server-extension"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 509] = [3, 0, 25, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 0, 97, 115, 109, 13, 0, 1, 0, 7, 219, 2, 1, 65, 2, 1, 65, 19, 1, 112, 115, 1, 111, 2, 115, 115, 1, 112, 1, 1, 114, 3, 7, 99, 111, 109, 109, 97, 110, 100, 115, 4, 97, 114, 103, 115, 0, 3, 101, 110, 118, 2, 3, 0, 7, 99, 111, 109, 109, 97, 110, 100, 3, 0, 3, 1, 114, 2, 4, 110, 97, 109, 101, 115, 12, 100, 111, 119, 110, 108, 111, 97, 100, 45, 117, 114, 108, 115, 3, 0, 20, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 45, 97, 115, 115, 101, 116, 3, 0, 5, 1, 112, 6, 1, 114, 2, 7, 118, 101, 114, 115, 105, 111, 110, 115, 6, 97, 115, 115, 101, 116, 115, 7, 3, 0, 14, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 3, 0, 8, 1, 106, 1, 115, 1, 115, 1, 64, 1, 12, 112, 97, 99, 107, 97, 103, 101, 45, 110, 97, 109, 101, 115, 0, 10, 3, 0, 26, 110, 112, 109, 45, 112, 97, 99, 107, 97, 103, 101, 45, 108, 97, 116, 101, 115, 116, 45, 118, 101, 114, 115, 105, 111, 110, 1, 11, 1, 106, 1, 9, 1, 115, 1, 64, 1, 4, 114, 101, 112, 111, 115, 0, 12, 3, 0, 21, 108, 97, 116, 101, 115, 116, 45, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 1, 13, 1, 106, 1, 4, 1, 115, 1, 64, 0, 0, 14, 4, 0, 27, 103, 101, 116, 45, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 99, 111, 109, 109, 97, 110, 100, 1, 15, 4, 1, 55, 122, 101, 100, 58, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 47, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 4, 0, 11, 31, 1, 0, 25, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 3, 0, 0, 0, 16, 12, 112, 97, 99, 107, 97, 103, 101, 45, 100, 111, 99, 115, 0, 123, 125, 0, 70, 9, 112, 114, 111, 100, 117, 99, 101, 114, 115, 1, 12, 112, 114, 111, 99, 101, 115, 115, 101, 100, 45, 98, 121, 2, 13, 119, 105, 116, 45, 99, 111, 109, 112, 111, 110, 101, 110, 116, 6, 48, 46, 49, 56, 46, 50, 16, 119, 105, 116, 45, 98, 105, 110, 100, 103, 101, 110, 45, 114, 117, 115, 116, 6, 48, 46, 49, 54, 46, 48];
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 578] = [3, 0, 25, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 0, 97, 115, 109, 13, 0, 1, 0, 7, 160, 3, 1, 65, 2, 1, 65, 21, 1, 112, 115, 1, 111, 2, 115, 115, 1, 112, 1, 1, 114, 3, 7, 99, 111, 109, 109, 97, 110, 100, 115, 4, 97, 114, 103, 115, 0, 3, 101, 110, 118, 2, 3, 0, 7, 99, 111, 109, 109, 97, 110, 100, 3, 0, 3, 1, 114, 2, 4, 110, 97, 109, 101, 115, 12, 100, 111, 119, 110, 108, 111, 97, 100, 45, 117, 114, 108, 115, 3, 0, 20, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 45, 97, 115, 115, 101, 116, 3, 0, 5, 1, 112, 6, 1, 114, 2, 7, 118, 101, 114, 115, 105, 111, 110, 115, 6, 97, 115, 115, 101, 116, 115, 7, 3, 0, 14, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 3, 0, 8, 1, 114, 2, 14, 114, 101, 113, 117, 105, 114, 101, 45, 97, 115, 115, 101, 116, 115, 127, 11, 112, 114, 101, 45, 114, 101, 108, 101, 97, 115, 101, 127, 3, 0, 22, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 45, 111, 112, 116, 105, 111, 110, 115, 3, 0, 10, 1, 106, 1, 115, 1, 115, 1, 64, 1, 12, 112, 97, 99, 107, 97, 103, 101, 45, 110, 97, 109, 101, 115, 0, 12, 3, 0, 26, 110, 112, 109, 45, 112, 97, 99, 107, 97, 103, 101, 45, 108, 97, 116, 101, 115, 116, 45, 118, 101, 114, 115, 105, 111, 110, 1, 13, 1, 106, 1, 9, 1, 115, 1, 64, 2, 4, 114, 101, 112, 111, 115, 7, 111, 112, 116, 105, 111, 110, 115, 11, 0, 14, 3, 0, 21, 108, 97, 116, 101, 115, 116, 45, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 1, 15, 1, 106, 1, 4, 1, 115, 1, 64, 0, 0, 16, 4, 0, 27, 103, 101, 116, 45, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 99, 111, 109, 109, 97, 110, 100, 1, 17, 4, 1, 55, 122, 101, 100, 58, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 47, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 4, 0, 11, 31, 1, 0, 25, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 3, 0, 0, 0, 16, 12, 112, 97, 99, 107, 97, 103, 101, 45, 100, 111, 99, 115, 0, 123, 125, 0, 70, 9, 112, 114, 111, 100, 117, 99, 101, 114, 115, 1, 12, 112, 114, 111, 99, 101, 115, 115, 101, 100, 45, 98, 121, 2, 13, 119, 105, 116, 45, 99, 111, 109, 112, 111, 110, 101, 110, 116, 6, 48, 46, 49, 56, 46, 50, 16, 119, 105, 116, 45, 98, 105, 110, 100, 103, 101, 110, 45, 114, 117, 115, 116, 6, 48, 46, 49, 54, 46, 48];
 
 #[inline(never)]
 #[doc(hidden)]

@@ -2,11 +2,12 @@ use crate::{ExtensionStore, LanguageManifestEntry, Manifest, ManifestEntry, Them
 use fs::FakeFs;
 use gpui::{Context, TestAppContext};
 use language::{LanguageMatcher, LanguageRegistry};
+use node_runtime::FakeNodeRuntime;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
-use util::http::FakeHttpClient;
+use util::http::{FakeHttpClient, Response};
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
@@ -188,12 +189,14 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     let language_registry = Arc::new(LanguageRegistry::test());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let node_runtime = FakeNodeRuntime::new();
 
     let store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             fs.clone(),
             http_client.clone(),
+            node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
             cx,
@@ -288,6 +291,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             PathBuf::from("/the-extension-dir"),
             fs.clone(),
             http_client.clone(),
+            node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
             cx,
@@ -384,7 +388,26 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
     .unwrap();
 
     let fs = FakeFs::new(cx.executor());
-    let http_client = FakeHttpClient::with_200_response();
+    let http_client = FakeHttpClient::create(|_| async move {
+        Ok(Response::new(
+            json!([
+                {
+                    "tag_name": "something",
+                    "prerelease": false,
+                    "tarball_url": "",
+                    "zipball_url": "",
+                    "assets": [
+                        {
+                            "name": "ok",
+                            "browser_download_url": "http://the-download-url.example.com"
+                        }
+                    ]
+                }
+            ])
+            .to_string()
+            .into(),
+        ))
+    });
 
     fs.insert_tree(
         "/the-extension-dir",
@@ -419,11 +442,14 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
 
     let language_registry = Arc::new(LanguageRegistry::test());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let node_runtime = FakeNodeRuntime::new();
+
     let store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             fs.clone(),
             http_client.clone(),
+            node_runtime,
             language_registry.clone(),
             theme_registry.clone(),
             cx,
@@ -443,6 +469,7 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
         let result = extension
             .call_get_language_server_command(&mut *wasm_store)
             .await
+            .unwrap()
             .unwrap();
         dbg!(result);
     }
