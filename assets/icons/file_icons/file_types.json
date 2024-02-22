@@ -116,6 +116,7 @@
         "rebar.config": "erlang",
         "rkt": "code",
         "rs": "rust",
+        "r": "r",
         "rtf": "document",
         "sav": "storage",
         "scm": "code",
@@ -237,6 +238,9 @@
         },
         "rust": {
             "icon": "icons/file_icons/rust.svg"
+        },
+        "r": {
+            "icon": "icons/file_icons/r.svg"
         },
         "settings": {
             "icon": "icons/file_icons/settings.svg"
