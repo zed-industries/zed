@@ -1,26 +1,26 @@
-//! Definitions of runnables with a static file config definition, not dependent on the application state.
+//! Definitions of tasks with a static file config definition, not dependent on the application state.
 
 use std::path::{Path, PathBuf};
 
-use crate::{static_source::Definition, Runnable, RunnableId, SpawnInTerminal};
+use crate::{static_source::Definition, SpawnInTerminal, Task, TaskId};
 
-/// A single config file entry with the deserialized runnable definition.
+/// A single config file entry with the deserialized task definition.
 #[derive(Clone, Debug, PartialEq)]
-pub struct StaticRunnable {
-    id: RunnableId,
+pub struct StaticTask {
+    id: TaskId,
     definition: Definition,
 }
 
-impl StaticRunnable {
-    pub(super) fn new(id: usize, runnable: Definition) -> Self {
+impl StaticTask {
+    pub(super) fn new(id: usize, task_definition: Definition) -> Self {
         Self {
-            id: RunnableId(format!("static_{}_{}", runnable.label, id)),
-            definition: runnable,
+            id: TaskId(format!("static_{}_{}", task_definition.label, id)),
+            definition: task_definition,
         }
     }
 }
 
-impl Runnable for StaticRunnable {
+impl Task for StaticTask {
     fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal> {
         Some(SpawnInTerminal {
             id: self.id.clone(),
@@ -39,7 +39,7 @@ impl Runnable for StaticRunnable {
         &self.definition.label
     }
 
-    fn id(&self) -> &RunnableId {
+    fn id(&self) -> &TaskId {
         &self.id
     }
 

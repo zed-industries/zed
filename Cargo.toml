@@ -63,8 +63,8 @@ members = [
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
-    "crates/runnable",
-    "crates/runnables_ui",
+    "crates/task",
+    "crates/tasks_ui",
     "crates/search",
     "crates/semantic_index",
     "crates/settings",
@@ -155,8 +155,8 @@ release_channel = { path = "crates/release_channel" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-runnable = { path = "crates/runnable" }
-runnables_ui = { path = "crates/runnables_ui" }
+task = { path = "crates/task" }
+tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 settings = { path = "crates/settings" }
