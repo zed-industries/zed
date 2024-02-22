@@ -432,15 +432,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
-                state.keyboard_focused_window = state
+                let keyboard_focused_window = state
                     .windows
                     .iter()
                     .find(|&w| w.1.surface.id() == surface.id())
                     .map(|w| w.1.clone());
 
-                if let Some(window) = &state.keyboard_focused_window {
+                if let Some(window) = keyboard_focused_window {
                     window.set_focused(false);
                 }
+
+                state.keyboard_focused_window = None;
             }
             wl_keyboard::Event::Modifiers {
                 mods_depressed,
