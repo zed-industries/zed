@@ -9326,7 +9326,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         &'a self,
         command: &'a OsStr,
         cx: &AppContext,
-    ) -> BoxFuture<'a, Option<PathBuf>> {
+    ) -> BoxFuture<'a, Option<(PathBuf, HashMap<String, String>)>> {
         let worktree_abs_path = self.worktree.read(cx).abs_path();
         async move {
             let shell_env = load_login_shell_environment(&worktree_abs_path)
@@ -9338,10 +9338,10 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
                 })
                 .log_err();
 
-            if let Some(shell_env) = shell_env.as_ref() {
+            if let Some(shell_env) = shell_env {
                 let shell_path = shell_env.get("PATH");
                 match which::which_in(command, shell_path, &worktree_abs_path) {
-                    Ok(command_path) => Some(command_path),
+                    Ok(command_path) => Some((command_path, shell_env)),
                     Err(error) => {
                         log::warn!(
                             "failed to determine path for command {command:?} in env {shell_env:?}: {error}"

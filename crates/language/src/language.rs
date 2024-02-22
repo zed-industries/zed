@@ -254,7 +254,7 @@ pub trait LspAdapterDelegate: Send + Sync {
         &'a self,
         command: &'a OsStr,
         cx: &AppContext,
-    ) -> BoxFuture<'a, Option<PathBuf>>;
+    ) -> BoxFuture<'a, Option<(PathBuf, HashMap<String, String>)>>;
     fn build_command<'a>(
         &'a self,
         command: &'a OsStr,

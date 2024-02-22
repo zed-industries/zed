@@ -72,9 +72,10 @@ impl super::LspAdapter for GoLspAdapter {
                 }
             };
             match command {
-                Some(path) => Some(LanguageServerBinary {
+                Some((path, env)) => Some(LanguageServerBinary {
                     path,
                     arguments: server_binary_arguments(),
+                    env: Some(env),
                 }),
                 None => None,
             }
@@ -135,6 +136,7 @@ impl super::LspAdapter for GoLspAdapter {
                     return Ok(LanguageServerBinary {
                         path: binary_path.to_path_buf(),
                         arguments: server_binary_arguments(),
+                        env: None,
                     });
                 }
             }
@@ -182,6 +184,7 @@ impl super::LspAdapter for GoLspAdapter {
         Ok(LanguageServerBinary {
             path: binary_path.to_path_buf(),
             arguments: server_binary_arguments(),
+            env: None,
         })
     }
 
@@ -400,6 +403,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             Ok(LanguageServerBinary {
                 path,
                 arguments: server_binary_arguments(),
+                env: None,
             })
         } else {
             Err(anyhow!("no cached binary"))
