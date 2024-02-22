@@ -9,9 +9,9 @@ struct GlobalDiscord(Model<Discord>);
 impl Global for GlobalDiscord {}
 
 pub struct Discord {
-    client: Option<Arc<Mutex<Client>>>,
-    pub running: Option<bool>,
-    initialized: Option<bool>,
+    client: Arc<Mutex<Client>>,
+    pub running: bool,
+    initialized: bool,
     start_timestamp: Option<u64>,
 }
 
@@ -32,82 +32,84 @@ impl Discord {
 
     pub fn new() -> Self {
         Self {
-            client: Some(Arc::new(Mutex::new(Client::new(1209561748273762375)))),
-            running: Some(false),
-            initialized: Some(false),
+            client: Arc::new(Mutex::new(Client::new(1209561748273762375))),
+            running: false,
+            initialized: false,
             start_timestamp: None,
         }
     }
 
     pub fn start_discord_rpc(&mut self) {
-        if let Some(client) = self.client.clone() {
-            // Use initialized here to prevent calling client.start multiple times
-            if !self.initialized.unwrap_or_else(|| false) {
-                self.initialized = Some(true);
-                thread::spawn(move || {
-                    let mut client = client.lock().unwrap();
-                    client.start();
-                });
-            }
-
-            self.start_timestamp = Some(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            );
-            self.running = Some(true);
+        if !self.initialized {
+            self.initialized = true;
+            let client = Arc::clone(&self.client);
+            thread::spawn(move || {
+                let mut client = client
+                    .lock()
+                    .expect("Failed to lock the client for starting");
+                client.start();
+            });
         }
+
+        self.start_timestamp = Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs(),
+        );
+        self.running = true;
     }
 
     pub fn stop_discord_rpc(&mut self) {
-        if let Some(client) = self.client.clone() {
-            thread::spawn(move || {
-                let mut client = client.lock().unwrap();
-                let _ = client.clear_activity();
-            });
+        let client = Arc::clone(&self.client);
+        thread::spawn(move || {
+            let mut client = client
+                .lock()
+                .expect("Failed to lock the client for stopping");
+            let _ = client.clear_activity();
+        });
 
-            self.running = Some(false);
-        }
+        self.running = false;
     }
 
     pub fn set_activity(&self, filename: String, language: String, project: String) {
-        if let Some(client) = self.client.clone() {
-            let start_timestamp = self.start_timestamp;
-            let image_key = self.map_language_to_image_key(&language);
+        let client = Arc::clone(&self.client);
+        let start_timestamp = self.start_timestamp;
+        let image_key = self.map_language_to_image_key(&language);
 
-            thread::spawn(move || {
-                let mut client = client.lock().unwrap();
-                let language_text = if language.is_empty() {
-                    "a file".to_string()
-                } else {
-                    format!("a {} file", language)
-                };
-                let project = if project.is_empty() {
-                    "No Project".to_string()
-                } else {
-                    format!("Project: {}", project)
-                };
-                client.set_activity(|a| {
+        thread::spawn(move || {
+            let mut client = client
+                .lock()
+                .expect("Failed to lock the client for activity update");
+            let language_text = language
+                .is_empty()
+                .then(|| "a file".to_string())
+                .unwrap_or_else(|| format!("a {} file", language));
+            let project_text = project
+                .is_empty()
+                .then(|| "No Project".to_string())
+                .unwrap_or_else(|| format!("Project: {}", project));
+
+            client
+                .set_activity(|a| {
                     let activity = a
                         .details(&format!("Editing {}", filename))
-                        .state(project)
+                        .state(&project_text)
                         .assets(|ass| {
                             ass.large_image(&image_key)
                                 .large_text(&format!("Editing {}", language_text))
                                 .small_image("zed_small_blue")
                                 .small_text("Zed")
                         });
-                    let activity = if let Some(start) = start_timestamp {
+
+                    if let Some(start) = start_timestamp {
                         activity.timestamps(|t| t.start(start))
                     } else {
                         activity
-                    };
-
-                    activity
+                    }
                 })
-            });
-        }
+                .expect("Failed to set activity");
+        });
     }
 
     fn map_language_to_image_key(&self, language: &str) -> String {

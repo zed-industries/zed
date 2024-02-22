@@ -21,28 +21,30 @@ pub struct DiscordButton {
 
 impl Render for DiscordButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let Some(discord) = Discord::global(cx) else {
-            return div();
-        };
+        match Discord::global(cx) {
+            Some(discord) => {
+                let icon = if discord.read(cx).running {
+                    IconName::Discord
+                } else {
+                    IconName::DiscordDisabled
+                };
 
-        let running = discord.read(cx).running.unwrap_or_else(|| false);
+                let this = cx.view().clone();
 
-        let icon = match running {
-            true => IconName::Discord,
-            false => IconName::DiscordDisabled,
-        };
-
-        let this = cx.view().clone();
-
-        div().child(
-            popover_menu("discord")
-                .menu(move |cx| Some(this.update(cx, |this, cx| this.build_discord_menu(cx))))
-                .anchor(AnchorCorner::BottomRight)
-                .trigger(
-                    IconButton::new("discord-icon", icon)
-                        .tooltip(|cx| Tooltip::text("Discord Rich Presence", cx)),
-                ),
-        )
+                div().child(
+                    popover_menu("discord")
+                        .menu(move |cx| {
+                            Some(this.update(cx, |this, cx| this.build_discord_menu(cx)))
+                        })
+                        .anchor(AnchorCorner::BottomRight)
+                        .trigger(
+                            IconButton::new("discord-icon", icon)
+                                .tooltip(|cx| Tooltip::text("Discord Rich Presence", cx)),
+                        ),
+                )
+            }
+            None => div(),
+        }
     }
 }
 
@@ -64,7 +66,9 @@ impl StatusItemView for DiscordButton {
 
 impl DiscordButton {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        Discord::global(cx).map(|discord| cx.observe(&discord, |_, _, cx| cx.notify()).detach());
+        if let Some(discord) = Discord::global(cx) {
+            cx.observe(&discord, |_, _, cx| cx.notify()).detach();
+        }
 
         Self {
             editor_subscription: None,
@@ -74,43 +78,39 @@ impl DiscordButton {
     }
 
     pub fn build_discord_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
-        let Some(discord) = Discord::global(cx) else {
-            return ContextMenu::build(cx, move |menu, _| {
+        match Discord::global(cx) {
+            Some(discord) => {
+                let running = discord.read(cx).running;
+
+                ContextMenu::build(cx, move |menu, _| {
+                    let action_text = if running {
+                        "Stop Discord Rich Presence"
+                    } else {
+                        "Start Discord Rich Presence"
+                    };
+                    menu.entry(action_text, None, toggle_discord_rich_presence)
+                })
+            }
+            None => ContextMenu::build(cx, |menu, _| {
                 menu.entry(
                     "Start Discord Rich Presence",
                     None,
                     toggle_discord_rich_presence,
                 )
-            });
-        };
-
-        let running = discord.read(cx).running.unwrap_or_else(|| false);
-
-        ContextMenu::build(cx, move |menu, _| match running {
-            true => menu.entry(
-                "Stop Discord Rich Presence",
-                None,
-                toggle_discord_rich_presence,
-            ),
-            false => menu.entry(
-                "Start Discord Rich Presence",
-                None,
-                toggle_discord_rich_presence,
-            ),
-        })
+            }),
+        }
     }
 
-    pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
         let Some(discord) = Discord::global(cx) else {
             return;
         };
 
-        let running = discord.read(cx).running.unwrap_or_else(|| false);
-
         // Do this initial check to prevent self.file from being saved
         // so that it causes the current file to be set as activity when rich presence is start
-        if !running {
-            // Resetting here in the event that a user starts, then stops and happens to start it again on the same file
+        if !discord.read(cx).running {
+            // Resetting here in the event that a user starts,
+            // then stops and happens to start it again on the same file
             self.file = None;
             return;
         }
@@ -138,7 +138,7 @@ impl DiscordButton {
                     .map_or_else(|| "".to_string(), |lang| lang.name().to_string());
                 if let Some(discord) = Discord::global(cx) {
                     discord.update(cx, |discord, _cx| {
-                        if discord.running.unwrap_or_else(|| false) {
+                        if discord.running {
                             discord.set_activity(filepath, file_language, project);
                         }
                     })
@@ -155,15 +155,10 @@ impl DiscordButton {
 
 fn toggle_discord_rich_presence(cx: &mut WindowContext) {
     if let Some(discord) = Discord::global(cx) {
-        let running = discord.read(cx).running.unwrap_or_else(|| false);
-
-        match running {
-            false => discord.update(cx, |discord, _cx| {
-                discord.start_discord_rpc();
-            }),
-            true => discord.update(cx, |discord, _cx| {
-                discord.stop_discord_rpc();
-            }),
+        if discord.read(cx).running {
+            discord.update(cx, |discord, _| discord.stop_discord_rpc());
+        } else {
+            discord.update(cx, |discord, _| discord.start_discord_rpc());
         }
     };
 }
