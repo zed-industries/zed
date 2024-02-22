@@ -5,9 +5,9 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint,
 };
-use regex::Regex;
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
 use language::{char_kind, CharKind, Selection};
+use regex::Regex;
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -68,9 +68,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             object(Object::Word { ignore_punctuation }, cx)
         },
     );
-    workspace.register_action(|_: &mut Workspace, _: &Tag, cx: _| {
-            object(Object::Tag, cx)
-    });
+    workspace.register_action(|_: &mut Workspace, _: &Tag, cx: _| object(Object::Tag, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
     workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
@@ -167,7 +165,7 @@ impl Object {
                 } else {
                     in_word(map, relative_to, ignore_punctuation)
                 }
-            },
+            }
             Object::Tag => surrounding_html_tag(map, relative_to, around),
             Object::Sentence => sentence(map, relative_to, around),
             Object::Quotes => {
@@ -244,8 +242,6 @@ fn in_word(
     Some(start..end)
 }
 
-
-
 fn surrounding_html_tag(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -269,7 +265,9 @@ fn surrounding_html_tag(
 
         let is_opentag: bool = !cap.get(1).is_some();
         if let Some(matched) = cap.get(0) {
-            let start = map.buffer_snapshot.clip_offset(matched.start(), Bias::Right);
+            let start = map
+                .buffer_snapshot
+                .clip_offset(matched.start(), Bias::Right);
             let end = map.buffer_snapshot.clip_offset(matched.end(), Bias::Left);
             let start_position = map.buffer_snapshot.offset_to_point(start);
             let end_position = map.buffer_snapshot.offset_to_point(end);
@@ -287,7 +285,11 @@ fn surrounding_html_tag(
                     if before_tag.name == tag.name {
                         let match_tag = htmlTag {
                             name: before_tag.name.clone(),
-                            start: if surround { before_tag.start } else { before_tag.end },
+                            start: if surround { 
+                                before_tag.start
+                            } else { 
+                                before_tag.end
+                            },
                             end: if surround { tag.end } else { tag.start },
                         };
                         final_stack.push(match_tag);
