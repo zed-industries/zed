@@ -21,7 +21,7 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{FxHashMap, FxHashSet};
+use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
@@ -69,7 +69,6 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: FxHashMap<EntityId, CursorStyle>,
     pub(crate) requested_cursor_style: Option<CursorStyle>,
     pub(crate) view_stack: Vec<EntityId>,
-    pub(crate) reused_views: FxHashSet<EntityId>,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
@@ -95,7 +94,6 @@ impl Frame {
             cursor_styles: FxHashMap::default(),
             requested_cursor_style: None,
             view_stack: Vec::new(),
-            reused_views: FxHashSet::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -109,7 +107,6 @@ impl Frame {
         self.depth_map.clear();
         self.next_stacking_order_ids = vec![0];
         self.next_root_z_index = 0;
-        self.reused_views.clear();
         self.scene.clear();
         self.requested_input_handler.take();
         self.tooltip_request.take();
@@ -153,11 +150,6 @@ impl Frame {
                 self.element_states.entry(element_id).or_insert(state);
             }
         }
-
-        // Reuse geometry that didn't change since the last frame.
-        self.scene
-            .reuse_views(&self.reused_views, &mut prev_frame.scene);
-        self.scene.finish();
     }
 }
 
@@ -666,20 +658,15 @@ impl<'a> ElementContext<'a> {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                Shadow {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
-                    bounds: shadow_bounds.scale(scale_factor),
-                    content_mask: content_mask.scale(scale_factor),
-                    corner_radii: corner_radii.scale(scale_factor),
-                    color: shadow.color,
-                    blur_radius: shadow.blur_radius.scale(scale_factor),
-                    pad: 0,
-                },
-            );
+            window.next_frame.scene.push_primitive(|draw_order| Shadow {
+                draw_order,
+                bounds: shadow_bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                corner_radii: corner_radii.scale(scale_factor),
+                color: shadow.color,
+                blur_radius: shadow.blur_radius.scale(scale_factor),
+                pad: 0,
+            });
         }
     }
 
@@ -692,20 +679,15 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Quad {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: quad.bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                background: quad.background,
-                border_color: quad.border_color,
-                corner_radii: quad.corner_radii.scale(scale_factor),
-                border_widths: quad.border_widths.scale(scale_factor),
-            },
-        );
+        window.next_frame.scene.push_primitive(|draw_order| Quad {
+            draw_order,
+            bounds: quad.bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            background: quad.background,
+            border_color: quad.border_color,
+            corner_radii: quad.corner_radii.scale(scale_factor),
+            border_widths: quad.border_widths.scale(scale_factor),
+        });
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
@@ -716,12 +698,11 @@ impl<'a> ElementContext<'a> {
 
         path.content_mask = content_mask;
         path.color = color.into();
-        path.view_id = view_id.into();
         let window = &mut *self.window;
-        window
-            .next_frame
-            .scene
-            .insert(&window.next_frame.z_index_stack, path.scale(scale_factor));
+        window.next_frame.scene.push_primitive(|draw_order| {
+            path.draw_order = draw_order;
+            path.scale(scale_factor)
+        });
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -745,19 +726,17 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Underline {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
+        window
+            .next_frame
+            .scene
+            .push_primitive(|draw_order| Underline {
+                draw_order,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
                 color: style.color.unwrap_or_default(),
                 thickness: style.thickness.scale(scale_factor),
                 wavy: style.wavy,
-            },
-        );
+            });
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.
@@ -777,19 +756,17 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Underline {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
+        window
+            .next_frame
+            .scene
+            .push_primitive(|draw_order| Underline {
+                draw_order,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
                 thickness: style.thickness.scale(scale_factor),
                 color: style.color.unwrap_or_default(),
                 wavy: false,
-            },
-        );
+            });
     }
 
     /// Paints a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
@@ -837,18 +814,16 @@ impl<'a> ElementContext<'a> {
             let content_mask = self.content_mask().scale(scale_factor);
             let view_id = self.parent_view_id();
             let window = &mut *self.window;
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                MonochromeSprite {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
+            window
+                .next_frame
+                .scene
+                .push_primitive(|draw_order| MonochromeSprite {
+                    draw_order,
                     bounds,
                     content_mask,
                     color,
                     tile,
-                },
-            );
+                });
         }
         Ok(())
     }
@@ -895,20 +870,18 @@ impl<'a> ElementContext<'a> {
             let view_id = self.parent_view_id();
             let window = &mut *self.window;
 
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                PolychromeSprite {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
+            window
+                .next_frame
+                .scene
+                .push_primitive(|draw_order| PolychromeSprite {
+                    draw_order,
                     bounds,
                     corner_radii: Default::default(),
                     content_mask,
                     tile,
                     grayscale: false,
                     pad: 0,
-                },
-            );
+                });
         }
         Ok(())
     }
@@ -941,18 +914,16 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            MonochromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
+        window
+            .next_frame
+            .scene
+            .push_primitive(|draw_order| MonochromeSprite {
+                draw_order,
                 bounds,
                 content_mask,
                 color,
                 tile,
-            },
-        );
+            });
 
         Ok(())
     }
@@ -980,20 +951,18 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            PolychromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
+        window
+            .next_frame
+            .scene
+            .push_primitive(|draw_order| PolychromeSprite {
+                draw_order,
                 bounds,
                 content_mask,
                 corner_radii,
                 tile,
                 grayscale,
                 pad: 0,
-            },
-        );
+            });
         Ok(())
     }
 
@@ -1005,17 +974,15 @@ impl<'a> ElementContext<'a> {
         let content_mask = self.content_mask().scale(scale_factor);
         let view_id = self.parent_view_id();
         let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            crate::Surface {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
+        window
+            .next_frame
+            .scene
+            .push_primitive(|draw_order| crate::Surface {
+                draw_order,
                 bounds,
                 content_mask,
                 image_buffer,
-            },
-        );
+            });
     }
 
     #[must_use]

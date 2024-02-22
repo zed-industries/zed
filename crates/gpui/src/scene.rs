@@ -1,15 +1,11 @@
 use crate::{
     point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, EntityId, Hsla, Pixels,
-    Point, ScaledPixels, StackingOrder,
+    Point, ScaledPixels,
 };
-use collections::{BTreeMap, FxHashSet};
 use std::{fmt::Debug, iter::Peekable, slice};
 
 #[allow(non_camel_case_types, unused)]
 pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
-
-pub(crate) type LayerId = u32;
-pub(crate) type DrawOrder = u32;
 
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
@@ -37,21 +33,18 @@ impl From<ViewId> for EntityId {
 
 #[derive(Default)]
 /// An index into all the geometry in a `Scene` at a point in time.
-pub(crate) struct SceneIndex {
-    pub(crate) shadow: usize,
-    pub(crate) quad: usize,
-    pub(crate) path: usize,
-    pub(crate) underline: usize,
-    pub(crate) monochrome_sprite: usize,
-    pub(crate) polychrome_sprite: usize,
-    pub(crate) surface: usize,
+pub(crate) struct PrimitiveCounts {
+    pub(crate) shadows: usize,
+    pub(crate) quads: usize,
+    pub(crate) paths: usize,
+    pub(crate) underlines: usize,
+    pub(crate) monochrome_sprites: usize,
+    pub(crate) polychrome_sprites: usize,
+    pub(crate) surfaces: usize,
 }
 
 #[derive(Default)]
 pub(crate) struct Scene {
-    last_layer: Option<(StackingOrder, LayerId)>,
-    layers_by_order: BTreeMap<StackingOrder, LayerId>,
-    orders_by_layer: BTreeMap<LayerId, StackingOrder>,
     pub(crate) shadows: Vec<Shadow>,
     pub(crate) quads: Vec<Quad>,
     pub(crate) paths: Vec<Path<ScaledPixels>>,
@@ -59,13 +52,11 @@ pub(crate) struct Scene {
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
     pub(crate) surfaces: Vec<Surface>,
+    pub(crate) primitive_count: u32,
 }
 
 impl Scene {
     pub fn clear(&mut self) {
-        self.last_layer = None;
-        self.layers_by_order.clear();
-        self.orders_by_layer.clear();
         self.shadows.clear();
         self.quads.clear();
         self.paths.clear();
@@ -73,17 +64,18 @@ impl Scene {
         self.monochrome_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.primitive_count = 0;
     }
 
-    pub fn len(&self) -> SceneIndex {
-        SceneIndex {
-            shadow: self.shadows.len(),
-            quad: self.quads.len(),
-            path: self.paths.len(),
-            underline: self.underlines.len(),
-            monochrome_sprite: self.monochrome_sprites.len(),
-            polychrome_sprite: self.polychrome_sprites.len(),
-            surface: self.surfaces.len(),
+    pub fn primitive_counts(&self) -> PrimitiveCounts {
+        PrimitiveCounts {
+            shadows: self.shadows.len(),
+            quads: self.quads.len(),
+            paths: self.paths.len(),
+            underlines: self.underlines.len(),
+            monochrome_sprites: self.monochrome_sprites.len(),
+            polychrome_sprites: self.polychrome_sprites.len(),
+            surfaces: self.surfaces.len(),
         }
     }
 
@@ -117,8 +109,12 @@ impl Scene {
         }
     }
 
-    pub(crate) fn insert(&mut self, order: &StackingOrder, primitive: impl Into<Primitive>) {
-        let primitive = primitive.into();
+    pub(crate) fn push_primitive<T: Into<Primitive>>(
+        &mut self,
+        build_primitive: impl FnOnce(u32) -> T,
+    ) {
+        let primitive = build_primitive(self.primitive_count).into();
+
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
@@ -128,150 +124,62 @@ impl Scene {
             return;
         }
 
-        let layer_id = self.layer_id_for_order(order);
         match primitive {
             Primitive::Shadow(mut shadow) => {
-                shadow.layer_id = layer_id;
                 self.shadows.push(shadow);
             }
             Primitive::Quad(mut quad) => {
-                quad.layer_id = layer_id;
                 self.quads.push(quad);
             }
             Primitive::Path(mut path) => {
-                path.layer_id = layer_id;
-                path.id = PathId(self.paths.len());
                 self.paths.push(path);
             }
             Primitive::Underline(mut underline) => {
-                underline.layer_id = layer_id;
                 self.underlines.push(underline);
             }
             Primitive::MonochromeSprite(mut sprite) => {
-                sprite.layer_id = layer_id;
                 self.monochrome_sprites.push(sprite);
             }
             Primitive::PolychromeSprite(mut sprite) => {
-                sprite.layer_id = layer_id;
                 self.polychrome_sprites.push(sprite);
             }
             Primitive::Surface(mut surface) => {
-                surface.layer_id = layer_id;
                 self.surfaces.push(surface);
             }
         }
+
+        self.primitive_count += 1;
     }
 
-    fn layer_id_for_order(&mut self, order: &StackingOrder) -> LayerId {
-        if let Some((last_order, last_layer_id)) = self.last_layer.as_ref() {
-            if order == last_order {
-                return *last_layer_id;
-            }
-        }
-
-        let layer_id = if let Some(layer_id) = self.layers_by_order.get(order) {
-            *layer_id
-        } else {
-            let next_id = self.layers_by_order.len() as LayerId;
-            self.layers_by_order.insert(order.clone(), next_id);
-            self.orders_by_layer.insert(next_id, order.clone());
-            next_id
-        };
-        self.last_layer = Some((order.clone(), layer_id));
-        layer_id
-    }
-
-    pub fn reuse_views(&mut self, views: &FxHashSet<EntityId>, prev_scene: &mut Self) {
-        for shadow in prev_scene.shadows.drain(..) {
-            if views.contains(&shadow.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&shadow.layer_id];
-                self.insert(order, shadow);
-            }
-        }
-
-        for quad in prev_scene.quads.drain(..) {
-            if views.contains(&quad.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&quad.layer_id];
-                self.insert(order, quad);
-            }
-        }
-
-        for path in prev_scene.paths.drain(..) {
-            if views.contains(&path.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&path.layer_id];
-                self.insert(order, path);
-            }
-        }
-
-        for underline in prev_scene.underlines.drain(..) {
-            if views.contains(&underline.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&underline.layer_id];
-                self.insert(order, underline);
-            }
-        }
-
-        for sprite in prev_scene.monochrome_sprites.drain(..) {
-            if views.contains(&sprite.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&sprite.layer_id];
-                self.insert(order, sprite);
-            }
-        }
-
-        for sprite in prev_scene.polychrome_sprites.drain(..) {
-            if views.contains(&sprite.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&sprite.layer_id];
-                self.insert(order, sprite);
-            }
-        }
-
-        for surface in prev_scene.surfaces.drain(..) {
-            if views.contains(&surface.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&surface.layer_id];
-                self.insert(order, surface);
-            }
-        }
-    }
-
-    pub fn finish(&mut self) {
-        let mut orders = vec![0; self.layers_by_order.len()];
-        for (ix, layer_id) in self.layers_by_order.values().enumerate() {
-            orders[*layer_id as usize] = ix as u32;
-        }
-
-        for shadow in &mut self.shadows {
-            shadow.order = orders[shadow.layer_id as usize];
-        }
-        self.shadows.sort_by_key(|shadow| shadow.order);
-
-        for quad in &mut self.quads {
-            quad.order = orders[quad.layer_id as usize];
-        }
-        self.quads.sort_by_key(|quad| quad.order);
-
-        for path in &mut self.paths {
-            path.order = orders[path.layer_id as usize];
-        }
-        self.paths.sort_by_key(|path| path.order);
-
-        for underline in &mut self.underlines {
-            underline.order = orders[underline.layer_id as usize];
-        }
-        self.underlines.sort_by_key(|underline| underline.order);
-
-        for monochrome_sprite in &mut self.monochrome_sprites {
-            monochrome_sprite.order = orders[monochrome_sprite.layer_id as usize];
-        }
-        self.monochrome_sprites.sort_by_key(|sprite| sprite.order);
-
-        for polychrome_sprite in &mut self.polychrome_sprites {
-            polychrome_sprite.order = orders[polychrome_sprite.layer_id as usize];
-        }
-        self.polychrome_sprites.sort_by_key(|sprite| sprite.order);
-
-        for surface in &mut self.surfaces {
-            surface.order = orders[surface.layer_id as usize];
-        }
-        self.surfaces.sort_by_key(|surface| surface.order);
+    pub fn reuse_subscene(
+        &mut self,
+        prev_scene: &mut Self,
+        start: PrimitiveCounts,
+        end: PrimitiveCounts,
+    ) {
+        self.shadows
+            .extend(prev_scene.shadows.drain(start.shadows..end.shadows));
+        self.quads
+            .extend(prev_scene.quads.drain(start.quads..end.quads));
+        self.paths
+            .extend(prev_scene.paths.drain(start.paths..end.paths));
+        self.underlines.extend(
+            prev_scene
+                .underlines
+                .drain(start.underlines..end.underlines),
+        );
+        self.monochrome_sprites.extend(
+            prev_scene
+                .monochrome_sprites
+                .drain(start.monochrome_sprites..end.monochrome_sprites),
+        );
+        self.polychrome_sprites.extend(
+            prev_scene
+                .polychrome_sprites
+                .drain(start.polychrome_sprites..end.polychrome_sprites),
+        );
+        self.surfaces
+            .extend(prev_scene.surfaces.drain(start.surfaces..end.surfaces));
     }
 }
 
@@ -305,25 +213,31 @@ impl<'a> Iterator for BatchIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut orders_and_kinds = [
             (
-                self.shadows_iter.peek().map(|s| s.order),
+                self.shadows_iter.peek().map(|s| s.draw_order),
                 PrimitiveKind::Shadow,
             ),
-            (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
-            (self.paths_iter.peek().map(|q| q.order), PrimitiveKind::Path),
             (
-                self.underlines_iter.peek().map(|u| u.order),
+                self.quads_iter.peek().map(|q| q.draw_order),
+                PrimitiveKind::Quad,
+            ),
+            (
+                self.paths_iter.peek().map(|q| q.draw_order),
+                PrimitiveKind::Path,
+            ),
+            (
+                self.underlines_iter.peek().map(|u| u.draw_order),
                 PrimitiveKind::Underline,
             ),
             (
-                self.monochrome_sprites_iter.peek().map(|s| s.order),
+                self.monochrome_sprites_iter.peek().map(|s| s.draw_order),
                 PrimitiveKind::MonochromeSprite,
             ),
             (
-                self.polychrome_sprites_iter.peek().map(|s| s.order),
+                self.polychrome_sprites_iter.peek().map(|s| s.draw_order),
                 PrimitiveKind::PolychromeSprite,
             ),
             (
-                self.surfaces_iter.peek().map(|s| s.order),
+                self.surfaces_iter.peek().map(|s| s.draw_order),
                 PrimitiveKind::Surface,
             ),
         ];
@@ -344,7 +258,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.shadows_iter.next();
                 while self
                     .shadows_iter
-                    .next_if(|shadow| (shadow.order, batch_kind) < max_order_and_kind)
+                    .next_if(|shadow| (shadow.draw_order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     shadows_end += 1;
@@ -360,7 +274,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.quads_iter.next();
                 while self
                     .quads_iter
-                    .next_if(|quad| (quad.order, batch_kind) < max_order_and_kind)
+                    .next_if(|quad| (quad.draw_order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     quads_end += 1;
@@ -374,7 +288,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.paths_iter.next();
                 while self
                     .paths_iter
-                    .next_if(|path| (path.order, batch_kind) < max_order_and_kind)
+                    .next_if(|path| (path.draw_order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     paths_end += 1;
@@ -388,7 +302,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.underlines_iter.next();
                 while self
                     .underlines_iter
-                    .next_if(|underline| (underline.order, batch_kind) < max_order_and_kind)
+                    .next_if(|underline| (underline.draw_order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     underlines_end += 1;
@@ -406,7 +320,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 while self
                     .monochrome_sprites_iter
                     .next_if(|sprite| {
-                        (sprite.order, batch_kind) < max_order_and_kind
+                        (sprite.draw_order, batch_kind) < max_order_and_kind
                             && sprite.tile.texture_id == texture_id
                     })
                     .is_some()
@@ -427,7 +341,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 while self
                     .polychrome_sprites_iter
                     .next_if(|sprite| {
-                        (sprite.order, batch_kind) < max_order_and_kind
+                        (sprite.draw_order, batch_kind) < max_order_and_kind
                             && sprite.tile.texture_id == texture_id
                     })
                     .is_some()
@@ -446,7 +360,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_iter.next();
                 while self
                     .surfaces_iter
-                    .next_if(|surface| (surface.order, batch_kind) < max_order_and_kind)
+                    .next_if(|surface| (surface.draw_order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     surfaces_end += 1;
@@ -528,9 +442,7 @@ pub(crate) enum PrimitiveBatch<'a> {
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct Quad {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
+    pub draw_order: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub background: Hsla,
@@ -541,7 +453,7 @@ pub(crate) struct Quad {
 
 impl Ord for Quad {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
+        self.draw_order.cmp(&other.draw_order)
     }
 }
 
@@ -560,9 +472,7 @@ impl From<Quad> for Primitive {
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct Underline {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
+    pub draw_order: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
@@ -572,7 +482,7 @@ pub(crate) struct Underline {
 
 impl Ord for Underline {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
+        self.draw_order.cmp(&other.draw_order)
     }
 }
 
@@ -591,9 +501,7 @@ impl From<Underline> for Primitive {
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct Shadow {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
+    pub draw_order: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
@@ -604,7 +512,7 @@ pub(crate) struct Shadow {
 
 impl Ord for Shadow {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
+        self.draw_order.cmp(&other.draw_order)
     }
 }
 
@@ -623,28 +531,11 @@ impl From<Shadow> for Primitive {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
+    pub draw_order: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
-}
-
-impl Ord for MonochromeSprite {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.order.cmp(&other.order) {
-            std::cmp::Ordering::Equal => self.tile.tile_id.cmp(&other.tile.tile_id),
-            order => order,
-        }
-    }
-}
-
-impl PartialOrd for MonochromeSprite {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 impl From<MonochromeSprite> for Primitive {
@@ -656,30 +547,13 @@ impl From<MonochromeSprite> for Primitive {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
+    pub draw_order: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
     pub grayscale: bool,
     pub pad: u32, // align to 8 bytes
-}
-
-impl Ord for PolychromeSprite {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.order.cmp(&other.order) {
-            std::cmp::Ordering::Equal => self.tile.tile_id.cmp(&other.tile.tile_id),
-            order => order,
-        }
-    }
-}
-
-impl PartialOrd for PolychromeSprite {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 impl From<PolychromeSprite> for Primitive {
@@ -690,25 +564,11 @@ impl From<PolychromeSprite> for Primitive {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Surface {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
+    pub draw_order: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     #[cfg(target_os = "macos")]
     pub image_buffer: media::core_video::CVImageBuffer,
-}
-
-impl Ord for Surface {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Surface {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 impl From<Surface> for Primitive {
@@ -723,10 +583,8 @@ pub(crate) struct PathId(pub(crate) usize);
 /// A line made up of a series of vertices and control points.
 #[derive(Debug)]
 pub struct Path<P: Clone + Default + Debug> {
+    pub(crate) draw_order: u32,
     pub(crate) id: PathId,
-    pub(crate) view_id: ViewId,
-    layer_id: LayerId,
-    order: DrawOrder,
     pub(crate) bounds: Bounds<P>,
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
@@ -740,10 +598,8 @@ impl Path<Pixels> {
     /// Create a new path with the given starting point.
     pub fn new(start: Point<Pixels>) -> Self {
         Self {
+            draw_order: 0,
             id: PathId(0),
-            view_id: ViewId::default(),
-            layer_id: LayerId::default(),
-            order: DrawOrder::default(),
             vertices: Vec::new(),
             start,
             current: start,
@@ -760,10 +616,8 @@ impl Path<Pixels> {
     /// Scale this path by the given factor.
     pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
         Path {
+            draw_order: self.draw_order,
             id: self.id,
-            view_id: self.view_id,
-            layer_id: self.layer_id,
-            order: self.order,
             bounds: self.bounds.scale(factor),
             content_mask: self.content_mask.scale(factor),
             vertices: self
@@ -849,13 +703,13 @@ impl Eq for Path<ScaledPixels> {}
 
 impl PartialEq for Path<ScaledPixels> {
     fn eq(&self, other: &Self) -> bool {
-        self.order == other.order
+        self.draw_order == other.draw_order
     }
 }
 
 impl Ord for Path<ScaledPixels> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
+        self.draw_order.cmp(&other.draw_order)
     }
 }
 

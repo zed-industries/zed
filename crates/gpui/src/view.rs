@@ -1,7 +1,7 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, Bounds,
     ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
-    FocusableView, IntoElement, LayoutId, Model, Pixels, Point, Render, SceneIndex, Size,
+    FocusableView, IntoElement, LayoutId, Model, Pixels, Point, PrimitiveCounts, Render, Size,
     StackingOrder, Style, TextStyle, ViewContext, VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
@@ -33,8 +33,8 @@ struct ViewCacheData {
     stacking_order: StackingOrder,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
-    scene_start: SceneIndex,
-    scene_end: SceneIndex,
+    scene_start: PrimitiveCounts,
+    scene_end: PrimitiveCounts,
 }
 
 impl<V: 'static> Entity<V> for View<V> {
@@ -324,14 +324,14 @@ impl Element for AnyView {
                 }
             }
 
-            let scene_start = cx.window.next_frame.scene.len();
+            let scene_start = cx.window.next_frame.scene.primitive_counts();
             if let Some(mut element) = state.element.take() {
                 element.paint(cx);
             } else {
                 let mut element = (self.request_layout)(self, cx).1;
                 element.draw(bounds.origin, bounds.size.into(), cx);
             }
-            let scene_end = cx.window.next_frame.scene.len();
+            let scene_end = cx.window.next_frame.scene.primitive_counts();
 
             state.next_stacking_order_id = cx
                 .window
