@@ -9322,6 +9322,40 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.http_client.clone()
     }
 
+    fn which_command<'a>(
+        &'a self,
+        command: &'a OsStr,
+        cx: &AppContext,
+    ) -> BoxFuture<'a, Option<PathBuf>> {
+        let worktree_abs_path = self.worktree.read(cx).abs_path();
+        async move {
+            let shell_env = load_login_shell_environment(&worktree_abs_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to determine load login shell environment in {worktree_abs_path:?}"
+                    )
+                })
+                .log_err();
+
+            if let Some(shell_env) = shell_env.as_ref() {
+                let shell_path = shell_env.get("PATH");
+                match which::which_in(command, shell_path, &worktree_abs_path) {
+                    Ok(command_path) => Some(command_path),
+                    Err(error) => {
+                        log::warn!(
+                            "failed to determine path for command {command:?} in env {shell_env:?}: {error}"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        }
+        .boxed()
+    }
+
     fn build_command<'a>(
         &'a self,
         command: &'a OsStr,
@@ -9348,6 +9382,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
             } else {
                 PathBuf::from(command)
             };
+
             log::info!("resolved language server command {command:?} to {command_path:?}, cwd: {worktree_abs_path:?}");
             let mut command = smol::process::Command::new(command_path);
             command.envs(shell_env.unwrap_or_default());

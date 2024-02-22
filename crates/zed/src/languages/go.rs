@@ -58,6 +58,29 @@ impl super::LspAdapter for GoLspAdapter {
         Ok(Box::new(version) as Box<_>)
     }
 
+    fn check_if_user_installed(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        let delegate = delegate.clone();
+        Some(cx.spawn(|cx| async move {
+            let command = match cx.update(|cx| delegate.which_command(OsStr::new("gopls"), cx)) {
+                Ok(task) => task.await,
+                Err(_) => {
+                    return None;
+                }
+            };
+            match command {
+                Some(path) => Some(LanguageServerBinary {
+                    path,
+                    arguments: server_binary_arguments(),
+                }),
+                None => None,
+            }
+        }))
+    }
+
     fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,

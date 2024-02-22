@@ -6,7 +6,7 @@ use crate::{
 };
 use ai::test::FakeEmbeddingProvider;
 
-use gpui::TestAppContext;
+use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageMatcher, LanguageRegistry, ToOffset};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
@@ -57,7 +57,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     )
     .await;
 
-    let languages = Arc::new(LanguageRegistry::new());
+    let languages = Arc::new(LanguageRegistry::new(Task::ready(())));
     let rust_language = rust_lang();
     let toml_language = toml_lang();
     languages.add(rust_language);

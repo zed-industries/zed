@@ -142,6 +142,14 @@ impl CachedLspAdapter {
         })
     }
 
+    pub fn check_if_user_installed(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        self.adapter.check_if_user_installed(delegate, cx)
+    }
+
     pub async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -242,6 +250,11 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn which_command<'a>(
+        &'a self,
+        command: &'a OsStr,
+        cx: &AppContext,
+    ) -> BoxFuture<'a, Option<PathBuf>>;
     fn build_command<'a>(
         &'a self,
         command: &'a OsStr,
@@ -254,6 +267,14 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn name(&self) -> LanguageServerName;
 
     fn short_name(&self) -> &'static str;
+
+    fn check_if_user_installed(
+        &self,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncAppContext,
+    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        None
+    }
 
     async fn fetch_latest_server_version(
         &self,

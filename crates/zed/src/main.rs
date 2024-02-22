@@ -1,7 +1,7 @@
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -14,7 +14,7 @@ use fs::RealFs;
 #[cfg(target_os = "macos")]
 use fsevent::StreamFlags;
 use futures::StreamExt;
-use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion};
+use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -29,6 +29,7 @@ use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
+use smol::process::Command;
 use std::{
     env,
     ffi::OsStr,
@@ -95,6 +96,14 @@ fn main() {
         paths::KEYMAP.clone(),
     );
 
+    let login_shell_env_loaded = if stdout_is_a_pty() {
+        Task::ready(())
+    } else {
+        app.background_executor().spawn(async {
+            load_login_shell_environment().await.log_err();
+        })
+    };
+
     let (listener, mut open_rx) = OpenListener::new();
     let listener = Arc::new(listener);
     let open_listener = listener.clone();
@@ -135,7 +144,7 @@ fn main() {
         let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
 
         let client = client::Client::new(http.clone(), cx);
-        let mut languages = LanguageRegistry::new();
+        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
@@ -820,6 +829,50 @@ async fn upload_previous_crashes(
                     .await?;
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn load_login_shell_environment() -> Result<()> {
+    let marker = "ZED_LOGIN_SHELL_START";
+    let shell = env::var("SHELL").context(
+        "SHELL environment variable is not assigned so we can't source login environment variables",
+    )?;
+    let output = Command::new(&shell)
+        .args([
+            "-l",
+            "-i",
+            "-c",
+            // We `cd $HOME` because some tools (asdf, mise, direnv, ...) hook into $SHELL's `cd`
+            // and only trigger after `cd`s been used.
+            // Since `cd $HOME` is safe (POSIX dicates that $HOME has to be set), we do that
+            // before getting the `env`.
+            &format!("cd $HOME; echo {marker}; /usr/bin/env -0"),
+        ])
+        .output()
+        .await
+        .context("failed to spawn login shell to source login environment variables")?;
+    if !output.status.success() {
+        Err(anyhow!("login shell exited with error"))?;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    if let Some(env_output_start) = stdout.find(marker) {
+        let env_output = &stdout[env_output_start + marker.len()..];
+        for line in env_output.split_terminator('\0') {
+            if let Some(separator_index) = line.find('=') {
+                let key = &line[..separator_index];
+                let value = &line[separator_index + 1..];
+                env::set_var(key, value);
+            }
+        }
+        log::info!(
+            "set environment variables from shell:{}, path:{}",
+            shell,
+            env::var("PATH").unwrap_or_default(),
+        );
     }
 
     Ok(())

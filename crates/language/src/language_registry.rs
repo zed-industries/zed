@@ -29,6 +29,7 @@ use util::{paths::PathExt, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture}
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
+    login_shell_env_loaded: Shared<Task<()>>,
     #[allow(clippy::type_complexity)]
     lsp_binary_paths: Mutex<
         HashMap<LanguageServerName, Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>,
@@ -115,7 +116,7 @@ struct LspBinaryStatusSender {
 }
 
 impl LanguageRegistry {
-    pub fn new() -> Self {
+    pub fn new(login_shell_env_loaded: Task<()>) -> Self {
         Self {
             state: RwLock::new(LanguageRegistryState {
                 next_language_server_id: 0,
@@ -129,6 +130,7 @@ impl LanguageRegistry {
                 reload_count: 0,
             }),
             language_server_download_dir: None,
+            login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_paths: Default::default(),
             executor: None,
             lsp_binary_status_tx: Default::default(),
@@ -137,7 +139,7 @@ impl LanguageRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
-        Self::new()
+        Self::new(Task::ready(()))
     }
 
     pub fn set_executor(&mut self, executor: BackgroundExecutor) {
@@ -550,11 +552,18 @@ impl LanguageRegistry {
         let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
         let root_path = root_path.clone();
         let adapter = adapter.clone();
+        let login_shell_env_loaded = self.login_shell_env_loaded.clone();
         let lsp_binary_statuses = self.lsp_binary_status_tx.clone();
 
         let task = {
             let container_dir = container_dir.clone();
             cx.spawn(move |mut cx| async move {
+                login_shell_env_loaded.await;
+                // TODO: This cache needs to be moved inside of `get_binary`, because we don't
+                // want to cache one binary per language server anymore. We might have
+                // worktree 1: user-installed gopls in `.bin`
+                // worktree 2: user-installed gopls in `~/bin`
+                // worktree 3: no gopls found in PATH -> fallback to Zed installation
                 let entry = this
                     .lsp_binary_paths
                     .lock()
@@ -733,6 +742,22 @@ async fn get_binary(
             .context("failed to create container directory")?;
     }
 
+    if let Some(task) = adapter.check_if_user_installed(&delegate, &mut cx) {
+        println!(
+            "checking if user has language server for {} installed",
+            language.name()
+        );
+        if let Some(binary) = task.await {
+            println!(
+                "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                language.name(),
+                binary.path,
+                binary.arguments
+            );
+            return Ok(binary);
+        }
+    }
+
     if let Some(task) = adapter.will_fetch_server(&delegate, &mut cx) {
         task.await?;
     }
@@ -774,6 +799,7 @@ async fn fetch_latest_binary(
     lsp_binary_statuses_tx: LspBinaryStatusSender,
 ) -> Result<LanguageServerBinary> {
     let container_dir: Arc<Path> = container_dir.into();
+
     lsp_binary_statuses_tx.send(
         language.clone(),
         LanguageServerBinaryStatus::CheckingForUpdate,
