@@ -848,7 +848,7 @@ async fn load_login_shell_environment() -> Result<()> {
             // and only trigger after `cd`s been used.
             // Since `cd $HOME` is safe (POSIX dicates that $HOME has to be set), we do that
             // before getting the `env`.
-            &format!("cd $HOME; echo {marker}; /usr/bin/env -0"),
+            &format!("cd $HOME; echo {marker}; /usr/bin/env -0; exit 0"),
         ])
         .output()
         .await

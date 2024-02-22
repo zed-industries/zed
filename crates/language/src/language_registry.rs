@@ -743,12 +743,8 @@ async fn get_binary(
     }
 
     if let Some(task) = adapter.check_if_user_installed(&delegate, &mut cx) {
-        println!(
-            "checking if user has language server for {} installed",
-            language.name()
-        );
         if let Some(binary) = task.await {
-            println!(
+            log::info!(
                 "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                 language.name(),
                 binary.path,

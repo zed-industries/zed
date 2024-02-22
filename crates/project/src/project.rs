@@ -22,7 +22,7 @@ use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
-    future::{try_join_all, BoxFuture, Shared},
+    future::{try_join_all, Shared},
     select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -72,7 +72,7 @@ use std::{
     cmp::{self, Ordering},
     convert::TryInto,
     env,
-    ffi::OsStr,
+    ffi::OsString,
     hash::Hash,
     mem,
     num::NonZeroU32,
@@ -9322,14 +9322,16 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.http_client.clone()
     }
 
-    fn which_command<'a>(
-        &'a self,
-        command: &'a OsStr,
+    fn which_command(
+        &self,
+        command: OsString,
         cx: &AppContext,
-    ) -> BoxFuture<'a, Option<(PathBuf, HashMap<String, String>)>> {
+    ) -> Task<Option<(PathBuf, HashMap<String, String>)>> {
         let worktree_abs_path = self.worktree.read(cx).abs_path();
-        async move {
-            let shell_env = load_login_shell_environment(&worktree_abs_path)
+        let command = command.to_owned();
+
+        cx.background_executor().spawn(async move {
+            let shell_env = load_shell_environment(&worktree_abs_path)
                 .await
                 .with_context(|| {
                     format!(
@@ -9340,11 +9342,11 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
             if let Some(shell_env) = shell_env {
                 let shell_path = shell_env.get("PATH");
-                match which::which_in(command, shell_path, &worktree_abs_path) {
+                match which::which_in(&command, shell_path, &worktree_abs_path) {
                     Ok(command_path) => Some((command_path, shell_env)),
                     Err(error) => {
                         log::warn!(
-                            "failed to determine path for command {command:?} in env {shell_env:?}: {error}"
+                            "failed to determine path for command {:?} in env {shell_env:?}: {error}", command.to_string_lossy()
                         );
                         None
                     }
@@ -9352,44 +9354,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
             } else {
                 None
             }
-        }
-        .boxed()
-    }
-
-    fn build_command<'a>(
-        &'a self,
-        command: &'a OsStr,
-        cx: &AppContext,
-    ) -> BoxFuture<'a, smol::process::Command> {
-        let worktree_abs_path = self.worktree.read(cx).abs_path();
-        async move {
-            let shell_env = load_login_shell_environment(&worktree_abs_path)
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to determine load login shell environment in {worktree_abs_path:?}"
-                    )
-                }).log_err();
-            let command_path = if let Some(shell_env) = shell_env.as_ref() {
-                let shell_path = shell_env.get("PATH");
-                let command_path = which::which_in(command, shell_path, &worktree_abs_path)
-                    .with_context(|| {
-                        format!(
-                            "failed to determine path for command {command:?} in env {shell_env:?}"
-                        )
-                    });
-                command_path.log_err().unwrap_or_else(|| PathBuf::from(&command))
-            } else {
-                PathBuf::from(command)
-            };
-
-            log::info!("resolved language server command {command:?} to {command_path:?}, cwd: {worktree_abs_path:?}");
-            let mut command = smol::process::Command::new(command_path);
-            command.envs(shell_env.unwrap_or_default());
-            command.current_dir(&worktree_abs_path);
-            command
-        }
-        .boxed()
+        })
     }
 }
 
@@ -9499,17 +9464,27 @@ fn include_text(server: &lsp::LanguageServer) -> bool {
         .unwrap_or(false)
 }
 
-async fn load_login_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
+async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
     let output = smol::process::Command::new(&shell)
         .args([
-            "-l",
             "-i",
             "-c",
-            &format!("cd {}; echo {marker}; /usr/bin/env -0", dir.display()),
+            // What we're doing here is to spawn a shell and then `cd` into
+            // the project directory to get the env in there as if the user
+            // `cd`'d into it. We do that because tools like direnv, asdf, ...
+            // hook into `cd` and only set up the env after that.
+            //
+            // The `exit 0` is the result of hours of debugging, trying to find out
+            // why running this command here, without `exit 0`, would mess
+            // up signal process for our process so that `ctrl-c` doesn't work
+            // anymore.
+            // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+            // do that, but it does, and `exit 0` helps.
+            &format!("cd {dir:?}; echo {marker}; /usr/bin/env -0; exit 0;"),
         ])
         .output()
         .await
@@ -9517,7 +9492,6 @@ async fn load_login_shell_environment(dir: &Path) -> Result<HashMap<String, Stri
     if !output.status.success() {
         Err(anyhow!("login shell exited with error"))?;
     }
-
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if let Some(env_output_start) = stdout.find(marker) {
