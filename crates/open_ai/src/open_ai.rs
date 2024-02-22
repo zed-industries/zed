@@ -38,11 +38,11 @@ impl Into<String> for Role {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo")]
+    #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo-0613")]
     ThreePointFiveTurbo,
-    #[serde(rename = "gpt-4")]
+    #[serde(rename = "gpt-4", alias = "gpt-4-0613")]
     Four,
-    #[serde(rename = "gpt-4-turbo-preview")]
+    #[serde(rename = "gpt-4-turbo-preview", alias = "gpt-4-1106-preview")]
     #[default]
     FourTurbo,
 }

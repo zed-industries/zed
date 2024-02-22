@@ -1178,7 +1178,7 @@ impl Panel for AssistantPanel {
                 DockPosition::Bottom => AssistantDockPosition::Bottom,
                 DockPosition::Right => AssistantDockPosition::Right,
             };
-            settings.dock = Some(dock);
+            settings.set_dock(dock);
         });
     }
 

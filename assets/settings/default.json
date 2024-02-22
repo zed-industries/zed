@@ -206,6 +206,8 @@
     "default_width": 380
   },
   "assistant": {
+    // Version of this setting.
+    "version": "1",
     // Whether to show the assistant panel button in the status bar.
     "button": true,
     // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
