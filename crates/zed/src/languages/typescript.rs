@@ -259,7 +259,7 @@ impl LspAdapter for EsLintLspAdapter {
         let release = latest_github_release(
             "microsoft/vscode-eslint",
             false,
-            false,
+            true,
             delegate.http_client(),
         )
         .await?;
