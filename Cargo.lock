@@ -3346,6 +3346,7 @@ dependencies = [
  "log",
  "node_runtime",
  "parking_lot 0.11.2",
+ "project",
  "schemars",
  "serde",
  "serde_json",

@@ -41,6 +41,52 @@ impl ::core::fmt::Debug for GithubReleaseOptions {
     f.debug_struct("GithubReleaseOptions").field("require-assets", &self.require_assets).field("pre-release", &self.pre_release).finish()
   }
 }
+
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct Worktree{
+  handle: wit_bindgen::rt::Resource<Worktree>,
+}
+
+impl Worktree{
+  #[doc(hidden)]
+  pub unsafe fn from_handle(handle: u32) -> Self {
+    Self {
+      handle: wit_bindgen::rt::Resource::from_handle(handle),
+    }
+  }
+  
+  #[doc(hidden)]
+  pub fn into_handle(self) -> u32 {
+    wit_bindgen::rt::Resource::into_handle(self.handle)
+  }
+  
+  #[doc(hidden)]
+  pub fn handle(&self) -> u32 {
+    wit_bindgen::rt::Resource::handle(&self.handle)
+  }
+}
+
+
+unsafe impl wit_bindgen::rt::WasmResource for Worktree{
+  #[inline]
+  unsafe fn drop(_handle: u32) {
+    #[cfg(not(target_arch = "wasm32"))]
+    unreachable!();
+    
+    #[cfg(target_arch = "wasm32")]
+    {
+      #[link(wasm_import_module = "$root")]
+      extern "C" {
+        #[link_name = "[resource-drop]worktree"]
+        fn drop(_: u32);
+      }
+      
+      drop(_handle);
+    }
+  }
+}
+
 #[allow(unused_unsafe, clippy::all)]
 pub fn npm_package_latest_version(package_name: &str,) -> Result<wit_bindgen::rt::string::String,wit_bindgen::rt::string::String>{
   
@@ -174,12 +220,66 @@ pub fn latest_github_release(repo: &str,options: GithubReleaseOptions,) -> Resul
     }
   }
 }
+impl Worktree {
+  #[allow(unused_unsafe, clippy::all)]
+  pub fn read_text_file(&self,path: &str,) -> Result<wit_bindgen::rt::string::String,wit_bindgen::rt::string::String>{
+    
+    #[allow(unused_imports)]
+    use wit_bindgen::rt::{alloc, vec::Vec, string::String};
+    unsafe {
+      
+      #[repr(align(4))]
+      struct RetArea([u8; 12]);
+      let mut ret_area = ::core::mem::MaybeUninit::<RetArea>::uninit();
+      let vec0 = path;
+      let ptr0 = vec0.as_ptr() as i32;
+      let len0 = vec0.len() as i32;
+      let ptr1 = ret_area.as_mut_ptr() as i32;
+      #[cfg(target_arch = "wasm32")]
+      #[link(wasm_import_module = "$root")]
+      extern "C" {
+        #[link_name = "[method]worktree.read-text-file"]
+        fn wit_import(_: i32, _: i32, _: i32, _: i32, );
+      }
+      
+      #[cfg(not(target_arch = "wasm32"))]
+      fn wit_import(_: i32, _: i32, _: i32, _: i32, ){ unreachable!() }
+      wit_import((self).handle() as i32, ptr0, len0, ptr1);
+      let l2 = i32::from(*((ptr1 + 0) as *const u8));
+      match l2 {
+        0 => {
+          let e = {
+            let l3 = *((ptr1 + 4) as *const i32);
+            let l4 = *((ptr1 + 8) as *const i32);
+            let len5 = l4 as usize;
+            let bytes5 = Vec::from_raw_parts(l3 as *mut _, len5, len5);
+            
+            wit_bindgen::rt::string_lift(bytes5)
+          };
+          Ok(e)
+        }
+        1 => {
+          let e = {
+            let l6 = *((ptr1 + 4) as *const i32);
+            let l7 = *((ptr1 + 8) as *const i32);
+            let len8 = l7 as usize;
+            let bytes8 = Vec::from_raw_parts(l6 as *mut _, len8, len8);
+            
+            wit_bindgen::rt::string_lift(bytes8)
+          };
+          Err(e)
+        }
+        _ => wit_bindgen::rt::invalid_enum_discriminant(),
+      }
+    }
+  }
+}
 const _: () = {
   
   #[doc(hidden)]
   #[export_name = "get-language-server-command"]
   #[allow(non_snake_case)]
-  unsafe extern "C" fn __export_get_language_server_command() -> i32 {
+  unsafe extern "C" fn __export_get_language_server_command(arg0: i32,) -> i32 {
     #[allow(unused_imports)]
     use wit_bindgen::rt::{alloc, vec::Vec, string::String};
     
@@ -197,7 +297,7 @@ const _: () = {
     #[cfg(target_arch="wasm32")]
     wit_bindgen::rt::run_ctors_once();
     
-    let result0 = <_GuestImpl as Guest>::get_language_server_command();
+    let result0 = <_GuestImpl as Guest>::get_language_server_command(&Worktree::from_handle(arg0 as u32));
     let ptr1 = _RET_AREA.0.as_mut_ptr() as i32;
     match result0 {
       Ok(e) => { {
@@ -335,7 +435,7 @@ const _: () = {
 };
 use super::Component as _GuestImpl;
 pub trait Guest {
-  fn get_language_server_command() -> Result<Command,wit_bindgen::rt::string::String>;
+  fn get_language_server_command(worktree: &Worktree,) -> Result<Command,wit_bindgen::rt::string::String>;
 }
 
 #[allow(unused_imports)]
@@ -346,9 +446,9 @@ struct _RetArea([u8; 28]);
 static mut _RET_AREA: _RetArea = _RetArea([0; 28]);
 
 #[cfg(target_arch = "wasm32")]
-#[link_section = "component-type:language-server-extension"]
+#[link_section = "component-type:zed-extension"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 578] = [3, 0, 25, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 0, 97, 115, 109, 13, 0, 1, 0, 7, 160, 3, 1, 65, 2, 1, 65, 21, 1, 112, 115, 1, 111, 2, 115, 115, 1, 112, 1, 1, 114, 3, 7, 99, 111, 109, 109, 97, 110, 100, 115, 4, 97, 114, 103, 115, 0, 3, 101, 110, 118, 2, 3, 0, 7, 99, 111, 109, 109, 97, 110, 100, 3, 0, 3, 1, 114, 2, 4, 110, 97, 109, 101, 115, 12, 100, 111, 119, 110, 108, 111, 97, 100, 45, 117, 114, 108, 115, 3, 0, 20, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 45, 97, 115, 115, 101, 116, 3, 0, 5, 1, 112, 6, 1, 114, 2, 7, 118, 101, 114, 115, 105, 111, 110, 115, 6, 97, 115, 115, 101, 116, 115, 7, 3, 0, 14, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 3, 0, 8, 1, 114, 2, 14, 114, 101, 113, 117, 105, 114, 101, 45, 97, 115, 115, 101, 116, 115, 127, 11, 112, 114, 101, 45, 114, 101, 108, 101, 97, 115, 101, 127, 3, 0, 22, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 45, 111, 112, 116, 105, 111, 110, 115, 3, 0, 10, 1, 106, 1, 115, 1, 115, 1, 64, 1, 12, 112, 97, 99, 107, 97, 103, 101, 45, 110, 97, 109, 101, 115, 0, 12, 3, 0, 26, 110, 112, 109, 45, 112, 97, 99, 107, 97, 103, 101, 45, 108, 97, 116, 101, 115, 116, 45, 118, 101, 114, 115, 105, 111, 110, 1, 13, 1, 106, 1, 9, 1, 115, 1, 64, 2, 4, 114, 101, 112, 111, 115, 7, 111, 112, 116, 105, 111, 110, 115, 11, 0, 14, 3, 0, 21, 108, 97, 116, 101, 115, 116, 45, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 1, 15, 1, 106, 1, 4, 1, 115, 1, 64, 0, 0, 16, 4, 0, 27, 103, 101, 116, 45, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 99, 111, 109, 109, 97, 110, 100, 1, 17, 4, 1, 55, 122, 101, 100, 58, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 47, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 4, 0, 11, 31, 1, 0, 25, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 3, 0, 0, 0, 16, 12, 112, 97, 99, 107, 97, 103, 101, 45, 100, 111, 99, 115, 0, 123, 125, 0, 70, 9, 112, 114, 111, 100, 117, 99, 101, 114, 115, 1, 12, 112, 114, 111, 99, 101, 115, 115, 101, 100, 45, 98, 121, 2, 13, 119, 105, 116, 45, 99, 111, 109, 112, 111, 110, 101, 110, 116, 6, 48, 46, 49, 56, 46, 50, 16, 119, 105, 116, 45, 98, 105, 110, 100, 103, 101, 110, 45, 114, 117, 115, 116, 6, 48, 46, 49, 54, 46, 48];
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 605] = [3, 0, 13, 122, 101, 100, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 0, 97, 115, 109, 13, 0, 1, 0, 7, 211, 3, 1, 65, 2, 1, 65, 25, 1, 112, 115, 1, 111, 2, 115, 115, 1, 112, 1, 1, 114, 3, 7, 99, 111, 109, 109, 97, 110, 100, 115, 4, 97, 114, 103, 115, 0, 3, 101, 110, 118, 2, 3, 0, 7, 99, 111, 109, 109, 97, 110, 100, 3, 0, 3, 1, 114, 2, 4, 110, 97, 109, 101, 115, 12, 100, 111, 119, 110, 108, 111, 97, 100, 45, 117, 114, 108, 115, 3, 0, 20, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 45, 97, 115, 115, 101, 116, 3, 0, 5, 1, 112, 6, 1, 114, 2, 7, 118, 101, 114, 115, 105, 111, 110, 115, 6, 97, 115, 115, 101, 116, 115, 7, 3, 0, 14, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 3, 0, 8, 1, 114, 2, 14, 114, 101, 113, 117, 105, 114, 101, 45, 97, 115, 115, 101, 116, 115, 127, 11, 112, 114, 101, 45, 114, 101, 108, 101, 97, 115, 101, 127, 3, 0, 22, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 45, 111, 112, 116, 105, 111, 110, 115, 3, 0, 10, 3, 0, 8, 119, 111, 114, 107, 116, 114, 101, 101, 3, 1, 1, 106, 1, 115, 1, 115, 1, 64, 1, 12, 112, 97, 99, 107, 97, 103, 101, 45, 110, 97, 109, 101, 115, 0, 13, 3, 0, 26, 110, 112, 109, 45, 112, 97, 99, 107, 97, 103, 101, 45, 108, 97, 116, 101, 115, 116, 45, 118, 101, 114, 115, 105, 111, 110, 1, 14, 1, 106, 1, 9, 1, 115, 1, 64, 2, 4, 114, 101, 112, 111, 115, 7, 111, 112, 116, 105, 111, 110, 115, 11, 0, 15, 3, 0, 21, 108, 97, 116, 101, 115, 116, 45, 103, 105, 116, 104, 117, 98, 45, 114, 101, 108, 101, 97, 115, 101, 1, 16, 1, 104, 12, 1, 64, 2, 4, 115, 101, 108, 102, 17, 4, 112, 97, 116, 104, 115, 0, 13, 3, 0, 31, 91, 109, 101, 116, 104, 111, 100, 93, 119, 111, 114, 107, 116, 114, 101, 101, 46, 114, 101, 97, 100, 45, 116, 101, 120, 116, 45, 102, 105, 108, 101, 1, 18, 1, 106, 1, 4, 1, 115, 1, 64, 1, 8, 119, 111, 114, 107, 116, 114, 101, 101, 17, 0, 19, 4, 0, 27, 103, 101, 116, 45, 108, 97, 110, 103, 117, 97, 103, 101, 45, 115, 101, 114, 118, 101, 114, 45, 99, 111, 109, 109, 97, 110, 100, 1, 20, 4, 1, 27, 122, 101, 100, 58, 101, 120, 116, 101, 110, 115, 105, 111, 110, 47, 122, 101, 100, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 4, 0, 11, 19, 1, 0, 13, 122, 101, 100, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 3, 0, 0, 0, 16, 12, 112, 97, 99, 107, 97, 103, 101, 45, 100, 111, 99, 115, 0, 123, 125, 0, 70, 9, 112, 114, 111, 100, 117, 99, 101, 114, 115, 1, 12, 112, 114, 111, 99, 101, 115, 115, 101, 100, 45, 98, 121, 2, 13, 119, 105, 116, 45, 99, 111, 109, 112, 111, 110, 101, 110, 116, 6, 48, 46, 49, 56, 46, 50, 16, 119, 105, 116, 45, 98, 105, 110, 100, 103, 101, 110, 45, 114, 117, 115, 116, 6, 48, 46, 49, 54, 46, 48];
 
 #[inline(never)]
 #[doc(hidden)]

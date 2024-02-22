@@ -1,6 +1,6 @@
-package zed:language-server-extension;
+package zed:extension;
 
-world language-server-extension {
+world zed-extension {
     record command {
         command: string,
         args: list<string>,
@@ -25,5 +25,9 @@ world language-server-extension {
     import npm-package-latest-version: func(package-name: string) -> result<string, string>;
     import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 
-    export get-language-server-command: func() -> result<command, string>;
+    resource worktree {
+        read-text-file: func(path: string) -> result<string, string>;
+    }
+
+    export get-language-server-command: func(worktree: borrow<worktree>) -> result<command, string>;
 }

@@ -1,10 +1,15 @@
 mod bindings;
-use bindings::{latest_github_release, Command, GithubReleaseOptions, Guest};
+use bindings::{latest_github_release, Command, GithubReleaseOptions, Guest, Worktree};
 
 struct Component;
 
 impl Guest for Component {
-    fn get_language_server_command() -> Result<Command, String> {
+    fn get_language_server_command(worktree: &Worktree) -> Result<Command, String> {
+        println!(
+            "worktree file content: {}",
+            worktree.read_text_file("something")?
+        );
+
         let release = latest_github_release(
             "rust-lang/rust-analyzer",
             GithubReleaseOptions {

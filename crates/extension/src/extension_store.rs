@@ -1,4 +1,4 @@
-mod language_server_extension;
+mod wasm_host;
 
 #[cfg(test)]
 mod extension_store_test;
@@ -9,15 +9,12 @@ use async_tar::Archive;
 use collections::{BTreeMap, HashSet};
 use fs::{Fs, RemoveOptions};
 use futures::channel::mpsc::unbounded;
-use futures::lock::Mutex as AsyncMutex;
 use futures::StreamExt as _;
 use futures::{io::BufReader, AsyncReadExt as _};
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
-    WASM_ENGINE,
 };
-use language_server_extension::LanguageServerExtension;
 use node_runtime::NodeRuntime;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -34,8 +31,7 @@ use util::{
     paths::EXTENSIONS_DIR,
     ResultExt, TryFutureExt,
 };
-use wasmtime::component::Component;
-use wasmtime_wasi::preview2::{command, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasm_host::{WasmExtension, WasmHost};
 
 #[derive(Deserialize)]
 pub struct ExtensionsApiResponse {
@@ -87,10 +83,9 @@ pub struct ExtensionStore {
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     extension_changes: ExtensionChanges,
+    wasm_host: Arc<WasmHost>,
+    wasm_extensions: Vec<WasmExtension>,
     reload_task: Option<Task<Option<()>>>,
-    wasm_linker: Arc<wasmtime::component::Linker<WasmState>>,
-    wasm_store: Arc<AsyncMutex<wasmtime::Store<WasmState>>>,
-    language_server_extensions: Vec<Arc<LanguageServerExtension>>,
     needs_reload: bool,
     _watch_extensions_dir: [Task<()>; 2],
 }
@@ -133,13 +128,6 @@ struct ExtensionChanges {
     languages: HashSet<Arc<str>>,
     grammars: HashSet<Arc<str>>,
     themes: HashSet<Arc<str>>,
-}
-
-pub(crate) struct WasmState {
-    table: ResourceTable,
-    ctx: WasiCtx,
-    node_runtime: Arc<dyn NodeRuntime>,
-    http_client: Arc<dyn HttpClient>,
 }
 
 actions!(zed, [ReloadExtensions]);
@@ -187,14 +175,6 @@ impl ExtensionStore {
         theme_registry: Arc<ThemeRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let mut wasm_linker = wasmtime::component::Linker::new(&WASM_ENGINE);
-        command::add_to_linker(&mut wasm_linker).unwrap();
-        LanguageServerExtension::add_to_linker(&mut wasm_linker, |state: &mut WasmState| state)
-            .unwrap();
-
-        let table = ResourceTable::new();
-        let ctx = WasiCtxBuilder::new().inherit_stdio().build();
-
         let mut this = Self {
             manifest: Default::default(),
             extensions_dir: extensions_dir.join("installed"),
@@ -202,19 +182,10 @@ impl ExtensionStore {
             extensions_being_installed: Default::default(),
             extensions_being_uninstalled: Default::default(),
             reload_task: None,
+            wasm_host: WasmHost::new(http_client.clone(), node_runtime),
+            wasm_extensions: Vec::new(),
             needs_reload: false,
             extension_changes: ExtensionChanges::default(),
-            wasm_linker: Arc::new(wasm_linker),
-            wasm_store: Arc::new(AsyncMutex::new(wasmtime::Store::new(
-                &WASM_ENGINE,
-                WasmState {
-                    table,
-                    ctx,
-                    node_runtime,
-                    http_client: http_client.clone(),
-                },
-            ))),
-            language_server_extensions: Vec::new(),
             fs,
             http_client,
             language_registry,
@@ -491,8 +462,7 @@ impl ExtensionStore {
         }
 
         let fs = self.fs.clone();
-        let wasm_store = self.wasm_store.clone();
-        let wasm_linker = self.wasm_linker.clone();
+        let wasm_host = self.wasm_host.clone();
         let root_dir = self.extensions_dir.clone();
         let theme_registry = self.theme_registry.clone();
         let themes = themes_to_add
@@ -526,7 +496,7 @@ impl ExtensionStore {
                 })
                 .await;
 
-            let mut components = Vec::new();
+            let mut wasm_extensions = Vec::new();
             for language_server in language_servers {
                 let mut path = root_dir.clone();
                 path.extend([
@@ -541,25 +511,16 @@ impl ExtensionStore {
                 wasm_file
                     .read_to_end(&mut wasm_bytes)
                     .expect("failed to read wasm");
-                let wasm_component = Component::from_binary(&WASM_ENGINE, &wasm_bytes)
-                    .expect("failed to compile wasm");
-
-                let mut wasm_store = wasm_store.lock().await;
-                components.push(
-                    LanguageServerExtension::instantiate_async(
-                        &mut *wasm_store,
-                        &wasm_component,
-                        wasm_linker.as_ref(),
-                    )
-                    .await
-                    .expect("failed to insantiate wasm component"),
+                wasm_extensions.push(
+                    wasm_host
+                        .load_extension(wasm_bytes, cx.background_executor().clone())
+                        .await
+                        .expect("failed to load wasm extension"),
                 );
             }
 
             this.update(&mut cx, |this, cx| {
-                for (bindings, _) in components {
-                    this.language_server_extensions.push(Arc::new(bindings));
-                }
+                this.wasm_extensions.extend(wasm_extensions);
                 ThemeSettings::reload_current_theme(cx)
             })
             .ok();
@@ -872,14 +833,4 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
         }
     }
     result
-}
-
-impl WasiView for WasmState {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.ctx
-    }
 }

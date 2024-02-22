@@ -1,13 +1,20 @@
-use crate::{ExtensionStore, LanguageManifestEntry, Manifest, ManifestEntry, ThemeManifestEntry};
+use crate::{
+    wasm_host::{WasmState, ZedExtension},
+    ExtensionStore, LanguageManifestEntry, Manifest, ManifestEntry, ThemeManifestEntry,
+};
 use fs::FakeFs;
+use futures::FutureExt;
 use gpui::{Context, TestAppContext};
 use language::{LanguageMatcher, LanguageRegistry};
 use node_runtime::FakeNodeRuntime;
+use project::Project;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
 use util::http::{FakeHttpClient, Response};
+use wasmtime::Store;
+use wasmtime_wasi::preview2::WasiView;
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
@@ -355,11 +362,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        let store = SettingsStore::test(cx);
-        cx.set_global(store);
-        theme::init(theme::LoadThemes::JustBase, cx);
-    });
+    init_test(cx);
 
     let example_dir = "example-extensions/rust-analyzer-example";
 
@@ -457,20 +460,46 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
     });
 
     cx.executor().run_until_parked();
-    let (wasm_store, extension) = store.read_with(cx, |store, _| {
-        (
-            store.wasm_store.clone(),
-            store.language_server_extensions[0].clone(),
-        )
+    let extension = store.read_with(cx, |store, _| store.wasm_extensions[0].clone());
+
+    fs.insert_tree(
+        "/the-project-dir",
+        json!({
+            "something": "foo"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-project-dir".as_ref()], cx).await;
+    let worktree = project.read_with(cx, |project, cx| {
+        project.worktrees().next().unwrap().read(cx).snapshot()
     });
 
-    {
-        let mut wasm_store = wasm_store.lock().await;
-        let result = extension
-            .call_get_language_server_command(&mut *wasm_store)
-            .await
-            .unwrap()
-            .unwrap();
-        dbg!(result);
-    }
+    let command = extension
+        .call(
+            |extension: &mut ZedExtension, store: &mut Store<WasmState>| {
+                async move {
+                    let resource = store.data_mut().table().push(worktree).unwrap();
+                    let command = extension
+                        .call_get_language_server_command(store, resource)
+                        .await;
+                    command
+                }
+                .boxed()
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    dbg!(&command);
+}
+
+fn init_test(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        Project::init_settings(cx);
+    });
 }
