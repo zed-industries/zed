@@ -26,7 +26,6 @@ git submodule update --init --recursive
 
   - If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
-
 ## Backend Dependencies
 
 # Note: This section is still in development. The instructions are not yet complete.

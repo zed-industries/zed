@@ -421,11 +421,28 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 state.keymap_state = Some(xkb::State::new(&keymap));
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                for window in &state.windows {
-                    if window.1.surface.id() == surface.id() {
-                        state.keyboard_focused_window = Some(Rc::clone(&window.1));
-                    }
+                state.keyboard_focused_window = state
+                    .windows
+                    .iter()
+                    .find(|&w| w.1.surface.id() == surface.id())
+                    .map(|w| w.1.clone());
+
+                if let Some(window) = &state.keyboard_focused_window {
+                    window.set_focused(true);
                 }
+            }
+            wl_keyboard::Event::Leave { surface, .. } => {
+                let keyboard_focused_window = state
+                    .windows
+                    .iter()
+                    .find(|&w| w.1.surface.id() == surface.id())
+                    .map(|w| w.1.clone());
+
+                if let Some(window) = keyboard_focused_window {
+                    window.set_focused(false);
+                }
+
+                state.keyboard_focused_window = None;
             }
             wl_keyboard::Event::Modifiers {
                 mods_depressed,
@@ -479,7 +496,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                     }
                 }
             }
-            wl_keyboard::Event::Leave { .. } => {}
             _ => {}
         }
     }

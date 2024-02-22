@@ -28,8 +28,7 @@ use settings::{
     DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::static_source::StaticSource;
-use tasks_ui::OneshotSource;
+use task::{oneshot_source::OneshotSource, static_source::StaticSource};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -59,10 +58,10 @@ actions!(
         OpenDefaultKeymap,
         OpenDefaultSettings,
         OpenKeymap,
-        OpenTasks,
         OpenLicenses,
         OpenLocalSettings,
         OpenLog,
+        OpenTasks,
         OpenTelemetryLog,
         ResetBufferFontSize,
         ResetDatabase,
@@ -402,9 +401,9 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
-    let app_name = ReleaseChannel::global(cx).display_name();
+    let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
-    let message = format!("{app_name} {version}");
+    let message = format!("{release_channel} {version}");
     let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
 
     let prompt = cx.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"]);

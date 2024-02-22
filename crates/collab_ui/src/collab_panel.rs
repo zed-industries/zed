@@ -34,7 +34,7 @@ use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu,
-    Icon, IconButton, IconName, IconSize, Label, ListHeader, ListItem, Tooltip,
+    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -854,6 +854,10 @@ impl CollabPanel {
                     .into_any_element()
             } else if role == proto::ChannelRole::Guest {
                 Label::new("Guest").color(Color::Muted).into_any_element()
+            } else if role == proto::ChannelRole::Talker {
+                Label::new("Mic only")
+                    .color(Color::Muted)
+                    .into_any_element()
             } else {
                 div().into_any_element()
             })
@@ -959,6 +963,8 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let channel_store = self.channel_store.read(cx);
+        let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
         ListItem::new("channel-notes")
             .selected(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
@@ -966,9 +972,19 @@ impl CollabPanel {
             }))
             .start_slot(
                 h_flex()
+                    .relative()
                     .gap_1()
                     .child(render_tree_branch(false, true, cx))
-                    .child(IconButton::new(0, IconName::File)),
+                    .child(IconButton::new(0, IconName::File))
+                    .children(has_channel_buffer_changed.then(|| {
+                        div()
+                            .w_1p5()
+                            .z_index(1)
+                            .absolute()
+                            .right(px(2.))
+                            .top(px(2.))
+                            .child(Indicator::dot().color(Color::Info))
+                    })),
             )
             .child(Label::new("notes"))
             .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
@@ -980,6 +996,8 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let channel_store = self.channel_store.read(cx);
+        let has_messages_notification = channel_store.has_new_messages(channel_id);
         ListItem::new("channel-chat")
             .selected(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
@@ -987,9 +1005,19 @@ impl CollabPanel {
             }))
             .start_slot(
                 h_flex()
+                    .relative()
                     .gap_1()
                     .child(render_tree_branch(false, false, cx))
-                    .child(IconButton::new(0, IconName::MessageBubbles)),
+                    .child(IconButton::new(0, IconName::MessageBubbles))
+                    .children(has_messages_notification.then(|| {
+                        div()
+                            .w_1p5()
+                            .z_index(1)
+                            .absolute()
+                            .right(px(2.))
+                            .top(px(4.))
+                            .child(Indicator::dot().color(Color::Info))
+                    })),
             )
             .child(Label::new("chat"))
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
@@ -1013,13 +1041,38 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let this = cx.view().clone();
-        if !(role == proto::ChannelRole::Guest || role == proto::ChannelRole::Member) {
+        if !(role == proto::ChannelRole::Guest
+            || role == proto::ChannelRole::Talker
+            || role == proto::ChannelRole::Member)
+        {
             return;
         }
 
-        let context_menu = ContextMenu::build(cx, |context_menu, cx| {
+        let context_menu = ContextMenu::build(cx, |mut context_menu, cx| {
             if role == proto::ChannelRole::Guest {
-                context_menu.entry(
+                context_menu = context_menu.entry(
+                    "Grant Mic Access",
+                    None,
+                    cx.handler_for(&this, move |_, cx| {
+                        ActiveCall::global(cx)
+                            .update(cx, |call, cx| {
+                                let Some(room) = call.room() else {
+                                    return Task::ready(Ok(()));
+                                };
+                                room.update(cx, |room, cx| {
+                                    room.set_participant_role(
+                                        user_id,
+                                        proto::ChannelRole::Talker,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .detach_and_prompt_err("Failed to grant mic access", cx, |_, _| None)
+                    }),
+                );
+            }
+            if role == proto::ChannelRole::Guest || role == proto::ChannelRole::Talker {
+                context_menu = context_menu.entry(
                     "Grant Write Access",
                     None,
                     cx.handler_for(&this, move |_, cx| {
@@ -1043,10 +1096,16 @@ impl CollabPanel {
                                 }
                             })
                     }),
-                )
-            } else if role == proto::ChannelRole::Member {
-                context_menu.entry(
-                    "Revoke Write Access",
+                );
+            }
+            if role == proto::ChannelRole::Member || role == proto::ChannelRole::Talker {
+                let label = if role == proto::ChannelRole::Talker {
+                    "Mute"
+                } else {
+                    "Revoke Access"
+                };
+                context_menu = context_menu.entry(
+                    label,
                     None,
                     cx.handler_for(&this, move |_, cx| {
                         ActiveCall::global(cx)
@@ -1062,12 +1121,12 @@ impl CollabPanel {
                                     )
                                 })
                             })
-                            .detach_and_prompt_err("Failed to revoke write access", cx, |_, _| None)
+                            .detach_and_prompt_err("Failed to revoke access", cx, |_, _| None)
                     }),
-                )
-            } else {
-                unreachable!()
+                );
             }
+
+            context_menu
         });
 
         cx.focus_view(&context_menu);
@@ -2490,13 +2549,26 @@ impl CollabPanel {
                         },
                     ))
                     .start_slot(
-                        Icon::new(if is_public {
-                            IconName::Public
-                        } else {
-                            IconName::Hash
-                        })
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
+                        div()
+                            .relative()
+                            .child(
+                                Icon::new(if is_public {
+                                    IconName::Public
+                                } else {
+                                    IconName::Hash
+                                })
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                            )
+                            .children(has_notes_notification.then(|| {
+                                div()
+                                    .w_1p5()
+                                    .z_index(1)
+                                    .absolute()
+                                    .right(px(-1.))
+                                    .top(px(-1.))
+                                    .child(Indicator::dot().color(Color::Info))
+                            })),
                     )
                     .child(
                         h_flex()
@@ -2530,9 +2602,7 @@ impl CollabPanel {
                                         this.join_channel_chat(channel_id, cx)
                                     }))
                                     .tooltip(|cx| Tooltip::text("Open channel chat", cx))
-                                    .when(!has_messages_notification, |this| {
-                                        this.visible_on_hover("")
-                                    }),
+                                    .visible_on_hover(""),
                             )
                             .child(
                                 IconButton::new("channel_notes", IconName::File)
@@ -2548,9 +2618,7 @@ impl CollabPanel {
                                         this.open_channel_notes(channel_id, cx)
                                     }))
                                     .tooltip(|cx| Tooltip::text("Open channel notes", cx))
-                                    .when(!has_notes_notification, |this| {
-                                        this.visible_on_hover("")
-                                    }),
+                                    .visible_on_hover(""),
                             ),
                     ),
             )
@@ -2560,6 +2628,7 @@ impl CollabPanel {
                     cx.new_view(|_| JoinChannelTooltip {
                         channel_store: channel_store.clone(),
                         channel_id,
+                        has_notes_notification,
                     })
                     .into()
                 }
@@ -2845,17 +2914,25 @@ impl Render for DraggedChannelView {
 struct JoinChannelTooltip {
     channel_store: Model<ChannelStore>,
     channel_id: ChannelId,
+    has_notes_notification: bool,
 }
 
 impl Render for JoinChannelTooltip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        tooltip_container(cx, |div, cx| {
+        tooltip_container(cx, |container, cx| {
             let participants = self
                 .channel_store
                 .read(cx)
                 .channel_participants(self.channel_id);
 
-            div.child(Label::new("Join Channel"))
+            container
+                .child(Label::new("Join channel"))
+                .children(self.has_notes_notification.then(|| {
+                    h_flex()
+                        .gap_2()
+                        .child(Indicator::dot().color(Color::Info))
+                        .child(Label::new("Unread notes"))
+                }))
                 .children(participants.iter().map(|participant| {
                     h_flex()
                         .gap_2()

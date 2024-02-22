@@ -51,7 +51,7 @@ impl Database {
             if !participant
                 .role
                 .unwrap_or(ChannelRole::Member)
-                .can_publish_to_rooms()
+                .can_edit_projects()
             {
                 return Err(anyhow!("guests cannot share projects"))?;
             }

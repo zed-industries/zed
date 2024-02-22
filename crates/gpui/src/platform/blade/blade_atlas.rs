@@ -117,6 +117,7 @@ impl PlatformAtlas for BladeAtlas {
         if let Some(tile) = lock.tiles_by_key.get(key) {
             Ok(tile.clone())
         } else {
+            profiling::scope!("new tile");
             let (size, bytes) = build()?;
             let tile = lock.allocate(size, key.texture_kind());
             lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
