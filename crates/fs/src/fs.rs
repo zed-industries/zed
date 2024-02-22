@@ -246,7 +246,7 @@ impl Fs for RealFs {
         let inode = metadata.ino();
 
         #[cfg(windows)]
-        let inode = file_id(path).await;
+        let inode = file_id(path).await?;
 
         Ok(Some(Metadata {
             inode,
@@ -1340,7 +1340,7 @@ pub fn copy_recursive<'a>(
 // can we get file id not open the file twice?
 // https://github.com/rust-lang/rust/issues/63010
 #[cfg(target_os = "windows")]
-async fn file_id(path: impl AsRef<Path>) -> u64 {
+async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     use std::os::windows::io::AsRawHandle;
 
     use smol::fs::windows::OpenOptionsExt;
@@ -1355,18 +1355,20 @@ async fn file_id(path: impl AsRef<Path>) -> u64 {
         .read(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
-        .await
-        .expect("Getting file id error: unable to open file!");
+        .await?;
 
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
     // This function supports Windows XP+
-    let ret = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
-    if ret == 0 {
-        panic!("Getting file id error: {}", std::io::Error::last_os_error());
-    };
+    smol::unblock(move || {
+        let ret = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
+        if ret == 0 {
+            return Err(anyhow!(format!("{}", std::io::Error::last_os_error())));
+        };
 
-    ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64)
+        Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
+    })
+    .await
 }
 
 #[cfg(test)]
