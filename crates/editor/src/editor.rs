@@ -4206,8 +4206,43 @@ impl Editor {
                 active_index: 0,
                 ranges: tabstops,
             });
-        }
 
+            // Check whether the just-entered snippet ends with an auto-closable bracket.
+            if self.autoclose_regions.is_empty() {
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                for selection in &mut self.selections.all::<Point>(cx) {
+                    let selection_head = selection.head();
+                    let Some(scope) = snapshot.language_scope_at(selection_head) else {
+                        continue;
+                    };
+
+                    let mut bracket_pair = None;
+                    let next_chars = snapshot.chars_at(selection_head).collect::<String>();
+                    let prev_chars = snapshot
+                        .reversed_chars_at(selection_head)
+                        .collect::<String>();
+                    for (pair, enabled) in scope.brackets() {
+                        if enabled
+                            && pair.close
+                            && prev_chars.starts_with(pair.start.as_str())
+                            && next_chars.starts_with(pair.end.as_str())
+                        {
+                            bracket_pair = Some(pair.clone());
+                            break;
+                        }
+                    }
+                    if let Some(pair) = bracket_pair {
+                        let start = snapshot.anchor_after(selection_head);
+                        let end = snapshot.anchor_after(selection_head);
+                        self.autoclose_regions.push(AutocloseRegion {
+                            selection_id: selection.id,
+                            range: start..end,
+                            pair,
+                        });
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
