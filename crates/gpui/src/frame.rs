@@ -22,9 +22,9 @@ use std::{
 
 pub struct Frame {
     elements: Vec<PaintedElement>,
-    scene: Scene,
+    pub(crate) scene: Scene,
     focus: Option<FocusId>,
-    window_active: bool,
+    pub(crate) window_active: bool,
     mouse_listeners: Vec<AnyMouseListener>,
     key_listeners: Vec<KeyListener>,
     action_listeners: Vec<ActionListener>,
@@ -62,8 +62,46 @@ impl Frame {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.elements.clear();
+        self.scene.clear();
+        self.focus = None;
+        self.mouse_listeners.clear();
+        self.key_listeners.clear();
+        self.action_listeners.clear();
+        self.element_states.clear();
+        self.element_stack.clear();
+        self.context_stack.clear();
+        self.content_mask_stack.clear();
+        self.focusable_node_ids.clear();
+        self.view_node_ids.clear();
+        self.keystroke_matchers.clear();
+    }
+
     pub fn clear_pending_keystrokes(&mut self) {
         self.keystroke_matchers.clear();
+    }
+
+    /// Preserve keystroke matchers from previous frames to support multi-stroke
+    /// bindings across multiple frames.
+    pub fn preserve_pending_keystrokes(
+        &mut self,
+        prev_frame: &mut Self,
+        focus_id: Option<FocusId>,
+    ) {
+        self.context_stack.clear();
+        for element in self.dispatch_path(focus_id) {
+            if let Some(context) = element.key_context.clone() {
+                self.context_stack.push(context);
+            }
+
+            if let Some((context_stack, matcher)) = prev_frame
+                .keystroke_matchers
+                .remove_entry(self.context_stack.as_slice())
+            {
+                self.keystroke_matchers.insert(context_stack, matcher);
+            }
+        }
     }
 
     pub fn set_focus(&mut self, focus_id: Option<FocusId>) {
@@ -100,17 +138,25 @@ impl Frame {
             return SmallVec::new();
         };
 
-        let mut focus_path: SmallVec<[FocusId; 8]> = SmallVec::new();
-        let mut current_node_id = self.focusable_node_ids.get(&focus_id).copied();
-        while let Some(node_id) = current_node_id {
-            let node = self.elements[node_id.0];
-            if let Some(focus_id) = node.focus_id {
-                focus_path.push(focus_id);
-            }
-            current_node_id = node.parent;
-        }
+        let mut focus_path = self
+            .dispatch_path(Some(focus_id))
+            .flat_map(|element| element.focus_id)
+            .collect::<SmallVec<[FocusId; 8]>>();
         focus_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         focus_path
+    }
+
+    pub fn view_path(&self, view_id: EntityId) -> SmallVec<[EntityId; 8]> {
+        let Some(element_id) = self.view_node_ids.get(&view_id) else {
+            return SmallVec::new();
+        };
+
+        let mut view_path = self
+            .ancestors(Some(*element_id))
+            .flat_map(|element| element.view_id)
+            .collect::<SmallVec<[EntityId; 8]>>();
+        view_path.reverse(); // Reverse the path so it goes from the root to the focused node.
+        view_path
     }
 
     pub fn action_dispatch_path(&self, focus_id: Option<FocusId>) -> SmallVec<[ActionListener; 8]> {
@@ -137,6 +183,59 @@ impl Frame {
             .collect::<SmallVec<[KeyListener; 8]>>();
         key_dispatch_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         key_dispatch_path
+    }
+
+    pub fn available_actions(&self, focus_id: Option<FocusId>) -> Vec<Box<dyn Action>> {
+        let mut actions = Vec::<Box<dyn Action>>::new();
+        for ActionListener { action_type, .. } in self.action_dispatch_path(focus_id) {
+            if let Err(ix) = actions.binary_search_by_key(&action_type, |a| a.as_any().type_id()) {
+                // Intentionally silence these errors without logging.
+                // If an action cannot be built by default, it's not available.
+                let action = self.action_registry.build_action_type(&action_type).ok();
+                if let Some(action) = action {
+                    actions.insert(ix, action);
+                }
+            }
+        }
+        actions
+    }
+
+    pub fn bindings_for_action(
+        &self,
+        action: &dyn Action,
+        focus_id: Option<FocusId>,
+    ) -> Vec<KeyBinding> {
+        let context_stack = self
+            .dispatch_path(focus_id)
+            .flat_map(|element| element.key_context.clone())
+            .collect::<SmallVec<[KeyContext; 8]>>();
+
+        let keymap = self.keymap.borrow();
+        keymap
+            .bindings_for_action(action)
+            .filter(|binding| {
+                for i in 0..context_stack.len() {
+                    let context = &context_stack[0..=i];
+                    if keymap.binding_enabled(binding, context) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn is_action_available(&self, action: &dyn Action, focus_id: Option<FocusId>) -> bool {
+        for element in self.dispatch_path(focus_id) {
+            if self.action_listeners[element.action_listeners.clone()]
+                .iter()
+                .any(|listener| listener.action_type == action.as_any().type_id())
+            {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn match_keystroke(
@@ -195,7 +294,13 @@ impl Frame {
         let mut current_node_id = focus_id
             .and_then(|focus_id| self.focusable_node_ids.get(&focus_id).copied())
             .or_else(|| self.elements.is_empty().then(|| PaintedElementId(0)));
+        self.ancestors(current_node_id)
+    }
 
+    fn ancestors(
+        &self,
+        mut current_node_id: Option<PaintedElementId>,
+    ) -> impl Iterator<Item = &PaintedElement> {
         iter::from_fn(move || {
             let node_id = current_node_id?;
             current_node_id = self.elements[node_id.0].parent;
@@ -274,16 +379,14 @@ impl Frame {
         self.active_element().key_listeners.end += 1;
     }
 
-    pub fn on_action<A: Action>(
+    pub fn on_action(
         &mut self,
-        listener: impl Fn(&A, DispatchPhase, &mut WindowContext) + 'static,
+        action_type: TypeId,
+        listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>,
     ) {
         self.action_listeners.push(ActionListener {
-            action_type: TypeId::of::<A>(),
-            listener: Rc::new(|event, phase, cx| {
-                let event = event.downcast_ref::<A>().unwrap();
-                listener(event, phase, cx);
-            }),
+            action_type,
+            listener: Rc::new(|event, phase, cx| listener(event, phase, cx)),
         });
 
         self.active_element().action_listeners.end += 1;

@@ -1,13 +1,13 @@
 use crate::{
     frame::ActionListener, px, size, transparent_black, Action, AnyDrag, AnyView, AppContext,
-    Arena, AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle,
-    DispatchNodeId, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent,
-    Flatten, Frame, Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch,
-    KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance,
-    WindowBounds, WindowOptions, WindowTextSystem,
+    Arena, AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle, DisplayId,
+    Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten, Frame, Global,
+    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
+    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
+    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
+    WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -609,14 +609,8 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
-        self.window
-            .next_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
+        self.window.rendered_frame.clear_pending_keystrokes();
+        self.window.next_frame.clear_pending_keystrokes();
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -811,19 +805,9 @@ impl<'a> WindowContext<'a> {
 
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
-        let target = self
-            .focused()
-            .and_then(|focused_handle| {
-                self.window
-                    .rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focused_handle.id)
-            })
-            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
         self.window
             .rendered_frame
-            .dispatch_tree
-            .is_action_available(action, target)
+            .is_action_available(action, self.window.focus)
     }
 
     /// The position of the mouse relative to the window.
@@ -840,36 +824,38 @@ impl<'a> WindowContext<'a> {
     /// on top of the given level. Layers who are extensions of the queried layer
     /// are not considered to be on top of queried layer.
     pub fn was_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
-        // Precondition: the depth map is ordered from topmost to bottomost.
+        todo!()
 
-        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if layer >= opaque_layer {
-                // The queried layer is either above or is the same as the this opaque layer.
-                // Anything after this point is guaranteed to be below the queried layer.
-                return true;
-            }
+        // // Precondition: the depth map is ordered from topmost to bottomost.
 
-            if !bounds.contains(point) {
-                // This opaque layer is above the queried layer but it doesn't contain
-                // the given position, so we can ignore it even if it's above.
-                continue;
-            }
+        // for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
+        //     if layer >= opaque_layer {
+        //         // The queried layer is either above or is the same as the this opaque layer.
+        //         // Anything after this point is guaranteed to be below the queried layer.
+        //         return true;
+        //     }
 
-            // At this point, we've established that this opaque layer is on top of the queried layer
-            // and contains the position:
-            // If neither the opaque layer or the queried layer is an extension of the other then
-            // we know they are on different stacking orders, and return false.
-            let is_on_same_layer = opaque_layer
-                .iter()
-                .zip(layer.iter())
-                .all(|(a, b)| a.z_index == b.z_index);
+        //     if !bounds.contains(point) {
+        //         // This opaque layer is above the queried layer but it doesn't contain
+        //         // the given position, so we can ignore it even if it's above.
+        //         continue;
+        //     }
 
-            if !is_on_same_layer {
-                return false;
-            }
-        }
+        //     // At this point, we've established that this opaque layer is on top of the queried layer
+        //     // and contains the position:
+        //     // If neither the opaque layer or the queried layer is an extension of the other then
+        //     // we know they are on different stacking orders, and return false.
+        //     let is_on_same_layer = opaque_layer
+        //         .iter()
+        //         .zip(layer.iter())
+        //         .all(|(a, b)| a.z_index == b.z_index);
 
-        true
+        //     if !is_on_same_layer {
+        //         return false;
+        //     }
+        // }
+
+        // true
     }
 
     pub(crate) fn was_top_layer_under_active_drag(
@@ -877,52 +863,53 @@ impl<'a> WindowContext<'a> {
         point: &Point<Pixels>,
         layer: &StackingOrder,
     ) -> bool {
+        todo!()
         // Precondition: the depth map is ordered from topmost to bottomost.
 
-        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if layer >= opaque_layer {
-                // The queried layer is either above or is the same as the this opaque layer.
-                // Anything after this point is guaranteed to be below the queried layer.
-                return true;
-            }
+        // for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
+        //     if layer >= opaque_layer {
+        //         // The queried layer is either above or is the same as the this opaque layer.
+        //         // Anything after this point is guaranteed to be below the queried layer.
+        //         return true;
+        //     }
 
-            if !bounds.contains(point) {
-                // This opaque layer is above the queried layer but it doesn't contain
-                // the given position, so we can ignore it even if it's above.
-                continue;
-            }
+        //     if !bounds.contains(point) {
+        //         // This opaque layer is above the queried layer but it doesn't contain
+        //         // the given position, so we can ignore it even if it's above.
+        //         continue;
+        //     }
 
-            // All normal content is rendered with a base z-index of 0, we know that if the root of this opaque layer
-            // equals `ACTIVE_DRAG_Z_INDEX` then it must be the drag layer and we can ignore it as we are
-            // looking to see if the queried layer was the topmost underneath the drag layer.
-            if opaque_layer
-                .first()
-                .map(|c| c.z_index == ACTIVE_DRAG_Z_INDEX)
-                .unwrap_or(false)
-            {
-                continue;
-            }
+        //     // All normal content is rendered with a base z-index of 0, we know that if the root of this opaque layer
+        //     // equals `ACTIVE_DRAG_Z_INDEX` then it must be the drag layer and we can ignore it as we are
+        //     // looking to see if the queried layer was the topmost underneath the drag layer.
+        //     if opaque_layer
+        //         .first()
+        //         .map(|c| c.z_index == ACTIVE_DRAG_Z_INDEX)
+        //         .unwrap_or(false)
+        //     {
+        //         continue;
+        //     }
 
-            // At this point, we've established that this opaque layer is on top of the queried layer
-            // and contains the position:
-            // If neither the opaque layer or the queried layer is an extension of the other then
-            // we know they are on different stacking orders, and return false.
-            let is_on_same_layer = opaque_layer
-                .iter()
-                .zip(layer.iter())
-                .all(|(a, b)| a.z_index == b.z_index);
+        //     // At this point, we've established that this opaque layer is on top of the queried layer
+        //     // and contains the position:
+        //     // If neither the opaque layer or the queried layer is an extension of the other then
+        //     // we know they are on different stacking orders, and return false.
+        //     let is_on_same_layer = opaque_layer
+        //         .iter()
+        //         .zip(layer.iter())
+        //         .all(|(a, b)| a.z_index == b.z_index);
 
-            if !is_on_same_layer {
-                return false;
-            }
-        }
+        //     if !is_on_same_layer {
+        //         return false;
+        //     }
+        // }
 
-        true
+        // true
     }
 
     /// Called during painting to get the current stacking order.
     pub fn stacking_order(&self) -> &StackingOrder {
-        &self.window.next_frame.z_index_stack
+        todo!()
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -931,12 +918,6 @@ impl<'a> WindowContext<'a> {
         self.window.dirty.set(false);
         self.window.drawing = true;
 
-        if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
-        {
-            let input_handler = self.window.platform_window.take_input_handler();
-            requested_handler.handler = input_handler;
-        }
-
         let root_view = self.window.root_view.take().unwrap();
         self.with_element_context(|cx| {
             cx.with_z_index(0, |cx| {
@@ -944,7 +925,7 @@ impl<'a> WindowContext<'a> {
                     // We need to use cx.cx here so we can utilize borrow splitting
                     for (action_type, action_listeners) in &cx.cx.app.global_action_listeners {
                         for action_listener in action_listeners.iter().cloned() {
-                            cx.cx.window.next_frame.dispatch_tree.on_action(
+                            cx.cx.window.next_frame.on_action(
                                 *action_type,
                                 Rc::new(
                                     move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
@@ -987,14 +968,10 @@ impl<'a> WindowContext<'a> {
         }
         self.window.dirty_views.clear();
 
-        // TODO!
-        // self.window
-        //     .next_frame
-        //     .dispatch_tree
-        //     .preserve_pending_keystrokes(
-        //         &mut self.window.rendered_frame.dispatch_tree,
-        //         self.window.focus,
-        //     );
+        self.window.next_frame.preserve_pending_keystrokes(
+            &mut self.window.rendered_frame.dispatch_tree,
+            self.window.focus,
+        );
         self.window.next_frame.set_focus(self.window.focus);
         self.window
             .next_frame
@@ -1022,9 +999,10 @@ impl<'a> WindowContext<'a> {
         self.window.layout_engine.as_mut().unwrap().clear();
         self.text_system()
             .finish_frame(&self.window.next_frame.reused_views);
-        self.window
-            .next_frame
-            .finish(&mut self.window.rendered_frame);
+        // todo!()
+        // self.window
+        //     .next_frame
+        //     .finish(&mut self.window.rendered_frame);
         ELEMENT_ARENA.with_borrow_mut(|element_arena| {
             let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
             if percentage >= 80. {
@@ -1206,56 +1184,54 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
-        if let Some(mut handlers) = self
-            .window
-            .rendered_frame
-            .mouse_listeners
-            .remove(&event.type_id())
-        {
-            // Because handlers may add other handlers, we sort every time.
-            handlers.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
+        todo!()
+        // if let Some(mut handlers) = self
+        //     .window
+        //     .rendered_frame
+        //     .mouse_listeners
+        //     .remove(&event.type_id())
+        // {
+        //     // Capture phase, events bubble from back to front. Handlers for this phase are used for
+        //     // special purposes, such as detecting events outside of a given Bounds.
+        //     for (_, _, handler) in &mut handlers {
+        //         self.with_element_context(|cx| {
+        //             handler(event, DispatchPhase::Capture, cx);
+        //         });
+        //         if !self.app.propagate_event {
+        //             break;
+        //         }
+        //     }
 
-            // Capture phase, events bubble from back to front. Handlers for this phase are used for
-            // special purposes, such as detecting events outside of a given Bounds.
-            for (_, _, handler) in &mut handlers {
-                self.with_element_context(|cx| {
-                    handler(event, DispatchPhase::Capture, cx);
-                });
-                if !self.app.propagate_event {
-                    break;
-                }
-            }
+        //     // Bubble phase, where most normal handlers do their work.
+        //     if self.app.propagate_event {
+        //         for (_, _, handler) in handlers.iter_mut().rev() {
+        //             self.with_element_context(|cx| {
+        //                 handler(event, DispatchPhase::Bubble, cx);
+        //             });
+        //             if !self.app.propagate_event {
+        //                 break;
+        //             }
+        //         }
+        //     }
 
-            // Bubble phase, where most normal handlers do their work.
-            if self.app.propagate_event {
-                for (_, _, handler) in handlers.iter_mut().rev() {
-                    self.with_element_context(|cx| {
-                        handler(event, DispatchPhase::Bubble, cx);
-                    });
-                    if !self.app.propagate_event {
-                        break;
-                    }
-                }
-            }
+        //     self.window
+        //         .rendered_frame
+        //         .mouse_listeners
+        //         .insert(event.type_id(), handlers);
+        // }
 
-            self.window
-                .rendered_frame
-                .mouse_listeners
-                .insert(event.type_id(), handlers);
-        }
-
-        if self.app.propagate_event && self.has_active_drag() {
-            if event.is::<MouseMoveEvent>() {
-                // If this was a mouse move event, redraw the window so that the
-                // active drag can follow the mouse cursor.
-                self.refresh();
-            } else if event.is::<MouseUpEvent>() {
-                // If this was a mouse up event, cancel the active drag and redraw
-                // the window.
-                self.active_drag = None;
-                self.refresh();
-            }
-        }
+        // if self.app.propagate_event && self.has_active_drag() {
+        //     if event.is::<MouseMoveEvent>() {
+        //         // If this was a mouse move event, redraw the window so that the
+        //         // active drag can follow the mouse cursor.
+        //         self.refresh();
+        //     } else if event.is::<MouseUpEvent>() {
+        //         // If this was a mouse up event, cancel the active drag and redraw
+        //         // the window.
+        //         self.active_drag = None;
+        //         self.refresh();
+        //     }
+        // }
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any) {
@@ -1338,30 +1314,22 @@ impl<'a> WindowContext<'a> {
     fn dispatch_key_down_up_event(&mut self, event: &dyn Any, focus_id: Option<FocusId>) {
         // Capture phase
         let key_dispatch_path = self.window.rendered_frame.key_dispatch_path(focus_id);
-        for node_id in &key_dispatch_path {
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-
-            for key_listener in node.key_listeners.clone() {
-                self.with_element_context(|cx| {
-                    key_listener(event, DispatchPhase::Capture, cx);
-                });
-                if !self.propagate_event {
-                    return;
-                }
+        for key_listener in &key_dispatch_path {
+            self.with_element_context(|cx| {
+                key_listener(event, DispatchPhase::Capture, cx);
+            });
+            if !self.propagate_event {
+                return;
             }
         }
 
         // Bubble phase
-        for node_id in dispatch_path.iter().rev() {
-            // Handle low level key events
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            for key_listener in node.key_listeners.clone() {
-                self.with_element_context(|cx| {
-                    key_listener(event, DispatchPhase::Bubble, cx);
-                });
-                if !self.propagate_event {
-                    return;
-                }
+        for key_listener in key_dispatch_path.iter().rev() {
+            self.with_element_context(|cx| {
+                key_listener(event, DispatchPhase::Bubble, cx);
+            });
+            if !self.propagate_event {
+                return;
             }
         }
     }
@@ -1372,18 +1340,8 @@ impl<'a> WindowContext<'a> {
     }
 
     fn replay_pending_input(&mut self, currently_pending: PendingInput) {
-        let node_id = self
-            .window
-            .focus
-            .and_then(|focus_id| {
-                self.window
-                    .rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
-
-        if self.window.focus != currently_pending.focus {
+        let focus_id = self.window.focus;
+        if focus_id != currently_pending.focus {
             return;
         }
 
@@ -1391,17 +1349,11 @@ impl<'a> WindowContext<'a> {
 
         self.propagate_event = true;
         for binding in currently_pending.bindings {
-            self.dispatch_action_on(node_id, binding.action.boxed_clone());
+            self.dispatch_action_on(focus_id, binding.action.boxed_clone());
             if !self.propagate_event {
                 return;
             }
         }
-
-        let dispatch_path = self
-            .window
-            .rendered_frame
-            .dispatch_tree
-            .dispatch_path(node_id);
 
         for keystroke in currently_pending.keystrokes {
             let event = KeyDownEvent {
@@ -1409,7 +1361,7 @@ impl<'a> WindowContext<'a> {
                 is_held: false,
             };
 
-            self.dispatch_key_down_up_event(&event, &dispatch_path);
+            self.dispatch_key_down_up_event(&event, focus_id);
             if !self.propagate_event {
                 return;
             }
@@ -1448,7 +1400,7 @@ impl<'a> WindowContext<'a> {
         for ActionListener {
             action_type,
             listener,
-        } in &dispatch_path
+        } in dispatch_path.iter().rev()
         {
             let any_action = action.as_any();
             if *action_type == any_action.type_id() {
@@ -1520,32 +1472,16 @@ impl<'a> WindowContext<'a> {
 
     /// Returns all available actions for the focused element.
     pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
-        let node_id = self
-            .window
-            .focus
-            .and_then(|focus_id| {
-                self.window
-                    .rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
-
         self.window
             .rendered_frame
-            .dispatch_tree
-            .available_actions(node_id)
+            .available_actions(self.window.focus)
     }
 
     /// Returns key bindings that invoke the given action on the currently focused element.
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.window
             .rendered_frame
-            .dispatch_tree
-            .bindings_for_action(
-                action,
-                &self.window.rendered_frame.dispatch_tree.context_stack,
-            )
+            .bindings_for_action(action, self.window.focus)
     }
 
     /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
@@ -1554,17 +1490,9 @@ impl<'a> WindowContext<'a> {
         action: &dyn Action,
         focus_handle: &FocusHandle,
     ) -> Vec<KeyBinding> {
-        let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
-
-        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
-            return vec![];
-        };
-        let context_stack: Vec<_> = dispatch_tree
-            .dispatch_path(node_id)
-            .into_iter()
-            .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
-            .collect();
-        dispatch_tree.bindings_for_action(action, &context_stack)
+        self.window
+            .rendered_frame
+            .bindings_for_action(action, Some(focus_handle.id))
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
@@ -1600,15 +1528,6 @@ impl<'a> WindowContext<'a> {
             .on_should_close(Box::new(move || this.update(|cx| f(cx)).unwrap_or(true)))
     }
 
-    pub(crate) fn parent_view_id(&self) -> EntityId {
-        *self
-            .window
-            .next_frame
-            .view_stack
-            .last()
-            .expect("a view should always be on the stack while drawing")
-    }
-
     /// Register an action listener on the window for the next frame. The type of action
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -1622,7 +1541,6 @@ impl<'a> WindowContext<'a> {
     ) {
         self.window
             .next_frame
-            .dispatch_tree
             .on_action(action_type, Rc::new(listener));
     }
 }
@@ -2034,7 +1952,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         for view_id in self
             .window
             .rendered_frame
-            .dispatch_tree
             .view_path(self.view.entity_id())
             .into_iter()
             .rev()
