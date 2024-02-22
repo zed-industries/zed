@@ -122,8 +122,4 @@ path = "examples/hello_world.rs"
 
 [[example]]
 name = "image"
-path = "examples/image.rs"
-
-[[example]]
-name = "ownership_post"
-path = "examples/ownership_post.rs"
+path = "examples/image/image.rs"
