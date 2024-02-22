@@ -115,7 +115,6 @@ pub enum IconName {
     WholeWord,
     XCircle,
     ZedXCopilot,
-    Zed,
 }
 
 impl IconName {
@@ -210,7 +209,6 @@ impl IconName {
             IconName::Update => "icons/update.svg",
             IconName::WholeWord => "icons/word_search.svg",
             IconName::XCircle => "icons/error.svg",
-            IconName::Zed => "icons/zed.png",
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
         }
     }
