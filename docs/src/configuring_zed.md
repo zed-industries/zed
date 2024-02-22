@@ -393,93 +393,14 @@ Inlay hints querying consists of two parts: editor (client) and LSP server.
 With the inlay settings above are changed to enable the hints, editor will start to query certain types of hints and react on LSP hint refresh request from the server.
 At this point, the server may or may not return hints depending on its implementation, further configuration might be needed, refer to the corresponding LSP server documentation.
 
-Use `lsp` section for the server configuration, below are some examples for well known servers:
+The following languages have inlay hints preconfigured by Zed:
 
-### Rust
+- [Go](https://docs.zed.dev/languages/go)
+- [Rust](https://docs.zed.dev/languages/rust)
+- [Svelte](https://docs.zed.dev/languages/svelte)
+- [Typescript](https://docs.zed.dev/languages/typescript)
 
-```json
-"lsp": {
-  "rust-analyzer": {
-    "initialization_options": {
-      "inlayHints": {
-        "maxLength": null,
-        "lifetimeElisionHints": {
-          "useParameterNames": true,
-          "enable": "skip_trivial"
-        },
-        "closureReturnTypeHints": {
-          "enable": "always"
-        }
-      }
-    }
-  }
-}
-```
-
-### Typescript
-
-```json
-"lsp": {
-  "typescript-language-server": {
-    "initialization_options": {
-      "preferences": {
-        "includeInlayParameterNameHints": "all",
-        "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-        "includeInlayFunctionParameterTypeHints": true,
-        "includeInlayVariableTypeHints": true,
-        "includeInlayVariableTypeHintsWhenTypeMatchesName": false,
-        "includeInlayPropertyDeclarationTypeHints": true,
-        "includeInlayFunctionLikeReturnTypeHints": true,
-        "includeInlayEnumMemberValueHints": true
-      }
-    }
-  }
-}
-```
-
-### Go
-
-```json
-"lsp": {
-  "gopls": {
-    "initialization_options": {
-      "hints": {
-        "assignVariableTypes": true,
-        "compositeLiteralFields": true,
-        "compositeLiteralTypes": true,
-        "constantValues": true,
-        "functionTypeParameters": true,
-        "parameterNames": true,
-        "rangeVariableTypes": true
-      }
-    }
-  }
-}
-```
-
-### Svelte
-
-```json
-{
-  "lsp": {
-    "typescript-language-server": {
-      "initialization_options": {
-        "preferences": {
-          "includeInlayParameterNameHints": "all",
-          "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-          "includeInlayFunctionParameterTypeHints": true,
-          "includeInlayVariableTypeHints": true,
-          "includeInlayVariableTypeHintsWhenTypeMatchesName": false,
-          "includeInlayPropertyDeclarationTypeHints": true,
-          "includeInlayFunctionLikeReturnTypeHints": true,
-          "includeInlayEnumMemberValueHints": true,
-          "includeInlayEnumMemberDeclarationTypes": true
-        }
-      }
-    }
-  }
-}
-```
+Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
 
 ## Journal
 
