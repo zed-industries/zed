@@ -1106,14 +1106,8 @@ impl AppContext {
         for window in self.windows() {
             window
                 .update(self, |_, cx| {
-                    cx.window
-                        .rendered_frame
-                        .dispatch_tree
-                        .clear_pending_keystrokes();
-                    cx.window
-                        .next_frame
-                        .dispatch_tree
-                        .clear_pending_keystrokes();
+                    cx.window.rendered_frame.clear_pending_keystrokes();
+                    cx.window.next_frame.clear_pending_keystrokes();
                 })
                 .ok();
         }

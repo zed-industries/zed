@@ -1,13 +1,13 @@
 use crate::{
-    px, size, transparent_black, Action, ActionListener, AnyDrag, AnyView, AppContext, Arena,
-    AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
-    WindowOptions, WindowTextSystem,
+    frame::ActionListener, px, size, transparent_black, Action, AnyDrag, AnyView, AppContext,
+    Arena, AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle,
+    DispatchNodeId, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent,
+    Flatten, Frame, Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch,
+    KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
+    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance,
+    WindowBounds, WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -126,10 +126,7 @@ impl FocusId {
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub(crate) fn contains(&self, other: Self, cx: &WindowContext) -> bool {
-        cx.window
-            .rendered_frame
-            .dispatch_tree
-            .focus_contains(*self, other)
+        cx.window.rendered_frame.focus_contains(*self, other)
     }
 }
 
@@ -314,13 +311,6 @@ impl PendingInput {
     }
 }
 
-pub(crate) struct ElementStateBox {
-    pub(crate) inner: Box<dyn Any>,
-    pub(crate) parent_view_id: EntityId,
-    #[cfg(debug_assertions)]
-    pub(crate) type_name: &'static str,
-}
-
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
@@ -449,8 +439,8 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
-            rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
-            next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            rendered_frame: Frame::new(cx.keymap.clone(), cx.actions.clone()),
+            next_frame: Frame::new(cx.keymap.clone(), cx.actions.clone()),
             next_frame_callbacks,
             dirty_views: FxHashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
@@ -561,10 +551,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = Some(handle.id);
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
+        self.window.rendered_frame.clear_pending_keystrokes();
         self.refresh();
     }
 
@@ -591,20 +578,10 @@ impl<'a> WindowContext<'a> {
 
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
-        let focus_handle = self.focused();
-
+        let focus_id = self.window.focus;
         self.defer(move |cx| {
-            let node_id = focus_handle
-                .and_then(|handle| {
-                    cx.window
-                        .rendered_frame
-                        .dispatch_tree
-                        .focusable_node_id(handle.id)
-                })
-                .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
-
             cx.propagate_event = true;
-            cx.dispatch_action_on_node(node_id, action);
+            cx.dispatch_action_on(focus_id, action);
         })
     }
 
@@ -1010,15 +987,18 @@ impl<'a> WindowContext<'a> {
         }
         self.window.dirty_views.clear();
 
+        // TODO!
+        // self.window
+        //     .next_frame
+        //     .dispatch_tree
+        //     .preserve_pending_keystrokes(
+        //         &mut self.window.rendered_frame.dispatch_tree,
+        //         self.window.focus,
+        //     );
+        self.window.next_frame.set_focus(self.window.focus);
         self.window
             .next_frame
-            .dispatch_tree
-            .preserve_pending_keystrokes(
-                &mut self.window.rendered_frame.dispatch_tree,
-                self.window.focus,
-            );
-        self.window.next_frame.focus = self.window.focus;
-        self.window.next_frame.window_active = self.window.active.get();
+            .set_window_active(self.window.active.get());
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
@@ -1283,29 +1263,14 @@ impl<'a> WindowContext<'a> {
             self.draw();
         }
 
-        let node_id = self
-            .window
-            .focus
-            .and_then(|focus_id| {
-                self.window
-                    .rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
-
-        let dispatch_path = self
-            .window
-            .rendered_frame
-            .dispatch_tree
-            .dispatch_path(node_id);
+        let focus_id = self.window.focus;
+        let dispatch_path = self.window.rendered_frame.key_dispatch_path(focus_id);
 
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             let KeymatchResult { bindings, pending } = self
                 .window
                 .rendered_frame
-                .dispatch_tree
-                .dispatch_key(&key_down_event.keystroke, &dispatch_path);
+                .match_keystroke(&key_down_event.keystroke, focus_id);
 
             if pending {
                 let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
@@ -1335,8 +1300,11 @@ impl<'a> WindowContext<'a> {
                 self.window.pending_input = Some(currently_pending);
 
                 self.propagate_event = false;
+
                 return;
-            } else if let Some(currently_pending) = self.window.pending_input.take() {
+            }
+
+            if let Some(currently_pending) = self.window.pending_input.take() {
                 if bindings
                     .iter()
                     .all(|binding| !currently_pending.used_by_binding(binding))
@@ -1351,7 +1319,7 @@ impl<'a> WindowContext<'a> {
 
             self.propagate_event = true;
             for binding in bindings {
-                self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+                self.dispatch_action_on(focus_id, binding.action.boxed_clone());
                 if !self.propagate_event {
                     self.dispatch_keystroke_observers(event, Some(binding.action));
                     return;
@@ -1359,7 +1327,7 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        self.dispatch_key_down_up_event(event, &dispatch_path);
+        self.dispatch_key_down_up_event(event, focus_id);
         if !self.propagate_event {
             return;
         }
@@ -1367,13 +1335,10 @@ impl<'a> WindowContext<'a> {
         self.dispatch_keystroke_observers(event, None);
     }
 
-    fn dispatch_key_down_up_event(
-        &mut self,
-        event: &dyn Any,
-        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
-    ) {
+    fn dispatch_key_down_up_event(&mut self, event: &dyn Any, focus_id: Option<FocusId>) {
         // Capture phase
-        for node_id in dispatch_path {
+        let key_dispatch_path = self.window.rendered_frame.key_dispatch_path(focus_id);
+        for node_id in &key_dispatch_path {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
 
             for key_listener in node.key_listeners.clone() {
@@ -1403,10 +1368,7 @@ impl<'a> WindowContext<'a> {
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .has_pending_keystrokes()
+        self.window.rendered_frame.has_pending_keystrokes()
     }
 
     fn replay_pending_input(&mut self, currently_pending: PendingInput) {
@@ -1429,7 +1391,7 @@ impl<'a> WindowContext<'a> {
 
         self.propagate_event = true;
         for binding in currently_pending.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+            self.dispatch_action_on(node_id, binding.action.boxed_clone());
             if !self.propagate_event {
                 return;
             }
@@ -1461,52 +1423,43 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {
-        let dispatch_path = self
-            .window
-            .rendered_frame
-            .dispatch_tree
-            .dispatch_path(node_id);
+    fn dispatch_action_on(&mut self, focus_id: Option<FocusId>, action: Box<dyn Action>) {
+        let dispatch_path = self.window.rendered_frame.action_dispatch_path(focus_id);
 
         // Capture phase
-        for node_id in &dispatch_path {
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            for ActionListener {
-                action_type,
-                listener,
-            } in node.action_listeners.clone()
-            {
-                let any_action = action.as_any();
-                if action_type == any_action.type_id() {
-                    self.with_element_context(|cx| {
-                        listener(any_action, DispatchPhase::Capture, cx);
-                    });
+        for ActionListener {
+            action_type,
+            listener,
+        } in &dispatch_path
+        {
+            let any_action = action.as_any();
+            if *action_type == any_action.type_id() {
+                self.with_element_context(|cx| {
+                    listener(any_action, DispatchPhase::Capture, cx);
+                });
 
-                    if !self.propagate_event {
-                        return;
-                    }
+                if !self.propagate_event {
+                    return;
                 }
             }
         }
+
         // Bubble phase
-        for node_id in dispatch_path.iter().rev() {
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            for ActionListener {
-                action_type,
-                listener,
-            } in node.action_listeners.clone()
-            {
-                let any_action = action.as_any();
-                if action_type == any_action.type_id() {
-                    self.propagate_event = false; // Actions stop propagation by default during the bubble phase
+        for ActionListener {
+            action_type,
+            listener,
+        } in &dispatch_path
+        {
+            let any_action = action.as_any();
+            if *action_type == any_action.type_id() {
+                self.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
-                    self.with_element_context(|cx| {
-                        listener(any_action, DispatchPhase::Bubble, cx);
-                    });
+                self.with_element_context(|cx| {
+                    listener(any_action, DispatchPhase::Bubble, cx);
+                });
 
-                    if !self.propagate_event {
-                        return;
-                    }
+                if !self.propagate_event {
+                    return;
                 }
             }
         }
