@@ -101,11 +101,11 @@ pub enum ChannelRole {
     #[default]
     Member,
     /// Talker can read, but not write.
-    /// (thought they can use microphones and the channel chat)
+    /// They can use microphones and the channel chat
     #[sea_orm(string_value = "talker")]
     Talker,
-    /// Guest can read, but not write nor use microphones
-    /// (thought they can use the channel chat)
+    /// Guest can read, but not write.
+    /// They can not use microphones but can use the chat.
     #[sea_orm(string_value = "guest")]
     Guest,
     /// Banned may not read.
