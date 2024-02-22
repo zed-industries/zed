@@ -491,8 +491,7 @@
         "ctrl-alt-shift-c": "project_panel::CopyRelativePath",
         "f2": "project_panel::Rename",
         "enter": "project_panel::Rename",
-        "delete": "project_panel::Delete",
-        "ctrl-backspace": "project_panel::Delete",
+        "backspace": "project_panel::Delete",
         "ctrl-alt-r": "project_panel::RevealInFinder",
         "alt-shift-f": "project_panel::NewSearchInDirectory"
       }
