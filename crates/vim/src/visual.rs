@@ -16,7 +16,7 @@ use crate::{
     motion::{start_of_line, Motion},
     object::Object,
     state::{Mode, Operator},
-    utils::copy_selections_content,
+    utils::{copy_selections_content, yank_selections_content},
     Vim,
 };
 
@@ -60,7 +60,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             if vim.state().mode == Mode::VisualBlock
                 && !matches!(
@@ -251,7 +251,7 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                 vim.switch_mode(target_mode, true, cx);
             }
 
-            vim.update_active_editor(cx, |editor, cx| {
+            vim.update_active_editor(cx, |_, editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
                         let mut head = selection.head();
@@ -298,7 +298,7 @@ fn toggle_mode(mode: Mode, cx: &mut ViewContext<Workspace>) {
 
 pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(None, cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
@@ -311,7 +311,7 @@ pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace
 pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = editor.selections.line_mode;
 
@@ -328,7 +328,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                         selection.goal = SelectionGoal::None;
                     });
                 });
-                copy_selections_content(editor, line_mode, cx);
+                copy_selections_content(vim, editor, line_mode, cx);
                 editor.insert("", cx);
 
                 // Fixup cursor position after the deletion
@@ -355,9 +355,9 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
 
 pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |vim, editor, cx| {
             let line_mode = editor.selections.line_mode;
-            copy_selections_content(editor, line_mode, cx);
+            yank_selections_content(vim, editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     if line_mode {
@@ -377,7 +377,7 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
 pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (display_map, selections) = editor.selections.all_adjusted_display(cx);
 
@@ -426,7 +426,7 @@ pub fn select_next(
         let count =
             vim.take_count(cx)
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             for _ in 0..count {
                 match editor.select_next(&Default::default(), cx) {
                     Err(a) => return Err(a),
@@ -448,7 +448,7 @@ pub fn select_previous(
         let count =
             vim.take_count(cx)
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             for _ in 0..count {
                 match editor.select_previous(&Default::default(), cx) {
                     Err(a) => return Err(a),

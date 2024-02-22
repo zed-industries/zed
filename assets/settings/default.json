@@ -331,7 +331,9 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [".env"]
+    "disabled_globs": [
+      ".env"
+    ]
   },
   // Settings specific to journaling
   "journal": {
@@ -440,7 +442,12 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [".env", "env", ".venv", "venv"],
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
@@ -554,6 +561,10 @@
     //         }
     //     }
     // }
+  },
+  // Vim settings
+  "vim": {
+    "use_system_clipboard": "always"
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

@@ -3,25 +3,35 @@ use std::time::Duration;
 use editor::{ClipboardSelection, Editor};
 use gpui::{ClipboardItem, ViewContext};
 use language::{CharKind, Point};
+use settings::Settings;
+
+use crate::{state::Mode, UseSystemClipboard, Vim, VimSettings};
 
 pub struct HighlightOnYank;
 
-pub fn copy_and_flash_selections_content(
+pub fn yank_selections_content(
+    vim: &mut Vim,
     editor: &mut Editor,
     linewise: bool,
     cx: &mut ViewContext<Editor>,
 ) {
-    copy_selections_content_internal(editor, linewise, true, cx);
+    copy_selections_content_internal(vim, editor, linewise, true, cx);
 }
 
-pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut ViewContext<Editor>) {
-    copy_selections_content_internal(editor, linewise, false, cx);
+pub fn copy_selections_content(
+    vim: &mut Vim,
+    editor: &mut Editor,
+    linewise: bool,
+    cx: &mut ViewContext<Editor>,
+) {
+    copy_selections_content_internal(vim, editor, linewise, false, cx);
 }
 
 fn copy_selections_content_internal(
+    vim: &mut Vim,
     editor: &mut Editor,
     linewise: bool,
-    highlight: bool,
+    is_yank: bool,
     cx: &mut ViewContext<Editor>,
 ) {
     let selections = editor.selections.all_adjusted(cx);
@@ -73,8 +83,22 @@ fn copy_selections_content_internal(
         }
     }
 
-    cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
-    if !highlight {
+    let setting = VimSettings::get_global(cx).use_system_clipboard;
+    if setting == UseSystemClipboard::Always || setting == UseSystemClipboard::OnYank && is_yank {
+        cx.write_to_clipboard(ClipboardItem::new(text.clone()).with_metadata(clipboard_selections));
+        vim.workspace_state
+            .registers
+            .insert(".system.".to_string(), text.clone());
+    } else {
+        vim.workspace_state.registers.insert(
+            ".system.".to_string(),
+            cx.read_from_clipboard()
+                .map(|item| item.text().clone())
+                .unwrap_or_default(),
+        );
+    }
+    vim.workspace_state.registers.insert("\"".to_string(), text);
+    if !is_yank || vim.state().mode == Mode::Visual {
         return;
     }
 

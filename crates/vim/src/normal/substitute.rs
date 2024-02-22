@@ -29,7 +29,7 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
 }
 
 pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut WindowContext) {
-    vim.update_active_editor(cx, |editor, cx| {
+    vim.update_active_editor(cx, |vim, editor, cx| {
         editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
@@ -72,7 +72,7 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
                     }
                 })
             });
-            copy_selections_content(editor, line_mode, cx);
+            copy_selections_content(vim, editor, line_mode, cx);
             let selections = editor.selections.all::<Point>(cx).into_iter();
             let edits = selections.map(|selection| (selection.start..selection.end, ""));
             editor.edit(edits, cx);

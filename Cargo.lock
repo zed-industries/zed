@@ -10903,6 +10903,7 @@ dependencies = [
  "project",
  "regex",
  "release_channel",
+ "schemars",
  "search",
  "serde",
  "serde_derive",

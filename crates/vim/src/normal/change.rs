@@ -24,7 +24,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
             | Motion::Backspace
             | Motion::StartOfLine { .. }
     );
-    vim.update_active_editor(cx, |editor, cx| {
+    vim.update_active_editor(cx, |vim, editor, cx| {
         let text_layout_details = editor.text_layout_details(cx);
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
@@ -45,7 +45,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                     };
                 });
             });
-            copy_selections_content(editor, motion.linewise(), cx);
+            copy_selections_content(vim, editor, motion.linewise(), cx);
             editor.insert("", cx);
         });
     });
@@ -59,7 +59,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
 
 pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut WindowContext) {
     let mut objects_found = false;
-    vim.update_active_editor(cx, |editor, cx| {
+    vim.update_active_editor(cx, |vim, editor, cx| {
         // We are swapping to insert mode anyway. Just set the line end clipping behavior now
         editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
@@ -69,7 +69,7 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                 });
             });
             if objects_found {
-                copy_selections_content(editor, false, cx);
+                copy_selections_content(vim, editor, false, cx);
                 editor.insert("", cx);
             }
         });
