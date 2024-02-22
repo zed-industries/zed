@@ -2093,6 +2093,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "extensions_ui",
  "feature_flags",
  "feedback",
  "futures 0.3.28",
