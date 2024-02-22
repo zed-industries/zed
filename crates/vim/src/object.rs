@@ -253,7 +253,7 @@ fn surrounding_html_tag(
     let mut final_stack: Vec<HtmlTag> = Vec::new();
     for cap in re.captures_iter(map.text().as_str()) {
         // If it's a self-closing tag, skip
-        if let Some(matched) = cap.get(3) {
+        if let Some(_) = cap.get(3) {
             continue;
         }
         // If not have tag name ,skip
