@@ -12,9 +12,9 @@ use crate::{
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, HalfPageDown, HalfPageUp, HoveredCursor, LineDown,
-    LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    EditorSettings, EditorSnapshot, EditorStyle, GutterDimensions, HalfPageDown, HalfPageUp,
+    HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
+    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -731,7 +731,7 @@ impl EditorElement {
             if let Some(line) = line {
                 let line_origin = bounds.origin
                     + point(
-                        bounds.size.width - line.width - layout.gutter_right_padding,
+                        bounds.size.width - line.width - layout.gutter_dimensions.right_padding,
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
 
@@ -751,11 +751,11 @@ impl EditorElement {
                     let fold_indicator_size = fold_indicator.measure(available_space, cx);
 
                     let position = point(
-                        bounds.size.width - layout.gutter_right_padding,
+                        bounds.size.width - layout.gutter_dimensions.right_padding,
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
                     let centering_offset = point(
-                        (layout.gutter_right_padding + layout.gutter_margin
+                        (layout.gutter_dimensions.right_padding + layout.gutter_dimensions.margin
                             - fold_indicator_size.width)
                             / 2.,
                         (line_height - fold_indicator_size.height) / 2.,
@@ -777,8 +777,9 @@ impl EditorElement {
                 let mut x = Pixels::ZERO;
                 let mut y = indicator.row as f32 * line_height - scroll_top;
                 // Center indicator.
-                x +=
-                    (layout.gutter_margin + layout.gutter_left_padding - indicator_size.width) / 2.;
+                x += (layout.gutter_dimensions.margin + layout.gutter_dimensions.left_padding
+                    - indicator_size.width)
+                    / 2.;
                 y += (line_height - indicator_size.height) / 2.;
 
                 button.draw(bounds.origin + point(x, y), available_space, cx);
@@ -893,7 +894,8 @@ impl EditorElement {
         cx: &mut ElementContext,
     ) {
         let start_row = layout.visible_display_row_range.start;
-        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let content_origin =
+            text_bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
         let whitespace_setting = self
             .editor
@@ -1162,7 +1164,8 @@ impl EditorElement {
         layout: &LayoutState,
         cx: &mut ElementContext,
     ) {
-        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let content_origin =
+            text_bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
         let line_end_overshoot = layout.line_end_overshoot();
 
         // A softer than perfect black
@@ -1188,7 +1191,8 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut ElementContext,
     ) {
-        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let content_origin =
+            text_bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
         let start_row = layout.visible_display_row_range.start;
         if let Some((position, mut context_menu)) = layout.context_menu.take() {
             let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
@@ -2230,9 +2234,7 @@ impl EditorElement {
                     bounds.size.width,
                     scroll_width,
                     text_width,
-                    gutter_dimensions.left_padding,
-                    gutter_dimensions.right_padding,
-                    gutter_dimensions.width,
+                    &gutter_dimensions,
                     em_width,
                     gutter_dimensions.width + gutter_dimensions.margin,
                     line_height,
@@ -2395,14 +2397,12 @@ impl EditorElement {
                 visible_display_row_range: start_row..end_row,
                 wrap_guides,
                 gutter_size,
-                gutter_left_padding: gutter_dimensions.left_padding,
-                gutter_right_padding: gutter_dimensions.right_padding,
+                gutter_dimensions,
                 text_size,
                 scrollbar_row_range,
                 show_scrollbars,
                 is_singleton,
                 max_row,
-                gutter_margin: gutter_dimensions.margin,
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
@@ -2429,9 +2429,7 @@ impl EditorElement {
         editor_width: Pixels,
         scroll_width: Pixels,
         text_width: Pixels,
-        gutter_left_padding: Pixels,
-        gutter_right_padding: Pixels,
-        gutter_width: Pixels,
+        gutter_dimensions: &GutterDimensions,
         em_width: Pixels,
         text_x: Pixels,
         line_height: Pixels,
@@ -2474,10 +2472,8 @@ impl EditorElement {
                     block.render(&mut BlockContext {
                         context: cx,
                         anchor_x,
-                        gutter_left_padding,
-                        gutter_right_padding,
+                        gutter_dimensions,
                         line_height,
-                        gutter_width,
                         em_width,
                         block_id,
                         max_width: scroll_width.max(text_width),
@@ -2581,12 +2577,14 @@ impl EditorElement {
                         h_flex()
                             .id(("collapsed context", block_id))
                             .size_full()
-                            .gap(gutter_left_padding + gutter_right_padding)
+                            .gap(gutter_dimensions.left_padding + gutter_dimensions.right_padding)
                             .child(
                                 h_flex()
                                     .justify_end()
                                     .flex_none()
-                                    .w(gutter_width - (gutter_left_padding + gutter_right_padding))
+                                    .w(gutter_dimensions.width
+                                        - (gutter_dimensions.left_padding
+                                            + gutter_dimensions.right_padding))
                                     .h_full()
                                     .text_buffer(cx)
                                     .text_color(cx.theme().colors().editor_line_number)
@@ -2647,7 +2645,7 @@ impl EditorElement {
                 BlockStyle::Sticky => editor_width,
                 BlockStyle::Flex => editor_width
                     .max(fixed_block_max_width)
-                    .max(gutter_width + scroll_width),
+                    .max(gutter_dimensions.width + scroll_width),
                 BlockStyle::Fixed => unreachable!(),
             };
             let available_space = size(
@@ -2664,7 +2662,7 @@ impl EditorElement {
             });
         }
         (
-            scroll_width.max(fixed_block_max_width - gutter_width),
+            scroll_width.max(fixed_block_max_width - gutter_dimensions.width),
             blocks,
         )
     }
@@ -3181,9 +3179,7 @@ type BufferRow = u32;
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
     gutter_size: Size<Pixels>,
-    gutter_left_padding: Pixels,
-    gutter_right_padding: Pixels,
-    gutter_margin: Pixels,
+    gutter_dimensions: GutterDimensions,
     text_size: gpui::Size<Pixels>,
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,

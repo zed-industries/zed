@@ -365,7 +365,7 @@ impl AssistantPanel {
                         move |cx: &mut BlockContext| {
                             measurements.set(BlockMeasurements {
                                 anchor_x: cx.anchor_x,
-                                gutter_width: cx.gutter_width,
+                                gutter_width: cx.gutter_dimensions.width,
                             });
                             inline_assistant.clone().into_any_element()
                         }

@@ -885,7 +885,7 @@ mod tests {
     use super::*;
     use editor::{
         display_map::{BlockContext, TransformBlock},
-        DisplayPoint,
+        DisplayPoint, GutterDimensions,
     };
     use gpui::{px, TestAppContext, VisualTestContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
@@ -1599,9 +1599,7 @@ mod tests {
                                     .render(&mut BlockContext {
                                         context: cx,
                                         anchor_x: px(0.),
-                                        gutter_left_padding: px(0.),
-                                        gutter_right_padding: px(0.),
-                                        gutter_width: px(0.),
+                                        gutter_dimensions: &GutterDimensions::default(),
                                         line_height: px(0.),
                                         em_width: px(0.),
                                         max_width: px(0.),

@@ -10193,9 +10193,14 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
             .group(group_id.clone())
             .relative()
             .size_full()
-            .pl(cx.gutter_width)
-            .w(cx.max_width + cx.gutter_width)
-            .child(div().flex().w(cx.anchor_x - cx.gutter_width).flex_shrink())
+            .pl(cx.gutter_dimensions.width)
+            .w(cx.max_width + cx.gutter_dimensions.width)
+            .child(
+                div()
+                    .flex()
+                    .w(cx.anchor_x - cx.gutter_dimensions.width)
+                    .flex_shrink(),
+            )
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,
