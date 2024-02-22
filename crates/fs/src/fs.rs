@@ -246,7 +246,7 @@ impl Fs for RealFs {
         let inode = metadata.ino();
 
         #[cfg(windows)]
-        let inode = file_id(path);
+        let inode = file_id(path).await;
 
         Ok(Some(Metadata {
             inode,
@@ -1337,9 +1337,10 @@ pub fn copy_recursive<'a>(
 }
 
 #[cfg(target_os = "windows")]
-fn file_id(path: impl AsRef<Path>) -> u64 {
-    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+async fn file_id(path: impl AsRef<Path>) -> u64 {
+    use std::os::windows::io::AsRawHandle;
 
+    use smol::fs::windows::OpenOptionsExt;
     use windows_sys::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
@@ -1347,10 +1348,11 @@ fn file_id(path: impl AsRef<Path>) -> u64 {
         },
     };
 
-    let file = std::fs::OpenOptions::new()
+    let file = smol::fs::OpenOptions::new()
         .read(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
+        .await
         .expect("Getting file id error: unable to open file!");
 
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
