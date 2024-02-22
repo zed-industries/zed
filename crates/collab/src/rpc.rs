@@ -28,7 +28,7 @@ use axum::{
     Extension, Router, TypedHeader,
 };
 use collections::{HashMap, HashSet};
-pub use connection_pool::ConnectionPool;
+pub use connection_pool::{ConnectionPool, ZedVersion};
 use futures::{
     channel::oneshot,
     future::{self, BoxFuture},
@@ -558,6 +558,7 @@ impl Server {
         connection: Connection,
         address: String,
         user: User,
+        zed_version: ZedVersion,
         impersonator: Option<User>,
         mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
@@ -599,7 +600,7 @@ impl Server {
 
             {
                 let mut pool = this.connection_pool.lock();
-                pool.add_connection(connection_id, user_id, user.admin);
+                pool.add_connection(connection_id, user_id, user.admin, zed_version);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
                 this.peer.send(connection_id, build_update_user_channels(&channels_for_user))?;
                 this.peer.send(connection_id, build_channels_update(
@@ -879,17 +880,20 @@ pub async fn handle_websocket_request(
             .into_response();
     }
 
-    // the first version of zed that sent this header was 0.121.x
-    if let Some(version) = app_version_header.map(|header| header.0 .0) {
-        // 0.123.0 was a nightly version with incompatible collab changes
-        // that were reverted.
-        if version == "0.123.0".parse().unwrap() {
-            return (
-                StatusCode::UPGRADE_REQUIRED,
-                "client must be upgraded".to_string(),
-            )
-                .into_response();
-        }
+    let Some(version) = app_version_header.map(|header| ZedVersion(header.0 .0)) else {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            "no version header found".to_string(),
+        )
+            .into_response();
+    };
+
+    if !version.is_supported() {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            "client must be upgraded".to_string(),
+        )
+            .into_response();
     }
 
     let socket_address = socket_address.to_string();
@@ -906,6 +910,7 @@ pub async fn handle_websocket_request(
                     connection,
                     socket_address,
                     user,
+                    version,
                     impersonator.0,
                     None,
                     Executor::Production,
@@ -1311,6 +1316,22 @@ async fn set_room_participant_role(
     response: Response<proto::SetRoomParticipantRole>,
     session: Session,
 ) -> Result<()> {
+    let user_id = UserId::from_proto(request.user_id);
+    let role = ChannelRole::from(request.role());
+
+    if role == ChannelRole::Talker {
+        let pool = session.connection_pool().await;
+
+        for connection in pool.user_connections(user_id) {
+            if !connection.zed_version.supports_talker_role() {
+                Err(anyhow!(
+                    "This user is on zed {} which does not support unmute",
+                    connection.zed_version
+                ))?;
+            }
+        }
+    }
+
     let (live_kit_room, can_publish) = {
         let room = session
             .db()
@@ -1318,13 +1339,13 @@ async fn set_room_participant_role(
             .set_room_participant_role(
                 session.user_id,
                 RoomId::from_proto(request.room_id),
-                UserId::from_proto(request.user_id),
-                ChannelRole::from(request.role()),
+                user_id,
+                role,
             )
             .await?;
 
         let live_kit_room = room.live_kit_room.clone();
-        let can_publish = ChannelRole::from(request.role()).can_publish_to_rooms();
+        let can_publish = ChannelRole::from(request.role()).can_use_microphone();
         room_updated(&room, &session.peer);
         (live_kit_room, can_publish)
     };

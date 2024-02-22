@@ -156,7 +156,7 @@ impl Room {
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
                 this.update(&mut cx, |this, cx| {
-                    if !this.read_only() {
+                    if this.can_use_microphone() {
                         if let Some(live_kit) = &this.live_kit {
                             if !live_kit.muted_by_user && !live_kit.deafened {
                                 return this.share_microphone(cx);
@@ -1322,11 +1322,6 @@ impl Room {
         })
     }
 
-    pub fn read_only(&self) -> bool {
-        !(self.local_participant().role == proto::ChannelRole::Member
-            || self.local_participant().role == proto::ChannelRole::Admin)
-    }
-
     pub fn is_speaking(&self) -> bool {
         self.live_kit
             .as_ref()
@@ -1335,6 +1330,22 @@ impl Room {
 
     pub fn is_deafened(&self) -> Option<bool> {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
+    }
+
+    pub fn can_use_microphone(&self) -> bool {
+        use proto::ChannelRole::*;
+        match self.local_participant.role {
+            Admin | Member | Talker => true,
+            Guest | Banned => false,
+        }
+    }
+
+    pub fn can_share_projects(&self) -> bool {
+        use proto::ChannelRole::*;
+        match self.local_participant.role {
+            Admin | Member => true,
+            Guest | Banned | Talker => false,
+        }
     }
 
     #[track_caller]

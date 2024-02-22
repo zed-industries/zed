@@ -854,6 +854,10 @@ impl CollabPanel {
                     .into_any_element()
             } else if role == proto::ChannelRole::Guest {
                 Label::new("Guest").color(Color::Muted).into_any_element()
+            } else if role == proto::ChannelRole::Talker {
+                Label::new("Mic only")
+                    .color(Color::Muted)
+                    .into_any_element()
             } else {
                 div().into_any_element()
             })
@@ -1013,13 +1017,38 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let this = cx.view().clone();
-        if !(role == proto::ChannelRole::Guest || role == proto::ChannelRole::Member) {
+        if !(role == proto::ChannelRole::Guest
+            || role == proto::ChannelRole::Talker
+            || role == proto::ChannelRole::Member)
+        {
             return;
         }
 
-        let context_menu = ContextMenu::build(cx, |context_menu, cx| {
+        let context_menu = ContextMenu::build(cx, |mut context_menu, cx| {
             if role == proto::ChannelRole::Guest {
-                context_menu.entry(
+                context_menu = context_menu.entry(
+                    "Grant Mic Access",
+                    None,
+                    cx.handler_for(&this, move |_, cx| {
+                        ActiveCall::global(cx)
+                            .update(cx, |call, cx| {
+                                let Some(room) = call.room() else {
+                                    return Task::ready(Ok(()));
+                                };
+                                room.update(cx, |room, cx| {
+                                    room.set_participant_role(
+                                        user_id,
+                                        proto::ChannelRole::Talker,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .detach_and_prompt_err("Failed to grant mic access", cx, |_, _| None)
+                    }),
+                );
+            }
+            if role == proto::ChannelRole::Guest || role == proto::ChannelRole::Talker {
+                context_menu = context_menu.entry(
                     "Grant Write Access",
                     None,
                     cx.handler_for(&this, move |_, cx| {
@@ -1043,10 +1072,16 @@ impl CollabPanel {
                                 }
                             })
                     }),
-                )
-            } else if role == proto::ChannelRole::Member {
-                context_menu.entry(
-                    "Revoke Write Access",
+                );
+            }
+            if role == proto::ChannelRole::Member || role == proto::ChannelRole::Talker {
+                let label = if role == proto::ChannelRole::Talker {
+                    "Mute"
+                } else {
+                    "Revoke Access"
+                };
+                context_menu = context_menu.entry(
+                    label,
                     None,
                     cx.handler_for(&this, move |_, cx| {
                         ActiveCall::global(cx)
@@ -1062,12 +1097,12 @@ impl CollabPanel {
                                     )
                                 })
                             })
-                            .detach_and_prompt_err("Failed to revoke write access", cx, |_, _| None)
+                            .detach_and_prompt_err("Failed to revoke access", cx, |_, _| None)
                     }),
-                )
-            } else {
-                unreachable!()
+                );
             }
+
+            context_menu
         });
 
         cx.focus_view(&context_menu);
