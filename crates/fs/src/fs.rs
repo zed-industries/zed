@@ -1336,6 +1336,9 @@ pub fn copy_recursive<'a>(
     .boxed()
 }
 
+// todo!(windows)
+// can we get file id not open the file twice?
+// https://github.com/rust-lang/rust/issues/63010
 #[cfg(target_os = "windows")]
 async fn file_id(path: impl AsRef<Path>) -> u64 {
     use std::os::windows::io::AsRawHandle;
