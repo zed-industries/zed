@@ -1,6 +1,4 @@
-use crate::{
-    ExtensionStore, GrammarManifestEntry, LanguageManifestEntry, Manifest, ThemeManifestEntry,
-};
+use crate::{ExtensionStore, LanguageManifestEntry, Manifest, ManifestEntry, ThemeManifestEntry};
 use fs::FakeFs;
 use gpui::{Context, TestAppContext};
 use language::{LanguageMatcher, LanguageRegistry};
@@ -110,14 +108,14 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         grammars: [
             (
                 "embedded_template".into(),
-                GrammarManifestEntry {
+                ManifestEntry {
                     extension: "zed-ruby".into(),
                     path: "grammars/embedded_template.wasm".into(),
                 },
             ),
             (
                 "ruby".into(),
-                GrammarManifestEntry {
+                ManifestEntry {
                     extension: "zed-ruby".into(),
                     path: "grammars/ruby.wasm".into(),
                 },
@@ -185,6 +183,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ]
         .into_iter()
         .collect(),
+        language_servers: Default::default(),
     };
 
     let language_registry = Arc::new(LanguageRegistry::test());
@@ -348,4 +347,103 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(language_registry.language_names(), ["Plain Text"]);
         assert_eq!(language_registry.grammar_names(), []);
     });
+}
+
+#[gpui::test]
+async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
+    let example_dir = "example-extensions/rust-analyzer-example";
+
+    let output = std::process::Command::new("cargo")
+        .args(["component", "build"])
+        .current_dir(
+            std::env::current_dir()
+                .unwrap()
+                .join(example_dir)
+                .canonicalize()
+                .unwrap(),
+        )
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "failed to build component {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let wasm_bytes = std::fs::read(&PathBuf::from_iter([
+        example_dir,
+        "target/wasm32-wasi/debug/rust_analyzer_example.wasm",
+    ]))
+    .unwrap();
+
+    let fs = FakeFs::new(cx.executor());
+    let http_client = FakeHttpClient::with_200_response();
+
+    fs.insert_tree(
+        "/the-extension-dir",
+        json!({
+            "installed": {
+                "rust-analyzer": {
+                    "extension.json": r#"{
+                        "id": "rust-analyzer",
+                        "name": "Zed Rust Analyzer",
+                        "version": "2.0.0"
+                    }"#,
+                    "language_servers": {
+                        "rust-analyzer": {
+                            "language_server.toml": r#"
+                                name = "rust-analyzer"
+                                language = "Rust"
+                            "#,
+                            "language_server.wasm": "",
+                        }
+                    },
+                }
+            }
+        }),
+    )
+    .await;
+
+    fs.insert_file(
+        "/the-extension-dir/installed/rust-analyzer/language_servers/rust-analyzer/language_server.wasm",
+        wasm_bytes.clone(),
+    )
+    .await;
+
+    let language_registry = Arc::new(LanguageRegistry::test());
+    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let store = cx.new_model(|cx| {
+        ExtensionStore::new(
+            PathBuf::from("/the-extension-dir"),
+            fs.clone(),
+            http_client.clone(),
+            language_registry.clone(),
+            theme_registry.clone(),
+            cx,
+        )
+    });
+
+    cx.executor().run_until_parked();
+    let (wasm_store, extension) = store.read_with(cx, |store, _| {
+        (
+            store.wasm_store.clone(),
+            store.language_server_extensions[0].clone(),
+        )
+    });
+
+    {
+        let mut wasm_store = wasm_store.lock().await;
+        let result = extension
+            .call_get_language_server_command(&mut *wasm_store)
+            .await
+            .unwrap();
+        dbg!(result);
+    }
 }

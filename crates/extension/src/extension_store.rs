@@ -1,14 +1,17 @@
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use async_trait::async_trait;
 use collections::{BTreeMap, HashSet};
 use fs::{Fs, RemoveOptions};
 use futures::channel::mpsc::unbounded;
+use futures::lock::Mutex as AsyncMutex;
 use futures::StreamExt as _;
 use futures::{io::BufReader, AsyncReadExt as _};
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    WASM_ENGINE,
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -23,6 +26,51 @@ use theme::{ThemeRegistry, ThemeSettings};
 use util::http::{AsyncBody, HttpClientWithUrl};
 use util::TryFutureExt;
 use util::{http::HttpClient, paths::EXTENSIONS_DIR, ResultExt};
+use wasmtime::component::Component;
+use wasmtime_wasi::preview2::{command, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+
+wasmtime::component::bindgen!({
+    async: true
+});
+
+struct WasmState {
+    table: ResourceTable,
+    ctx: WasiCtx,
+}
+
+#[async_trait]
+impl LanguageServerExtensionImports for WasmState {
+    #[must_use]
+    async fn npm_package_latest_version(
+        &mut self,
+        package_name: String,
+    ) -> wasmtime::Result<Result<String, String>> {
+        todo!()
+    }
+
+    async fn latest_github_release(
+        &mut self,
+        repo: String,
+    ) -> wasmtime::Result<Result<GithubRelease, String>> {
+        Ok(Ok(GithubRelease {
+            version: "50".into(),
+            assets: vec![GithubReleaseAsset {
+                name: "the-asset".into(),
+                download_url: "the-url".into(),
+            }],
+        }))
+    }
+}
+
+impl WasiView for WasmState {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+
+    fn ctx(&mut self) -> &mut WasiCtx {
+        &mut self.ctx
+    }
+}
 
 #[cfg(test)]
 mod extension_store_test;
@@ -78,6 +126,9 @@ pub struct ExtensionStore {
     theme_registry: Arc<ThemeRegistry>,
     extension_changes: ExtensionChanges,
     reload_task: Option<Task<Option<()>>>,
+    wasm_linker: Arc<wasmtime::component::Linker<WasmState>>,
+    wasm_store: Arc<AsyncMutex<wasmtime::Store<WasmState>>>,
+    language_server_extensions: Vec<Arc<LanguageServerExtension>>,
     needs_reload: bool,
     _watch_extensions_dir: [Task<()>; 2],
 }
@@ -89,13 +140,14 @@ impl Global for GlobalExtensionStore {}
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Manifest {
     pub extensions: BTreeMap<Arc<str>, Arc<str>>,
-    pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
+    pub grammars: BTreeMap<Arc<str>, ManifestEntry>,
+    pub language_servers: BTreeMap<Arc<str>, ManifestEntry>,
     pub languages: BTreeMap<Arc<str>, LanguageManifestEntry>,
     pub themes: BTreeMap<Arc<str>, ThemeManifestEntry>,
 }
 
-#[derive(PartialEq, Eq, Debug, PartialOrd, Ord, Deserialize, Serialize)]
-pub struct GrammarManifestEntry {
+#[derive(Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Deserialize, Serialize)]
+pub struct ManifestEntry {
     extension: String,
     path: PathBuf,
 }
@@ -162,6 +214,14 @@ impl ExtensionStore {
         theme_registry: Arc<ThemeRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let mut wasm_linker = wasmtime::component::Linker::new(&WASM_ENGINE);
+        command::add_to_linker(&mut wasm_linker).unwrap();
+        LanguageServerExtension::add_to_linker(&mut wasm_linker, |state: &mut WasmState| state)
+            .unwrap();
+
+        let table = ResourceTable::new();
+        let ctx = WasiCtxBuilder::new().inherit_stdio().build();
+
         let mut this = Self {
             manifest: Default::default(),
             extensions_dir: extensions_dir.join("installed"),
@@ -171,6 +231,12 @@ impl ExtensionStore {
             reload_task: None,
             needs_reload: false,
             extension_changes: ExtensionChanges::default(),
+            wasm_linker: Arc::new(wasm_linker),
+            wasm_store: Arc::new(AsyncMutex::new(wasmtime::Store::new(
+                &WASM_ENGINE,
+                WasmState { table, ctx },
+            ))),
+            language_server_extensions: Vec::new(),
             fs,
             http_client,
             language_registry,
@@ -194,7 +260,8 @@ impl ExtensionStore {
 
         if let Some(manifest_content) = manifest_content.log_err() {
             if let Some(manifest) = serde_json::from_str(&manifest_content).log_err() {
-                self.manifest_updated(manifest, cx);
+                // TODO: don't detach
+                self.manifest_updated(manifest, cx).detach();
             }
         }
 
@@ -335,7 +402,11 @@ impl ExtensionStore {
     /// no longer in the manifest, or whose files have changed on disk.
     /// Then it loads any themes, languages, or grammars that are newly
     /// added to the manifest, or whose files have changed on disk.
-    fn manifest_updated(&mut self, manifest: Manifest, cx: &mut ModelContext<Self>) {
+    fn manifest_updated(
+        &mut self,
+        manifest: Manifest,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         fn diff<'a, T, I1, I2>(
             old_keys: I1,
             new_keys: I2,
@@ -390,6 +461,11 @@ impl ExtensionStore {
             manifest.grammars.iter(),
             &self.extension_changes.grammars,
         );
+        let (_language_servers_to_remove, language_servers_to_add) = diff(
+            old_manifest.language_servers.iter(),
+            manifest.language_servers.iter(),
+            &Default::default(),
+        );
         let (themes_to_remove, themes_to_add) = diff(
             old_manifest.themes.iter(),
             manifest.themes.iter(),
@@ -436,44 +512,81 @@ impl ExtensionStore {
             );
         }
 
-        let (reload_theme_tx, mut reload_theme_rx) = unbounded();
         let fs = self.fs.clone();
+        let wasm_store = self.wasm_store.clone();
+        let wasm_linker = self.wasm_linker.clone();
         let root_dir = self.extensions_dir.clone();
         let theme_registry = self.theme_registry.clone();
         let themes = themes_to_add
             .iter()
             .filter_map(|name| manifest.themes.get(name).cloned())
             .collect::<Vec<_>>();
-        cx.background_executor()
-            .spawn(async move {
-                for theme in &themes {
-                    let mut theme_path = root_dir.clone();
-                    theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
-
-                    theme_registry
-                        .load_user_theme(&theme_path, fs.clone())
-                        .await
-                        .log_err();
-                }
-
-                reload_theme_tx.unbounded_send(()).ok();
-            })
-            .detach();
-
-        cx.spawn(|_, cx| async move {
-            while let Some(_) = reload_theme_rx.next().await {
-                if cx
-                    .update(|cx| ThemeSettings::reload_current_theme(cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
+        let language_servers = language_servers_to_add
+            .iter()
+            .filter_map(|name| manifest.language_servers.get(name).cloned())
+            .collect::<Vec<_>>();
 
         *self.manifest.write() = manifest;
         cx.notify();
+
+        cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .spawn({
+                    let root_dir = root_dir.clone();
+                    let fs = fs.clone();
+                    async move {
+                        for theme in &themes {
+                            let mut theme_path = root_dir.clone();
+                            theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
+
+                            theme_registry
+                                .load_user_theme(&theme_path, fs.clone())
+                                .await
+                                .log_err();
+                        }
+                    }
+                })
+                .await;
+
+            let mut components = Vec::new();
+            for language_server in language_servers {
+                let mut path = root_dir.clone();
+                path.extend([
+                    language_server.extension.as_ref(),
+                    language_server.path.as_path(),
+                ]);
+                let mut wasm_file = fs
+                    .open_sync(&path.join("language_server.wasm"))
+                    .await
+                    .expect("failed to open wasm file");
+                let mut wasm_bytes = Vec::new();
+                wasm_file
+                    .read_to_end(&mut wasm_bytes)
+                    .expect("failed to read wasm");
+                let wasm_component = Component::from_binary(&WASM_ENGINE, &wasm_bytes)
+                    .expect("failed to compile wasm");
+
+                let mut wasm_store = wasm_store.lock().await;
+                components.push(
+                    LanguageServerExtension::instantiate_async(
+                        &mut *wasm_store,
+                        &wasm_component,
+                        wasm_linker.as_ref(),
+                    )
+                    .await
+                    .expect("failed to insantiate wasm component"),
+                );
+            }
+
+            this.update(&mut cx, |this, cx| {
+                for (bindings, _) in components {
+                    this.language_server_extensions.push(Arc::new(bindings));
+                }
+                ThemeSettings::reload_current_theme(cx)
+            })
+            .ok();
+            Ok(())
+        })
     }
 
     fn watch_extensions_dir(&self, cx: &mut ModelContext<Self>) -> [Task<()>; 2] {
@@ -599,8 +712,13 @@ impl ExtensionStore {
                     })
                     .await;
 
+                if let Ok(task) =
+                    this.update(&mut cx, |this, cx| this.manifest_updated(manifest, cx))
+                {
+                    task.await.log_err();
+                }
+
                 this.update(&mut cx, |this, cx| {
-                    this.manifest_updated(manifest, cx);
                     this.reload_task.take();
                     if this.needs_reload {
                         this.reload(cx);
@@ -650,7 +768,7 @@ impl ExtensionStore {
 
                 manifest.grammars.insert(
                     grammar_name.into(),
-                    GrammarManifestEntry {
+                    ManifestEntry {
                         extension: extension_name.into(),
                         path: relative_path.into(),
                     },
@@ -707,6 +825,27 @@ impl ExtensionStore {
 
                     manifest.themes.insert(theme.name.into(), location);
                 }
+            }
+        }
+
+        if let Ok(mut language_server_paths) =
+            fs.read_dir(&extension_dir.join("language_servers")).await
+        {
+            while let Some(language_server_path) = language_server_paths.next().await {
+                let path = language_server_path?;
+                let Ok(relative_path) = path.strip_prefix(&extension_dir) else {
+                    continue;
+                };
+                let Some(server_name) = relative_path.file_stem().and_then(OsStr::to_str) else {
+                    continue;
+                };
+                manifest.language_servers.insert(
+                    server_name.into(),
+                    ManifestEntry {
+                        extension: extension_name.into(),
+                        path: relative_path.into(),
+                    },
+                );
             }
         }
 

@@ -1,0 +1,15 @@
+[package]
+name = "rust-analyzer-example"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+wit-bindgen = { version = "0.16.0" }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+target = { path = "../../wit" }

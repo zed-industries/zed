@@ -86,7 +86,12 @@ thread_local! {
 lazy_static! {
     static ref NEXT_LANGUAGE_ID: AtomicUsize = Default::default();
     static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
-    static ref WASM_ENGINE: wasmtime::Engine = wasmtime::Engine::default();
+    pub static ref WASM_ENGINE: wasmtime::Engine = {
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        config.async_support(true);
+        wasmtime::Engine::new(&config).unwrap()
+    };
 
     /// A shared grammar for plain text, exposed for reuse by downstream crates.
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(

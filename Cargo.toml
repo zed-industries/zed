@@ -296,6 +296,7 @@ unindent = "0.1.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmtime = "18.0"
+wasmtime-wasi = "18.0"
 which = "6.0.0"
 sys-locale = "0.3.1"
 

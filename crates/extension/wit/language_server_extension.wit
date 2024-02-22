@@ -1,0 +1,24 @@
+package zed:language-server-extension;
+
+world language-server-extension {
+    record command {
+        command: string,
+        args: list<string>,
+        env: list<tuple<string, string>>,
+    }
+
+    record github-release {
+        version: string,
+        assets: list<github-release-asset>,
+    }
+
+    record github-release-asset {
+        name: string,
+        download-url: string,
+    }
+
+    import npm-package-latest-version: func(package-name: string) -> result<string, string>;
+    import latest-github-release: func(repo: string) -> result<github-release, string>;
+
+    export get-language-server-command: func() -> result<command, string>;
+}

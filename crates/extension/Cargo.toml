@@ -16,6 +16,8 @@ path = "src/extension_json_schemas.rs"
 anyhow.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
+async-trait.workspace = true
+client.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -30,6 +32,8 @@ settings.workspace = true
 theme.workspace = true
 toml.workspace = true
 util.workspace = true
+wasmtime = { workspace = true, features = ["async"] }
+wasmtime-wasi.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
