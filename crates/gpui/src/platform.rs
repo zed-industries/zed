@@ -430,30 +430,26 @@ pub trait InputHandler: 'static {
     /// Corresponds to [selectedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438242-selectedrange)
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+    fn selected_text_range(&self, cx: &mut WindowContext) -> Option<Range<usize>>;
 
     /// Get the range of the currently marked text, if any
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
-    fn marked_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+    fn marked_text_range(&self, cx: &mut WindowContext) -> Option<Range<usize>>;
 
     /// Get the text for the given document range in UTF-16 characters
     /// Corresponds to [attributedSubstring(forProposedRange: actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438238-attributedsubstring)
     ///
     /// range_utf16 is in terms of UTF-16 characters
-    fn text_for_range(
-        &mut self,
-        range_utf16: Range<usize>,
-        cx: &mut WindowContext,
-    ) -> Option<String>;
+    fn text_for_range(&self, range_utf16: Range<usize>, cx: &mut WindowContext) -> Option<String>;
 
     /// Replace the text in the given document range with the given text
     /// Corresponds to [insertText(_:replacementRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438258-inserttext)
     ///
     /// replacement_range is in terms of UTF-16 characters
     fn replace_text_in_range(
-        &mut self,
+        &self,
         replacement_range: Option<Range<usize>>,
         text: &str,
         cx: &mut WindowContext,
@@ -466,7 +462,7 @@ pub trait InputHandler: 'static {
     /// range_utf16 is in terms of UTF-16 characters
     /// new_selected_range is in terms of UTF-16 characters
     fn replace_and_mark_text_in_range(
-        &mut self,
+        &self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
@@ -475,14 +471,14 @@ pub trait InputHandler: 'static {
 
     /// Remove the IME 'composing' state from the document
     /// Corresponds to [unmarkText()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438239-unmarktext)
-    fn unmark_text(&mut self, cx: &mut WindowContext);
+    fn unmark_text(&self, cx: &mut WindowContext);
 
     /// Get the bounds of the given document range in screen coordinates
     /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
     ///
     /// This is used for positioning the IME candidate window
     fn bounds_for_range(
-        &mut self,
+        &self,
         range_utf16: Range<usize>,
         cx: &mut WindowContext,
     ) -> Option<Bounds<Pixels>>;

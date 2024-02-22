@@ -68,26 +68,22 @@ impl<V: 'static> ElementInputHandler<V> {
 }
 
 impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>> {
+    fn selected_text_range(&self, cx: &mut WindowContext) -> Option<Range<usize>> {
         self.view
             .update(cx, |view, cx| view.selected_text_range(cx))
     }
 
-    fn marked_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>> {
+    fn marked_text_range(&self, cx: &mut WindowContext) -> Option<Range<usize>> {
         self.view.update(cx, |view, cx| view.marked_text_range(cx))
     }
 
-    fn text_for_range(
-        &mut self,
-        range_utf16: Range<usize>,
-        cx: &mut WindowContext,
-    ) -> Option<String> {
+    fn text_for_range(&self, range_utf16: Range<usize>, cx: &mut WindowContext) -> Option<String> {
         self.view
             .update(cx, |view, cx| view.text_for_range(range_utf16, cx))
     }
 
     fn replace_text_in_range(
-        &mut self,
+        &self,
         replacement_range: Option<Range<usize>>,
         text: &str,
         cx: &mut WindowContext,
@@ -98,7 +94,7 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
     }
 
     fn replace_and_mark_text_in_range(
-        &mut self,
+        &self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
@@ -109,12 +105,12 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
         });
     }
 
-    fn unmark_text(&mut self, cx: &mut WindowContext) {
+    fn unmark_text(&self, cx: &mut WindowContext) {
         self.view.update(cx, |view, cx| view.unmark_text(cx));
     }
 
     fn bounds_for_range(
-        &mut self,
+        &self,
         range_utf16: Range<usize>,
         cx: &mut WindowContext,
     ) -> Option<Bounds<Pixels>> {

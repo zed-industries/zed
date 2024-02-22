@@ -108,6 +108,10 @@ impl DispatchTree {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn clear(&mut self) {
         self.node_stack.clear();
         self.context_stack.clear();

@@ -1,7 +1,7 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, Bounds,
     ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
-    FocusableView, IntoElement, LayoutId, Model, Pixels, Point, PrimitiveCounts, Render, Size,
+    FocusableView, FrameIndex, IntoElement, LayoutId, Model, Pixels, Point, Render, Size,
     StackingOrder, Style, TextStyle, ViewContext, VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
@@ -9,6 +9,7 @@ use std::{
     any::{type_name, TypeId},
     fmt,
     hash::{Hash, Hasher},
+    ops::Range,
 };
 
 /// A view is a piece of state that can be presented on screen by implementing the [Render] trait.
@@ -24,17 +25,16 @@ impl<V> Sealed for View<V> {}
 pub struct AnyViewState {
     root_style: Style,
     next_stacking_order_id: u16,
-    cache_key: Option<ViewCacheData>,
+    cache_state: Option<ViewCacheState>,
     element: Option<AnyElement>,
 }
 
-struct ViewCacheData {
+struct ViewCacheState {
     bounds: Bounds<Pixels>,
     stacking_order: StackingOrder,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
-    scene_start: PrimitiveCounts,
-    scene_end: PrimitiveCounts,
+    subframe_range: Range<FrameIndex>,
 }
 
 impl<V: 'static> Entity<V> for View<V> {
@@ -299,7 +299,7 @@ impl Element for AnyView {
             let state = AnyViewState {
                 root_style,
                 next_stacking_order_id: 0,
-                cache_key: None,
+                cache_state: None,
                 element: Some(element),
             };
             (layout_id, state)
@@ -313,25 +313,25 @@ impl Element for AnyView {
                 return;
             }
 
-            if let Some(cache_key) = state.cache_key.as_mut() {
-                if cache_key.bounds == bounds
-                    && cache_key.content_mask == cx.content_mask()
-                    && cache_key.stacking_order == *cx.stacking_order()
-                    && cache_key.text_style == cx.text_style()
+            if let Some(cache_state) = state.cache_state.as_mut() {
+                if cache_state.bounds == bounds
+                    && cache_state.content_mask == cx.content_mask()
+                    && cache_state.stacking_order == *cx.stacking_order()
+                    && cache_state.text_style == cx.text_style()
                 {
-                    cx.reuse_view(state.next_stacking_order_id);
+                    cx.reuse_view(cache_state.subframe_range.clone());
                     return;
                 }
             }
 
-            let scene_start = cx.window.next_frame.scene.primitive_counts();
+            let subframe_start = cx.window.next_frame.current_index();
             if let Some(mut element) = state.element.take() {
                 element.paint(cx);
             } else {
                 let mut element = (self.request_layout)(self, cx).1;
                 element.draw(bounds.origin, bounds.size.into(), cx);
             }
-            let scene_end = cx.window.next_frame.scene.primitive_counts();
+            let subframe_end = cx.window.next_frame.current_index();
 
             state.next_stacking_order_id = cx
                 .window
@@ -340,13 +340,12 @@ impl Element for AnyView {
                 .last()
                 .copied()
                 .unwrap();
-            state.cache_key = Some(ViewCacheData {
+            state.cache_state = Some(ViewCacheState {
                 bounds,
                 stacking_order: cx.stacking_order().clone(),
                 content_mask: cx.content_mask(),
                 text_style: cx.text_style(),
-                scene_start,
-                scene_end,
+                subframe_range: subframe_start..subframe_end,
             });
         })
     }

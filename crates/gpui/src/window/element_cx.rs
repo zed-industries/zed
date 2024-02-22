@@ -16,6 +16,7 @@ use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
     mem,
+    ops::Range,
     rc::Rc,
     sync::Arc,
 };
@@ -34,21 +35,24 @@ use crate::{
     EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
     InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
     Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
-    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    RenderImageParams, RenderSvgParams, Scene, SceneIndex, Shadow, SharedString, Size,
+    StackingContext, StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline,
+    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
 
-pub(crate) struct RequestedInputHandler {
-    pub(crate) view_id: EntityId,
-    pub(crate) handler: Option<PlatformInputHandler>,
-}
-
 pub(crate) struct TooltipRequest {
     pub(crate) view_id: EntityId,
     pub(crate) tooltip: AnyTooltip,
+}
+
+/// Identifies a moment in time during construction of a frame. Used for reusing cached subsets of a previous frame.
+#[derive(Clone)]
+pub(crate) struct FrameIndex {
+    mouse_listeners: usize,
+    dispatch_nodes: usize,
+    scene_index: SceneIndex,
 }
 
 pub(crate) struct Frame {
@@ -56,6 +60,7 @@ pub(crate) struct Frame {
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
     pub(crate) mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
+    pub(crate) input_handlers: Vec<PlatformInputHandler>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
@@ -64,7 +69,6 @@ pub(crate) struct Frame {
     pub(crate) next_root_z_index: u16,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
-    pub(crate) requested_input_handler: Option<RequestedInputHandler>,
     pub(crate) tooltip_request: Option<TooltipRequest>,
     pub(crate) cursor_styles: FxHashMap<EntityId, CursorStyle>,
     pub(crate) requested_cursor_style: Option<CursorStyle>,
@@ -81,6 +85,7 @@ impl Frame {
             window_active: false,
             element_states: FxHashMap::default(),
             mouse_listeners: FxHashMap::default(),
+            input_handlers: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
             depth_map: Vec::new(),
@@ -89,7 +94,6 @@ impl Frame {
             next_root_z_index: 0,
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
-            requested_input_handler: None,
             tooltip_request: None,
             cursor_styles: FxHashMap::default(),
             requested_cursor_style: None,
@@ -103,12 +107,12 @@ impl Frame {
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
         self.mouse_listeners.values_mut().for_each(Vec::clear);
+        self.input_handlers.clear();
         self.dispatch_tree.clear();
         self.depth_map.clear();
         self.next_stacking_order_ids = vec![0];
         self.next_root_z_index = 0;
         self.scene.clear();
-        self.requested_input_handler.take();
         self.tooltip_request.take();
         self.cursor_styles.clear();
         self.requested_cursor_style.take();
@@ -119,6 +123,14 @@ impl Frame {
         self.focus
             .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
             .unwrap_or_default()
+    }
+
+    pub(crate) fn current_index(&self) -> FrameIndex {
+        FrameIndex {
+            scene_index: self.scene.current_index(),
+            mouse_listeners: self.mouse_listeners.len(),
+            dispatch_nodes: self.dispatch_tree.len(),
+        }
     }
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
@@ -302,8 +314,9 @@ impl<'a> VisualContext for ElementContext<'a> {
 }
 
 impl<'a> ElementContext<'a> {
-    pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
+    pub(crate) fn reuse_view(&mut self, subframe_range: Range<FrameIndex>) {
         let view_id = self.parent_view_id();
+
         let grafted_view_ids = self
             .cx
             .window
@@ -643,6 +656,7 @@ impl<'a> ElementContext<'a> {
                 }
             })
     }
+
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
     pub fn paint_shadows(
         &mut self,
@@ -658,15 +672,18 @@ impl<'a> ElementContext<'a> {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.next_frame.scene.push_primitive(|draw_order| Shadow {
-                draw_order,
-                bounds: shadow_bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                corner_radii: corner_radii.scale(scale_factor),
-                color: shadow.color,
-                blur_radius: shadow.blur_radius.scale(scale_factor),
-                pad: 0,
-            });
+            window
+                .next_frame
+                .scene
+                .paint_primitive(|draw_order| Shadow {
+                    draw_order,
+                    bounds: shadow_bounds.scale(scale_factor),
+                    content_mask: content_mask.scale(scale_factor),
+                    corner_radii: corner_radii.scale(scale_factor),
+                    color: shadow.color,
+                    blur_radius: shadow.blur_radius.scale(scale_factor),
+                    pad: 0,
+                });
         }
     }
 
@@ -679,7 +696,7 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.push_primitive(|draw_order| Quad {
+        window.next_frame.scene.paint_primitive(|draw_order| Quad {
             draw_order,
             bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
@@ -699,7 +716,7 @@ impl<'a> ElementContext<'a> {
         path.content_mask = content_mask;
         path.color = color.into();
         let window = &mut *self.window;
-        window.next_frame.scene.push_primitive(|draw_order| {
+        window.next_frame.scene.paint_primitive(|draw_order| {
             path.draw_order = draw_order;
             path.scale(scale_factor)
         });
@@ -729,7 +746,7 @@ impl<'a> ElementContext<'a> {
         window
             .next_frame
             .scene
-            .push_primitive(|draw_order| Underline {
+            .paint_primitive(|draw_order| Underline {
                 draw_order,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -759,7 +776,7 @@ impl<'a> ElementContext<'a> {
         window
             .next_frame
             .scene
-            .push_primitive(|draw_order| Underline {
+            .paint_primitive(|draw_order| Underline {
                 draw_order,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -817,7 +834,7 @@ impl<'a> ElementContext<'a> {
             window
                 .next_frame
                 .scene
-                .push_primitive(|draw_order| MonochromeSprite {
+                .paint_primitive(|draw_order| MonochromeSprite {
                     draw_order,
                     bounds,
                     content_mask,
@@ -873,7 +890,7 @@ impl<'a> ElementContext<'a> {
             window
                 .next_frame
                 .scene
-                .push_primitive(|draw_order| PolychromeSprite {
+                .paint_primitive(|draw_order| PolychromeSprite {
                     draw_order,
                     bounds,
                     corner_radii: Default::default(),
@@ -917,7 +934,7 @@ impl<'a> ElementContext<'a> {
         window
             .next_frame
             .scene
-            .push_primitive(|draw_order| MonochromeSprite {
+            .paint_primitive(|draw_order| MonochromeSprite {
                 draw_order,
                 bounds,
                 content_mask,
@@ -954,7 +971,7 @@ impl<'a> ElementContext<'a> {
         window
             .next_frame
             .scene
-            .push_primitive(|draw_order| PolychromeSprite {
+            .paint_primitive(|draw_order| PolychromeSprite {
                 draw_order,
                 bounds,
                 content_mask,
@@ -977,7 +994,7 @@ impl<'a> ElementContext<'a> {
         window
             .next_frame
             .scene
-            .push_primitive(|draw_order| crate::Surface {
+            .paint_primitive(|draw_order| crate::Surface {
                 draw_order,
                 bounds,
                 content_mask,

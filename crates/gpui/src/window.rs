@@ -1,6 +1,6 @@
 use crate::{
-    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
-    AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
+    px, size, transparent_black, Action, ActionListener, AnyDrag, AnyView, AppContext, Arena,
+    AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
     Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
     Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
@@ -1471,7 +1471,7 @@ impl<'a> WindowContext<'a> {
         // Capture phase
         for node_id in &dispatch_path {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            for DispatchActionListener {
+            for ActionListener {
                 action_type,
                 listener,
             } in node.action_listeners.clone()
@@ -1491,7 +1491,7 @@ impl<'a> WindowContext<'a> {
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            for DispatchActionListener {
+            for ActionListener {
                 action_type,
                 listener,
             } in node.action_listeners.clone()

@@ -31,9 +31,9 @@ impl From<ViewId> for EntityId {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 /// An index into all the geometry in a `Scene` at a point in time.
-pub(crate) struct PrimitiveCounts {
+pub(crate) struct SceneIndex {
     pub(crate) shadows: usize,
     pub(crate) quads: usize,
     pub(crate) paths: usize,
@@ -67,8 +67,8 @@ impl Scene {
         self.primitive_count = 0;
     }
 
-    pub fn primitive_counts(&self) -> PrimitiveCounts {
-        PrimitiveCounts {
+    pub fn current_index(&self) -> SceneIndex {
+        SceneIndex {
             shadows: self.shadows.len(),
             quads: self.quads.len(),
             paths: self.paths.len(),
@@ -109,7 +109,7 @@ impl Scene {
         }
     }
 
-    pub(crate) fn push_primitive<T: Into<Primitive>>(
+    pub(crate) fn paint_primitive<T: Into<Primitive>>(
         &mut self,
         build_primitive: impl FnOnce(u32) -> T,
     ) {
@@ -151,12 +151,7 @@ impl Scene {
         self.primitive_count += 1;
     }
 
-    pub fn reuse_subscene(
-        &mut self,
-        prev_scene: &mut Self,
-        start: PrimitiveCounts,
-        end: PrimitiveCounts,
-    ) {
+    pub fn reuse_subscene(&mut self, prev_scene: &mut Self, start: SceneIndex, end: SceneIndex) {
         self.shadows
             .extend(prev_scene.shadows.drain(start.shadows..end.shadows));
         self.quads
