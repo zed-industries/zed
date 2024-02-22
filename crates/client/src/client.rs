@@ -45,7 +45,7 @@ use util::http::{HttpClient, ZedHttpClient};
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
-pub use telemetry::Event;
+pub use telemetry_events::Event;
 pub use user::*;
 
 lazy_static! {
