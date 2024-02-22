@@ -14,12 +14,12 @@
 ] @variable
 
 ;; func parametr
-parameter: (IDENTIFIER) @variable.parametr
+parameter: (IDENTIFIER) @type
 
 [
   field_member: (IDENTIFIER)
   field_access: (IDENTIFIER)
-] @variable
+] @property
 
 ;; assume TitleCase is a type
 (
