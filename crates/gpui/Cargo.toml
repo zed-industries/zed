@@ -51,6 +51,7 @@ parking = "2.0.0"
 parking_lot.workspace = true
 pathfinder_geometry = "0.5"
 postage.workspace = true
+profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true

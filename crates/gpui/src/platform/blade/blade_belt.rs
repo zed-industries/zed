@@ -39,6 +39,7 @@ impl BladeBelt {
         }
     }
 
+    #[profiling::function]
     pub fn alloc(&mut self, size: u64, gpu: &gpu::Context) -> gpu::BufferPiece {
         for &mut (ref rb, ref mut offset) in self.active.iter_mut() {
             let aligned = offset.next_multiple_of(self.desc.alignment);

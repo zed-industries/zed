@@ -71,7 +71,10 @@ impl Client for X11Client {
         // into window functions as they may invoke callbacks that need
         // to immediately access the platform (self).
         while !self.platform_inner.state.lock().quit_requested {
-            let event = self.xcb_connection.wait_for_event().unwrap();
+            let event = {
+                profiling::scope!("Wait for event");
+                self.xcb_connection.wait_for_event().unwrap()
+            };
             match event {
                 xcb::Event::X(x::Event::ClientMessage(ev)) => {
                     if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
@@ -210,6 +213,7 @@ impl Client for X11Client {
                 _ => {}
             }
 
+            profiling::scope!("Runnables");
             if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
                 runnable.run();
             }
@@ -219,6 +223,7 @@ impl Client for X11Client {
             fun();
         }
     }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let setup = self.xcb_connection.get_setup();
         setup
@@ -230,6 +235,7 @@ impl Client for X11Client {
             })
             .collect()
     }
+
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         Some(Rc::new(X11Display::new(&self.xcb_connection, id.0 as i32)))
     }

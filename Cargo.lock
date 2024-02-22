@@ -4121,6 +4121,7 @@ dependencies = [
  "pathfinder_geometry",
  "png",
  "postage",
+ "profiling",
  "rand 0.8.5",
  "raw-window-handle 0.5.2",
  "raw-window-handle 0.6.0",
@@ -6861,6 +6862,25 @@ dependencies = [
  "log",
  "ntapi",
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "profiling"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43d84d1d7a6ac92673717f9f6d1518374ef257669c24ebc5ac25d5033828be58"
+dependencies = [
+ "profiling-procmacros",
+]
+
+[[package]]
+name = "profiling-procmacros"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8021cf59c8ec9c432cfc2526ac6b8aa508ecaf29cd415f271b8406c1b851c3fd"
+dependencies = [
+ "quote",
+ "syn 2.0.48",
 ]
 
 [[package]]
@@ -11978,6 +11998,7 @@ dependencies = [
  "outline",
  "parking_lot 0.11.2",
  "postage",
+ "profiling",
  "project",
  "project_panel",
  "project_symbols",
