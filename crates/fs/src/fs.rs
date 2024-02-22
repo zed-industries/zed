@@ -422,7 +422,7 @@ enum FakeFsEntry {
     File {
         inode: u64,
         mtime: SystemTime,
-        content: String,
+        content: Vec<u8>,
     },
     Dir {
         inode: u64,
@@ -568,7 +568,7 @@ impl FakeFs {
         })
     }
 
-    pub async fn insert_file(&self, path: impl AsRef<Path>, content: String) {
+    pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
         self.write_file_internal(path, content).unwrap()
     }
 
@@ -591,7 +591,7 @@ impl FakeFs {
         state.emit_event(&[path]);
     }
 
-    pub fn write_file_internal(&self, path: impl AsRef<Path>, content: String) -> Result<()> {
+    fn write_file_internal(&self, path: impl AsRef<Path>, content: Vec<u8>) -> Result<()> {
         let mut state = self.state.lock();
         let path = path.as_ref();
         let inode = state.next_inode;
@@ -616,6 +616,16 @@ impl FakeFs {
         })?;
         state.emit_event(&[path]);
         Ok(())
+    }
+
+    async fn load_internal(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
+        let path = path.as_ref();
+        let path = normalize_path(path);
+        self.simulate_random_delay().await;
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        entry.file_content(&path).cloned()
     }
 
     pub fn pause_events(&self) {
@@ -655,7 +665,7 @@ impl FakeFs {
                     self.create_dir(path).await.unwrap();
                 }
                 String(contents) => {
-                    self.insert_file(&path, contents).await;
+                    self.insert_file(&path, contents.into_bytes()).await;
                 }
                 _ => {
                     panic!("JSON object must contain only objects, strings, or null");
@@ -825,7 +835,7 @@ impl FakeFsEntry {
         matches!(self, Self::Symlink { .. })
     }
 
-    fn file_content(&self, path: &Path) -> Result<&String> {
+    fn file_content(&self, path: &Path) -> Result<&Vec<u8>> {
         if let Self::File { content, .. } = self {
             Ok(content)
         } else {
@@ -833,7 +843,7 @@ impl FakeFsEntry {
         }
     }
 
-    fn set_file_content(&mut self, path: &Path, new_content: String) -> Result<()> {
+    fn set_file_content(&mut self, path: &Path, new_content: Vec<u8>) -> Result<()> {
         if let Self::File { content, mtime, .. } = self {
             *mtime = SystemTime::now();
             *content = new_content;
@@ -902,7 +912,7 @@ impl Fs for FakeFs {
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
-            content: String::new(),
+            content: Vec::new(),
         }));
         state.write_path(path, |entry| {
             match entry {
@@ -993,7 +1003,7 @@ impl Fs for FakeFs {
                 e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
                     inode,
                     mtime,
-                    content: String::new(),
+                    content: Vec::new(),
                 })))
                 .clone(),
             )),
@@ -1072,35 +1082,30 @@ impl Fs for FakeFs {
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
-        let text = self.load(path).await?;
-        Ok(Box::new(io::Cursor::new(text)))
+        let bytes = self.load_internal(path).await?;
+        Ok(Box::new(io::Cursor::new(bytes)))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
-        let path = normalize_path(path);
-        self.simulate_random_delay().await;
-        let state = self.state.lock();
-        let entry = state.read_path(&path)?;
-        let entry = entry.lock();
-        entry.file_content(&path).cloned()
+        let content = self.load_internal(path).await?;
+        Ok(String::from_utf8(content.clone())?)
     }
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
-        self.write_file_internal(path, data.to_string())?;
-
+        self.write_file_internal(path, data.into_bytes())?;
         Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
-        let content = chunks(text, line_ending).collect();
+        let content = chunks(text, line_ending).collect::<String>();
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        self.write_file_internal(path, content)?;
+        self.write_file_internal(path, content.into_bytes())?;
         Ok(())
     }
 
