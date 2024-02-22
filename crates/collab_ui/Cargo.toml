@@ -34,6 +34,7 @@ clock.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
+extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 futures.workspace = true
