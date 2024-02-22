@@ -116,10 +116,25 @@ pub fn update_settings_file<T: Settings>(
             store.new_text_for_update::<T>(old_text, update)
         })?;
         let initial_path = paths::SETTINGS.as_path();
-        let resolved_path = fs
-            .canonicalize(initial_path)
+        let file_exists = fs.is_file(initial_path).await;
+        let resolved_path = if file_exists {
+            fs.canonicalize(initial_path).await.with_context(|| {
+                format!("Failed to canonicalize settings path {:?}", initial_path)
+            })?
+        } else {
+            fs.create_file(
+                initial_path,
+                fs::CreateOptions {
+                    overwrite: false,
+                    ignore_if_exists: true,
+                },
+            )
             .await
-            .with_context(|| format!("Failed to canonicalize settings path {:?}", initial_path))?;
+            .with_context(|| format!("Failed to create settings file {:?}", initial_path))?;
+            fs.canonicalize(initial_path)
+                .await
+                .unwrap_or_else(|_| initial_path.to_path_buf())
+        };
         fs.atomic_write(resolved_path.clone(), new_text)
             .await
             .with_context(|| format!("Failed to write settings to file {:?}", resolved_path))?;
