@@ -285,22 +285,21 @@ fn surrounding_html_tag(
                     if before_tag.name == tag.name {
                         let match_tag = htmlTag {
                             name: before_tag.name.clone(),
-                            start: if surround { 
+                            start: if surround {
                                 before_tag.start
-                            } else { 
+                            } else {
                                 before_tag.end
                             },
                             end: if surround { tag.end } else { tag.start },
                         };
                         final_stack.push(match_tag);
                         open_tag_stack.remove(i);
+                    }
                 }
             }
         }
-        }
         for tag in &final_stack {
             if tag.start < relative_to && tag.end > relative_to {
-                println!("tag is {:?}",tag.name);
                 return Some(tag.start..tag.end)
             }
         }
