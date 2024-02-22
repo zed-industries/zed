@@ -36,6 +36,18 @@ impl From<ViewId> for EntityId {
 }
 
 #[derive(Default)]
+/// An index into all the geometry in a `Scene` at a point in time.
+pub(crate) struct SceneIndex {
+    pub(crate) shadow: usize,
+    pub(crate) quad: usize,
+    pub(crate) path: usize,
+    pub(crate) underline: usize,
+    pub(crate) monochrome_sprite: usize,
+    pub(crate) polychrome_sprite: usize,
+    pub(crate) surface: usize,
+}
+
+#[derive(Default)]
 pub(crate) struct Scene {
     last_layer: Option<(StackingOrder, LayerId)>,
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
@@ -61,6 +73,18 @@ impl Scene {
         self.monochrome_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+    }
+
+    pub fn len(&self) -> SceneIndex {
+        SceneIndex {
+            shadow: self.shadows.len(),
+            quad: self.quads.len(),
+            path: self.paths.len(),
+            underline: self.underlines.len(),
+            monochrome_sprite: self.monochrome_sprites.len(),
+            polychrome_sprite: self.polychrome_sprites.len(),
+            surface: self.surfaces.len(),
+        }
     }
 
     pub fn paths(&self) -> &[Path<ScaledPixels>] {

@@ -1,8 +1,8 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, Bounds,
     ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
-    FocusableView, IntoElement, LayoutId, Model, Pixels, Point, Render, Size, StackingOrder, Style,
-    TextStyle, ViewContext, VisualContext, WeakModel,
+    FocusableView, IntoElement, LayoutId, Model, Pixels, Point, Render, SceneIndex, Size,
+    StackingOrder, Style, TextStyle, ViewContext, VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -24,15 +24,17 @@ impl<V> Sealed for View<V> {}
 pub struct AnyViewState {
     root_style: Style,
     next_stacking_order_id: u16,
-    cache_key: Option<ViewCacheKey>,
+    cache_key: Option<ViewCacheData>,
     element: Option<AnyElement>,
 }
 
-struct ViewCacheKey {
+struct ViewCacheData {
     bounds: Bounds<Pixels>,
     stacking_order: StackingOrder,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
+    scene_start: SceneIndex,
+    scene_end: SceneIndex,
 }
 
 impl<V: 'static> Entity<V> for View<V> {
@@ -322,12 +324,14 @@ impl Element for AnyView {
                 }
             }
 
+            let scene_start = cx.window.next_frame.scene.len();
             if let Some(mut element) = state.element.take() {
                 element.paint(cx);
             } else {
                 let mut element = (self.request_layout)(self, cx).1;
                 element.draw(bounds.origin, bounds.size.into(), cx);
             }
+            let scene_end = cx.window.next_frame.scene.len();
 
             state.next_stacking_order_id = cx
                 .window
@@ -336,11 +340,13 @@ impl Element for AnyView {
                 .last()
                 .copied()
                 .unwrap();
-            state.cache_key = Some(ViewCacheKey {
+            state.cache_key = Some(ViewCacheData {
                 bounds,
                 stacking_order: cx.stacking_order().clone(),
                 content_mask: cx.content_mask(),
                 text_style: cx.text_style(),
+                scene_start,
+                scene_end,
             });
         })
     }
