@@ -1,7 +1,7 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{Client, ClientSettings, TelemetrySettings, ZED_APP_PATH};
+use client::{Client, TelemetrySettings, ZED_APP_PATH};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use editor::{Editor, MultiBuffer};
@@ -192,15 +192,12 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
     let release_channel = ReleaseChannel::global(cx);
     let version = env!("CARGO_PKG_VERSION");
 
-    let server_url = &ClientSettings::get_global(cx).server_url;
-    let url = format!(
-        "{}/api/release_notes/{}/{}",
-        server_url,
+    let client = client::Client::global(cx).http_client();
+    let url = client.zed_url(&format!(
+        "/api/release_notes/{}/{}",
         release_channel.dev_name(),
         version
-    );
-
-    let client = client::Client::global(cx).http_client();
+    ));
 
     let markdown = workspace
         .app_state()
