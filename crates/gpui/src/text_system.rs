@@ -725,6 +725,7 @@ pub struct FontMetrics {
     pub(crate) x_height: f32,
 
     /// The outer limits of the area that the font covers.
+    /// Corresponds to the xMin / xMax / yMin / yMax values in the OpenType `head` table
     pub(crate) bounding_box: Bounds<f32>,
 }
 

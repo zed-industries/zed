@@ -6,7 +6,7 @@ use futures::{io::BufReader, StreamExt};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
-use std::env::consts::ARCH;
+use std::env::consts::{ARCH, OS};
 use std::{any::Any, path::PathBuf};
 use util::async_maybe;
 use util::github::latest_github_release;
@@ -28,15 +28,16 @@ impl LspAdapter for ZlsAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("zigtools/zls", false, delegate.http_client()).await?;
-        let asset_name = format!("zls-{}-macos.tar.gz", ARCH);
+        let release =
+            latest_github_release("zigtools/zls", true, false, delegate.http_client()).await?;
+        let asset_name = format!("zls-{ARCH}-{OS}.tar.gz");
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         let version = GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         };
 
@@ -63,11 +64,15 @@ impl LspAdapter for ZlsAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        fs::set_permissions(
-            &binary_path,
-            <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-        )
-        .await?;
+        // todo!("windows")
+        #[cfg(not(windows))]
+        {
+            fs::set_permissions(
+                &binary_path,
+                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+            )
+            .await?;
+        }
         Ok(LanguageServerBinary {
             path: binary_path,
             arguments: vec![],

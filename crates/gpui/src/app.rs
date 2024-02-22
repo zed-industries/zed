@@ -1,33 +1,3 @@
-mod async_context;
-mod entity_map;
-mod model_context;
-#[cfg(any(test, feature = "test-support"))]
-mod test_context;
-
-pub use async_context::*;
-use derive_more::{Deref, DerefMut};
-pub use entity_map::*;
-pub use model_context::*;
-use refineable::Refineable;
-use smol::future::FutureExt;
-#[cfg(any(test, feature = "test-support"))]
-pub use test_context::*;
-use time::UtcOffset;
-
-use crate::WindowAppearance;
-use crate::{
-    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
-    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
-};
-use anyhow::{anyhow, Result};
-use collections::{FxHashMap, FxHashSet, VecDeque};
-use futures::{channel::oneshot, future::LocalBoxFuture, Future};
-
-use slotmap::SlotMap;
 use std::{
     any::{type_name, TypeId},
     cell::{Ref, RefCell, RefMut},
@@ -38,10 +8,41 @@ use std::{
     sync::{atomic::Ordering::SeqCst, Arc},
     time::Duration,
 };
+
+use anyhow::{anyhow, Result};
+use derive_more::{Deref, DerefMut};
+use futures::{channel::oneshot, future::LocalBoxFuture, Future};
+use slotmap::SlotMap;
+use smol::future::FutureExt;
+use time::UtcOffset;
+
+pub use async_context::*;
+use collections::{FxHashMap, FxHashSet, VecDeque};
+pub use entity_map::*;
+pub use model_context::*;
+use refineable::Refineable;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_context::*;
 use util::{
     http::{self, HttpClient},
     ResultExt,
 };
+
+use crate::WindowAppearance;
+use crate::{
+    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
+    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
+    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
+    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
+};
+
+mod async_context;
+mod entity_map;
+mod model_context;
+#[cfg(any(test, feature = "test-support"))]
+mod test_context;
 
 /// The duration for which futures returned from [AppContext::on_app_context] or [ModelContext::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
@@ -111,6 +112,9 @@ impl App {
     /// Builds an app with the given asset source.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        log::info!("GPUI was compiled in test mode");
+
         Self(AppContext::new(
             current_platform(),
             Arc::new(()),
@@ -193,7 +197,6 @@ impl App {
     }
 }
 
-pub(crate) type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 'static>;
@@ -213,8 +216,6 @@ pub struct AppContext {
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
-    pub(crate) next_frame_callbacks: FxHashMap<DisplayId, Vec<FrameCallback>>,
-    pub(crate) frame_consumers: FxHashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -225,6 +226,7 @@ pub struct AppContext {
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
+    pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
@@ -275,8 +277,6 @@ impl AppContext {
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
-                next_frame_callbacks: FxHashMap::default(),
-                frame_consumers: FxHashMap::default(),
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -286,6 +286,7 @@ impl AppContext {
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
+                window_handles: FxHashMap::default(),
                 windows: SlotMap::with_key(),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
                 global_action_listeners: FxHashMap::default(),
@@ -325,6 +326,7 @@ impl AppContext {
         }
 
         self.windows.clear();
+        self.window_handles.clear();
         self.flush_effects();
 
         let futures = futures::future::join_all(futures);
@@ -469,8 +471,8 @@ impl AppContext {
     /// To find all windows of a given type, you could filter on
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.windows
-            .values()
-            .filter_map(|window| Some(window.as_ref()?.handle))
+            .keys()
+            .flat_map(|window_id| self.window_handles.get(&window_id).copied())
             .collect()
     }
 
@@ -493,6 +495,7 @@ impl AppContext {
             let mut window = Window::new(handle.into(), options, cx);
             let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
             window.root_view.replace(root_view.into());
+            cx.window_handles.insert(id, window.handle);
             cx.windows.get_mut(id).unwrap().replace(window);
             handle
         })
@@ -681,7 +684,6 @@ impl AppContext {
                     self.update_window(window, |_, cx| cx.draw()).unwrap();
                 }
 
-                #[allow(clippy::collapsible_else_if)]
                 if self.pending_effects.is_empty() {
                     break;
                 }
@@ -1241,12 +1243,13 @@ impl Context for AppContext {
                 .get_mut(handle.id)
                 .ok_or_else(|| anyhow!("window not found"))?
                 .take()
-                .unwrap();
+                .ok_or_else(|| anyhow!("window not found"))?;
 
             let root_view = window.root_view.clone().unwrap();
             let result = update(root_view, &mut WindowContext::new(cx, &mut window));
 
             if window.removed {
+                cx.window_handles.remove(&handle.id);
                 cx.windows.remove(handle.id);
             } else {
                 cx.windows

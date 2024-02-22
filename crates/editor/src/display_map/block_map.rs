@@ -22,6 +22,9 @@ use text::Edit;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
+/// Tracks custom blocks such as diagnostics that should be displayed within buffer.
+///
+/// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct BlockMap {
     next_block_id: AtomicUsize,
     wrap_snapshot: RefCell<WrapSnapshot>,

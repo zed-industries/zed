@@ -3,16 +3,16 @@ mod projects;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result, Subscription, Task,
-    View, ViewContext, WeakView,
+    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result,
+    Subscription, Task, View, ViewContext, WeakView,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{prelude::*, tooltip_container, HighlightedLabel, ListItem, ListItemSpacing, Tooltip};
 use util::paths::PathExt;
-use workspace::{ModalView, Workspace, WorkspaceLocation, WORKSPACE_DB};
+use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_DB};
 
 pub use projects::OpenRecent;
 
@@ -30,7 +30,14 @@ impl ModalView for RecentProjects {}
 
 impl RecentProjects {
     fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| {
+            // We want to use a list when we render paths, because the items can have different heights (multiple paths).
+            if delegate.render_paths {
+                Picker::list(delegate, cx)
+            } else {
+                Picker::uniform_list(delegate, cx)
+            }
+        });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
@@ -38,13 +45,11 @@ impl RecentProjects {
             let workspaces = WORKSPACE_DB
                 .recent_workspaces_on_disk()
                 .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(_, location)| location)
-                .collect();
+                .unwrap_or_default();
+
             this.update(&mut cx, move |this, cx| {
                 this.picker.update(cx, move |picker, cx| {
-                    picker.delegate.workspace_locations = workspaces;
+                    picker.delegate.workspaces = workspaces;
                     picker.update_matches(picker.query(cx), cx)
                 })
             })
@@ -82,7 +87,7 @@ impl RecentProjects {
                 workspace.toggle_modal(cx, |cx| {
                     let delegate = RecentProjectsDelegate::new(weak_workspace, true);
 
-                    let modal = RecentProjects::new(delegate, 34., cx);
+                    let modal = Self::new(delegate, 34., cx);
                     modal
                 });
             })?;
@@ -117,20 +122,23 @@ impl Render for RecentProjects {
 
 pub struct RecentProjectsDelegate {
     workspace: WeakView<Workspace>,
-    workspace_locations: Vec<WorkspaceLocation>,
+    workspaces: Vec<(WorkspaceId, WorkspaceLocation)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
+    // Flag to reset index when there is a new query vs not reset index when user delete an item
+    reset_selected_match_index: bool,
 }
 
 impl RecentProjectsDelegate {
     fn new(workspace: WeakView<Workspace>, render_paths: bool) -> Self {
         Self {
             workspace,
-            workspace_locations: vec![],
+            workspaces: vec![],
             selected_match_index: 0,
             matches: Default::default(),
             render_paths,
+            reset_selected_match_index: true,
         }
     }
 }
@@ -139,7 +147,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
-        "Recent Projects...".into()
+        "Search recent projects...".into()
     }
 
     fn match_count(&self) -> usize {
@@ -162,10 +170,10 @@ impl PickerDelegate for RecentProjectsDelegate {
         let query = query.trim_start();
         let smart_case = query.chars().any(|c| c.is_uppercase());
         let candidates = self
-            .workspace_locations
+            .workspaces
             .iter()
             .enumerate()
-            .map(|(id, location)| {
+            .map(|(id, (_, location))| {
                 let combined_string = location
                     .paths()
                     .iter()
@@ -185,14 +193,17 @@ impl PickerDelegate for RecentProjectsDelegate {
         ));
         self.matches.sort_unstable_by_key(|m| m.candidate_id);
 
-        self.selected_match_index = self
-            .matches
-            .iter()
-            .enumerate()
-            .rev()
-            .max_by_key(|(_, m)| OrderedFloat(m.score))
-            .map(|(ix, _)| ix)
-            .unwrap_or(0);
+        if self.reset_selected_match_index {
+            self.selected_match_index = self
+                .matches
+                .iter()
+                .enumerate()
+                .rev()
+                .max_by_key(|(_, m)| OrderedFloat(m.score))
+                .map(|(ix, _)| ix)
+                .unwrap_or(0);
+        }
+        self.reset_selected_match_index = true;
         Task::ready(())
     }
 
@@ -202,7 +213,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .get(self.selected_index())
             .zip(self.workspace.upgrade())
         {
-            let workspace_location = &self.workspace_locations[selected_match.candidate_id];
+            let (_, workspace_location) = &self.workspaces[selected_match.candidate_id];
             workspace
                 .update(cx, |workspace, cx| {
                     workspace
@@ -219,17 +230,18 @@ impl PickerDelegate for RecentProjectsDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let Some(r#match) = self.matches.get(ix) else {
             return None;
         };
 
-        let highlighted_location = HighlightedWorkspaceLocation::new(
-            &r#match,
-            &self.workspace_locations[r#match.candidate_id],
-        );
+        let (workspace_id, location) = &self.workspaces[r#match.candidate_id];
+        let highlighted_location: HighlightedWorkspaceLocation =
+            HighlightedWorkspaceLocation::new(&r#match, location);
+        let tooltip_highlighted_location = highlighted_location.clone();
 
+        let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -239,9 +251,99 @@ impl PickerDelegate for RecentProjectsDelegate {
                     v_flex()
                         .child(highlighted_location.names)
                         .when(self.render_paths, |this| {
-                            this.children(highlighted_location.paths)
+                            this.children(highlighted_location.paths.into_iter().map(|path| {
+                                HighlightedLabel::new(path.text, path.highlight_positions)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                            }))
                         }),
-                ),
+                )
+                .when(!is_current_workspace, |el| {
+                    let delete_button = div()
+                        .child(
+                            IconButton::new("delete", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener(move |this, _event, cx| {
+                                    cx.stop_propagation();
+                                    cx.prevent_default();
+
+                                    this.delegate.delete_recent_project(ix, cx)
+                                }))
+                                .tooltip(|cx| Tooltip::text("Delete From Recent Projects...", cx)),
+                        )
+                        .into_any_element();
+
+                    if self.selected_index() == ix {
+                        el.end_slot::<AnyElement>(delete_button)
+                    } else {
+                        el.end_hover_slot::<AnyElement>(delete_button)
+                    }
+                })
+                .tooltip(move |cx| {
+                    let tooltip_highlighted_location = tooltip_highlighted_location.clone();
+                    cx.new_view(move |_| MatchTooltip {
+                        highlighted_location: tooltip_highlighted_location,
+                    })
+                    .into()
+                }),
         )
+    }
+}
+
+impl RecentProjectsDelegate {
+    fn delete_recent_project(&self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+        if let Some(selected_match) = self.matches.get(ix) {
+            let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
+            cx.spawn(move |this, mut cx| async move {
+                let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
+                let workspaces = WORKSPACE_DB
+                    .recent_workspaces_on_disk()
+                    .await
+                    .unwrap_or_default();
+                this.update(&mut cx, move |picker, cx| {
+                    picker.delegate.workspaces = workspaces;
+                    picker.delegate.set_selected_index(ix - 1, cx);
+                    picker.delegate.reset_selected_match_index = false;
+                    picker.update_matches(picker.query(cx), cx)
+                })
+            })
+            .detach();
+        }
+    }
+
+    fn is_current_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> bool {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            if workspace_id == workspace.database_id() {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+struct MatchTooltip {
+    highlighted_location: HighlightedWorkspaceLocation,
+}
+
+impl Render for MatchTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        tooltip_container(cx, |div, _| {
+            div.children(
+                self.highlighted_location
+                    .paths
+                    .clone()
+                    .into_iter()
+                    .map(|path| {
+                        HighlightedLabel::new(path.text, path.highlight_positions)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    }),
+            )
+        })
     }
 }

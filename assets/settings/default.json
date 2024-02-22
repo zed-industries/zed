@@ -214,6 +214,8 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
+    // The default OpenAI API endpoint to use when starting new conversations.
+    "openai_api_url": "https://api.openai.com/v1",
     // The default OpenAI model to use when starting new conversations. This
     // setting can take three values:
     //
@@ -329,7 +331,9 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [".env"]
+    "disabled_globs": [
+      ".env"
+    ]
   },
   // Settings specific to journaling
   "journal": {
@@ -438,18 +442,26 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [".env", "env", ".venv", "venv"],
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
-    // "font_size": "15",
+    // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Mono",
-    // ---
+    // Sets the maximum number of lines in the terminal's scrollback buffer.
+    // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
+    // Existing terminals will not pick up this change until they are recreated.
+    // "max_scroll_history_lines": 10000,
   },
   // Difference settings for semantic_index
   "semantic_index": {
@@ -480,6 +492,7 @@
   "deno": {
     "enable": false
   },
+  "code_actions_on_format": {},
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {
@@ -488,11 +501,18 @@
     "Elixir": {
       "tab_size": 2
     },
+    "Gleam": {
+      "tab_size": 2
+    },
     "Go": {
       "tab_size": 4,
-      "hard_tabs": true
+      "hard_tabs": true,
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
     },
     "Markdown": {
+      "tab_size": 2,
       "soft_wrap": "preferred_line_length"
     },
     "JavaScript": {
@@ -534,13 +554,17 @@
   "lsp": {
     // Specify the LSP name as a key here.
     // "rust-analyzer": {
-    //     //These initialization options are merged into Zed's defaults
+    //     // These initialization options are merged into Zed's defaults
     //     "initialization_options": {
-    //         "checkOnSave": {
-    //             "command": "clippy"
+    //         "check": {
+    //             "command": "clippy" // rust-analyzer.check.command (default: "check")
     //         }
     //     }
     // }
+  },
+  // Vim settings
+  "vim": {
+    "use_system_clipboard": "always"
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
@@ -560,7 +584,7 @@
   "stable": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using Zed Stable.
+  // Settings overrides to use when using Zed Dev.
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"

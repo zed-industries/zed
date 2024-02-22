@@ -1,25 +1,7 @@
 #!/usr/bin/bash -e
 
-# if not on Linux, do nothing
-[[ $(uname) == "Linux" ]] || exit 0
-
-# Copy assets to the user's home directory if they don't exist
-mkdir -p "$HOME/.config/zed"
-
-mkdir -p "$HOME/.config/zed/plugins"
-
-mkdir -p "$HOME/.config/zed/themes"
-cp -ruL ./assets/themes/*/*.json "$HOME/.config/zed/themes"
-
-test -f "$HOME/.config/zed/settings.json" ||
-  cp -uL ./assets/settings/initial_user_settings.json "$HOME/.config/zed/settings.json"
-
-test -f "$HOME/.config/zed/keymap.json" ||
-  cp -uL ./assets/keymaps/default.json "$HOME/.config/zed/keymap.json"
-
 # if sudo is not installed, define an empty alias
 maysudo=$(command -v sudo || true)
-export maysudo
 
 # Ubuntu, Debian, etc.
 # https://packages.ubuntu.com/
@@ -29,6 +11,9 @@ if [[ -n $apt ]]; then
     libasound2-dev
     libfontconfig-dev
     vulkan-validationlayers*
+    libwayland-dev
+    libxkbcommon-x11-dev
+    openssl
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -42,8 +27,27 @@ if [[ -n $dnf ]]; then
     alsa-lib-devel
     fontconfig-devel
     vulkan-validation-layers
+    wayland-devel
+    libxkbcommon-x11-devel
+    openssl-devel
   )
   $maysudo "$dnf" install -y "${deps[@]}"
+  exit 0
+fi
+
+# openSuse
+# https://software.opensuse.org/
+zyp=$(command -v zypper || true)
+if [[ -n $zyp ]]; then
+  deps=(
+    alsa-devel
+    fontconfig-devel
+    vulkan-validationlayers
+    wayland-devel
+    libxkbcommon-x11-devel
+    openssl-devel
+  )
+  $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
 fi
 
@@ -55,8 +59,11 @@ if [[ -n $pacman ]]; then
     alsa-lib
     fontconfig
     vulkan-validation-layers
+    wayland
+    libxkbcommon-x11
+    openssl
   )
-  $maysudo "$pacman" -S --noconfirm "${deps[@]}"
+  $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
 fi
 

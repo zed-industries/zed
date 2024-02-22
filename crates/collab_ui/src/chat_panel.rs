@@ -63,6 +63,7 @@ pub struct ChatPanel {
     focus_handle: FocusHandle,
     open_context_menu: Option<(u64, Subscription)>,
     highlighted_message: Option<(u64, Task<()>)>,
+    last_acknowledged_message_id: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -126,6 +127,7 @@ impl ChatPanel {
                 focus_handle: cx.focus_handle(),
                 open_context_menu: None,
                 highlighted_message: None,
+                last_acknowledged_message_id: None,
             };
 
             if let Some(channel_id) = ActiveCall::global(cx)
@@ -281,6 +283,13 @@ impl ChatPanel {
     fn acknowledge_last_message(&mut self, cx: &mut ViewContext<Self>) {
         if self.active && self.is_scrolled_to_bottom {
             if let Some((chat, _)) = &self.active_chat {
+                if let Some(channel_id) = self.channel_id(cx) {
+                    self.last_acknowledged_message_id = self
+                        .channel_store
+                        .read(cx)
+                        .last_acknowledge_message_id(channel_id);
+                }
+
                 chat.update(cx, |chat, cx| {
                     chat.acknowledge_last_message(cx);
                 });
@@ -362,9 +371,9 @@ impl ChatPanel {
                         .px_1()
                         .py_0p5()
                         .mb_1()
-                        .overflow_hidden()
                         .child(
                             div()
+                                .overflow_hidden()
                                 .max_h_12()
                                 .child(reply_to_message_body.element(body_element_id, cx)),
                         ),
@@ -454,119 +463,145 @@ impl ChatPanel {
             cx.theme().colors().panel_background
         };
 
-        v_flex().w_full().relative().child(
-            div()
-                .bg(background)
-                .rounded_md()
-                .overflow_hidden()
-                .px_1()
-                .py_0p5()
-                .when(!is_continuation_from_previous, |this| {
-                    this.mt_2().child(
-                        h_flex()
-                            .text_ui_sm()
-                            .child(div().absolute().child(
-                                Avatar::new(message.sender.avatar_uri.clone()).size(rems(1.)),
-                            ))
-                            .child(
-                                div()
-                                    .pl(cx.rem_size() + px(6.0))
-                                    .pr(px(8.0))
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(Label::new(message.sender.github_login.clone())),
-                            )
-                            .child(
-                                Label::new(format_timestamp(
-                                    OffsetDateTime::now_utc(),
-                                    message.timestamp,
-                                    self.local_timezone,
+        v_flex()
+            .w_full()
+            .relative()
+            .child(
+                div()
+                    .bg(background)
+                    .rounded_md()
+                    .overflow_hidden()
+                    .px_1()
+                    .py_0p5()
+                    .when(!is_continuation_from_previous, |this| {
+                        this.mt_2().child(
+                            h_flex()
+                                .text_ui_sm()
+                                .child(div().absolute().child(
+                                    Avatar::new(message.sender.avatar_uri.clone()).size(rems(1.)),
                                 ))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            ),
+                                .child(
+                                    div()
+                                        .pl(cx.rem_size() + px(6.0))
+                                        .pr(px(8.0))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(Label::new(message.sender.github_login.clone())),
+                                )
+                                .child(
+                                    Label::new(format_timestamp(
+                                        OffsetDateTime::now_utc(),
+                                        message.timestamp,
+                                        self.local_timezone,
+                                        None,
+                                    ))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                ),
+                        )
+                    })
+                    .when(
+                        message.reply_to_message_id.is_some() && reply_to_message.is_none(),
+                        |this| {
+                            const MESSAGE_DELETED: &str = "Message has been deleted";
+
+                            let body_text = StyledText::new(MESSAGE_DELETED).with_highlights(
+                                &cx.text_style(),
+                                vec![(
+                                    0..MESSAGE_DELETED.len(),
+                                    HighlightStyle {
+                                        font_style: Some(FontStyle::Italic),
+                                        ..Default::default()
+                                    },
+                                )],
+                            );
+
+                            this.child(
+                                div()
+                                    .border_l_2()
+                                    .text_ui_xs()
+                                    .border_color(cx.theme().colors().border)
+                                    .px_1()
+                                    .py_0p5()
+                                    .child(body_text),
+                            )
+                        },
                     )
-                })
-                .when(
-                    message.reply_to_message_id.is_some() && reply_to_message.is_none(),
-                    |this| {
-                        const MESSAGE_DELETED: &str = "Message has been deleted";
-
-                        let body_text = StyledText::new(MESSAGE_DELETED).with_highlights(
-                            &cx.text_style(),
-                            vec![(
-                                0..MESSAGE_DELETED.len(),
-                                HighlightStyle {
-                                    font_style: Some(FontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            )],
-                        );
-
-                        this.child(
-                            div()
-                                .border_l_2()
-                                .text_ui_xs()
-                                .border_color(cx.theme().colors().border)
-                                .px_1()
-                                .py_0p5()
-                                .child(body_text),
+                    .when_some(reply_to_message, |el, reply_to_message| {
+                        el.child(self.render_replied_to_message(
+                            Some(message.id),
+                            &reply_to_message,
+                            cx,
+                        ))
+                    })
+                    .when(mentioning_you || replied_to_you, |this| this.my_0p5())
+                    .map(|el| {
+                        let text = self.markdown_data.entry(message.id).or_insert_with(|| {
+                            Self::render_markdown_with_mentions(
+                                &self.languages,
+                                self.client.id(),
+                                &message,
+                            )
+                        });
+                        el.child(
+                            v_flex()
+                                .w_full()
+                                .text_ui_sm()
+                                .id(element_id)
+                                .group("")
+                                .child(text.element("body".into(), cx))
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .z_index(1)
+                                        .right_0()
+                                        .w_6()
+                                        .bg(background)
+                                        .when(!self.has_open_menu(message_id), |el| {
+                                            el.visible_on_hover("")
+                                        })
+                                        .when_some(message_id, |el, message_id| {
+                                            el.child(
+                                                popover_menu(("menu", message_id))
+                                                    .trigger(IconButton::new(
+                                                        ("trigger", message_id),
+                                                        IconName::Ellipsis,
+                                                    ))
+                                                    .menu(move |cx| {
+                                                        Some(Self::render_message_menu(
+                                                            &this,
+                                                            message_id,
+                                                            can_delete_message,
+                                                            cx,
+                                                        ))
+                                                    }),
+                                            )
+                                        }),
+                                ),
                         )
-                    },
-                )
-                .when_some(reply_to_message, |el, reply_to_message| {
-                    el.child(self.render_replied_to_message(
-                        Some(message.id),
-                        &reply_to_message,
-                        cx,
-                    ))
-                })
-                .when(mentioning_you || replied_to_you, |this| this.my_0p5())
-                .map(|el| {
-                    let text = self.markdown_data.entry(message.id).or_insert_with(|| {
-                        Self::render_markdown_with_mentions(
-                            &self.languages,
-                            self.client.id(),
-                            &message,
-                        )
-                    });
-                    el.child(
-                        v_flex()
-                            .w_full()
-                            .text_ui_sm()
-                            .id(element_id)
-                            .group("")
-                            .child(text.element("body".into(), cx))
+                    }),
+            )
+            .when(
+                self.last_acknowledged_message_id
+                    .is_some_and(|l| Some(l) == message_id),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .py_2()
+                            .gap_1()
+                            .items_center()
+                            .child(div().w_full().h_0p5().bg(cx.theme().colors().border))
                             .child(
                                 div()
-                                    .absolute()
-                                    .z_index(1)
-                                    .right_0()
-                                    .w_6()
-                                    .bg(background)
-                                    .when(!self.has_open_menu(message_id), |el| {
-                                        el.visible_on_hover("")
-                                    })
-                                    .when_some(message_id, |el, message_id| {
-                                        el.child(
-                                            popover_menu(("menu", message_id))
-                                                .trigger(IconButton::new(
-                                                    ("trigger", message_id),
-                                                    IconName::Ellipsis,
-                                                ))
-                                                .menu(move |cx| {
-                                                    Some(Self::render_message_menu(
-                                                        &this,
-                                                        message_id,
-                                                        can_delete_message,
-                                                        cx,
-                                                    ))
-                                                }),
-                                        )
-                                    }),
-                            ),
+                                    .px_1()
+                                    .rounded_md()
+                                    .text_ui_xs()
+                                    .bg(cx.theme().colors().background)
+                                    .child("New messages"),
+                            )
+                            .child(div().w_full().h_0p5().bg(cx.theme().colors().border)),
                     )
-                }),
-        )
+                },
+            )
     }
 
     fn has_open_menu(&self, message_id: Option<u64>) -> bool {
@@ -681,8 +716,11 @@ impl ChatPanel {
 
         cx.spawn(|this, mut cx| async move {
             let chat = open_chat.await?;
-            this.update(&mut cx, |this, cx| {
+            let highlight_message_id = scroll_to_message_id;
+            let scroll_to_message_id = this.update(&mut cx, |this, cx| {
                 this.set_active_chat(chat.clone(), cx);
+
+                scroll_to_message_id.or_else(|| this.last_acknowledged_message_id)
             })?;
 
             if let Some(message_id) = scroll_to_message_id {
@@ -690,21 +728,22 @@ impl ChatPanel {
                     ChannelChat::load_history_since_message(chat.clone(), message_id, (*cx).clone())
                         .await
                 {
-                    let task = cx.spawn({
-                        let this = this.clone();
-
-                        |mut cx| async move {
-                            cx.background_executor().timer(Duration::from_secs(2)).await;
-                            this.update(&mut cx, |this, cx| {
-                                this.highlighted_message.take();
-                                cx.notify();
-                            })
-                            .ok();
-                        }
-                    });
-
                     this.update(&mut cx, |this, cx| {
-                        this.highlighted_message = Some((message_id, task));
+                        if let Some(highlight_message_id) = highlight_message_id {
+                            let task = cx.spawn({
+                                |this, mut cx| async move {
+                                    cx.background_executor().timer(Duration::from_secs(2)).await;
+                                    this.update(&mut cx, |this, cx| {
+                                        this.highlighted_message.take();
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                            });
+
+                            this.highlighted_message = Some((highlight_message_id, task));
+                        }
+
                         if this.active_chat.as_ref().map_or(false, |(c, _)| *c == chat) {
                             this.message_list.scroll_to(ListOffset {
                                 item_ix,
@@ -733,7 +772,7 @@ impl Render for ChatPanel {
         v_flex()
             .key_context("ChatPanel")
             .track_focus(&self.focus_handle)
-            .full()
+            .size_full()
             .on_action(cx.listener(Self::send))
             .child(
                 h_flex().z_index(1).child(
@@ -755,11 +794,11 @@ impl Render for ChatPanel {
             )
             .child(div().flex_grow().px_2().map(|this| {
                 if self.active_chat.is_some() {
-                    this.child(list(self.message_list.clone()).full())
+                    this.child(list(self.message_list.clone()).size_full())
                 } else {
                     this.child(
                         div()
-                            .full()
+                            .size_full()
                             .p_4()
                             .child(
                                 Label::new("Select a channel to chat in.")
@@ -801,18 +840,21 @@ impl Render for ChatPanel {
 
                 el.when_some(reply_message, |el, reply_message| {
                     el.child(
-                        div()
+                        h_flex()
                             .when(!self.is_scrolled_to_bottom, |el| {
                                 el.border_t_1().border_color(cx.theme().colors().border)
                             })
-                            .flex()
-                            .w_full()
-                            .items_start()
+                            .justify_between()
                             .overflow_hidden()
+                            .items_start()
                             .py_1()
                             .px_2()
                             .bg(cx.theme().colors().background)
-                            .child(self.render_replied_to_message(None, &reply_message, cx))
+                            .child(
+                                div().flex_shrink().overflow_hidden().child(
+                                    self.render_replied_to_message(None, &reply_message, cx),
+                                ),
+                            )
                             .child(
                                 IconButton::new("close-reply-preview", IconName::Close)
                                     .shape(ui::IconButtonShape::Square)
@@ -917,26 +959,58 @@ impl Panel for ChatPanel {
 
 impl EventEmitter<PanelEvent> for ChatPanel {}
 
+fn is_12_hour_clock(locale: String) -> bool {
+    [
+        "es-MX", "es-CO", "es-SV", "es-NI",
+        "es-HN", // Mexico, Colombia, El Salvador, Nicaragua, Honduras
+        "en-US", "en-CA", "en-AU", "en-NZ", // U.S, Canada, Australia, New Zealand
+        "ar-SA", "ar-EG", "ar-JO", // Saudi Arabia, Egypt, Jordan
+        "en-IN", "hi-IN", // India, Hindu
+        "en-PK", "ur-PK", // Pakistan, Urdu
+        "en-PH", "fil-PH", // Philippines, Filipino
+        "bn-BD", "ccp-BD", // Bangladesh, Chakma
+        "en-IE", "ga-IE", // Ireland, Irish
+        "en-MY", "ms-MY", // Malaysia, Malay
+    ]
+    .contains(&locale.as_str())
+}
+
 fn format_timestamp(
     reference: OffsetDateTime,
     timestamp: OffsetDateTime,
     timezone: UtcOffset,
+    locale: Option<String>,
 ) -> String {
+    let locale = match locale {
+        Some(locale) => locale,
+        None => sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")),
+    };
     let timestamp_local = timestamp.to_offset(timezone);
     let timestamp_local_hour = timestamp_local.hour();
-
-    let hour_12 = match timestamp_local_hour {
-        0 => 12,                              // Midnight
-        13..=23 => timestamp_local_hour - 12, // PM hours
-        _ => timestamp_local_hour,            // AM hours
-    };
-    let meridiem = if timestamp_local_hour >= 12 {
-        "pm"
-    } else {
-        "am"
-    };
     let timestamp_local_minute = timestamp_local.minute();
-    let formatted_time = format!("{:02}:{:02} {}", hour_12, timestamp_local_minute, meridiem);
+
+    let (hour, meridiem) = if is_12_hour_clock(locale) {
+        let meridiem = if timestamp_local_hour >= 12 {
+            "pm"
+        } else {
+            "am"
+        };
+
+        let hour_12 = match timestamp_local_hour {
+            0 => 12,                              // Midnight
+            13..=23 => timestamp_local_hour - 12, // PM hours
+            _ => timestamp_local_hour,            // AM hours
+        };
+
+        (hour_12, Some(meridiem))
+    } else {
+        (timestamp_local_hour, None)
+    };
+
+    let formatted_time = match meridiem {
+        Some(meridiem) => format!("{:02}:{:02} {}", hour, timestamp_local_minute, meridiem),
+        None => format!("{:02}:{:02}", hour, timestamp_local_minute),
+    };
 
     let reference_local = reference.to_offset(timezone);
     let reference_local_date = reference_local.date();
@@ -950,12 +1024,20 @@ fn format_timestamp(
         return format!("yesterday at {}", formatted_time);
     }
 
-    format!(
-        "{:02}/{:02}/{}",
-        timestamp_local_date.month() as u32,
-        timestamp_local_date.day(),
-        timestamp_local_date.year()
-    )
+    match meridiem {
+        Some(_) => format!(
+            "{:02}/{:02}/{}",
+            timestamp_local_date.month() as u32,
+            timestamp_local_date.day(),
+            timestamp_local_date.year()
+        ),
+        None => format!(
+            "{:02}/{:02}/{}",
+            timestamp_local_date.day(),
+            timestamp_local_date.month() as u32,
+            timestamp_local_date.year()
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1015,13 +1097,135 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_render_markdown_with_auto_detect_links() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body: "Here is a link https://zed.dev to zeds website".to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar_uri: "avatar_fgh".into(),
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: Vec::new(),
+            reply_to_message_id: None,
+        };
+
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) =
+            marked_text_ranges("Here is a link «https://zed.dev» to zeds website", false);
+        assert_eq!(message.text, body);
+        assert_eq!(1, ranges.len());
+        assert_eq!(
+            message.highlights,
+            vec![(
+                ranges[0].clone(),
+                HighlightStyle {
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: 1.0.into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+                .into()
+            ),]
+        );
+    }
+
+    #[gpui::test]
+    fn test_render_markdown_with_auto_detect_links_and_additional_formatting() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body: "**Here is a link https://zed.dev to zeds website**".to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar_uri: "avatar_fgh".into(),
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: Vec::new(),
+            reply_to_message_id: None,
+        };
+
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) = marked_text_ranges(
+            "«Here is a link »«https://zed.dev»« to zeds website»",
+            false,
+        );
+        assert_eq!(message.text, body);
+        assert_eq!(3, ranges.len());
+        assert_eq!(
+            message.highlights,
+            vec![
+                (
+                    ranges[0].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (
+                    ranges[1].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        underline: Some(gpui::UnderlineStyle {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (
+                    ranges[2].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_format_locale() {
+        let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
+        let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
+
+        assert_eq!(
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-GB"))
+            ),
+            "15:30"
+        );
+    }
+
     #[test]
     fn test_format_today() {
         let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
         let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "03:30 pm"
         );
     }
@@ -1032,7 +1236,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 9, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 09:00 am"
         );
     }
@@ -1043,7 +1252,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 20, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 08:00 pm"
         );
     }
@@ -1054,7 +1268,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 18, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 06:00 pm"
         );
     }
@@ -1065,7 +1284,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 23, 55, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 11:55 pm"
         );
     }
@@ -1076,7 +1300,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 1, 20, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "yesterday at 08:00 pm"
         );
     }
@@ -1087,7 +1316,12 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 10, 20, 20, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone()),
+            format_timestamp(
+                reference,
+                timestamp,
+                test_timezone(),
+                Some(String::from("en-US"))
+            ),
             "04/10/1990"
         );
     }

@@ -55,6 +55,7 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_open_ai_model: OpenAiModel,
+    pub openai_api_url: String,
 }
 
 /// Assistant panel settings
@@ -80,6 +81,10 @@ pub struct AssistantSettingsContent {
     ///
     /// Default: gpt-4-1106-preview
     pub default_open_ai_model: Option<OpenAiModel>,
+    /// OpenAI API base URL to use when starting new conversations.
+    ///
+    /// Default: https://api.openai.com/v1
+    pub openai_api_url: Option<String>,
 }
 
 impl Settings for AssistantSettings {

@@ -4,7 +4,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
+use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
@@ -23,7 +23,7 @@ use std::{
     path::PathBuf,
     str::{self, FromStr as _},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
     },
     time::{Duration, Instant},
@@ -31,11 +31,13 @@ use std::{
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
 
+const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, &str, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -58,20 +60,20 @@ pub struct LanguageServerBinary {
 /// A running language server process.
 pub struct LanguageServer {
     server_id: LanguageServerId,
-    next_id: AtomicUsize,
+    next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
-    name: String,
+    name: Arc<str>,
     capabilities: ServerCapabilities,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
-    response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
-    io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+    response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+    io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     executor: BackgroundExecutor,
     #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
-    _server: Option<Mutex<Child>>,
+    server: Arc<Mutex<Option<Child>>>,
 }
 
 /// Identifies a running language server.
@@ -86,9 +88,19 @@ pub enum Subscription {
         notification_handlers: Option<Arc<Mutex<HashMap<&'static str, NotificationHandler>>>>,
     },
     Io {
-        id: usize,
-        io_handlers: Option<Weak<Mutex<HashMap<usize, IoHandler>>>>,
+        id: i32,
+        io_handlers: Option<Weak<Mutex<HashMap<i32, IoHandler>>>>,
     },
+}
+
+/// Language server protocol RPC request message ID.
+///
+/// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RequestId {
+    Int(i32),
+    Str(String),
 }
 
 /// Language server protocol RPC request message.
@@ -97,7 +109,7 @@ pub enum Subscription {
 #[derive(Serialize, Deserialize)]
 pub struct Request<'a, T> {
     jsonrpc: &'static str,
-    id: usize,
+    id: RequestId,
     method: &'a str,
     params: T,
 }
@@ -106,7 +118,7 @@ pub struct Request<'a, T> {
 #[derive(Serialize, Deserialize)]
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
-    id: usize,
+    id: RequestId,
     #[serde(default)]
     error: Option<Error>,
     #[serde(borrow)]
@@ -119,7 +131,7 @@ struct AnyResponse<'a> {
 #[derive(Serialize)]
 struct Response<T> {
     jsonrpc: &'static str,
-    id: usize,
+    id: RequestId,
     result: Option<T>,
     error: Option<Error>,
 }
@@ -139,7 +151,7 @@ struct Notification<'a, T> {
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
     #[serde(default)]
-    id: Option<usize>,
+    id: Option<RequestId>,
     #[serde(borrow)]
     method: &'a str,
     #[serde(borrow, default)]
@@ -167,6 +179,13 @@ impl LanguageServer {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
 
+        log::info!(
+            "starting language server. binary path: {:?}, working directory: {:?}, args: {:?}",
+            binary.path,
+            working_dir,
+            &binary.arguments
+        );
+
         let mut server = process::Command::new(&binary.path)
             .current_dir(working_dir)
             .args(binary.arguments)
@@ -191,7 +210,7 @@ impl LanguageServer {
             cx,
             move |notification| {
                 log::info!(
-                    "{} unhandled notification {}:\n{}",
+                    "Language server with id {} sent unhandled notification {}:\n{}",
                     server_id,
                     notification.method,
                     serde_json::to_string_pretty(
@@ -206,7 +225,7 @@ impl LanguageServer {
         );
 
         if let Some(name) = binary.path.file_name() {
-            server.name = name.to_string_lossy().to_string();
+            server.name = name.to_string_lossy().into();
         }
 
         Ok(server)
@@ -282,7 +301,7 @@ impl LanguageServer {
             notification_handlers,
             response_handlers,
             io_handlers,
-            name: Default::default(),
+            name: "".into(),
             capabilities: Default::default(),
             code_action_kinds,
             next_id: Default::default(),
@@ -291,7 +310,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            _server: server.map(|server| Mutex::new(server)),
+            server: Arc::new(Mutex::new(server.map(|server| server))),
         }
     }
 
@@ -304,8 +323,8 @@ impl LanguageServer {
         stdout: Stdout,
         mut on_unhandled_notification: F,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
-        response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
-        io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+        response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
         cx: AsyncAppContext,
     ) -> anyhow::Result<()>
     where
@@ -323,47 +342,17 @@ impl LanguageServer {
         loop {
             buffer.clear();
 
-            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
-                break;
-            };
+            read_headers(&mut stdout, &mut buffer).await?;
 
-            if stdout.read_until(b'\n', &mut buffer).await? == 0 {
-                break;
-            };
+            let headers = std::str::from_utf8(&buffer)?;
 
-            let header = std::str::from_utf8(&buffer)?;
-            let mut segments = header.lines();
-
-            let message_len: usize = segments
-                .next()
-                .with_context(|| {
-                    format!("unable to find the first line of the LSP message header `{header}`")
-                })?
-                .strip_prefix(CONTENT_LEN_HEADER)
-                .with_context(|| format!("invalid LSP message header `{header}`"))?
-                .parse()
-                .with_context(|| {
-                    format!("failed to parse Content-Length of LSP message header: `{header}`")
-                })?;
-
-            if let Some(second_segment) = segments.next() {
-                match second_segment {
-                    "" => (), // Header end
-                    header_field => {
-                        if header_field.starts_with("Content-Type:") {
-                            stdout.read_until(b'\n', &mut buffer).await?;
-                        } else {
-                            anyhow::bail!(
-                                "inside `{header}`, expected a Content-Type header field or a header ending CRLF, got `{second_segment:?}`"
-                            )
-                        }
-                    }
-                }
-            } else {
-                anyhow::bail!(
-                    "unable to find the second line of the LSP message header `{header}`"
-                );
-            }
+            let message_len = headers
+                .split("\n")
+                .find(|line| line.starts_with(CONTENT_LEN_HEADER))
+                .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
+                .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
+                .trim_end()
+                .parse()?;
 
             buffer.resize(message_len, 0);
             stdout.read_exact(&mut buffer).await?;
@@ -412,13 +401,11 @@ impl LanguageServer {
             // Don't starve the main thread when receiving lots of messages at once.
             smol::future::yield_now().await;
         }
-
-        Ok(())
     }
 
     async fn handle_stderr<Stderr>(
         stderr: Stderr,
-        io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
         stderr_capture: Arc<Mutex<Option<String>>>,
     ) -> anyhow::Result<()>
     where
@@ -455,8 +442,8 @@ impl LanguageServer {
         stdin: Stdin,
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
-        response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
-        io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+        response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     ) -> anyhow::Result<()>
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
@@ -639,7 +626,7 @@ impl LanguageServer {
         cx.spawn(|_| async move {
             let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
-                self.name = info.name;
+                self.name = info.name.into();
             }
             self.capabilities = response.capabilities;
 
@@ -652,7 +639,7 @@ impl LanguageServer {
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
-            let next_id = AtomicUsize::new(self.next_id.load(SeqCst));
+            let next_id = AtomicI32::new(self.next_id.load(SeqCst));
             let outbound_tx = self.outbound_tx.clone();
             let executor = self.executor.clone();
             let mut output_done = self.output_done_rx.lock().take().unwrap();
@@ -665,14 +652,30 @@ impl LanguageServer {
             );
             let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
             outbound_tx.close();
+
+            let server = self.server.clone();
+            let name = self.name.clone();
+            let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
             Some(
                 async move {
                     log::debug!("language server shutdown started");
-                    shutdown_request.await?;
+
+                    select! {
+                        request_result = shutdown_request.fuse() => {
+                            request_result?;
+                        }
+
+                        _ = timer => {
+                            log::info!("timeout waiting for language server {name} to shutdown");
+                        },
+                    }
+
                     response_handlers.lock().take();
                     exit?;
                     output_done.recv().await;
+                    server.lock().take().map(|mut child| child.kill());
                     log::debug!("language server shutdown finished");
+
                     drop(tasks);
                     anyhow::Ok(())
                 }
@@ -881,8 +884,8 @@ impl LanguageServer {
     }
 
     fn request_internal<T: request::Request>(
-        next_id: &AtomicUsize,
-        response_handlers: &Mutex<Option<HashMap<usize, ResponseHandler>>>,
+        next_id: &AtomicI32,
+        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
@@ -893,7 +896,7 @@ impl LanguageServer {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
             jsonrpc: JSON_RPC_VERSION,
-            id,
+            id: RequestId::Int(id),
             method: T::METHOD,
             params,
         })
@@ -907,13 +910,18 @@ impl LanguageServer {
             .map(|handlers| {
                 let executor = executor.clone();
                 handlers.insert(
-                    id,
+                    RequestId::Int(id),
                     Box::new(move |result| {
                         executor
                             .spawn(async move {
                                 let response = match result {
-                                    Ok(response) => serde_json::from_str(&response)
-                                        .context("failed to deserialize response"),
+                                    Ok(response) => match serde_json::from_str(&response) {
+                                        Ok(deserialized) => Ok(deserialized),
+                                        Err(error) => {
+                                            log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
+                                            Err(error).context("failed to deserialize response")
+                                        }
+                                    }
                                     Err(error) => Err(anyhow!("{}", error.message)),
                                 };
                                 _ = tx.send(response);
@@ -947,7 +955,7 @@ impl LanguageServer {
             });
 
             let method = T::METHOD;
-            futures::select! {
+            select! {
                 response = rx.fuse() => {
                     let elapsed = started.elapsed();
                     log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
@@ -1128,6 +1136,7 @@ impl LanguageServer {
             document_formatting_provider: Some(OneOf::Left(true)),
             document_range_formatting_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
+            implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
             ..Default::default()
         }
@@ -1254,6 +1263,26 @@ impl FakeLanguageServer {
     }
 }
 
+pub(self) async fn read_headers<Stdout>(
+    reader: &mut BufReader<Stdout>,
+    buffer: &mut Vec<u8>,
+) -> Result<()>
+where
+    Stdout: AsyncRead + Unpin + Send + 'static,
+{
+    loop {
+        if buffer.len() >= HEADER_DELIMITER.len()
+            && buffer[(buffer.len() - HEADER_DELIMITER.len())..] == HEADER_DELIMITER[..]
+        {
+            return Ok(());
+        }
+
+        if reader.read_until(b'\n', buffer).await? == 0 {
+            return Err(anyhow!("cannot read LSP message headers"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1326,5 +1355,56 @@ mod tests {
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_read_headers() {
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Length: 123\r\n\r\n" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(buf, b"Content-Length: 123\r\n\r\n");
+
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n{\"somecontent\":123}" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(
+            buf,
+            b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n"
+        );
+
+        let mut buf = Vec::new();
+        let mut reader = smol::io::BufReader::new(b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n{\"somecontent\":true}" as &[u8]);
+        read_headers(&mut reader, &mut buf).await.unwrap();
+        assert_eq!(
+            buf,
+            b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n"
+        );
+    }
+
+    #[gpui::test]
+    fn test_deserialize_string_digit_id() {
+        let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
+        let notification = serde_json::from_str::<AnyNotification>(json)
+            .expect("message with string id should be parsed");
+        let expected_id = RequestId::Str("2".to_string());
+        assert_eq!(notification.id, Some(expected_id));
+    }
+
+    #[gpui::test]
+    fn test_deserialize_string_id() {
+        let json = r#"{"jsonrpc":"2.0","id":"anythingAtAll","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
+        let notification = serde_json::from_str::<AnyNotification>(json)
+            .expect("message with string id should be parsed");
+        let expected_id = RequestId::Str("anythingAtAll".to_string());
+        assert_eq!(notification.id, Some(expected_id));
+    }
+
+    #[gpui::test]
+    fn test_deserialize_int_id() {
+        let json = r#"{"jsonrpc":"2.0","id":2,"method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
+        let notification = serde_json::from_str::<AnyNotification>(json)
+            .expect("message with string id should be parsed");
+        let expected_id = RequestId::Int(2);
+        assert_eq!(notification.id, Some(expected_id));
     }
 }

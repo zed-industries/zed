@@ -93,6 +93,7 @@ pub struct LocalWorktree {
     diagnostic_summaries: HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
+    fs_case_sensitive: bool,
     visible: bool,
 }
 
@@ -314,6 +315,13 @@ impl Worktree {
             .await
             .context("failed to stat worktree path")?;
 
+        let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
+            log::error!(
+                "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
+            );
+            true
+        });
+
         let closure_fs = Arc::clone(&fs);
         let closure_next_entry_id = Arc::clone(&next_entry_id);
         let closure_abs_path = abs_path.to_path_buf();
@@ -435,6 +443,7 @@ impl Worktree {
                 diagnostic_summaries: Default::default(),
                 client,
                 fs,
+                fs_case_sensitive,
                 visible,
             })
         })
@@ -638,10 +647,18 @@ fn start_background_scan_tasks(
         let background = cx.background_executor().clone();
         async move {
             let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
+            let case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
+                log::error!(
+                    "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
+                );
+                true
+            });
+
             BackgroundScanner::new(
                 snapshot,
                 next_entry_id,
                 fs,
+                case_sensitive,
                 scan_states_tx,
                 background,
                 scan_requests_rx,
@@ -1293,9 +1310,29 @@ impl LocalWorktree {
         let abs_old_path = self.absolutize(&old_path);
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
+        let case_sensitive = self.fs_case_sensitive;
         let rename = cx.background_executor().spawn(async move {
-            fs.rename(&abs_old_path?, &abs_new_path?, Default::default())
-                .await
+            let abs_old_path = abs_old_path?;
+            let abs_new_path = abs_new_path?;
+
+            let abs_old_path_lower = abs_old_path.to_str().map(|p| p.to_lowercase());
+            let abs_new_path_lower = abs_new_path.to_str().map(|p| p.to_lowercase());
+
+            // If we're on a case-insensitive FS and we're doing a case-only rename (i.e. `foobar` to `FOOBAR`)
+            // we want to overwrite, because otherwise we run into a file-already-exists error.
+            let overwrite = !case_sensitive
+                && abs_old_path != abs_new_path
+                && abs_old_path_lower == abs_new_path_lower;
+
+            fs.rename(
+                &abs_old_path,
+                &abs_new_path,
+                fs::RenameOptions {
+                    overwrite,
+                    ..Default::default()
+                },
+            )
+            .await
         });
 
         cx.spawn(|this, mut cx| async move {
@@ -2215,11 +2252,16 @@ impl LocalSnapshot {
 
     fn ignore_stack_for_abs_path(&self, abs_path: &Path, is_dir: bool) -> Arc<IgnoreStack> {
         let mut new_ignores = Vec::new();
-        for ancestor in abs_path.ancestors().skip(1) {
-            if let Some((ignore, _)) = self.ignores_by_parent_abs_path.get(ancestor) {
-                new_ignores.push((ancestor, Some(ignore.clone())));
-            } else {
-                new_ignores.push((ancestor, None));
+        for (index, ancestor) in abs_path.ancestors().enumerate() {
+            if index > 0 {
+                if let Some((ignore, _)) = self.ignores_by_parent_abs_path.get(ancestor) {
+                    new_ignores.push((ancestor, Some(ignore.clone())));
+                } else {
+                    new_ignores.push((ancestor, None));
+                }
+            }
+            if ancestor.join(&*DOT_GIT).is_dir() {
+                break;
             }
         }
 
@@ -3229,6 +3271,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 struct BackgroundScanner {
     state: Mutex<BackgroundScannerState>,
     fs: Arc<dyn Fs>,
+    fs_case_sensitive: bool,
     status_updates_tx: UnboundedSender<ScanState>,
     executor: BackgroundExecutor,
     scan_requests_rx: channel::Receiver<ScanRequest>,
@@ -3249,6 +3292,7 @@ impl BackgroundScanner {
         snapshot: LocalSnapshot,
         next_entry_id: Arc<AtomicUsize>,
         fs: Arc<dyn Fs>,
+        fs_case_sensitive: bool,
         status_updates_tx: UnboundedSender<ScanState>,
         executor: BackgroundExecutor,
         scan_requests_rx: channel::Receiver<ScanRequest>,
@@ -3256,6 +3300,7 @@ impl BackgroundScanner {
     ) -> Self {
         Self {
             fs,
+            fs_case_sensitive,
             status_updates_tx,
             executor,
             scan_requests_rx,
@@ -3279,14 +3324,21 @@ impl BackgroundScanner {
 
         // Populate ignores above the root.
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
-        for ancestor in root_abs_path.ancestors().skip(1) {
-            if let Ok(ignore) = build_gitignore(&ancestor.join(&*GITIGNORE), self.fs.as_ref()).await
-            {
-                self.state
-                    .lock()
-                    .snapshot
-                    .ignores_by_parent_abs_path
-                    .insert(ancestor.into(), (ignore.into(), false));
+        for (index, ancestor) in root_abs_path.ancestors().enumerate() {
+            if index != 0 {
+                if let Ok(ignore) =
+                    build_gitignore(&ancestor.join(&*GITIGNORE), self.fs.as_ref()).await
+                {
+                    self.state
+                        .lock()
+                        .snapshot
+                        .ignores_by_parent_abs_path
+                        .insert(ancestor.into(), (ignore.into(), false));
+                }
+            }
+            if ancestor.join(&*DOT_GIT).is_dir() {
+                // Reached root of git repository.
+                break;
             }
         }
 
@@ -3884,6 +3936,21 @@ impl BackgroundScanner {
                     let metadata = self.fs.metadata(abs_path).await?;
                     if let Some(metadata) = metadata {
                         let canonical_path = self.fs.canonicalize(abs_path).await?;
+
+                        // If we're on a case-insensitive filesystem (default on macOS), we want
+                        // to only ignore metadata for non-symlink files if their absolute-path matches
+                        // the canonical-path.
+                        // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
+                        // and we want to ignore the metadata for the old path (`test.txt`) so it's
+                        // treated as removed.
+                        if !self.fs_case_sensitive && !metadata.is_symlink {
+                            let canonical_file_name = canonical_path.file_name();
+                            let file_name = abs_path.file_name();
+                            if canonical_file_name != file_name {
+                                return Ok(None);
+                            }
+                        }
+
                         anyhow::Ok(Some((metadata, canonical_path)))
                     } else {
                         Ok(None)

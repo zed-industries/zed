@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
+use collections::HashMap;
 use gpui::{Action, KeyContext};
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,8 @@ pub struct WorkspaceState {
     pub recorded_count: Option<usize>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
+
+    pub registers: HashMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -169,7 +172,6 @@ impl EditorState {
 
     pub fn keymap_context_layer(&self) -> KeyContext {
         let mut context = KeyContext::default();
-        context.add("VimEnabled");
         context.set(
             "vim_mode",
             match self.mode {

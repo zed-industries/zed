@@ -1,8 +1,9 @@
 use std::any::Any;
+use std::env::consts;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -35,12 +36,17 @@ impl LspAdapter for GleamLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
-            latest_github_release("gleam-lang/gleam", false, delegate.http_client()).await?;
-
+            latest_github_release("gleam-lang/gleam", true, false, delegate.http_client()).await?;
         let asset_name = format!(
-            "gleam-{version}-{arch}-apple-darwin.tar.gz",
-            version = release.name,
-            arch = std::env::consts::ARCH
+            "gleam-{version}-{arch}-{os}.tar.gz",
+            version = release.tag_name,
+            arch = std::env::consts::ARCH,
+            os = match consts::OS {
+                "macos" => "apple-darwin",
+                "linux" => "unknown-linux-musl",
+                "windows" => "pc-windows-msvc",
+                other => bail!("Running on unsupported os: {other}"),
+            },
         );
         let asset = release
             .assets
@@ -48,7 +54,7 @@ impl LspAdapter for GleamLspAdapter {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.name,
+            name: release.tag_name,
             url: asset.browser_download_url.clone(),
         }))
     }

@@ -12,10 +12,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
-use futures::{
-    channel::{mpsc, oneshot},
-    StreamExt,
-};
+use futures::channel::oneshot;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -23,7 +20,6 @@ use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
     cell::{Cell, RefCell},
-    collections::hash_map::Entry,
     fmt::{Debug, Display},
     future::Future,
     hash::{Hash, Hasher},
@@ -243,6 +239,8 @@ impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 /// Emitted by implementers of [`ManagedView`] to indicate the view should be dismissed, such as when a view is presented as a modal.
 pub struct DismissEvent;
 
+type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
+
 // Holds the state for a specific window.
 #[doc(hidden)]
 pub struct Window {
@@ -259,6 +257,7 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
@@ -273,6 +272,7 @@ pub struct Window {
     appearance_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
@@ -280,6 +280,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    graphics_profiler_enabled: bool,
 }
 
 #[derive(Default, Debug)]
@@ -338,14 +339,41 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
         let active = Rc::new(Cell::new(false));
+        let needs_present = Rc::new(Cell::new(false));
+        let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
+        platform_window.on_close(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                let _ = handle.update(&mut cx, |_, cx| cx.remove_window());
+            }
+        }));
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
             let active = active.clone();
+            let needs_present = needs_present.clone();
+            let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move || {
+                let next_frame_callbacks = next_frame_callbacks.take();
+                if !next_frame_callbacks.is_empty() {
+                    handle
+                        .update(&mut cx, |_, cx| {
+                            for callback in next_frame_callbacks {
+                                callback(cx);
+                            }
+                        })
+                        .log_err();
+                }
+
+                // Keep presenting the current scene for 1 extra second since the
+                // last input to prevent the display from underclocking the refresh rate.
+                let needs_present = needs_present.get()
+                    || (active.get()
+                        && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
+
                 if dirty.get() {
                     measure("frame duration", || {
                         handle
@@ -355,12 +383,7 @@ impl Window {
                             })
                             .log_err();
                     })
-                }
-                // Keep presenting the current scene for 1 extra second since the
-                // last input to prevent the display from underclocking the refresh rate.
-                else if active.get()
-                    && last_input_timestamp.get().elapsed() < Duration::from_secs(1)
-                {
+                } else if needs_present {
                     handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
             }
@@ -428,6 +451,7 @@ impl Window {
             element_id_stack: GlobalElementId::default(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            next_frame_callbacks,
             dirty_views: FxHashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
@@ -442,6 +466,7 @@ impl Window {
             appearance_observers: SubscriberSet::new(),
             active,
             dirty,
+            needs_present,
             last_input_timestamp,
             refreshing: false,
             drawing: false,
@@ -449,6 +474,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            graphics_profiler_enabled: false,
         }
     }
     fn new_focus_listener(
@@ -670,57 +696,7 @@ impl<'a> WindowContext<'a> {
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
-        let handle = self.window.handle;
-        let display_id = self.window.display_id;
-
-        let mut frame_consumers = std::mem::take(&mut self.app.frame_consumers);
-        if let Entry::Vacant(e) = frame_consumers.entry(display_id) {
-            let (tx, mut rx) = mpsc::unbounded::<()>();
-            self.platform.set_display_link_output_callback(
-                display_id,
-                Box::new(move || _ = tx.unbounded_send(())),
-            );
-
-            let consumer_task = self.app.spawn(|cx| async move {
-                while rx.next().await.is_some() {
-                    cx.update(|cx| {
-                        for callback in cx
-                            .next_frame_callbacks
-                            .get_mut(&display_id)
-                            .unwrap()
-                            .drain(..)
-                            .collect::<SmallVec<[_; 32]>>()
-                        {
-                            callback(cx);
-                        }
-                    })
-                    .ok();
-
-                    // Flush effects, then stop the display link if no new next_frame_callbacks have been added.
-
-                    cx.update(|cx| {
-                        if cx.next_frame_callbacks.is_empty() {
-                            cx.platform.stop_display_link(display_id);
-                        }
-                    })
-                    .ok();
-                }
-            });
-            e.insert(consumer_task);
-        }
-        debug_assert!(self.app.frame_consumers.is_empty());
-        self.app.frame_consumers = frame_consumers;
-
-        if self.next_frame_callbacks.is_empty() {
-            self.platform.start_display_link(display_id);
-        }
-
-        self.next_frame_callbacks
-            .entry(display_id)
-            .or_default()
-            .push(Box::new(move |cx: &mut AppContext| {
-                cx.update_window(handle, |_root_view, cx| callback(cx)).ok();
-            }));
+        RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -974,7 +950,7 @@ impl<'a> WindowContext<'a> {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
-    pub(crate) fn draw(&mut self) {
+    pub fn draw(&mut self) {
         self.window.dirty.set(false);
         self.window.drawing = true;
 
@@ -1113,12 +1089,46 @@ impl<'a> WindowContext<'a> {
         }
         self.window.refreshing = false;
         self.window.drawing = false;
+        self.window.needs_present.set(true);
     }
 
     fn present(&self) {
         self.window
             .platform_window
             .draw(&self.window.rendered_frame.scene);
+        self.window.needs_present.set(false);
+    }
+
+    /// Dispatch a given keystroke as though the user had typed it.
+    /// You can create a keystroke with Keystroke::parse("").
+    pub fn dispatch_keystroke(&mut self, mut keystroke: Keystroke) -> bool {
+        if keystroke.ime_key.is_none()
+            && !keystroke.modifiers.command
+            && !keystroke.modifiers.control
+            && !keystroke.modifiers.function
+        {
+            keystroke.ime_key = Some(if keystroke.modifiers.shift {
+                keystroke.key.to_uppercase().clone()
+            } else {
+                keystroke.key.clone()
+            })
+        }
+        if self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+        })) {
+            return true;
+        }
+
+        if let Some(input) = keystroke.ime_key {
+            if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                input_handler.dispatch_input(&input, self);
+                self.window.platform_window.set_input_handler(input_handler);
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1269,6 +1279,10 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any) {
+        if self.window.dirty.get() {
+            self.draw();
+        }
+
         let node_id = self
             .window
             .focus
@@ -1441,7 +1455,7 @@ impl<'a> WindowContext<'a> {
 
         if !input.is_empty() {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
-                input_handler.flush_pending_input(&input, self);
+                input_handler.dispatch_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler)
             }
         }
@@ -1496,6 +1510,14 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
+    }
+
+    /// Toggle the graphics profiler to debug your application's rendering performance.
+    pub fn toggle_graphics_profiler(&mut self) {
+        self.window.graphics_profiler_enabled = !self.window.graphics_profiler_enabled;
+        self.window
+            .platform_window
+            .set_graphics_profiler_enabled(self.window.graphics_profiler_enabled);
     }
 
     /// Register the given handler to be invoked whenever the global of the given type
@@ -1584,7 +1606,7 @@ impl<'a> WindowContext<'a> {
         let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
             return vec![];
         };
-        let context_stack = dispatch_tree
+        let context_stack: Vec<_> = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
@@ -1622,17 +1644,7 @@ impl<'a> WindowContext<'a> {
         let mut this = self.to_async();
         self.window
             .platform_window
-            .on_should_close(Box::new(move || {
-                this.update(|cx| {
-                    // Ensure that the window is removed from the app if it's been closed
-                    // by always pre-empting the system close event.
-                    if f(cx) {
-                        cx.remove_window();
-                    }
-                    false
-                })
-                .unwrap_or(true)
-            }))
+            .on_should_close(Box::new(move || this.update(|cx| f(cx)).unwrap_or(true)))
     }
 
     pub(crate) fn parent_view_id(&self) -> EntityId {
@@ -2548,11 +2560,11 @@ impl<V: 'static + Render> WindowHandle<V> {
 
     /// Check if this window is 'active'.
     ///
-    /// Will return `None` if the window is closed.
-    pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
-        cx.windows
-            .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active.get()))
+    /// Will return `None` if the window is closed or currently
+    /// borrowed.
+    pub fn is_active(&self, cx: &mut AppContext) -> Option<bool> {
+        cx.update_window(self.any_handle, |_, cx| cx.is_window_active())
+            .ok()
     }
 }
 

@@ -335,7 +335,7 @@ impl TestAppContext {
             .map(Keystroke::parse)
             .map(Result::unwrap)
         {
-            self.dispatch_keystroke(window, keystroke.into(), false);
+            self.dispatch_keystroke(window, keystroke.into());
         }
 
         self.background_executor.run_until_parked()
@@ -347,21 +347,16 @@ impl TestAppContext {
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
         for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
-            self.dispatch_keystroke(window, keystroke.into(), false);
+            self.dispatch_keystroke(window, keystroke.into());
         }
 
         self.background_executor.run_until_parked()
     }
 
     /// dispatches a single Keystroke (see also `simulate_keystrokes` and `simulate_input`)
-    pub fn dispatch_keystroke(
-        &mut self,
-        window: AnyWindowHandle,
-        keystroke: Keystroke,
-        is_held: bool,
-    ) {
-        self.test_window(window)
-            .simulate_keystroke(keystroke, is_held)
+    pub fn dispatch_keystroke(&mut self, window: AnyWindowHandle, keystroke: Keystroke) {
+        self.update_window(window, |_, cx| cx.dispatch_keystroke(keystroke))
+            .unwrap();
     }
 
     /// Returns the `TestWindow` backing the given handle.

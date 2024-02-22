@@ -125,6 +125,9 @@ impl Platform for TestPlatform {
 
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
+
+        #[cfg(target_os = "windows")]
+        todo!("windows")
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -185,18 +188,6 @@ impl Platform for TestPlatform {
     fn window_appearance(&self) -> WindowAppearance {
         WindowAppearance::Light
     }
-
-    fn set_display_link_output_callback(
-        &self,
-        _display_id: DisplayId,
-        mut callback: Box<dyn FnMut() + Send>,
-    ) {
-        callback()
-    }
-
-    fn start_display_link(&self, _display_id: DisplayId) {}
-
-    fn stop_display_link(&self, _display_id: DisplayId) {}
 
     fn open_url(&self, url: &str) {
         *self.opened_url.borrow_mut() = Some(url.to_string())

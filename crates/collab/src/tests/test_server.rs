@@ -1,7 +1,7 @@
 use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
+    rpc::{Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState, Config,
 };
 use anyhow::anyhow;
@@ -10,10 +10,11 @@ use channel::{ChannelBuffer, ChannelStore};
 use client::{
     self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
+use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
-use gpui::{BackgroundExecutor, Context, Model, TestAppContext, View, VisualTestContext};
+use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 
@@ -36,7 +37,7 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
+use util::{http::FakeHttpClient, SemanticVersion};
 use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
@@ -230,6 +231,7 @@ impl TestServer {
                                 server_conn,
                                 client_name,
                                 user,
+                                ZedVersion(SemanticVersion::new(1, 0, 0)),
                                 None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
@@ -272,7 +274,7 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
         });
 
         client
@@ -478,6 +480,7 @@ impl TestServer {
         Arc::new(AppState {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
+            blob_store_client: None,
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
@@ -490,6 +493,11 @@ impl TestServer {
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
+                blob_store_url: None,
+                blob_store_region: None,
+                blob_store_access_key: None,
+                blob_store_secret_key: None,
+                blob_store_bucket: None,
             },
         })
     }
@@ -758,6 +766,16 @@ impl TestClient {
         // it might be nice to try and cleanup these at the end of each test.
         (view, cx)
     }
+}
+
+pub fn open_channel_notes(
+    channel_id: u64,
+    cx: &mut VisualTestContext,
+) -> Task<anyhow::Result<View<ChannelView>>> {
+    let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+    let view = window.root_view(cx).unwrap();
+
+    cx.update(|cx| ChannelView::open(channel_id, None, view.clone(), cx))
 }
 
 impl Drop for TestClient {

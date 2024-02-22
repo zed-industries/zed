@@ -4,6 +4,7 @@ use collections::{BTreeMap, HashSet};
 use rpc::ConnectionId;
 use serde::Serialize;
 use tracing::instrument;
+use util::SemanticVersion;
 
 #[derive(Default, Serialize)]
 pub struct ConnectionPool {
@@ -16,10 +17,30 @@ struct ConnectedUser {
     connection_ids: HashSet<ConnectionId>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ZedVersion(pub SemanticVersion);
+use std::fmt;
+
+impl fmt::Display for ZedVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl ZedVersion {
+    pub fn is_supported(&self) -> bool {
+        self.0 != SemanticVersion::new(0, 123, 0)
+    }
+    pub fn supports_talker_role(&self) -> bool {
+        self.0 >= SemanticVersion::new(0, 125, 0)
+    }
+}
+
 #[derive(Serialize)]
 pub struct Connection {
     pub user_id: UserId,
     pub admin: bool,
+    pub zed_version: ZedVersion,
 }
 
 impl ConnectionPool {
@@ -29,9 +50,21 @@ impl ConnectionPool {
     }
 
     #[instrument(skip(self))]
-    pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId, admin: bool) {
-        self.connections
-            .insert(connection_id, Connection { user_id, admin });
+    pub fn add_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        user_id: UserId,
+        admin: bool,
+        zed_version: ZedVersion,
+    ) {
+        self.connections.insert(
+            connection_id,
+            Connection {
+                user_id,
+                admin,
+                zed_version,
+            },
+        );
         let connected_user = self.connected_users.entry(user_id).or_default();
         connected_user.connection_ids.insert(connection_id);
     }
@@ -55,6 +88,19 @@ impl ConnectionPool {
 
     pub fn connections(&self) -> impl Iterator<Item = &Connection> {
         self.connections.values()
+    }
+
+    pub fn user_connections(&self, user_id: UserId) -> impl Iterator<Item = &Connection> + '_ {
+        self.connected_users
+            .get(&user_id)
+            .into_iter()
+            .map(|state| {
+                state
+                    .connection_ids
+                    .iter()
+                    .flat_map(|cid| self.connections.get(cid))
+            })
+            .flatten()
     }
 
     pub fn user_connection_ids(&self, user_id: UserId) -> impl Iterator<Item = ConnectionId> + '_ {

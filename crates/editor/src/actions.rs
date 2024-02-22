@@ -165,6 +165,9 @@ gpui::actions!(
         GoToPrevHunk,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
+        GoToImplementation,
+        GoToImplementationSplit,
+        OpenUrl,
         HalfPageDown,
         HalfPageUp,
         Hover,
@@ -194,6 +197,7 @@ gpui::actions!(
         NewlineBelow,
         NextScreen,
         OpenExcerpts,
+        OpenPermalinkToLine,
         Outdent,
         PageDown,
         PageUp,
@@ -238,5 +242,7 @@ gpui::actions!(
         Undo,
         UndoSelection,
         UnfoldLines,
+        UniqueLinesCaseSensitive,
+        UniqueLinesCaseInsensitive
     ]
 );
