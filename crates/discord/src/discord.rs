@@ -39,10 +39,6 @@ impl Discord {
         }
     }
 
-    pub fn set_running(&mut self, running: Option<bool>) {
-        self.running = running
-    }
-
     pub fn start_discord_rpc(&mut self) {
         if let Some(client) = self.client.clone() {
             // Use initialized here to prevent calling client.start multiple times
