@@ -14,7 +14,7 @@
 ] @variable
 
 ;; func parametr
-parameter: (IDENTIFIER) @type
+parameter: (IDENTIFIER) @property
 
 [
   field_member: (IDENTIFIER)
