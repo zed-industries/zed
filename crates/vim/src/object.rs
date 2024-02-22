@@ -31,7 +31,7 @@ pub enum Object {
     Tag,
 }
 
-struct htmlTag {
+struct HtmlTag {
     name: String,
     start: DisplayPoint,
     end: DisplayPoint,
@@ -249,8 +249,8 @@ fn surrounding_html_tag(
 ) -> Option<Range<DisplayPoint>> {
     // https://regexr.com/3t585
     let re = Regex::new(r"<(/)?([^<>\s/]+)(?:[^<>]*?)(/)?>").unwrap();
-    let mut open_tag_stack: Vec<htmlTag> = Vec::new();
-    let mut final_stack: Vec<htmlTag> = Vec::new();
+    let mut open_tag_stack: Vec<HtmlTag> = Vec::new();
+    let mut final_stack: Vec<HtmlTag> = Vec::new();
     for cap in re.captures_iter(map.text().as_str()) {
         // If it's a self-closing tag, skip
         if let Some(matched) = cap.get(3) {
@@ -264,14 +264,14 @@ fn surrounding_html_tag(
         };
 
         let is_opentag: bool = !cap.get(1).is_some();
-        if let Some(matched) = cap.get(0) {
+        if let Some(html_tag) = cap.get(0) {
             let start = map
                 .buffer_snapshot
-                .clip_offset(matched.start(), Bias::Right);
-            let end = map.buffer_snapshot.clip_offset(matched.end(), Bias::Left);
+                .clip_offset(html_tag.start(), Bias::Right);
+            let end = map.buffer_snapshot.clip_offset(html_tag.end(), Bias::Left);
             let start_position = map.buffer_snapshot.offset_to_point(start);
             let end_position = map.buffer_snapshot.offset_to_point(end);
-            let tag = htmlTag {
+            let tag = HtmlTag {
                 name: tag_name,
                 start: start_position.to_display_point(map),
                 end: end_position.to_display_point(map),
@@ -281,9 +281,9 @@ fn surrounding_html_tag(
                 open_tag_stack.push(tag);
             } else {
                 for i in (0..open_tag_stack.len()).rev() {
-                    let before_tag: &htmlTag = &open_tag_stack[i];
+                    let before_tag: &HtmlTag = &open_tag_stack[i];
                     if before_tag.name == tag.name {
-                        let match_tag = htmlTag {
+                        let match_tag = HtmlTag {
                             name: before_tag.name.clone(),
                             start: if surround {
                                 before_tag.start
