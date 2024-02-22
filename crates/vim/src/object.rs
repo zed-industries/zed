@@ -300,10 +300,9 @@ fn surrounding_html_tag(
         }
         for tag in &final_stack {
             if tag.start < relative_to && tag.end > relative_to {
-                return Some(tag.start..tag.end)
+                return Some(tag.start..tag.end);
             }
         }
-
     }
     None
 }
