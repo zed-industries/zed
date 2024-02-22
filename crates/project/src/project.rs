@@ -4646,6 +4646,7 @@ impl Project {
             cx,
         )
     }
+
     pub fn type_definition<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
@@ -4653,8 +4654,31 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-
         self.type_definition_impl(buffer, position, cx)
+    }
+
+    fn implementation_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetImplementation { position },
+            cx,
+        )
+    }
+
+    pub fn implementation<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.implementation_impl(buffer, position, cx)
     }
 
     fn references_impl(

@@ -1346,6 +1346,7 @@ pub(crate) struct NavigationData {
 enum GotoDefinitionKind {
     Symbol,
     Type,
+    Implementation,
 }
 
 #[derive(Debug, Clone)]
@@ -7352,6 +7353,18 @@ impl Editor {
         self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
     }
 
+    pub fn go_to_implementation(&mut self, _: &GoToImplementation, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, false, cx);
+    }
+
+    pub fn go_to_implementation_split(
+        &mut self,
+        _: &GoToImplementationSplit,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, true, cx);
+    }
+
     pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
         self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx);
     }
@@ -7389,6 +7402,7 @@ impl Editor {
         let definitions = project.update(cx, |project, cx| match kind {
             GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
+            GotoDefinitionKind::Implementation => project.implementation(&buffer, head, cx),
         });
 
         cx.spawn(|editor, mut cx| async move {
