@@ -25,7 +25,7 @@ impl Render for DiscordButton {
             return div();
         };
 
-        let running = discord.read(cx).running().unwrap_or_else(|| false);
+        let running = discord.read(cx).running.unwrap_or_else(|| false);
 
         let icon = match running {
             true => IconName::Discord,
@@ -84,7 +84,7 @@ impl DiscordButton {
             });
         };
 
-        let running = discord.read(cx).running().unwrap_or_else(|| false);
+        let running = discord.read(cx).running.unwrap_or_else(|| false);
 
         ContextMenu::build(cx, move |menu, _| match running {
             true => menu.entry(
@@ -105,10 +105,10 @@ impl DiscordButton {
             return;
         };
 
-        let running = discord.read(cx).running().unwrap_or_else(|| false);
+        let running = discord.read(cx).running.unwrap_or_else(|| false);
 
         // Do this initial check to prevent self.file from being saved
-        // Basically causes the current file to be set as activity when enabled
+        // so that it causes the current file to be set as activity when rich presence is start
         if !running {
             // Resetting here in the event that a user starts, then stops and happens to start it again on the same file
             self.file = None;
@@ -124,6 +124,7 @@ impl DiscordButton {
         if self.file.as_ref().map(Arc::as_ptr) != file.as_ref().map(Arc::as_ptr) {
             if let Some(file) = file.as_ref() {
                 let fullpath = file.full_path(cx).to_str().unwrap_or_default().to_string();
+                // Not sure if there's a better way to get the project name here
                 let path = Path::new(&fullpath);
                 let project = path
                     .iter()
@@ -132,16 +133,13 @@ impl DiscordButton {
                     .to_string_lossy()
                     .to_string();
                 let filepath = file.path().to_str().unwrap_or_default().to_string();
-                // let filename = file.file_name(cx).to_str().unwrap_or_default().to_string();
                 let file_language = language
                     .as_ref()
                     .map_or_else(|| "".to_string(), |lang| lang.name().to_string());
                 if let Some(discord) = Discord::global(cx) {
                     discord.update(cx, |discord, _cx| {
-                        if discord.running().unwrap_or_else(|| false) {
+                        if discord.running.unwrap_or_else(|| false) {
                             discord.set_activity(filepath, file_language, project);
-                        } else {
-                            println!("Client not ready.")
                         }
                     })
                 }
@@ -156,20 +154,16 @@ impl DiscordButton {
 }
 
 fn toggle_discord_rich_presence(cx: &mut WindowContext) {
-    println!("Toggling DRPC!");
-    let Some(discord) = Discord::global(cx) else {
-        println!("Failed to toggle!");
-        return;
+    if let Some(discord) = Discord::global(cx) {
+        let running = discord.read(cx).running.unwrap_or_else(|| false);
+
+        match running {
+            false => discord.update(cx, |discord, _cx| {
+                discord.start_discord_rpc();
+            }),
+            true => discord.update(cx, |discord, _cx| {
+                discord.stop_discord_rpc();
+            }),
+        }
     };
-
-    let running = discord.read(cx).running().unwrap_or_else(|| false);
-
-    match running {
-        false => discord.update(cx, |discord, _cx| {
-            discord.start_discord_rpc();
-        }),
-        true => discord.update(cx, |discord, _cx| {
-            discord.stop_discord_rpc();
-        }),
-    }
 }

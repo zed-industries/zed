@@ -11,7 +11,4 @@ doctest = false
 
 [dependencies]
 gpui.workspace = true
-workspace.workspace = true
 discord-rpc-client = "^0.4"
-language.workspace = true
-tokio = { version = "1", features = ["full"] }

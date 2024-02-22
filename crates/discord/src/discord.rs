@@ -1,4 +1,4 @@
-use discord_rpc_client::{Client, Event};
+use discord_rpc_client::Client;
 use gpui::{AppContext, Context, Global, Model};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -10,13 +10,12 @@ impl Global for GlobalDiscord {}
 
 pub struct Discord {
     client: Option<Arc<Mutex<Client>>>,
-    running: Option<bool>,
+    pub running: Option<bool>,
     initialized: Option<bool>,
     start_timestamp: Option<u64>,
 }
 
 pub fn init(cx: &mut AppContext) {
-    println!("Initializing Discord!");
     let discord = cx.new_model(move |_cx| Discord::new());
     Discord::set_global(discord.clone(), cx);
 }
@@ -40,17 +39,17 @@ impl Discord {
         }
     }
 
-    pub fn running(&self) -> Option<bool> {
-        self.running
+    pub fn set_running(&mut self, running: Option<bool>) {
+        self.running = running
     }
 
     pub fn start_discord_rpc(&mut self) {
         if let Some(client) = self.client.clone() {
+            // Use initialized here to prevent calling client.start multiple times
             if !self.initialized.unwrap_or_else(|| false) {
                 self.initialized = Some(true);
                 thread::spawn(move || {
                     let mut client = client.lock().unwrap();
-                    client.on_event(Event::Ready, |_ctx| println!("Client is ready."));
                     client.start();
                 });
             }
@@ -62,8 +61,6 @@ impl Discord {
                     .as_secs(),
             );
             self.running = Some(true);
-        } else {
-            println!("Client is not available.");
         }
     }
 
@@ -75,8 +72,6 @@ impl Discord {
             });
 
             self.running = Some(false);
-        } else {
-            println!("Error stopping client.");
         }
     }
 
@@ -97,8 +92,7 @@ impl Discord {
                 } else {
                     format!("Project: {}", project)
                 };
-                println!("Updating status: {}, {}", filename, language);
-                if let Err(why) = client.set_activity(|a| {
+                client.set_activity(|a| {
                     let activity = a
                         .details(&format!("Editing {}", filename))
                         .state(project)
@@ -115,12 +109,8 @@ impl Discord {
                     };
 
                     activity
-                }) {
-                    println!("Failed to set presence: {}", why);
-                }
+                })
             });
-        } else {
-            println!("Client is not available.");
         }
     }
 

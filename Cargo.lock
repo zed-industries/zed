@@ -2996,9 +2996,6 @@ version = "0.1.0"
 dependencies = [
  "discord-rpc-client",
  "gpui",
- "language",
- "tokio",
- "workspace",
 ]
 
 [[package]]
