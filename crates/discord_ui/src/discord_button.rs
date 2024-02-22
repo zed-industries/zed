@@ -5,6 +5,7 @@ use gpui::{
     WindowContext,
 };
 use language::{File, Language};
+use std::path::Path;
 use std::sync::Arc;
 use workspace::{
     item::ItemHandle,
@@ -14,16 +15,19 @@ use workspace::{
 
 pub struct DiscordButton {
     editor_subscription: Option<(Subscription, usize)>,
-    enabled: Option<bool>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
 }
 
 impl Render for DiscordButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let enabled = self.enabled.unwrap_or_else(|| false);
+        let Some(discord) = Discord::global(cx) else {
+            return div();
+        };
 
-        let icon = match enabled {
+        let running = discord.read(cx).running().unwrap_or_else(|| false);
+
+        let icon = match running {
             true => IconName::Discord,
             false => IconName::DiscordDisabled,
         };
@@ -64,23 +68,32 @@ impl DiscordButton {
 
         Self {
             editor_subscription: None,
-            enabled: None,
             language: None,
             file: None,
         }
     }
 
     pub fn build_discord_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
-        let enabled = self.enabled.unwrap_or_else(|| false);
+        let Some(discord) = Discord::global(cx) else {
+            return ContextMenu::build(cx, move |menu, _| {
+                menu.entry(
+                    "Start Discord Rich Presence",
+                    None,
+                    toggle_discord_rich_presence,
+                )
+            });
+        };
 
-        ContextMenu::build(cx, move |menu, _| match enabled {
+        let running = discord.read(cx).running().unwrap_or_else(|| false);
+
+        ContextMenu::build(cx, move |menu, _| match running {
             true => menu.entry(
-                "Disable Discord Rich Presence",
+                "Stop Discord Rich Presence",
                 None,
                 toggle_discord_rich_presence,
             ),
             false => menu.entry(
-                "Enable Discord Rich Presence",
+                "Start Discord Rich Presence",
                 None,
                 toggle_discord_rich_presence,
             ),
@@ -88,6 +101,20 @@ impl DiscordButton {
     }
 
     pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+        let Some(discord) = Discord::global(cx) else {
+            return;
+        };
+
+        let running = discord.read(cx).running().unwrap_or_else(|| false);
+
+        // Do this initial check to prevent self.file from being saved
+        // Basically causes the current file to be set as activity when enabled
+        if !running {
+            // Resetting here in the event that a user starts, then stops and happens to start it again on the same file
+            self.file = None;
+            return;
+        }
+
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;
@@ -96,14 +123,23 @@ impl DiscordButton {
 
         if self.file.as_ref().map(Arc::as_ptr) != file.as_ref().map(Arc::as_ptr) {
             if let Some(file) = file.as_ref() {
-                let filename = file.file_name(cx).to_str().unwrap_or_default().to_string();
+                let fullpath = file.full_path(cx).to_str().unwrap_or_default().to_string();
+                let path = Path::new(&fullpath);
+                let project = path
+                    .iter()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let filepath = file.path().to_str().unwrap_or_default().to_string();
+                // let filename = file.file_name(cx).to_str().unwrap_or_default().to_string();
                 let file_language = language
                     .as_ref()
                     .map_or_else(|| "".to_string(), |lang| lang.name().to_string());
                 if let Some(discord) = Discord::global(cx) {
                     discord.update(cx, |discord, _cx| {
-                        if discord.ready().unwrap_or_else(|| false) {
-                            discord.set_activity(filename, file_language);
+                        if discord.running().unwrap_or_else(|| false) {
+                            discord.set_activity(filepath, file_language, project);
                         } else {
                             println!("Client not ready.")
                         }
@@ -125,7 +161,15 @@ fn toggle_discord_rich_presence(cx: &mut WindowContext) {
         println!("Failed to toggle!");
         return;
     };
-    discord.update(cx, |discord, _cx| {
-        discord.start_discord_rpc();
-    });
+
+    let running = discord.read(cx).running().unwrap_or_else(|| false);
+
+    match running {
+        false => discord.update(cx, |discord, _cx| {
+            discord.start_discord_rpc();
+        }),
+        true => discord.update(cx, |discord, _cx| {
+            discord.stop_discord_rpc();
+        }),
+    }
 }

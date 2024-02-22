@@ -10,7 +10,8 @@ impl Global for GlobalDiscord {}
 
 pub struct Discord {
     client: Option<Arc<Mutex<Client>>>,
-    ready: Option<bool>,
+    running: Option<bool>,
+    initialized: Option<bool>,
     start_timestamp: Option<u64>,
 }
 
@@ -33,35 +34,53 @@ impl Discord {
     pub fn new() -> Self {
         Self {
             client: Some(Arc::new(Mutex::new(Client::new(1209561748273762375)))),
-            ready: Some(false),
-            start_timestamp: Some(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            ),
+            running: Some(false),
+            initialized: Some(false),
+            start_timestamp: None,
         }
     }
 
-    pub fn ready(&mut self) -> Option<bool> {
-        self.ready
+    pub fn running(&self) -> Option<bool> {
+        self.running
     }
 
     pub fn start_discord_rpc(&mut self) {
         if let Some(client) = self.client.clone() {
-            thread::spawn(move || {
-                let mut client = client.lock().unwrap();
-                client.on_event(Event::Ready, |_ctx| println!("Client is ready."));
-                client.start();
-            });
+            if !self.initialized.unwrap_or_else(|| false) {
+                self.initialized = Some(true);
+                thread::spawn(move || {
+                    let mut client = client.lock().unwrap();
+                    client.on_event(Event::Ready, |_ctx| println!("Client is ready."));
+                    client.start();
+                });
+            }
 
-            self.ready = Some(true);
+            self.start_timestamp = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            );
+            self.running = Some(true);
         } else {
             println!("Client is not available.");
         }
     }
 
-    pub fn set_activity(&self, filename: String, language: String) {
+    pub fn stop_discord_rpc(&mut self) {
+        if let Some(client) = self.client.clone() {
+            thread::spawn(move || {
+                let mut client = client.lock().unwrap();
+                let _ = client.clear_activity();
+            });
+
+            self.running = Some(false);
+        } else {
+            println!("Error stopping client.");
+        }
+    }
+
+    pub fn set_activity(&self, filename: String, language: String, project: String) {
         if let Some(client) = self.client.clone() {
             let start_timestamp = self.start_timestamp;
             let image_key = self.map_language_to_image_key(&language);
@@ -73,15 +92,20 @@ impl Discord {
                 } else {
                     format!("a {} file", language)
                 };
+                let project = if project.is_empty() {
+                    "No Project".to_string()
+                } else {
+                    format!("Project: {}", project)
+                };
                 println!("Updating status: {}, {}", filename, language);
                 if let Err(why) = client.set_activity(|a| {
                     let activity = a
                         .details(&format!("Editing {}", filename))
-                        .state("Project: zed")
+                        .state(project)
                         .assets(|ass| {
                             ass.large_image(&image_key)
                                 .large_text(&format!("Editing {}", language_text))
-                                .small_image("zed_small")
+                                .small_image("zed_small_blue")
                                 .small_text("Zed")
                         });
                     let activity = if let Some(start) = start_timestamp {
@@ -106,7 +130,7 @@ impl Discord {
             | "elixir" | "erlang" | "git" | "go" | "groovy" | "haskell" | "html" | "java"
             | "javascript" | "json" | "kotlin" | "latex" | "less" | "lua" | "markdown" | "perl"
             | "php" | "powershell" | "python" | "ruby" | "rust" | "sass" | "scala" | "swift"
-            | "typescript" | "xml" | "yaml" => language.to_lowercase(),
+            | "toml" | "typescript" | "xml" | "yaml" => language.to_lowercase(),
             "c++" => "cplusplus".to_string(),
             "c#" => "csharp".to_string(),
             _ => "code".to_string(),
