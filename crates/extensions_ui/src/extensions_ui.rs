@@ -238,18 +238,43 @@ impl ExtensionsPage {
                         .child(
                             Label::new(format!(
                                 "{}: {}",
-                                if extension.authors.len() > 1 {
-                                    "Authors"
-                                } else {
+                                if extension.authors.len() == 1 {
                                     "Author"
+                                } else {
+                                    "Authors"
                                 },
                                 extension.authors.join(", ")
                             ))
                             .size(LabelSize::Small),
                         )
                         .child(
-                            Label::new(format!("Downloads: {}", extension.download_count))
-                                .size(LabelSize::Small),
+                            h_flex()
+                                .gap_2()
+                                .justify_between()
+                                .child(
+                                    Label::new(format!(
+                                        "{}: {}",
+                                        if extension.download_count == 1 {
+                                            "Download"
+                                        } else {
+                                            "Downloads"
+                                        },
+                                        extension.download_count
+                                    ))
+                                    .size(LabelSize::Small),
+                                )
+                                .child(
+                                    Label::new("•")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(format!(
+                                        "Version: {}",
+                                        extension.version
+                                    ))
+                                    .size(LabelSize::Small),
+                                )
                         ),
                 )
                 .child(
