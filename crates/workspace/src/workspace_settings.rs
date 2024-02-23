@@ -24,7 +24,7 @@ pub struct WorkspaceSettingsContent {
     pub confirm_quit: Option<bool>,
     /// Status bar settings.
     ///
-    pub status_bar: Option<StatusBarSettings>,
+    pub status_bar: StatusBarSettings,
     /// Whether or not to show the call status icon in the status bar.
     ///
     /// Default: true
@@ -37,18 +37,62 @@ pub struct WorkspaceSettingsContent {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct StatusBarSettings {
-    /// Whether or not to show the call status icon in the status bar.
+    /// Settings for the elements in the status bar.
+    ///
+    /// Default: all elements are visible
+    pub elements: Option<StatusBarElementSettings>,
+    /// Whether or not to show the status bar.
     ///
     /// Default: true
-    pub show_status_bar: Option<bool>,
-    /// Whether or not to show the call status icon in the status bar.
+    pub visible: Option<bool>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct StatusBarElementSettings {
+    /// Whether or not to show the assistant icon in the status bar.
     ///
     /// Default: true
-    pub show_share_feedback_icon: Option<bool>,
+    pub assistant: Option<bool>,
+    /// Whether or not to show the chat icon in the status bar.
+    ///
+    /// Default: true
+    pub chat: Option<bool>,
+    /// Whether or not to show the collaboration panel icon in the status bar.
+    ///
+    /// Default: true
+    pub collaboration: Option<bool>,
+    /// Whether or not to show the copilot icon in the status bar.
+    ///
+    /// Default: true
+    pub copilot: Option<bool>,
+    /// Whether or not to show the cursor position in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position: Option<bool>,
+    /// Whether or not to show the diagnostics in the status bar.
+    ///
+    /// Default: true
+    pub diagnostics: Option<bool>,
+    /// Whether or not to show the feedback icon in the status bar.
+    ///
+    /// Default: true
+    pub feedback: Option<bool>,
     /// Whether or not to show the language selector in the status bar.
     ///
     /// Default: true
-    pub show_language_selector: Option<bool>,
+    pub language_selector: Option<bool>,
+    /// Whether or not to show the notification icon in the status bar.
+    ///
+    /// Default: true
+    pub notification: Option<bool>,
+    /// Whether or not to show the project panel icon in the status bar.
+    ///
+    /// Default: true
+    pub project: Option<bool>,
+    /// Whether or not to show the terminal icon in the status bar.
+    ///
+    /// Default: true
+    pub terminal: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
