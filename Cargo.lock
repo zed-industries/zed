@@ -12144,6 +12144,7 @@ dependencies = [
  "thiserror",
  "tiny_http",
  "toml 0.8.10",
+ "tree-sitter-rust",
  "unindent",
  "url",
  "urlencoding",

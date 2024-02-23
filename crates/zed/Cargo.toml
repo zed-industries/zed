@@ -131,6 +131,7 @@ gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
+tree-sitter-rust.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
