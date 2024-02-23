@@ -950,4 +950,16 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.set_state("ˇ1234\n56789", Mode::Normal);
     cx.simulate_keystrokes(["g", "u"]);
     cx.assert_state("1234 567ˇ89", Mode::Normal);
+
+    // test leaving command
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g t",
+            workspace::SendKeystrokes("i space escape".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("12ˇ34", Mode::Normal);
+    cx.simulate_keystrokes(["g", "t"]);
+    cx.assert_state("12ˇ 34", Mode::Normal);
 }
