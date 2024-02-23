@@ -1,10 +1,11 @@
 use anyhow::anyhow;
-use axum::{routing::get, Extension, Router};
+use axum::{extract::MatchedPath, routing::get, Extension, Router};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
     Config, MigrateConfig, Result,
 };
 use db::Database;
+use hyper::Request;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
@@ -84,6 +85,18 @@ async fn main() -> Result<()> {
                 )
                 .layer(
                     TraceLayer::new_for_http()
+                        .make_span_with(|request: &Request<_>| {
+                            let matched_path = request
+                                .extensions()
+                                .get::<MatchedPath>()
+                                .map(MatchedPath::as_str);
+
+                            tracing::info_span!(
+                                "http_request",
+                                method = ?request.method(),
+                                matched_path,
+                            )
+                        })
                         .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
                 );
 
