@@ -1950,6 +1950,7 @@ name = "clock"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "parking_lot 0.11.2",
  "smallvec",
 ]
 

@@ -52,6 +52,7 @@ uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }

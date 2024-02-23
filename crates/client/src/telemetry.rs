@@ -324,7 +324,8 @@ impl Telemetry {
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event)
@@ -340,7 +341,8 @@ impl Telemetry {
             suggestion_id,
             suggestion_accepted,
             file_extension,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event)
@@ -356,7 +358,8 @@ impl Telemetry {
             conversation_id,
             kind,
             model,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event)
@@ -372,7 +375,8 @@ impl Telemetry {
             operation,
             room_id,
             channel_id,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event)
@@ -382,7 +386,8 @@ impl Telemetry {
         let event = Event::Cpu {
             usage_as_percentage,
             core_count,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event)
@@ -396,14 +401,15 @@ impl Telemetry {
         let event = Event::Memory {
             memory_in_bytes,
             virtual_memory_in_bytes,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event)
     }
 
     pub fn report_app_event(self: &Arc<Self>, operation: String) {
-        self.report_app_event_with_date_time(operation, Utc::now());
+        self.report_app_event_with_date_time(operation, self.clock.utc_now());
     }
 
     fn report_app_event_with_date_time(
@@ -425,7 +431,8 @@ impl Telemetry {
         let event = Event::Setting {
             setting,
             value,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event)
@@ -440,7 +447,8 @@ impl Telemetry {
             let event = Event::Edit {
                 duration: end.timestamp_millis() - start.timestamp_millis(),
                 environment,
-                milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+                milliseconds_since_first_event: self
+                    .milliseconds_since_first_event(self.clock.utc_now()),
             };
 
             self.report_event(event);
@@ -451,7 +459,8 @@ impl Telemetry {
         let event = Event::Action {
             source,
             action,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event)

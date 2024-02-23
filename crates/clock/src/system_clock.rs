@@ -14,31 +14,46 @@ impl SystemClock for RealSystemClock {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub struct FakeSystemClock {
+pub struct FakeSystemClockState {
     now: DateTime<Utc>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct FakeSystemClock {
+    // Use an unfair lock to ensure tests are deterministic.
+    state: parking_lot::Mutex<FakeSystemClockState>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl Default for FakeSystemClock {
     fn default() -> Self {
-        Self { now: Utc::now() }
+        Self::new(Utc::now())
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeSystemClock {
     pub fn new(now: DateTime<Utc>) -> Self {
-        Self { now }
+        let state = FakeSystemClockState { now };
+
+        Self {
+            state: parking_lot::Mutex::new(state),
+        }
     }
 
-    pub fn set_now(&mut self, now: DateTime<Utc>) {
-        self.now = now;
+    pub fn set_now(&self, now: DateTime<Utc>) {
+        self.state.lock().now = now;
+    }
+
+    /// Advances the [`FakeSystemClock`] by the specified [`Duration`](chrono::Duration).
+    pub fn advance(&self, duration: chrono::Duration) {
+        self.state.lock().now += duration;
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl SystemClock for FakeSystemClock {
     fn utc_now(&self) -> DateTime<Utc> {
-        self.now
+        self.state.lock().now
     }
 }

@@ -10,8 +10,9 @@ path = "src/clock.rs"
 doctest = false
 
 [features]
-test-support = []
+test-support = ["dep:parking_lot"]
 
 [dependencies]
 chrono.workspace = true
+parking_lot = { workspace = true, optional = true }
 smallvec.workspace = true
