@@ -59,7 +59,10 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cell::RefCell,
-    cmp, env,
+    cmp,
+    collections::hash_map::DefaultHasher,
+    env,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     rc::Rc,
     sync::{atomic::AtomicUsize, Arc, Weak},
@@ -579,24 +582,13 @@ impl Workspace {
                 }),
 
                 project::Event::LanguageServerPrompt(request) => {
-                    let request = request.clone();
+                    let mut hasher = DefaultHasher::new();
+                    request.message.as_str().hash(&mut hasher);
+                    let id = hasher.finish();
 
-                    cx.spawn(|_, mut cx| async move {
-                        let messages = request
-                            .actions
-                            .iter()
-                            .map(|action| action.title.as_str())
-                            .collect::<Vec<_>>();
-                        let index = cx
-                            .update(|cx| {
-                                cx.prompt(request.level, "", Some(&request.message), &messages)
-                            })?
-                            .await?;
-                        request.respond(index).await;
-
-                        Result::<(), anyhow::Error>::Ok(())
-                    })
-                    .detach()
+                    this.show_notification(id as usize, cx, |cx| {
+                        cx.new_view(|_| notifications::LanguageServerPrompt::new(request.clone()))
+                    });
                 }
 
                 _ => {}
@@ -2766,7 +2758,7 @@ impl Workspace {
                     .z_index(100)
                     .right_3()
                     .bottom_3()
-                    .w_96()
+                    .w_112()
                     .h_full()
                     .flex()
                     .flex_col()
