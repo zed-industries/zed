@@ -802,6 +802,11 @@ async fn get_binary(
             .await
         {
             statuses.send(language.clone(), LanguageServerBinaryStatus::Cached);
+            log::info!(
+                "failed to fetch newest version of language server {:?}. falling back to using {:?}",
+                adapter.name,
+                binary.path.display()
+            );
             return Ok(binary);
         } else {
             statuses.send(
@@ -838,9 +843,8 @@ async fn fetch_latest_binary(
     lsp_binary_statuses_tx.send(language.clone(), LanguageServerBinaryStatus::Downloading);
 
     log::info!(
-        "fetching version {:?} for language server {:?}",
-        version_info,
-        adapter.name
+        "checking if Zed already installed or fetching version for language server {:?}",
+        adapter.name.0
     );
     let binary = adapter
         .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate)
