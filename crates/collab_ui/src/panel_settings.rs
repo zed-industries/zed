@@ -7,31 +7,24 @@ use workspace::dock::DockPosition;
 
 #[derive(Deserialize, Debug)]
 pub struct CollaborationPanelSettings {
-    pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct ChatPanelSettings {
-    pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct NotificationPanelSettings {
-    pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct PanelSettingsContent {
-    /// Whether to show the panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
     /// Where to dock the panel.
     ///
     /// Default: left
