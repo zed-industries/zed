@@ -1,5 +1,6 @@
 use std::rc::Rc;
 use std::sync::Arc;
+use std::cell::RefCell;
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -61,7 +62,7 @@ pub(crate) struct WaylandClientStateInner {
 }
 
 #[derive(Clone)]
-pub(crate) struct WaylandClientState(Arc<Mutex<WaylandClientStateInner>>);
+pub(crate) struct WaylandClientState(Rc<RefCell<WaylandClientStateInner>>);
 
 pub(crate) struct KeyRepeat {
     rate: i32,
@@ -80,7 +81,7 @@ pub(crate) struct WaylandClient {
 
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>, conn: Arc<Connection>) -> Self {
-        let state = WaylandClientState(Arc::new(Mutex::new(WaylandClientStateInner {
+        let state = WaylandClientState(Rc::new(RefCell::new(WaylandClientStateInner {
             compositor: None,
             buffer: None,
             wm_base: None,
@@ -157,7 +158,7 @@ impl Client for WaylandClient {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let mut state = self.state.0.lock();
+        let mut state = self.state.0.borrow_mut();
 
         let wm_base = state.wm_base.as_ref().unwrap();
         let compositor = state.compositor.as_ref().unwrap();
@@ -225,7 +226,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.lock();
+        let mut state = state.0.borrow_mut();
         if let wl_registry::Event::Global {
             name, interface, ..
         } = event
@@ -295,7 +296,7 @@ impl Dispatch<WlCallback, Arc<WlSurface>> for WaylandClientState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.lock();
+        let mut state = state.0.borrow_mut();
         if let wl_callback::Event::Done { .. } = event {
             for window in &state.windows {
                 if window.1.surface.id() == surf.id() {
@@ -317,7 +318,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.lock();
+        let mut state = state.0.borrow_mut();
         if let xdg_surface::Event::Configure { serial, .. } = event {
             xdg_surface.ack_configure(serial);
             for window in &state.windows {
@@ -340,7 +341,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.lock();
+        let mut state = state.0.borrow_mut();
         if let xdg_toplevel::Event::Configure {
             width,
             height,
@@ -418,7 +419,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state_container.0.lock();
+        let mut state = state_container.0.borrow_mut();
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 state.repeat.rate = rate;
@@ -538,7 +539,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                     loop {
                                         Timer::after(wait_time).await;
 
-                                        let state = state_container.0.lock();
+                                        let state = state_container.0.borrow_mut();
                                         let is_repeating = id == state.repeat.current_id
                                             && state.repeat.current_keysym.is_some()
                                             && state.keyboard_focused_window.is_some();
@@ -604,7 +605,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.lock();
+        let mut state = state.0.borrow_mut();
         match event {
             wl_pointer::Event::Enter {
                 surface,
@@ -748,7 +749,7 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Wayland
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.lock();
+        let mut state = state.0.borrow_mut();
         if let wp_fractional_scale_v1::Event::PreferredScale { scale, .. } = event {
             for window in &state.windows {
                 if window.0.id() == *id {
@@ -771,7 +772,7 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.lock();
+        let mut state = state.0.borrow_mut();
         if let zxdg_toplevel_decoration_v1::Event::Configure { mode, .. } = event {
             for window in &state.windows {
                 if window.0.id() == *surface_id {
