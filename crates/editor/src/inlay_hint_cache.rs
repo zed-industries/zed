@@ -37,6 +37,7 @@ pub struct InlayHintCache {
     version: usize,
     pub(super) enabled: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
+    refresh_task: Option<Task<()>>,
     lsp_request_limiter: Arc<Semaphore>,
 }
 
@@ -107,6 +108,10 @@ impl InvalidationStrategy {
             self,
             InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited
         )
+    }
+
+    fn is_buffer_edited(&self) -> bool {
+        matches!(self, InvalidationStrategy::BufferEdited)
     }
 }
 
@@ -260,6 +265,8 @@ impl TasksForRanges {
     }
 }
 
+const INLAY_HINTS_BUFFER_EDITED_DEBOUNCE: Duration = Duration::from_millis(700);
+
 impl InlayHintCache {
     pub(super) fn new(inlay_hint_settings: InlayHintSettings) -> Self {
         Self {
@@ -267,6 +274,7 @@ impl InlayHintCache {
             enabled: inlay_hint_settings.enabled,
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
+            refresh_task: None,
             version: 0,
             lsp_request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_LSP_REQUESTS)),
         }
@@ -358,7 +366,13 @@ impl InlayHintCache {
         }
 
         let cache_version = self.version + 1;
-        cx.spawn(|editor, mut cx| async move {
+        self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
+            if invalidate.is_buffer_edited() {
+                cx.background_executor()
+                    .timer(INLAY_HINTS_BUFFER_EDITED_DEBOUNCE)
+                    .await;
+            }
+
             editor
                 .update(&mut cx, |editor, cx| {
                     spawn_new_update_tasks(
@@ -371,8 +385,7 @@ impl InlayHintCache {
                     )
                 })
                 .ok();
-        })
-        .detach();
+        }));
 
         if invalidated_hints.is_empty() {
             None
