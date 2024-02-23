@@ -63,7 +63,10 @@ async fn main() -> Result<()> {
                 None
             };
 
-            fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
+            // TODO: Once we move the extensions endpoints to run inside `api` service, move the background task as well.
+            if !is_api_only {
+                fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
+            }
 
             let mut app = collab::api::routes(rpc_server.clone(), state.clone());
             if let Some(rpc_server) = rpc_server.clone() {
