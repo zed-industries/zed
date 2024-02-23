@@ -41,6 +41,7 @@ impl LspAdapter for ErlangLspAdapter {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "erlang_ls".into(),
+            env: None,
             arguments: vec![],
         })
     }
@@ -52,6 +53,7 @@ impl LspAdapter for ErlangLspAdapter {
     async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "erlang_ls".into(),
+            env: None,
             arguments: vec!["--version".into()],
         })
     }

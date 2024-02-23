@@ -105,6 +105,7 @@ impl super::LspAdapter for ClojureLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
+            env: None,
             arguments: vec![],
         })
     }
@@ -118,6 +119,7 @@ impl super::LspAdapter for ClojureLspAdapter {
         if binary_path.exists() {
             Some(LanguageServerBinary {
                 path: binary_path,
+                env: None,
                 arguments: vec![],
             })
         } else {
@@ -133,6 +135,7 @@ impl super::LspAdapter for ClojureLspAdapter {
         if binary_path.exists() {
             Some(LanguageServerBinary {
                 path: binary_path,
+                env: None,
                 arguments: vec!["--version".into()],
             })
         } else {

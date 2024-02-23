@@ -41,6 +41,7 @@ impl LspAdapter for NuLanguageServer {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "nu".into(),
+            env: None,
             arguments: vec!["--lsp".into()],
         })
     }

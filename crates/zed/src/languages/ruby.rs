@@ -39,6 +39,7 @@ impl LspAdapter for RubyLanguageServer {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "solargraph".into(),
+            env: None,
             arguments: vec!["stdio".into()],
         })
     }

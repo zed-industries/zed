@@ -41,6 +41,7 @@ impl LspAdapter for UiuaLanguageServer {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "uiua".into(),
+            env: None,
             arguments: vec!["lsp".into()],
         })
     }

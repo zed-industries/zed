@@ -118,6 +118,7 @@ impl super::LspAdapter for VueLspAdapter {
         *self.typescript_install_path.lock() = Some(ts_path);
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
+            env: None,
             arguments: vue_server_binary_arguments(&server_path),
         })
     }
@@ -204,6 +205,7 @@ async fn get_cached_server_binary(
             Ok((
                 LanguageServerBinary {
                     path: node.binary_path().await?,
+                    env: None,
                     arguments: vue_server_binary_arguments(&server_path),
                 },
                 typescript_path,

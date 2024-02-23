@@ -94,6 +94,7 @@ impl super::LspAdapter for LuaLspAdapter {
         }
         Ok(LanguageServerBinary {
             path: binary_path,
+            env: None,
             arguments: Vec::new(),
         })
     }
@@ -138,6 +139,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         if let Some(path) = last_binary_path {
             Ok(LanguageServerBinary {
                 path,
+                env: None,
                 arguments: Vec::new(),
             })
         } else {
