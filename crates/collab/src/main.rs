@@ -11,6 +11,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+#[cfg(unix)]
 use tokio::signal::unix::SignalKind;
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
@@ -64,6 +65,7 @@ async fn main() -> Result<()> {
                         .layer(Extension(state.clone())),
                 );
 
+            #[cfg(unix)]
             axum::Server::from_tcp(listener)?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
@@ -79,6 +81,10 @@ async fn main() -> Result<()> {
                     rpc_server.teardown();
                 })
                 .await?;
+
+            // todo!("windows")
+            #[cfg(windows)]
+            unimplemented!();
         }
         _ => {
             Err(anyhow!("usage: collab <version | migrate | serve>"))?;
