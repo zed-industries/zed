@@ -756,7 +756,7 @@ async fn check_user_installed_binary(
         return None;
     };
 
-    if let Some(binary) = task.await {
+    task.await.and_then(|binary| {
         log::info!(
             "found user-installed language server for {}. path: {:?}, arguments: {:?}",
             language.name(),
@@ -764,9 +764,7 @@ async fn check_user_installed_binary(
             binary.arguments
         );
         Some(binary)
-    } else {
-        None
-    }
+    })
 }
 
 async fn get_binary(
