@@ -1110,7 +1110,9 @@ fn window_top(
 
     if let Some(visible_rows) = text_layout_details.visible_rows {
         let bottom_row = first_visible_line.row() + visible_rows as u32;
-        let new_row = (first_visible_line.row() + (times as u32)).min(bottom_row);
+        let new_row = (first_visible_line.row() + (times as u32))
+            .min(bottom_row)
+            .min(map.max_buffer_row());
         let new_col = point.column().min(map.line_len(first_visible_line.row()));
 
         let new_point = DisplayPoint::new(new_row, new_col);
@@ -1134,8 +1136,8 @@ fn window_middle(
             .scroll_anchor
             .anchor
             .to_display_point(map);
-        let max_rows = (visible_rows as u32).min(map.max_buffer_row());
-        let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
+        let new_row =
+            (first_visible_line.row() + (visible_rows.div_euclid(2))).min(map.max_buffer_row());
         let new_col = point.column().min(map.line_len(new_row));
         let new_point = DisplayPoint::new(new_row, new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
