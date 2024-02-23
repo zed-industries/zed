@@ -1,10 +1,10 @@
 use editor::Editor;
 use gpui::{
-    div, list, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, Length, ListState, MouseButton, MouseDownEvent, Render, Task,
+    div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
+    EventEmitter, FocusHandle, FocusableView, Length, ListState, Render, Task,
     UniformListScrollHandle, View, ViewContext, WindowContext,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
 
@@ -39,6 +39,19 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn placeholder_text(&self) -> Arc<str>;
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
+
+    // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
+    // work for up to `duration` to try and get a result synchronously.
+    // This avoids a flash of an empty command-palette on cmd-shift-p, and lets workspace::SendKeystrokes
+    // mostly work when dismissing a palette.
+    fn finalize_update_matches(
+        &mut self,
+        _query: String,
+        _duration: Duration,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> bool {
+        false
+    }
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
@@ -90,7 +103,7 @@ impl<D: PickerDelegate> Picker<D> {
         let mut this = Self {
             delegate,
             editor,
-            element_container: Self::crate_element_container(is_uniform, cx),
+            element_container: Self::create_element_container(is_uniform, cx),
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
@@ -98,10 +111,13 @@ impl<D: PickerDelegate> Picker<D> {
             is_modal: true,
         };
         this.update_matches("".to_string(), cx);
+        // give the delegate 4ms to renderthe first set of suggestions.
+        this.delegate
+            .finalize_update_matches("".to_string(), Duration::from_millis(4), cx);
         this
     }
 
-    fn crate_element_container(is_uniform: bool, cx: &mut ViewContext<Self>) -> ElementContainer {
+    fn create_element_container(is_uniform: bool, cx: &mut ViewContext<Self>) -> ElementContainer {
         if is_uniform {
             ElementContainer::UniformList(UniformListScrollHandle::new())
         } else {
@@ -197,15 +213,24 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        if self.pending_update_matches.is_some() {
+        if self.pending_update_matches.is_some()
+            && !self
+                .delegate
+                .finalize_update_matches(self.query(cx), Duration::from_millis(16), cx)
+        {
             self.confirm_on_update = Some(false)
         } else {
+            self.pending_update_matches.take();
             self.delegate.confirm(false, cx);
         }
     }
 
     fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
-        if self.pending_update_matches.is_some() {
+        if self.pending_update_matches.is_some()
+            && !self
+                .delegate
+                .finalize_update_matches(self.query(cx), Duration::from_millis(16), cx)
+        {
             self.confirm_on_update = Some(true)
         } else {
             self.delegate.confirm(true, cx);
@@ -286,12 +311,10 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn render_element(&self, cx: &mut ViewContext<Self>, ix: usize) -> impl IntoElement {
         div()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, cx| {
-                    this.handle_click(ix, event.modifiers.command, cx)
-                }),
-            )
+            .id(("item", ix))
+            .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
+                this.handle_click(ix, event.down.modifiers.command, cx)
+            }))
             .children(
                 self.delegate
                     .render_match(ix, ix == self.delegate.selected_index(), cx),

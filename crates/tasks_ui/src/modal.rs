@@ -2,32 +2,33 @@ use std::sync::Arc;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, DismissEvent, EventEmitter, FocusableView, InteractiveElement, Model,
-    ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
+    actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
-use runnable::Runnable;
+use task::{oneshot_source::OneshotSource, Task};
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::schedule_runnable;
+use crate::schedule_task;
 
-actions!(runnables, [Spawn, Rerun]);
+actions!(task, [Spawn, Rerun]);
 
-/// A modal used to spawn new runnables.
-pub(crate) struct RunnablesModalDelegate {
+/// A modal used to spawn new tasks.
+pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Vec<Arc<dyn Runnable>>,
+    candidates: Vec<Arc<dyn Task>>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     placeholder_text: Arc<str>,
     workspace: WeakView<Workspace>,
+    last_prompt: String,
 }
 
-impl RunnablesModalDelegate {
+impl TasksModalDelegate {
     fn new(inventory: Model<Inventory>, workspace: WeakView<Workspace>) -> Self {
         Self {
             inventory,
@@ -35,25 +36,37 @@ impl RunnablesModalDelegate {
             candidates: Vec::new(),
             matches: Vec::new(),
             selected_index: 0,
-            placeholder_text: Arc::from("Select runnable..."),
+            placeholder_text: Arc::from("Select task..."),
+            last_prompt: String::default(),
         }
+    }
+
+    fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
+        let oneshot_source = self
+            .inventory
+            .update(cx, |this, _| this.source::<OneshotSource>())?;
+        oneshot_source.update(cx, |this, _| {
+            let Some(this) = this.as_any().downcast_mut::<OneshotSource>() else {
+                return None;
+            };
+            Some(this.spawn(self.last_prompt.clone()))
+        })
     }
 }
 
-pub(crate) struct RunnablesModal {
-    picker: View<Picker<RunnablesModalDelegate>>,
+pub(crate) struct TasksModal {
+    picker: View<Picker<TasksModalDelegate>>,
     _subscription: Subscription,
 }
 
-impl RunnablesModal {
+impl TasksModal {
     pub(crate) fn new(
         inventory: Model<Inventory>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let picker = cx.new_view(|cx| {
-            Picker::uniform_list(RunnablesModalDelegate::new(inventory, workspace), cx)
-        });
+        let picker = cx
+            .new_view(|cx| Picker::uniform_list(TasksModalDelegate::new(inventory, workspace), cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
         });
@@ -63,7 +76,8 @@ impl RunnablesModal {
         }
     }
 }
-impl Render for RunnablesModal {
+
+impl Render for TasksModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
         v_flex()
             .w(rems(34.))
@@ -76,15 +90,17 @@ impl Render for RunnablesModal {
     }
 }
 
-impl EventEmitter<DismissEvent> for RunnablesModal {}
-impl FocusableView for RunnablesModal {
+impl EventEmitter<DismissEvent> for TasksModal {}
+
+impl FocusableView for TasksModal {
     fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
         self.picker.read(cx).focus_handle(cx)
     }
 }
-impl ModalView for RunnablesModal {}
 
-impl PickerDelegate for RunnablesModalDelegate {
+impl ModalView for TasksModal {}
+
+impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
@@ -107,14 +123,14 @@ impl PickerDelegate for RunnablesModalDelegate {
         &mut self,
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
-    ) -> Task<()> {
+    ) -> gpui::Task<()> {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     picker.delegate.candidates = picker
                         .delegate
                         .inventory
-                        .update(cx, |inventory, cx| inventory.list_runnables(None, cx));
+                        .update(cx, |inventory, cx| inventory.list_tasks(None, cx));
                     picker
                         .delegate
                         .candidates
@@ -149,6 +165,7 @@ impl PickerDelegate for RunnablesModalDelegate {
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
+                    delegate.last_prompt = query;
 
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
@@ -161,17 +178,29 @@ impl PickerDelegate for RunnablesModalDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        let Some(current_match) = self.matches.get(current_match_index) else {
+
+        let task = if secondary {
+            if !self.last_prompt.trim().is_empty() {
+                self.spawn_oneshot(cx)
+            } else {
+                None
+            }
+        } else {
+            self.matches.get(current_match_index).map(|current_match| {
+                let ix = current_match.candidate_id;
+                self.candidates[ix].clone()
+            })
+        };
+
+        let Some(task) = task else {
             return;
         };
 
-        let ix = current_match.candidate_id;
-        let runnable = &self.candidates[ix];
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_runnable(workspace, runnable.as_ref(), cx);
+                schedule_task(workspace, task.as_ref(), cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -188,10 +217,9 @@ impl PickerDelegate for RunnablesModalDelegate {
         _cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
-        //let runnable = self.candidates[target_index].metadata();
         let highlights: Vec<_> = hit.positions.iter().copied().collect();
         Some(
-            ListItem::new(SharedString::from(format!("runnables-modal-{ix}")))
+            ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)

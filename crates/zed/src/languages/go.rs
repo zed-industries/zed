@@ -125,10 +125,16 @@ impl super::LspAdapter for GoLspAdapter {
             .args(["install", "golang.org/x/tools/gopls@latest"])
             .output()
             .await?;
-        anyhow::ensure!(
-            install_output.status.success(),
-            "failed to install gopls. Is `go` installed and in the PATH?"
-        );
+
+        if !install_output.status.success() {
+            log::error!(
+                "failed to install gopls via `go install`. stdout: {:?}, stderr: {:?}",
+                String::from_utf8_lossy(&install_output.stdout),
+                String::from_utf8_lossy(&install_output.stderr)
+            );
+
+            return Err(anyhow!("failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."));
+        }
 
         let installed_binary_path = gobin_dir.join("gopls");
         let version_output = process::Command::new(&installed_binary_path)

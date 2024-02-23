@@ -165,6 +165,8 @@ gpui::actions!(
         GoToPrevHunk,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
+        GoToImplementation,
+        GoToImplementationSplit,
         OpenUrl,
         HalfPageDown,
         HalfPageUp,

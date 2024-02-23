@@ -53,7 +53,7 @@ impl JsonLspAdapter {
             },
             cx,
         );
-        let runnables_schema = runnable::static_source::DefinitionProvider::generate_json_schema();
+        let tasks_schema = task::static_source::DefinitionProvider::generate_json_schema();
         serde_json::json!({
             "json": {
                 "format": {
@@ -72,8 +72,8 @@ impl JsonLspAdapter {
                         "schema": KeymapFile::generate_json_schema(&action_names),
                     },
                     {
-                        "fileMatch": [schema_file_match(&paths::RUNNABLES)],
-                        "schema": runnables_schema,
+                        "fileMatch": [schema_file_match(&paths::TASKS)],
+                        "schema": tasks_schema,
                     }
                 ]
             }

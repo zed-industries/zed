@@ -19,19 +19,21 @@ use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+use wayland_protocols::xdg::decoration::zv1::client::{
+    zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
+};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
-use xkbcommon::xkb;
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
-use xkbcommon::xkb::{Keycode, KEYMAP_COMPILE_NO_FLAGS};
+use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use crate::platform::linux::client::Client;
-use crate::platform::linux::wayland::window::WaylandWindow;
+use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
-use crate::ScrollDelta;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformDisplay, PlatformInput, Point, ScrollWheelEvent, TouchPhase, WindowOptions,
+    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
+    ScrollWheelEvent, TouchPhase, WindowOptions,
 };
 
 const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
@@ -42,6 +44,7 @@ pub(crate) struct WaylandClientState {
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     viewporter: Option<wp_viewporter::WpViewporter>,
     fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
     platform_inner: Rc<LinuxPlatformInner>,
     wl_seat: Option<wl_seat::WlSeat>,
@@ -70,6 +73,7 @@ impl WaylandClient {
             wm_base: None,
             viewporter: None,
             fractional_scale_manager: None,
+            decoration_manager: None,
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
             wl_seat: None,
@@ -143,6 +147,31 @@ impl Client for WaylandClient {
         let toplevel = xdg_surface.get_toplevel(&self.qh, ());
         let wl_surface = Arc::new(wl_surface);
 
+        // Attempt to set up window decorations based on the requested configuration
+        //
+        // Note that wayland compositors may either not support decorations at all, or may
+        // support them but not allow clients to choose whether they are enabled or not.
+        // We attempt to account for these cases here.
+
+        if let Some(decoration_manager) = state.decoration_manager.as_ref() {
+            // The protocol for managing decorations is present at least, but that doesn't
+            // mean that the compositor will allow us to use it.
+
+            let decoration =
+                decoration_manager.get_toplevel_decoration(&toplevel, &self.qh, xdg_surface.id());
+
+            // todo!(linux) - options.titlebar is lacking information required for wayland.
+            //                Especially, whether a titlebar is wanted in itself.
+            //
+            // Removing the titlebar also removes the entire window frame (ie. the ability to
+            // close, move and resize the window [snapping still works]). This needs additional
+            // handling in Zed, in order to implement drag handlers on a titlebar element.
+            //
+            // Since all of this handling is not present, we request server-side decorations
+            // for now as a stopgap solution.
+            decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ServerSide);
+        }
+
         let viewport = state
             .viewporter
             .as_ref()
@@ -210,6 +239,17 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
                         registry.bind::<wp_viewporter::WpViewporter, _, _>(name, 1, qh, ());
                     state.viewporter = Some(view_porter);
                 }
+                "zxdg_decoration_manager_v1" => {
+                    // Unstable and optional
+                    let decoration_manager = registry
+                        .bind::<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, _, _>(
+                        name,
+                        1,
+                        qh,
+                        (),
+                    );
+                    state.decoration_manager = Some(decoration_manager);
+                }
                 _ => {}
             };
         }
@@ -222,6 +262,7 @@ delegate_noop!(WaylandClientState: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
 delegate_noop!(WaylandClientState: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+delegate_noop!(WaylandClientState: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientState: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientState: ignore wp_viewport::WpViewport);
 
@@ -380,11 +421,28 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 state.keymap_state = Some(xkb::State::new(&keymap));
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                for window in &state.windows {
-                    if window.1.surface.id() == surface.id() {
-                        state.keyboard_focused_window = Some(Rc::clone(&window.1));
-                    }
+                state.keyboard_focused_window = state
+                    .windows
+                    .iter()
+                    .find(|&w| w.1.surface.id() == surface.id())
+                    .map(|w| w.1.clone());
+
+                if let Some(window) = &state.keyboard_focused_window {
+                    window.set_focused(true);
                 }
+            }
+            wl_keyboard::Event::Leave { surface, .. } => {
+                let keyboard_focused_window = state
+                    .windows
+                    .iter()
+                    .find(|&w| w.1.surface.id() == surface.id())
+                    .map(|w| w.1.clone());
+
+                if let Some(window) = keyboard_focused_window {
+                    window.set_focused(false);
+                }
+
+                state.keyboard_focused_window = None;
             }
             wl_keyboard::Event::Modifiers {
                 mods_depressed,
@@ -411,55 +469,56 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
             } => {
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
-                let key_utf32 = keymap_state.key_get_utf32(keycode);
-                let key_utf8 = keymap_state.key_get_utf8(keycode);
-                let key_sym = keymap_state.key_get_one_sym(keycode);
-                let key = xkb::keysym_get_name(key_sym).to_lowercase();
-
-                // Ignore control characters (and DEL) for the purposes of ime_key,
-                // but if key_utf32 is 0 then assume it isn't one
-                let ime_key =
-                    (key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127)).then_some(key_utf8);
 
                 let focused_window = &state.keyboard_focused_window;
                 if let Some(focused_window) = focused_window {
                     match key_state {
                         wl_keyboard::KeyState::Pressed => {
                             focused_window.handle_input(PlatformInput::KeyDown(KeyDownEvent {
-                                keystroke: Keystroke {
-                                    modifiers: state.modifiers,
-                                    key,
-                                    ime_key,
-                                },
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
                                 is_held: false, // todo!(linux)
                             }));
                         }
                         wl_keyboard::KeyState::Released => {
                             focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                                keystroke: Keystroke {
-                                    modifiers: state.modifiers,
-                                    key,
-                                    ime_key,
-                                },
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
                             }));
                         }
                         _ => {}
                     }
                 }
             }
-            wl_keyboard::Event::Leave { .. } => {}
             _ => {}
         }
     }
 }
 
-fn linux_button_to_gpui(button: u32) -> MouseButton {
-    match button {
-        0x110 => MouseButton::Left,
-        0x111 => MouseButton::Right,
-        0x112 => MouseButton::Middle,
-        _ => unimplemented!(), // todo!(linux)
-    }
+fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
+    // These values are coming from <linux/input-event-codes.h>.
+    const BTN_LEFT: u32 = 0x110;
+    const BTN_RIGHT: u32 = 0x111;
+    const BTN_MIDDLE: u32 = 0x112;
+    const BTN_SIDE: u32 = 0x113;
+    const BTN_EXTRA: u32 = 0x114;
+    const BTN_FORWARD: u32 = 0x115;
+    const BTN_BACK: u32 = 0x116;
+
+    Some(match button {
+        BTN_LEFT => MouseButton::Left,
+        BTN_RIGHT => MouseButton::Right,
+        BTN_MIDDLE => MouseButton::Middle,
+        BTN_BACK | BTN_SIDE => MouseButton::Navigate(NavigationDirection::Back),
+        BTN_FORWARD | BTN_EXTRA => MouseButton::Navigate(NavigationDirection::Forward),
+        _ => return None,
+    })
 }
 
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
@@ -513,16 +572,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 ..
             } => {
                 let focused_window = &state.mouse_focused_window;
-                let mouse_location = &state.mouse_location;
-                if let (Some(focused_window), Some(mouse_location)) =
-                    (focused_window, mouse_location)
+                let mouse_location = state.mouse_location;
+                let button = linux_button_to_gpui(button);
+                if let (Some(focused_window), Some(mouse_location), Some(button)) =
+                    (focused_window, mouse_location, button)
                 {
                     match button_state {
                         wl_pointer::ButtonState::Pressed => {
-                            state.button_pressed = Some(linux_button_to_gpui(button));
+                            state.button_pressed = Some(button);
                             focused_window.handle_input(PlatformInput::MouseDown(MouseDownEvent {
-                                button: linux_button_to_gpui(button),
-                                position: *mouse_location,
+                                button,
+                                position: mouse_location,
                                 modifiers: state.modifiers,
                                 click_count: 1,
                             }));
@@ -530,8 +590,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         wl_pointer::ButtonState::Released => {
                             state.button_pressed = None;
                             focused_window.handle_input(PlatformInput::MouseUp(MouseUpEvent {
-                                button: linux_button_to_gpui(button),
-                                position: *mouse_location,
+                                button,
+                                position: mouse_location,
                                 modifiers: Modifiers::default(),
                                 click_count: 1,
                             }));
@@ -608,6 +668,45 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Wayland
             for window in &state.windows {
                 if window.0.id() == *id {
                     window.1.rescale(scale as f32 / 120.0);
+                    return;
+                }
+            }
+        }
+    }
+}
+
+impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
+    for WaylandClientState
+{
+    fn event(
+        state: &mut Self,
+        _: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
+        event: zxdg_toplevel_decoration_v1::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zxdg_toplevel_decoration_v1::Event::Configure { mode, .. } = event {
+            for window in &state.windows {
+                if window.0.id() == *surface_id {
+                    match mode {
+                        WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
+                            window
+                                .1
+                                .set_decoration_state(WaylandDecorationState::Server);
+                        }
+                        WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
+                            window
+                                .1
+                                .set_decoration_state(WaylandDecorationState::Client);
+                        }
+                        WEnum::Value(_) => {
+                            log::warn!("Unknown decoration mode");
+                        }
+                        WEnum::Unknown(v) => {
+                            log::warn!("Unknown decoration mode: {}", v);
+                        }
+                    }
                     return;
                 }
             }

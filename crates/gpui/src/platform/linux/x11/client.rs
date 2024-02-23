@@ -11,7 +11,8 @@ use crate::platform::{
     LinuxPlatformInner, PlatformWindow, X11Display, X11Window, X11WindowState, XcbAtoms,
 };
 use crate::{
-    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, Size, WindowOptions,
+    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
+    TouchPhase, WindowOptions,
 };
 
 pub(crate) struct X11ClientState {
@@ -70,7 +71,10 @@ impl Client for X11Client {
         // into window functions as they may invoke callbacks that need
         // to immediately access the platform (self).
         while !self.platform_inner.state.lock().quit_requested {
-            let event = self.xcb_connection.wait_for_event().unwrap();
+            let event = {
+                profiling::scope!("Wait for event");
+                self.xcb_connection.wait_for_event().unwrap()
+            };
             match event {
                 xcb::Event::X(x::Event::ClientMessage(ev)) => {
                     if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
@@ -106,42 +110,42 @@ impl Client for X11Client {
                     window.request_refresh();
                 }
                 xcb::Event::Present(xcb::present::Event::IdleNotify(_ev)) => {}
+                xcb::Event::X(x::Event::FocusIn(ev)) => {
+                    let window = self.get_window(ev.event());
+                    window.set_focused(true);
+                }
+                xcb::Event::X(x::Event::FocusOut(ev)) => {
+                    let window = self.get_window(ev.event());
+                    window.set_focused(false);
+                }
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
                     let window = self.get_window(ev.event());
                     let modifiers = super::modifiers_from_state(ev.state());
-                    let key = {
+                    let keystroke = {
                         let code = ev.detail().into();
                         let mut state = self.state.lock();
-                        let key = state.xkb.key_get_utf8(code);
+                        let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                         state.xkb.update_key(code, xkb::KeyDirection::Down);
-                        key
+                        keystroke
                     };
+
                     window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
-                        keystroke: crate::Keystroke {
-                            modifiers,
-                            key,
-                            ime_key: None,
-                        },
+                        keystroke,
                         is_held: false,
                     }));
                 }
                 xcb::Event::X(x::Event::KeyRelease(ev)) => {
                     let window = self.get_window(ev.event());
                     let modifiers = super::modifiers_from_state(ev.state());
-                    let key = {
+                    let keystroke = {
                         let code = ev.detail().into();
                         let mut state = self.state.lock();
-                        let key = state.xkb.key_get_utf8(code);
+                        let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                         state.xkb.update_key(code, xkb::KeyDirection::Up);
-                        key
+                        keystroke
                     };
-                    window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent {
-                        keystroke: crate::Keystroke {
-                            modifiers,
-                            key,
-                            ime_key: None,
-                        },
-                    }));
+
+                    window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
                 }
                 xcb::Event::X(x::Event::ButtonPress(ev)) => {
                     let window = self.get_window(ev.event());
@@ -154,6 +158,15 @@ impl Client for X11Client {
                             position,
                             modifiers,
                             click_count: 1,
+                        }));
+                    } else if ev.detail() >= 4 && ev.detail() <= 5 {
+                        // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
+                        let delta_x = if ev.detail() == 4 { 1.0 } else { -1.0 };
+                        window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Lines(Point::new(0.0, delta_x)),
+                            modifiers,
+                            touch_phase: TouchPhase::default(),
                         }));
                     } else {
                         log::warn!("Unknown button press: {ev:?}");
@@ -200,6 +213,7 @@ impl Client for X11Client {
                 _ => {}
             }
 
+            profiling::scope!("Runnables");
             if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
                 runnable.run();
             }
@@ -209,6 +223,7 @@ impl Client for X11Client {
             fun();
         }
     }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let setup = self.xcb_connection.get_setup();
         setup
@@ -220,6 +235,7 @@ impl Client for X11Client {
             })
             .collect()
     }
+
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         Some(Rc::new(X11Display::new(&self.xcb_connection, id.0 as i32)))
     }

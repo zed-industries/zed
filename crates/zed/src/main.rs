@@ -140,9 +140,10 @@ fn main() {
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
 
+        let clock = Arc::new(clock::RealSystemClock);
         let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
 
-        let client = client::Client::new(http.clone(), cx);
+        let client = client::Client::new(clock, http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.background_executor().clone());
@@ -244,7 +245,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
-        runnables_ui::init(cx);
+        tasks_ui::init(cx);
         channel::init(&client, user_store.clone(), cx);
         search::init(cx);
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
@@ -681,10 +682,11 @@ fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
         .spawn(async move {
-            upload_previous_panics(http.clone(), telemetry_settings)
+            let most_recent_panic = upload_previous_panics(http.clone(), telemetry_settings)
                 .await
-                .log_err();
-            upload_previous_crashes(http, telemetry_settings)
+                .log_err()
+                .flatten();
+            upload_previous_crashes(http, most_recent_panic, telemetry_settings)
                 .await
                 .log_err()
         })
@@ -695,9 +697,12 @@ fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
 async fn upload_previous_panics(
     http: Arc<ZedHttpClient>,
     telemetry_settings: client::TelemetrySettings,
-) -> Result<()> {
+) -> Result<Option<(i64, String)>> {
     let panic_report_url = http.zed_url("/api/panic");
     let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+
+    let mut most_recent_panic = None;
+
     while let Some(child) = children.next().await {
         let child = child?;
         let child_path = child.path();
@@ -720,7 +725,7 @@ async fn upload_previous_panics(
                 .await
                 .context("error reading panic file")?;
 
-            let panic = serde_json::from_str(&panic_file_content)
+            let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
                 .ok()
                 .or_else(|| {
                     panic_file_content
@@ -734,6 +739,8 @@ async fn upload_previous_panics(
                 });
 
             if let Some(panic) = panic {
+                most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
+
                 let body = serde_json::to_string(&PanicRequest { panic }).unwrap();
 
                 let request = Request::post(&panic_report_url)
@@ -752,7 +759,7 @@ async fn upload_previous_panics(
             .context("error removing panic")
             .log_err();
     }
-    Ok::<_, anyhow::Error>(())
+    Ok::<_, anyhow::Error>(most_recent_panic)
 }
 
 static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
@@ -761,6 +768,7 @@ static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
 /// (only if telemetry is enabled)
 async fn upload_previous_crashes(
     http: Arc<ZedHttpClient>,
+    most_recent_panic: Option<(i64, String)>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
     if !telemetry_settings.diagnostics {
@@ -797,10 +805,17 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let request = Request::post(&crash_report_url)
+            let mut request = Request::post(&crash_report_url)
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                .header("Content-Type", "text/plain")
-                .body(body.into())?;
+                .header("Content-Type", "text/plain");
+
+            if let Some((panicked_on, payload)) = most_recent_panic.as_ref() {
+                request = request
+                    .header("x-zed-panicked-on", format!("{}", panicked_on))
+                    .header("x-zed-panic", payload)
+            }
+
+            let request = request.body(body.into())?;
 
             let response = http.send(request).await.context("error sending crash")?;
             if !response.status().is_success() {

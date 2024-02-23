@@ -51,6 +51,7 @@ parking = "2.0.0"
 parking_lot.workspace = true
 pathfinder_geometry = "0.5"
 postage.workspace = true
+profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
@@ -105,7 +106,7 @@ ashpd = "0.7.0"
 # todo!(linux) - Technically do not use `randr`, but it doesn't compile otherwise
 xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr", "xkb"] }
 wayland-client= { version = "0.31.2" }
-wayland-protocols = { version = "0.31.2", features = ["client", "staging"] }
+wayland-protocols = { version = "0.31.2", features = ["client", "staging", "unstable"] }
 wayland-backend = { version = "0.3.3", features = ["client_system"] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 as-raw-xcb-connection = "1"
@@ -115,3 +116,11 @@ blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.10.0"
+
+[[example]]
+name = "hello_world"
+path = "examples/hello_world.rs"
+
+[[example]]
+name = "image"
+path = "examples/image/image.rs"

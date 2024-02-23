@@ -122,16 +122,13 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let (api_url, model_name) = cx
-                .update(|cx| {
-                    let settings = AssistantSettings::get_global(cx);
-                    (
-                        settings.openai_api_url.clone(),
-                        settings.default_open_ai_model.full_name().to_string(),
-                    )
-                })
-                .log_err()
-                .unwrap();
+            let (api_url, model_name) = cx.update(|cx| {
+                let settings = AssistantSettings::get_global(cx);
+                (
+                    settings.openai_api_url.clone(),
+                    settings.default_open_ai_model.full_name().to_string(),
+                )
+            })?;
             let completion_provider = OpenAiCompletionProvider::new(
                 api_url,
                 model_name,
@@ -365,7 +362,7 @@ impl AssistantPanel {
                         move |cx: &mut BlockContext| {
                             measurements.set(BlockMeasurements {
                                 anchor_x: cx.anchor_x,
-                                gutter_width: cx.gutter_width,
+                                gutter_width: cx.gutter_dimensions.width,
                             });
                             inline_assistant.clone().into_any_element()
                         }

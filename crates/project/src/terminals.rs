@@ -5,7 +5,7 @@ use smol::channel::bounded;
 use std::path::{Path, PathBuf};
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
-    RunableState, SpawnRunnable, Terminal, TerminalBuilder,
+    SpawnTask, TaskState, Terminal, TerminalBuilder,
 };
 
 // #[cfg(target_os = "macos")]
@@ -19,7 +19,7 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        spawn_runnable: Option<SpawnRunnable>,
+        spawn_task: Option<SpawnTask>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
@@ -32,18 +32,18 @@ impl Project {
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
         let mut env = settings.env.clone();
-        let (spawn_runnable, shell) = if let Some(spawn_runnable) = spawn_runnable {
-            env.extend(spawn_runnable.env);
+        let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
+            env.extend(spawn_task.env);
             (
-                Some(RunableState {
-                    id: spawn_runnable.id,
-                    label: spawn_runnable.label,
+                Some(TaskState {
+                    id: spawn_task.id,
+                    label: spawn_task.label,
                     completed: false,
                     completion_rx,
                 }),
                 Shell::WithArguments {
-                    program: spawn_runnable.command,
-                    args: spawn_runnable.args,
+                    program: spawn_task.command,
+                    args: spawn_task.args,
                 },
             )
         } else {
@@ -52,11 +52,12 @@ impl Project {
 
         let terminal = TerminalBuilder::new(
             working_directory.clone(),
-            spawn_runnable,
+            spawn_task,
             shell,
             env,
             Some(settings.blinking.clone()),
             settings.alternate_scroll,
+            settings.max_scroll_history_lines,
             window,
             completion_tx,
         )
