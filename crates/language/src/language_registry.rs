@@ -558,34 +558,41 @@ impl LanguageRegistry {
         let task = {
             let container_dir = container_dir.clone();
             cx.spawn(move |mut cx| async move {
-                login_shell_env_loaded.await;
+                // First we check whether the adapter can give us a user-installed binary.
+                // If so, we do *not* want to cache that, because each worktree might give us a different
+                // binary:
+                //
+                //      worktree 1: user-installed at `.bin/gopls`
+                //      worktree 2: user-installed at `~/bin/gopls`
+                //      worktree 3: no gopls found in PATH -> fallback to Zed installation
+                //
+                // We only want to cache when we fall back to the global one,
+                // because we don't want to download and overwrite our global one
+                // for each worktree we might have open.
 
-                let entry = this
-                    .lsp_binary_paths
-                    .lock()
-                    .entry(adapter.name.clone())
-                    .or_insert_with(|| {
-                        let adapter = adapter.clone();
-                        let language = language.clone();
-                        let delegate = delegate.clone();
-                        cx.spawn(|cx| {
-                            get_binary(
-                                adapter,
-                                language,
-                                delegate,
-                                container_dir,
-                                lsp_binary_statuses,
-                                cx,
-                            )
-                            .map_err(Arc::new)
-                        })
-                        .shared()
-                    })
-                    .clone();
+                let user_binary_task = check_user_installed_binary(
+                    adapter.clone(),
+                    language.clone(),
+                    delegate.clone(),
+                    &mut cx,
+                );
+                let binary = if let Some(user_binary) = user_binary_task.await {
+                    user_binary
+                } else {
+                    // If we want to install a binary globally, we need to wait for
+                    // the login shell to be set on our process.
+                    login_shell_env_loaded.await;
 
-                let binary = match entry.await {
-                    Ok(binary) => binary,
-                    Err(err) => anyhow::bail!("{err}"),
+                    get_or_install_binary(
+                        this,
+                        &adapter,
+                        language,
+                        &delegate,
+                        &cx,
+                        container_dir,
+                        lsp_binary_statuses,
+                    )
+                    .await?
                 };
 
                 if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
@@ -724,6 +731,62 @@ impl LspBinaryStatusSender {
     }
 }
 
+async fn check_user_installed_binary(
+    adapter: Arc<CachedLspAdapter>,
+    language: Arc<Language>,
+    delegate: Arc<dyn LspAdapterDelegate>,
+    cx: &mut AsyncAppContext,
+) -> Option<LanguageServerBinary> {
+    let Some(task) = adapter.check_if_user_installed(&delegate, cx) else {
+        return None;
+    };
+
+    task.await.and_then(|binary| {
+        log::info!(
+            "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+            language.name(),
+            binary.path,
+            binary.arguments
+        );
+        Some(binary)
+    })
+}
+
+async fn get_or_install_binary(
+    registry: Arc<LanguageRegistry>,
+    adapter: &Arc<CachedLspAdapter>,
+    language: Arc<Language>,
+    delegate: &Arc<dyn LspAdapterDelegate>,
+    cx: &AsyncAppContext,
+    container_dir: Arc<Path>,
+    lsp_binary_statuses: LspBinaryStatusSender,
+) -> Result<LanguageServerBinary> {
+    let entry = registry
+        .lsp_binary_paths
+        .lock()
+        .entry(adapter.name.clone())
+        .or_insert_with(|| {
+            let adapter = adapter.clone();
+            let language = language.clone();
+            let delegate = delegate.clone();
+            cx.spawn(|cx| {
+                get_binary(
+                    adapter,
+                    language,
+                    delegate,
+                    container_dir,
+                    lsp_binary_statuses,
+                    cx,
+                )
+                .map_err(Arc::new)
+            })
+            .shared()
+        })
+        .clone();
+
+    entry.await.map_err(|err| anyhow!("{:?}", err))
+}
+
 async fn get_binary(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
@@ -757,15 +820,20 @@ async fn get_binary(
             .await
         {
             statuses.send(language.clone(), LanguageServerBinaryStatus::Cached);
-            return Ok(binary);
-        } else {
-            statuses.send(
-                language.clone(),
-                LanguageServerBinaryStatus::Failed {
-                    error: format!("{:?}", error),
-                },
+            log::info!(
+                "failed to fetch newest version of language server {:?}. falling back to using {:?}",
+                adapter.name,
+                binary.path.display()
             );
+            return Ok(binary);
         }
+
+        statuses.send(
+            language.clone(),
+            LanguageServerBinaryStatus::Failed {
+                error: format!("{:?}", error),
+            },
+        );
     }
 
     binary
@@ -779,14 +847,23 @@ async fn fetch_latest_binary(
     lsp_binary_statuses_tx: LspBinaryStatusSender,
 ) -> Result<LanguageServerBinary> {
     let container_dir: Arc<Path> = container_dir.into();
+
     lsp_binary_statuses_tx.send(
         language.clone(),
         LanguageServerBinaryStatus::CheckingForUpdate,
     );
 
+    log::info!(
+        "querying GitHub for latest version of language server {:?}",
+        adapter.name.0
+    );
     let version_info = adapter.fetch_latest_server_version(delegate).await?;
     lsp_binary_statuses_tx.send(language.clone(), LanguageServerBinaryStatus::Downloading);
 
+    log::info!(
+        "checking if Zed already installed or fetching version for language server {:?}",
+        adapter.name.0
+    );
     let binary = adapter
         .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate)
         .await?;

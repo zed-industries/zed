@@ -84,6 +84,7 @@ impl super::LspAdapter for CLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
+            env: None,
             arguments: vec![],
         })
     }
@@ -260,6 +261,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         if clangd_bin.exists() {
             Ok(LanguageServerBinary {
                 path: clangd_bin,
+                env: None,
                 arguments: vec![],
             })
         } else {

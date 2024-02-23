@@ -97,6 +97,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
+            env: None,
             arguments: typescript_server_binary_arguments(&server_path),
         })
     }
@@ -192,11 +193,13 @@ async fn get_cached_ts_server_binary(
         if new_server_path.exists() {
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
+                env: None,
                 arguments: typescript_server_binary_arguments(&new_server_path),
             })
         } else if old_server_path.exists() {
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
+                env: None,
                 arguments: typescript_server_binary_arguments(&old_server_path),
             })
         } else {
@@ -307,6 +310,7 @@ impl LspAdapter for EsLintLspAdapter {
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
+            env: None,
             arguments: eslint_server_binary_arguments(&server_path),
         })
     }
@@ -354,6 +358,7 @@ async fn get_cached_eslint_server_binary(
 
         Ok(LanguageServerBinary {
             path: node.binary_path().await?,
+            env: None,
             arguments: eslint_server_binary_arguments(&server_path),
         })
     })

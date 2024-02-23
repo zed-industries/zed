@@ -58,6 +58,25 @@ impl super::LspAdapter for GoLspAdapter {
         Ok(Box::new(version) as Box<_>)
     }
 
+    fn check_if_user_installed(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        let delegate = delegate.clone();
+
+        Some(cx.spawn(|cx| async move {
+            match cx.update(|cx| delegate.which_command(OsString::from("gopls"), cx)) {
+                Ok(task) => task.await.map(|(path, env)| LanguageServerBinary {
+                    path,
+                    arguments: server_binary_arguments(),
+                    env: Some(env),
+                }),
+                Err(_) => None,
+            }
+        }))
+    }
+
     fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -107,6 +126,7 @@ impl super::LspAdapter for GoLspAdapter {
                     return Ok(LanguageServerBinary {
                         path: binary_path.to_path_buf(),
                         arguments: server_binary_arguments(),
+                        env: None,
                     });
                 }
             }
@@ -154,6 +174,7 @@ impl super::LspAdapter for GoLspAdapter {
         Ok(LanguageServerBinary {
             path: binary_path.to_path_buf(),
             arguments: server_binary_arguments(),
+            env: None,
         })
     }
 
@@ -372,6 +393,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             Ok(LanguageServerBinary {
                 path,
                 arguments: server_binary_arguments(),
+                env: None,
             })
         } else {
             Err(anyhow!("no cached binary"))

@@ -41,6 +41,7 @@ impl LspAdapter for HaskellLanguageServer {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "haskell-language-server-wrapper".into(),
+            env: None,
             arguments: vec!["lsp".into()],
         })
     }

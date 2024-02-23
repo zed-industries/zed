@@ -85,6 +85,7 @@ impl LspAdapter for TaploLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
+            env: None,
             arguments: vec!["lsp".into(), "stdio".into()],
         })
     }
@@ -120,6 +121,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
         anyhow::Ok(LanguageServerBinary {
             path: last.context("no cached binary")?,
+            env: None,
             arguments: Default::default(),
         })
     })

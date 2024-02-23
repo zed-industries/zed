@@ -74,6 +74,7 @@ impl LspAdapter for PurescriptLspAdapter {
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
+            env: None,
             arguments: server_binary_arguments(&server_path),
         })
     }
@@ -127,6 +128,7 @@ async fn get_cached_server_binary(
         if server_path.exists() {
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
+                env: None,
                 arguments: server_binary_arguments(&server_path),
             })
         } else {

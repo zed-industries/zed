@@ -81,6 +81,7 @@ impl LspAdapter for GleamLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
+            env: None,
             arguments: server_binary_arguments(),
         })
     }
@@ -116,6 +117,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
         anyhow::Ok(LanguageServerBinary {
             path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            env: None,
             arguments: server_binary_arguments(),
         })
     })
