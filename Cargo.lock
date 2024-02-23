@@ -1188,7 +1188,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tower",
- "tower-http",
+ "tower-http 0.3.5",
  "tower-layer",
  "tower-service",
 ]
@@ -1225,7 +1225,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
- "tower-http",
+ "tower-http 0.3.5",
  "tower-layer",
  "tower-service",
 ]
@@ -2121,6 +2121,7 @@ dependencies = [
  "toml 0.8.10",
  "tonic",
  "tower",
+ "tower-http 0.4.4",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
@@ -10050,6 +10051,25 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61c5bb1d698276a2443e5ecfabc1008bf15a36c12e6a7176e7bf089ea9131140"
+dependencies = [
+ "bitflags 2.4.1",
+ "bytes 1.5.0",
+ "futures-core",
+ "futures-util",
+ "http 0.2.9",
+ "http-body",
+ "http-range-header",
+ "pin-project-lite 0.2.13",
+ "tower-layer",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]
