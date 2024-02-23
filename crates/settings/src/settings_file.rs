@@ -116,13 +116,20 @@ pub fn update_settings_file<T: Settings>(
             store.new_text_for_update::<T>(old_text, update)
         })?;
         let initial_path = paths::SETTINGS.as_path();
-        let resolved_path = fs
-            .canonicalize(initial_path)
-            .await
-            .with_context(|| format!("Failed to canonicalize settings path {:?}", initial_path))?;
-        fs.atomic_write(resolved_path.clone(), new_text)
-            .await
-            .with_context(|| format!("Failed to write settings to file {:?}", resolved_path))?;
+        if !fs.is_file(initial_path).await {
+            fs.atomic_write(initial_path.to_path_buf(), new_text)
+                .await
+                .with_context(|| format!("Failed to write settings to file {:?}", initial_path))?;
+        } else {
+            let resolved_path = fs.canonicalize(initial_path).await.with_context(|| {
+                format!("Failed to canonicalize settings path {:?}", initial_path)
+            })?;
+
+            fs.atomic_write(resolved_path.clone(), new_text)
+                .await
+                .with_context(|| format!("Failed to write settings to file {:?}", resolved_path))?;
+        }
+
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
