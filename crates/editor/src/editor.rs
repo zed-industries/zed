@@ -4061,7 +4061,8 @@ impl Editor {
         if self.available_code_actions.is_some() {
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
-                    .icon_size(IconSize::Small)
+                    .icon_size(IconSize::XSmall)
+                    .size(ui::ButtonSize::None)
                     .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(|editor, _e, cx| {
@@ -9639,50 +9640,50 @@ impl EditorSnapshot {
         max_line_number_width: Pixels,
         cx: &AppContext,
     ) -> GutterDimensions {
-        if self.show_gutter {
-            let descent = cx.text_system().descent(font_id, font_size);
+        if !self.show_gutter {
+            return GutterDimensions::default();
+        }
+        let descent = cx.text_system().descent(font_id, font_size);
 
-            let show_git_gutter = matches!(
-                ProjectSettings::get_global(cx).git.git_gutter,
-                Some(GitGutterSetting::TrackedFiles)
-            );
-            let gutter_settings = EditorSettings::get_global(cx).gutter;
+        let show_git_gutter = matches!(
+            ProjectSettings::get_global(cx).git.git_gutter,
+            Some(GitGutterSetting::TrackedFiles)
+        );
+        let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-            let line_gutter_width = if gutter_settings.line_numbers {
-                // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
-                let min_width_for_number_on_gutter = em_width * 4.0;
-                max_line_number_width.max(min_width_for_number_on_gutter)
-            } else {
-                0.0.into()
-            };
-
-            let git_gutter_left_padding = show_git_gutter.then_some(em_width);
-            let code_actions_left_padding = gutter_settings.code_actions.then_some(em_width * 4.0);
-            let line_numbers_left_padding = gutter_settings.line_numbers.then_some(em_width);
-
-            let left_gutter_padding = Pixels(0.0)
-                .max(git_gutter_left_padding.unwrap_or(0.0.into()))
-                .max(code_actions_left_padding.unwrap_or(0.0.into()))
-                .max(line_numbers_left_padding.unwrap_or(0.0.into()));
-
-            let line_number_right_padding = gutter_settings.line_numbers.then_some(em_width * 2.0);
-            let folds_right_padding = gutter_settings.folds.then_some(em_width * 3.0);
-
-            let right_gutter_padding = Pixels(0.0)
-                .max(line_number_right_padding.unwrap_or(0.0.into()))
-                .max(folds_right_padding.unwrap_or(0.0.into()));
-
-            let gutter_width = line_gutter_width + left_gutter_padding + right_gutter_padding;
-            let gutter_margin = -descent;
-
-            GutterDimensions {
-                left_padding: left_gutter_padding,
-                right_padding: right_gutter_padding,
-                width: gutter_width,
-                margin: gutter_margin,
-            }
+        let line_gutter_width = if gutter_settings.line_numbers {
+            // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
+            let min_width_for_number_on_gutter = em_width * 4.0;
+            max_line_number_width.max(min_width_for_number_on_gutter)
         } else {
-            GutterDimensions::default()
+            0.0.into()
+        };
+
+        let left_padding = if gutter_settings.code_actions {
+            em_width * 3.0
+        } else if show_git_gutter && gutter_settings.line_numbers {
+            em_width * 2.0
+        } else if show_git_gutter || gutter_settings.line_numbers {
+            em_width
+        } else {
+            px(0.)
+        };
+
+        let right_padding = if gutter_settings.folds && gutter_settings.line_numbers {
+            em_width * 4.0
+        } else if gutter_settings.folds {
+            em_width * 3.0
+        } else if gutter_settings.line_numbers {
+            em_width
+        } else {
+            px(0.)
+        };
+
+        GutterDimensions {
+            left_padding,
+            right_padding,
+            width: line_gutter_width + left_padding + right_padding,
+            margin: -descent,
         }
     }
 }
