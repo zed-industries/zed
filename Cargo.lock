@@ -5024,6 +5024,7 @@ dependencies = [
  "smol",
  "task",
  "text",
+ "theme",
  "toml 0.8.10",
  "tree-sitter",
  "tree-sitter-astro",
@@ -5071,6 +5072,7 @@ dependencies = [
  "tree-sitter-vue",
  "tree-sitter-yaml",
  "tree-sitter-zig",
+ "unindent",
  "util",
 ]
 
