@@ -1,5 +1,8 @@
-use chrono::{DateTime, Duration, Utc};
+use std::sync::Arc;
 use std::time;
+
+use chrono::{DateTime, Duration, Utc};
+use clock::SystemClock;
 
 const COALESCE_TIMEOUT: time::Duration = time::Duration::from_secs(20);
 const SIMULATED_DURATION_FOR_SINGLE_EVENT: time::Duration = time::Duration::from_millis(1);
@@ -12,30 +15,20 @@ struct PeriodData {
 }
 
 pub struct EventCoalescer {
+    clock: Arc<dyn SystemClock>,
     state: Option<PeriodData>,
 }
 
 impl EventCoalescer {
-    pub fn new() -> Self {
-        Self { state: None }
+    pub fn new(clock: Arc<dyn SystemClock>) -> Self {
+        Self { clock, state: None }
     }
 
     pub fn log_event(
         &mut self,
         environment: &'static str,
     ) -> Option<(DateTime<Utc>, DateTime<Utc>, &'static str)> {
-        self.log_event_with_time(Utc::now(), environment)
-    }
-
-    // pub fn close_current_period(&mut self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
-    //     self.environment.map(|env| self.log_event(env)).flatten()
-    // }
-
-    fn log_event_with_time(
-        &mut self,
-        log_time: DateTime<Utc>,
-        environment: &'static str,
-    ) -> Option<(DateTime<Utc>, DateTime<Utc>, &'static str)> {
+        let log_time = self.clock.utc_now();
         let coalesce_timeout = Duration::from_std(COALESCE_TIMEOUT).unwrap();
 
         let Some(state) = &mut self.state else {
