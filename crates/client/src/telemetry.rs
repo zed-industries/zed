@@ -408,18 +408,11 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_app_event(self: &Arc<Self>, operation: String) {
-        self.report_app_event_with_date_time(operation, self.clock.utc_now());
-    }
-
-    fn report_app_event_with_date_time(
-        self: &Arc<Self>,
-        operation: String,
-        date_time: DateTime<Utc>,
-    ) -> Event {
+    pub fn report_app_event(self: &Arc<Self>, operation: String) -> Event {
         let event = Event::App {
             operation,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(date_time),
+            milliseconds_since_first_event: self
+                .milliseconds_since_first_event(self.clock.utc_now()),
         };
 
         self.report_event(event.clone());
@@ -621,18 +614,17 @@ mod tests {
         let session_id = "session_id".to_string();
 
         cx.update(|cx| {
-            let telemetry = Telemetry::new(clock, http, cx);
+            let telemetry = Telemetry::new(clock.clone(), http, cx);
 
             telemetry.state.lock().max_queue_size = 4;
             telemetry.start(installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
 
-            let first_date_time = Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap();
+            let first_date_time = clock.utc_now();
             let operation = "test".to_string();
 
-            let event =
-                telemetry.report_app_event_with_date_time(operation.clone(), first_date_time);
+            let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
                 Event::App {
@@ -647,9 +639,9 @@ mod tests {
                 Some(first_date_time)
             );
 
-            let mut date_time = first_date_time + chrono::Duration::milliseconds(100);
+            clock.advance(chrono::Duration::milliseconds(100));
 
-            let event = telemetry.report_app_event_with_date_time(operation.clone(), date_time);
+            let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
                 Event::App {
@@ -664,9 +656,9 @@ mod tests {
                 Some(first_date_time)
             );
 
-            date_time += chrono::Duration::milliseconds(100);
+            clock.advance(chrono::Duration::milliseconds(100));
 
-            let event = telemetry.report_app_event_with_date_time(operation.clone(), date_time);
+            let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
                 Event::App {
@@ -681,10 +673,10 @@ mod tests {
                 Some(first_date_time)
             );
 
-            date_time += chrono::Duration::milliseconds(100);
+            clock.advance(chrono::Duration::milliseconds(100));
 
             // Adding a 4th event should cause a flush
-            let event = telemetry.report_app_event_with_date_time(operation.clone(), date_time);
+            let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
                 Event::App {
@@ -708,17 +700,16 @@ mod tests {
         let session_id = "session_id".to_string();
 
         cx.update(|cx| {
-            let telemetry = Telemetry::new(clock, http, cx);
+            let telemetry = Telemetry::new(clock.clone(), http, cx);
             telemetry.state.lock().max_queue_size = 4;
             telemetry.start(installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
 
-            let first_date_time = Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap();
+            let first_date_time = clock.utc_now();
             let operation = "test".to_string();
 
-            let event =
-                telemetry.report_app_event_with_date_time(operation.clone(), first_date_time);
+            let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
                 Event::App {
