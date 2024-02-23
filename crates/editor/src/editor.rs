@@ -1487,7 +1487,6 @@ impl Editor {
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let mut this = Self {
-            handle: cx.view().downgrade(),
             focus_handle,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
