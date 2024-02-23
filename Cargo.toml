@@ -262,7 +262,7 @@ tree-sitter-ocaml = { git = "https://github.com/tree-sitter/tree-sitter-ocaml", 
 tree-sitter-php = "0.21.1"
 tree-sitter-prisma-io = { git = "https://github.com/victorhqc/tree-sitter-prisma" }
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
-tree-sitter-purescript = { git = "https://github.com/ivanmoreau/tree-sitter-purescript", rev = "a37140f0c7034977b90faa73c94fcb8a5e45ed08" }
+tree-sitter-purescript = { git = "https://github.com/postsolar/tree-sitter-purescript", rev = "v0.1.0" }
 tree-sitter-python = "0.20.2"
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
 tree-sitter-ruby = "0.20.0"
