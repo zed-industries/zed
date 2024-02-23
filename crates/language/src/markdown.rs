@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
-use gpui::{px, FontStyle, FontWeight, HighlightStyle, UnderlineStyle, StrikethroughStyle};
+use gpui::{px, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, UnderlineStyle};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
 /// Parsed Markdown content.
