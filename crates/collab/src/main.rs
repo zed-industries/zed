@@ -39,7 +39,16 @@ async fn main() -> Result<()> {
             run_migrations().await?;
         }
         Some("serve") => {
-            let is_api_only = args.next().is_some_and(|arg| arg == "api");
+            let (is_api, is_collab) = if let Some(next) = args.next() {
+                (next == "api", next == "collab")
+            } else {
+                (true, true)
+            };
+            if !is_api && !is_collab {
+                Err(anyhow!(
+                    "usage: collab <version | migrate | serve [api|collab]>"
+                ))?;
+            }
 
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
@@ -51,7 +60,7 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let rpc_server = if !is_api_only {
+            let rpc_server = if is_collab {
                 let epoch = state
                     .db
                     .create_server(&state.config.zed_environment)
@@ -65,8 +74,7 @@ async fn main() -> Result<()> {
                 None
             };
 
-            // TODO: Once we move the extensions endpoints to run inside `api` service, move the background task as well.
-            if !is_api_only {
+            if is_api {
                 fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
             }
 
@@ -79,6 +87,7 @@ async fn main() -> Result<()> {
                     Router::new()
                         .route("/", get(handle_root))
                         .route("/healthz", get(handle_liveness_probe))
+                        .merge(collab::api::extensions::router())
                         .merge(collab::api::events::router())
                         .layer(Extension(state.clone())),
                 )
@@ -107,7 +116,9 @@ async fn main() -> Result<()> {
                 .await?;
         }
         _ => {
-            Err(anyhow!("usage: collab <version | migrate | serve>"))?;
+            Err(anyhow!(
+                "usage: collab <version | migrate | serve [api|collab]>"
+            ))?;
         }
     }
     Ok(())

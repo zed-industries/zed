@@ -1,7 +1,6 @@
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::ClientSettings;
 use collections::{BTreeMap, HashSet};
 use fs::{Fs, RemoveOptions};
 use futures::channel::mpsc::unbounded;
@@ -13,7 +12,6 @@ use language::{
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use settings::Settings as _;
 use std::cmp::Ordering;
 use std::{
     ffi::OsStr,
@@ -22,7 +20,7 @@ use std::{
     time::Duration,
 };
 use theme::{ThemeRegistry, ThemeSettings};
-use util::http::AsyncBody;
+use util::http::{AsyncBody, ZedHttpClient};
 use util::TryFutureExt;
 use util::{http::HttpClient, paths::EXTENSIONS_DIR, ResultExt};
 
@@ -57,7 +55,7 @@ pub enum ExtensionStatus {
 pub struct ExtensionStore {
     manifest: Arc<RwLock<Manifest>>,
     fs: Arc<dyn Fs>,
-    http_client: Arc<dyn HttpClient>,
+    http_client: Arc<ZedHttpClient>,
     extensions_dir: PathBuf,
     extensions_being_installed: HashSet<Arc<str>>,
     extensions_being_uninstalled: HashSet<Arc<str>>,
@@ -113,7 +111,7 @@ actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
-    http_client: Arc<dyn HttpClient>,
+    http_client: Arc<ZedHttpClient>,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
@@ -145,7 +143,7 @@ impl ExtensionStore {
     pub fn new(
         extensions_dir: PathBuf,
         fs: Arc<dyn Fs>,
-        http_client: Arc<dyn HttpClient>,
+        http_client: Arc<ZedHttpClient>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         cx: &mut ModelContext<Self>,
@@ -224,14 +222,12 @@ impl ExtensionStore {
         search: Option<&str>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Extension>>> {
-        let url = format!(
-            "{}/{}{query}",
-            ClientSettings::get_global(cx).server_url,
-            "api/extensions",
+        let url = self.http_client.zed_api_url(&format!(
+            "/extensions{query}",
             query = search
                 .map(|search| format!("?filter={search}"))
                 .unwrap_or_default()
-        );
+        ));
         let http_client = self.http_client.clone();
         cx.spawn(move |_, _| async move {
             let mut response = http_client.get(&url, AsyncBody::empty(), true).await?;
@@ -264,10 +260,9 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) {
         log::info!("installing extension {extension_id} {version}");
-        let url = format!(
-            "{}/api/extensions/{extension_id}/{version}/download",
-            ClientSettings::get_global(cx).server_url
-        );
+        let url = self
+            .http_client
+            .zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
 
         let extensions_dir = self.extensions_dir();
         let http_client = self.http_client.clone();
