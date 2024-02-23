@@ -66,14 +66,15 @@ unsafe impl HasRawDisplayHandle for RawWindow {
 }
 
 impl WaylandWindowInner {
-    fn new(
-        conn: &Arc<wayland_client::Connection>,
-        wl_surf: &Arc<wl_surface::WlSurface>,
-        bounds: Bounds<i32>,
-    ) -> Self {
+    fn new(wl_surf: &Arc<wl_surface::WlSurface>, bounds: Bounds<i32>) -> Self {
         let raw = RawWindow {
             window: wl_surf.id().as_ptr().cast::<c_void>(),
-            display: conn.backend().display_ptr().cast::<c_void>(),
+            display: wl_surf
+                .backend()
+                .upgrade()
+                .unwrap()
+                .display_ptr()
+                .cast::<c_void>(),
         };
         let gpu = Arc::new(
             unsafe {
@@ -105,7 +106,6 @@ impl WaylandWindowInner {
 }
 
 pub(crate) struct WaylandWindowState {
-    conn: Arc<wayland_client::Connection>,
     inner: Mutex<WaylandWindowInner>,
     pub(crate) callbacks: Mutex<Callbacks>,
     pub(crate) surface: Arc<wl_surface::WlSurface>,
@@ -115,7 +115,6 @@ pub(crate) struct WaylandWindowState {
 
 impl WaylandWindowState {
     pub(crate) fn new(
-        conn: &Arc<wayland_client::Connection>,
         wl_surf: Arc<wl_surface::WlSurface>,
         viewport: Option<wp_viewport::WpViewport>,
         toplevel: Arc<xdg_toplevel::XdgToplevel>,
@@ -139,9 +138,8 @@ impl WaylandWindowState {
         };
 
         Self {
-            conn: Arc::clone(conn),
             surface: Arc::clone(&wl_surf),
-            inner: Mutex::new(WaylandWindowInner::new(&Arc::clone(conn), &wl_surf, bounds)),
+            inner: Mutex::new(WaylandWindowInner::new(&wl_surf, bounds)),
             callbacks: Mutex::new(Callbacks::default()),
             toplevel,
             viewport,
