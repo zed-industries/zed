@@ -1,8 +1,12 @@
 use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim};
 use collections::{HashMap, HashSet};
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias};
+use editor::{
+    display_map::{DisplaySnapshot, ToDisplayPoint},
+    scroll::Autoscroll,
+    Bias, DisplayPoint,
+};
 use gpui::WindowContext;
-use language::Point;
+use language::{Point, Selection};
 
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.stop_recording();
@@ -106,8 +110,7 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                                 (offset_range.end + '\n'.len_utf8()).to_display_point(map);
                         }
 
-                        let end_at_eof = map.chars_at(selection.end).next().is_none();
-                        if end_at_eof && selection.start.row() > 0 {
+                        if ends_at_eof(map, selection) && selection.start.row() > 0 {
                             should_move_to_start.insert(selection.id);
                             selection.start =
                                 (offset_range.start - '\n'.len_utf8()).to_display_point(map);
@@ -132,6 +135,10 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
             });
         });
     });
+}
+
+fn ends_at_eof(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) -> bool {
+    selection.end.to_point(map) == map.buffer_snapshot.max_point()
 }
 
 #[cfg(test)]

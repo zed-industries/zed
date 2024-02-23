@@ -541,7 +541,8 @@ pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> D
         let blank = map.buffer_snapshot.is_line_blank(row);
         if blank != is_current_line_blank {
             let previous_row = row - 1;
-            return Point::new(previous_row, map.line_len(previous_row)).to_display_point(map);
+            return Point::new(previous_row, map.buffer_snapshot.line_len(previous_row))
+                .to_display_point(map);
         }
     }
 
