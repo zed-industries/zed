@@ -12,6 +12,8 @@ use std::{
     sync::Arc,
 };
 use tokio::signal::unix::SignalKind;
+use tower_http::trace::{self, TraceLayer};
+use tracing::Level;
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
@@ -63,6 +65,9 @@ async fn main() -> Result<()> {
                         .route("/healthz", get(handle_liveness_probe))
                         .merge(collab::api::events::router())
                         .layer(Extension(state.clone())),
+                )
+                .layer(TraceLayer::new_for_http()
+                    .on_response(trace::DefaultOnResponse::new().level(Level::INFO))
                 );
 
             axum::Server::from_tcp(listener)?
