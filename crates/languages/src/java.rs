@@ -37,6 +37,7 @@ impl LspAdapter for JavaLspAdapter {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "jdtls".into(),
+            env: None,
             arguments: vec![
                 "-configuration".into(),
                 HOME.join(".cache/jdtls").into(),
@@ -58,6 +59,7 @@ impl LspAdapter for JavaLspAdapter {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "jdtls".into(),
+            env: None,
             arguments: vec!["--help".into()],
             env: None,
         })
