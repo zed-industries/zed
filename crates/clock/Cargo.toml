@@ -9,5 +9,9 @@ license = "GPL-3.0-or-later"
 path = "src/clock.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
+chrono.workspace = true
 smallvec.workspace = true

@@ -2,6 +2,7 @@ mod event_coalescer;
 
 use crate::TelemetrySettings;
 use chrono::{DateTime, Utc};
+use clock::SystemClock;
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
 use once_cell::sync::Lazy;
@@ -24,6 +25,7 @@ use util::TryFutureExt;
 use self::event_coalescer::EventCoalescer;
 
 pub struct Telemetry {
+    clock: Arc<dyn SystemClock>,
     http_client: Arc<ZedHttpClient>,
     executor: BackgroundExecutor,
     state: Arc<Mutex<TelemetryState>>,
@@ -156,7 +158,11 @@ static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
 });
 
 impl Telemetry {
-    pub fn new(client: Arc<ZedHttpClient>, cx: &mut AppContext) -> Arc<Self> {
+    pub fn new(
+        clock: Arc<dyn SystemClock>,
+        client: Arc<ZedHttpClient>,
+        cx: &mut AppContext,
+    ) -> Arc<Self> {
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
 
@@ -205,6 +211,7 @@ impl Telemetry {
 
         // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
+            clock,
             http_client: client,
             executor: cx.background_executor().clone(),
             state,
@@ -590,18 +597,22 @@ impl Telemetry {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use util::http::FakeHttpClient;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
         init_test(cx);
+        let clock = Arc::new(FakeSystemClock::new(
+            Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
+        ));
         let http = FakeHttpClient::with_200_response();
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
         cx.update(|cx| {
-            let telemetry = Telemetry::new(http, cx);
+            let telemetry = Telemetry::new(clock, http, cx);
 
             telemetry.state.lock().max_queue_size = 4;
             telemetry.start(installation_id, session_id, cx);
@@ -680,12 +691,15 @@ mod tests {
     #[gpui::test]
     async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx);
+        let clock = Arc::new(FakeSystemClock::new(
+            Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
+        ));
         let http = FakeHttpClient::with_200_response();
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
         cx.update(|cx| {
-            let telemetry = Telemetry::new(http, cx);
+            let telemetry = Telemetry::new(clock, http, cx);
             telemetry.state.lock().max_queue_size = 4;
             telemetry.start(installation_id, session_id, cx);
 
