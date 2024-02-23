@@ -20,6 +20,7 @@ pub enum TerminalDockPosition {
 
 #[derive(Deserialize)]
 pub struct TerminalSettings {
+    pub button: bool,
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
     pub font_size: Option<Pixels>,
@@ -84,6 +85,10 @@ pub enum ActivateScript {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettingsContent {
+    /// Whether to show the terminal button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     /// What shell to use when opening a terminal.
     ///
     /// Default: system

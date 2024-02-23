@@ -23,7 +23,7 @@ use ui::{h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName,
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    Workspace, WorkspaceSettings,
+    Workspace,
 };
 
 const LOADING_THRESHOLD: usize = 30;
@@ -676,16 +676,8 @@ impl Panel for NotificationPanel {
     }
 
     fn icon(&self, cx: &gpui::WindowContext) -> Option<IconName> {
-        if let Some(elements) = WorkspaceSettings::get_global(cx)
-            .status_bar
-            .clone()
-            .elements
-        {
-            // Now that we have elements, check cursor_position
-            if !elements.notification.unwrap_or(true) {
-                // If cursor_position is true or None (defaulting to true)
-                return None;
-            }
+        if !NotificationPanelSettings::get_global(cx).button {
+            return None;
         }
 
         if self.unseen_notifications.is_empty() {

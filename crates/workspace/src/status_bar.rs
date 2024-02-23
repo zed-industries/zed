@@ -35,11 +35,7 @@ pub struct StatusBar {
 
 impl Render for StatusBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if !WorkspaceSettings::get_global(cx)
-            .status_bar
-            .show_status_bar
-            .unwrap_or(true)
-        {
+        if !WorkspaceSettings::get_global(cx).show_status_bar {
             return div();
         }
         h_flex()

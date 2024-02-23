@@ -6,10 +6,13 @@ use gpui::{
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
+use settings::Settings as _;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
-use crate::{Deploy, ProjectDiagnosticsEditor};
+use crate::{
+    project_diagnostics_settings::ProjectDiagnosticsSettings, Deploy, ProjectDiagnosticsEditor,
+};
 
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
@@ -22,6 +25,9 @@ pub struct DiagnosticIndicator {
 
 impl Render for DiagnosticIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if ProjectDiagnosticsSettings::get_global(cx).button {
+            return div();
+        }
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_flex().map(|this| {
                 this.child(

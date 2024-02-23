@@ -26,7 +26,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, Pane, Workspace,
+    DraggedTab, Pane, Workspace, WorkspaceSettings,
 };
 
 use anyhow::Result;
@@ -689,7 +689,7 @@ impl Panel for TerminalPanel {
     }
 
     fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
-        Some(IconName::Terminal)
+        Some(IconName::Terminal).filter(|_| TerminalSettings::get_global(_cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

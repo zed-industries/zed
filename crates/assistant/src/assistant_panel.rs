@@ -63,7 +63,7 @@ use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
-    Save, Toast, ToggleZoom, Toolbar, Workspace,
+    Save, Toast, ToggleZoom, Toolbar, Workspace, WorkspaceSettings,
 };
 
 pub fn init(cx: &mut AppContext) {

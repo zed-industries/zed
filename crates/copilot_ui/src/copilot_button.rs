@@ -20,7 +20,7 @@ use workspace::{
     ui::{
         popover_menu, ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, Tooltip,
     },
-    StatusItemView, Toast, Workspace, WorkspaceSettings,
+    StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
 
@@ -38,16 +38,13 @@ pub struct CopilotButton {
 
 impl Render for CopilotButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if let Some(elements) = WorkspaceSettings::get_global(cx)
-            .status_bar
-            .clone()
-            .elements
+        if !cx
+            .global::<SettingsStore>()
+            .get::<AllLanguageSettings>(None)
+            .copilot
+            .button
         {
-            // Now that we have elements, check cursor_position
-            if !elements.copilot.unwrap_or(true) {
-                // If cursor_position is true or None (defaulting to true)
-                return div();
-            }
+            return div();
         }
 
         let all_language_settings = all_language_settings(None, cx);

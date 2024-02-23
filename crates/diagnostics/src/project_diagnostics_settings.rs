@@ -3,12 +3,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug)]
 pub struct ProjectDiagnosticsSettings {
+    pub button: bool,
     pub include_warnings: bool,
 }
 
 /// Diagnostics configuration.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct ProjectDiagnosticsSettingsContent {
+    /// Whether to show diagnostics in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     /// Whether to show warnings or not by default.
     ///
     /// Default: true

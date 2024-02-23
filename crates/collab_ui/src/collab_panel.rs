@@ -40,7 +40,7 @@ use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
-    OpenChannelNotes, Workspace, WorkspaceSettings,
+    OpenChannelNotes, Workspace,
 };
 
 actions!(
@@ -2757,18 +2757,9 @@ impl Panel for CollabPanel {
     }
 
     fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::IconName> {
-        if let Some(elements) = WorkspaceSettings::get_global(cx)
-            .status_bar
-            .clone()
-            .elements
-        {
-            // Now that we have elements, check cursor_position
-            if !elements.collaboration.unwrap_or(true) {
-                // If cursor_position is true or None (defaulting to true)
-                return None;
-            }
-        }
-        Some(ui::IconName::Collab)
+        CollaborationPanelSettings::get_global(cx)
+            .button
+            .then(|| ui::IconName::Collab)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

@@ -28,7 +28,7 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    Workspace, WorkspaceSettings,
+    Workspace,
 };
 
 mod message_editor;
@@ -938,18 +938,7 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
-        if let Some(elements) = WorkspaceSettings::get_global(cx)
-            .status_bar
-            .clone()
-            .elements
-        {
-            // Now that we have elements, check cursor_position
-            if !elements.chat.unwrap_or(true) {
-                // If cursor_position is true or None (defaulting to true)
-                return None;
-            }
-        }
-        Some(ui::IconName::MessageBubbles)
+        Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

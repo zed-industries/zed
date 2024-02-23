@@ -13,6 +13,7 @@ pub enum ProjectPanelDockPosition {
 
 #[derive(Deserialize, Debug)]
 pub struct ProjectPanelSettings {
+    pub button: bool,
     pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
     pub file_icons: bool,
@@ -24,6 +25,10 @@ pub struct ProjectPanelSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct ProjectPanelSettingsContent {
+    /// Whether to show the project panel button in the toolbar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     /// Customise default width (in pixels) taken by project panel
     ///
     /// Default: 240

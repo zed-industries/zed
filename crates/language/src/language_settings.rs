@@ -100,6 +100,8 @@ pub struct LanguageSettings {
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
+    /// Whether to the copilot icon is shown in the status bar.
+    pub button: bool,
     /// Whether Copilot is enabled.
     pub feature_enabled: bool,
     /// A list of globs representing files that Copilot should be disabled for.
@@ -227,6 +229,9 @@ pub struct LanguageSettingsContent {
 /// The contents of the GitHub Copilot settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CopilotSettingsContent {
+    /// Whether to the copilot icon is shown in the status bar.
+    #[serde(default)]
+    pub button: Option<bool>,
     /// A list of globs representing files that Copilot should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
@@ -444,6 +449,11 @@ impl settings::Settings for AllLanguageSettings {
             .as_ref()
             .and_then(|f| f.copilot)
             .ok_or_else(Self::missing_default)?;
+        let copilot_button = default_value
+            .copilot
+            .as_ref()
+            .and_then(|c| c.button)
+            .ok_or_else(Self::missing_default)?;
         let mut copilot_globs = default_value
             .copilot
             .as_ref()
@@ -482,6 +492,7 @@ impl settings::Settings for AllLanguageSettings {
 
         Ok(Self {
             copilot: CopilotSettings {
+                button: copilot_button,
                 feature_enabled: copilot_enabled,
                 disabled_globs: copilot_globs
                     .iter()

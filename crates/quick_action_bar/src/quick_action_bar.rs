@@ -9,6 +9,7 @@ use gpui::{
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
+use workspace::WorkspaceSettings;
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -121,7 +122,6 @@ impl Render for QuickActionBar {
                 }
             },
         );
-
         h_flex()
             .id("quick action bar")
             .gap_2()

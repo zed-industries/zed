@@ -19,11 +19,7 @@ impl DeployFeedbackButton {
 
 impl Render for DeployFeedbackButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if !WorkspaceSettings::get_global(cx)
-            .status_bar
-            .show_share_feedback_icon
-            .unwrap_or(true)
-        {
+        if !WorkspaceSettings::get_global(cx).show_feedback_icon {
             return ().into_any_element();
         }
         let is_open = self

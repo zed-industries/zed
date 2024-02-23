@@ -31,7 +31,7 @@ use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    Workspace,
+    Workspace, WorkspaceSettings,
 };
 
 const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
@@ -1638,8 +1638,8 @@ impl Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::FileTree)
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
+        Some(ui::IconName::FileTree).filter(|_| ProjectPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

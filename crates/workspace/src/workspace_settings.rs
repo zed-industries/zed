@@ -6,7 +6,10 @@ use settings::Settings;
 pub struct WorkspaceSettings {
     pub active_pane_magnification: f32,
     pub confirm_quit: bool,
-    pub status_bar: StatusBarSettings,
+    pub show_call_status_icon: bool,
+    pub show_status_bar: bool,
+    pub show_feedback_icon: bool,
+    pub show_cursor_position: bool,
     pub autosave: AutosaveSetting,
 }
 
@@ -17,82 +20,38 @@ pub struct WorkspaceSettingsContent {
     /// but when set to a larger value, the active pane takes up more space.
     ///
     /// Default: `1.0`
+    #[serde(default)]
     pub active_pane_magnification: Option<f32>,
     /// Whether or not to prompt the user to confirm before closing the application.
     ///
     /// Default: false
+    #[serde(default)]
     pub confirm_quit: Option<bool>,
-    /// Status bar settings.
-    ///
-    pub status_bar: StatusBarSettings,
     /// Whether or not to show the call status icon in the status bar.
     ///
     /// Default: true
+    #[serde(default)]
     pub show_call_status_icon: Option<bool>,
-    /// When to automatically save edited buffers.
-    ///
-    /// Default: off
-    pub autosave: Option<AutosaveSetting>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct StatusBarSettings {
-    /// Settings for the elements in the status bar.
-    ///
-    /// Default: all elements are visible
-    pub elements: Option<StatusBarElementSettings>,
     /// Whether or not to show the status bar.
     ///
     /// Default: true
-    pub visible: Option<bool>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct StatusBarElementSettings {
-    /// Whether or not to show the assistant icon in the status bar.
+    #[serde(default)]
+    pub show_status_bar: Option<bool>,
+    /// Whether or not to show the share feedback icon in status bar.
     ///
     /// Default: true
-    pub assistant: Option<bool>,
-    /// Whether or not to show the chat icon in the status bar.
+    #[serde(default)]
+    pub show_feedback_icon: Option<bool>,
+    /// Whether or not to show the share feedback icon in status bar.
     ///
     /// Default: true
-    pub chat: Option<bool>,
-    /// Whether or not to show the collaboration panel icon in the status bar.
+    #[serde(default)]
+    pub show_cursor_position: Option<bool>,
+    /// When to automatically save edited buffers.
     ///
-    /// Default: true
-    pub collaboration: Option<bool>,
-    /// Whether or not to show the copilot icon in the status bar.
-    ///
-    /// Default: true
-    pub copilot: Option<bool>,
-    /// Whether or not to show the cursor position in the status bar.
-    ///
-    /// Default: true
-    pub cursor_position: Option<bool>,
-    /// Whether or not to show the diagnostics in the status bar.
-    ///
-    /// Default: true
-    pub diagnostics: Option<bool>,
-    /// Whether or not to show the feedback icon in the status bar.
-    ///
-    /// Default: true
-    pub feedback: Option<bool>,
-    /// Whether or not to show the language selector in the status bar.
-    ///
-    /// Default: true
-    pub language_selector: Option<bool>,
-    /// Whether or not to show the notification icon in the status bar.
-    ///
-    /// Default: true
-    pub notification: Option<bool>,
-    /// Whether or not to show the project panel icon in the status bar.
-    ///
-    /// Default: true
-    pub project: Option<bool>,
-    /// Whether or not to show the terminal icon in the status bar.
-    ///
-    /// Default: true
-    pub terminal: Option<bool>,
+    /// Default: off
+    #[serde(default)]
+    pub autosave: Option<AutosaveSetting>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
