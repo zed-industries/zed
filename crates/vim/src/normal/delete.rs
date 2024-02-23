@@ -76,6 +76,14 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                 s.move_with(|map, selection| {
                     object.expand_selection(map, selection, around);
                     let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
+                    let mut move_selection_start_to_previous_line =
+                        |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
+                            let start = selection.start.to_offset(map, Bias::Left);
+                            if selection.start.row() > 0 {
+                                should_move_to_start.insert(selection.id);
+                                selection.start = (start - '\n'.len_utf8()).to_display_point(map);
+                            }
+                        };
                     let contains_only_newlines = map
                         .chars_at(selection.start)
                         .take_while(|(_, p)| p < &selection.end)
@@ -92,12 +100,9 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                     // at the end or start
                     if (around || object == Object::Sentence) && contains_only_newlines {
                         if end_at_newline {
-                            selection.end =
-                                (offset_range.end + '\n'.len_utf8()).to_display_point(map);
-                        } else if selection.start.row() > 0 {
-                            should_move_to_start.insert(selection.id);
-                            selection.start =
-                                (offset_range.start - '\n'.len_utf8()).to_display_point(map);
+                            move_selection_end_to_next_line(map, selection);
+                        } else {
+                            move_selection_start_to_previous_line(map, selection);
                         }
                     }
 
@@ -106,14 +111,11 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                     let cancelled = around && selection.start == selection.end;
                     if object == Object::Paragraph && !cancelled {
                         if end_at_newline {
-                            selection.end =
-                                (offset_range.end + '\n'.len_utf8()).to_display_point(map);
+                            move_selection_end_to_next_line(map, selection);
                         }
 
-                        if ends_at_eof(map, selection) && selection.start.row() > 0 {
-                            should_move_to_start.insert(selection.id);
-                            selection.start =
-                                (offset_range.start - '\n'.len_utf8()).to_display_point(map);
+                        if ends_at_eof(map, selection) {
+                            move_selection_start_to_previous_line(map, selection);
                         }
                     }
                 });
@@ -135,6 +137,11 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
             });
         });
     });
+}
+
+fn move_selection_end_to_next_line(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
+    let end = selection.end.to_offset(map, Bias::Left);
+    selection.end = (end + '\n'.len_utf8()).to_display_point(map);
 }
 
 fn ends_at_eof(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) -> bool {
