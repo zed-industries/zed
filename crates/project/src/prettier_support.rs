@@ -70,9 +70,14 @@ pub(super) async fn format_with_prettier(
                 match prettier.format(buffer, buffer_path, cx).await {
                     Ok(new_diff) => return Some(FormatOperation::Prettier(new_diff)),
                     Err(e) => {
-                        log::error!(
-                            "Prettier instance from {prettier_path:?} failed to format a buffer: {e:#}"
-                        );
+                        match prettier_path {
+                            Some(prettier_path) => log::error!(
+                                "Prettier instance from path {prettier_path:?} failed to format a buffer: {e:#}"
+                            ),
+                            None => log::error!(
+                                "Default prettier instance failed to format a buffer: {e:#}"
+                            ),
+                        }
                     }
                 }
             }
@@ -366,6 +371,7 @@ fn register_new_prettier(
 }
 
 async fn install_prettier_packages(
+    fs: &dyn Fs,
     plugins_to_install: HashSet<&'static str>,
     node: Arc<dyn NodeRuntime>,
 ) -> anyhow::Result<()> {
@@ -385,18 +391,32 @@ async fn install_prettier_packages(
         .await
         .context("fetching latest npm versions")?;
 
-    log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
+    let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
+    match fs.metadata(default_prettier_dir).await.with_context(|| {
+        format!("fetching FS metadata for default prettier dir {default_prettier_dir:?}")
+    })? {
+        Some(prettier_dir_metadata) => anyhow::ensure!(
+            prettier_dir_metadata.is_dir,
+            "default prettier dir {default_prettier_dir:?} is not a directory"
+        ),
+        None => fs
+            .create_dir(default_prettier_dir)
+            .await
+            .with_context(|| format!("creating default prettier dir {default_prettier_dir:?}"))?,
+    }
+
+    log::info!("Installing default prettier and plugins: {packages_to_versions:?}");
     let borrowed_packages = packages_to_versions
         .iter()
         .map(|(package, version)| (package.as_str(), version.as_str()))
         .collect::<Vec<_>>();
-    node.npm_install_packages(DEFAULT_PRETTIER_DIR.as_path(), &borrowed_packages)
+    node.npm_install_packages(default_prettier_dir, &borrowed_packages)
         .await
         .context("fetching formatter packages")?;
     anyhow::Ok(())
 }
 
-async fn save_prettier_server_file(fs: &dyn Fs) -> Result<(), anyhow::Error> {
+async fn save_prettier_server_file(fs: &dyn Fs) -> anyhow::Result<()> {
     let prettier_wrapper_path = DEFAULT_PRETTIER_DIR.join(prettier::PRETTIER_SERVER_FILE);
     fs.save(
         &prettier_wrapper_path,
@@ -411,6 +431,17 @@ async fn save_prettier_server_file(fs: &dyn Fs) -> Result<(), anyhow::Error> {
         )
     })?;
     Ok(())
+}
+
+async fn should_write_prettier_server_file(fs: &dyn Fs) -> bool {
+    let prettier_wrapper_path = DEFAULT_PRETTIER_DIR.join(prettier::PRETTIER_SERVER_FILE);
+    if !fs.is_file(&prettier_wrapper_path).await {
+        return true;
+    }
+    let Ok(prettier_server_file_contents) = fs.load(&prettier_wrapper_path).await else {
+        return true;
+    };
+    prettier_server_file_contents != prettier::PRETTIER_SERVER_JS
 }
 
 impl Project {
@@ -623,6 +654,7 @@ impl Project {
         _cx: &mut ModelContext<Self>,
     ) {
         // suppress unused code warnings
+        let _ = should_write_prettier_server_file;
         let _ = install_prettier_packages;
         let _ = save_prettier_server_file;
 
@@ -643,7 +675,6 @@ impl Project {
         let Some(node) = self.node.as_ref().cloned() else {
             return;
         };
-        log::info!("Initializing default prettier with plugins {new_plugins:?}");
         let fs = Arc::clone(&self.fs);
         let locate_prettier_installation = match worktree.and_then(|worktree_id| {
             self.worktree_for_id(worktree_id, cx)
@@ -689,6 +720,7 @@ impl Project {
             }
         };
 
+        log::info!("Initializing default prettier with plugins {new_plugins:?}");
         let plugins_to_install = new_plugins.clone();
         let fs = Arc::clone(&self.fs);
         let new_installation_task = cx
@@ -703,7 +735,7 @@ impl Project {
                         if prettier_path.is_some() {
                             new_plugins.clear();
                         }
-                        let mut needs_install = false;
+                        let mut needs_install = should_write_prettier_server_file(fs.as_ref()).await;
                         if let Some(previous_installation_task) = previous_installation_task {
                             if let Err(e) = previous_installation_task.await {
                                 log::error!("Failed to install default prettier: {e:#}");
@@ -744,8 +776,10 @@ impl Project {
                             let installed_plugins = new_plugins.clone();
                             cx.background_executor()
                                 .spawn(async move {
+                                    install_prettier_packages(fs.as_ref(), new_plugins, node).await?;
+                                    // Save the server file last, so the reinstall need could be determined by the absence of the file.
                                     save_prettier_server_file(fs.as_ref()).await?;
-                                    install_prettier_packages(new_plugins, node).await
+                                    anyhow::Ok(())
                                 })
                                 .await
                                 .context("prettier & plugins install")
