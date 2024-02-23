@@ -579,32 +579,22 @@ impl LanguageRegistry {
                 let binary = if let Some(user_binary) = user_binary_task.await {
                     user_binary
                 } else {
+                    // If we want to install a binary globally, we need to wait for
+                    // the login shell to be set on our process.
                     login_shell_env_loaded.await;
 
-                    let entry = this
-                        .lsp_binary_paths
-                        .lock()
-                        .entry(adapter.name.clone())
-                        .or_insert_with(|| {
-                            let adapter = adapter.clone();
-                            let language = language.clone();
-                            let delegate = delegate.clone();
-                            cx.spawn(|cx| {
-                                get_binary(
-                                    adapter,
-                                    language,
-                                    delegate,
-                                    container_dir,
-                                    lsp_binary_statuses,
-                                    cx,
-                                )
-                                .map_err(Arc::new)
-                            })
-                            .shared()
-                        })
-                        .clone();
+                    let binary = get_or_install_binary(
+                        this,
+                        &adapter,
+                        language,
+                        &delegate,
+                        &cx,
+                        container_dir,
+                        lsp_binary_statuses,
+                    )
+                    .await;
 
-                    match entry.await {
+                    match binary {
                         Ok(binary) => binary,
                         Err(err) => anyhow::bail!("{err}"),
                     }
@@ -767,6 +757,41 @@ async fn check_user_installed_binary(
     })
 }
 
+async fn get_or_install_binary(
+    registry: Arc<LanguageRegistry>,
+    adapter: &Arc<CachedLspAdapter>,
+    language: Arc<Language>,
+    delegate: &Arc<dyn LspAdapterDelegate>,
+    cx: &AsyncAppContext,
+    container_dir: Arc<Path>,
+    lsp_binary_statuses: LspBinaryStatusSender,
+) -> Result<LanguageServerBinary, Arc<anyhow::Error>> {
+    let entry = registry
+        .lsp_binary_paths
+        .lock()
+        .entry(adapter.name.clone())
+        .or_insert_with(|| {
+            let adapter = adapter.clone();
+            let language = language.clone();
+            let delegate = delegate.clone();
+            cx.spawn(|cx| {
+                get_binary(
+                    adapter,
+                    language,
+                    delegate,
+                    container_dir,
+                    lsp_binary_statuses,
+                    cx,
+                )
+                .map_err(Arc::new)
+            })
+            .shared()
+        })
+        .clone();
+
+    entry.await
+}
+
 async fn get_binary(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
@@ -806,14 +831,14 @@ async fn get_binary(
                 binary.path.display()
             );
             return Ok(binary);
-        } else {
-            statuses.send(
-                language.clone(),
-                LanguageServerBinaryStatus::Failed {
-                    error: format!("{:?}", error),
-                },
-            );
         }
+
+        statuses.send(
+            language.clone(),
+            LanguageServerBinaryStatus::Failed {
+                error: format!("{:?}", error),
+            },
+        );
     }
 
     binary
