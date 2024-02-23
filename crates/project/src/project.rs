@@ -100,6 +100,7 @@ pub use task_inventory::Inventory;
 pub use worktree::*;
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
+const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub trait Item {
@@ -2876,6 +2877,14 @@ impl Project {
                             log::error!("Hit {max} reinstallation attempts for {server_name:?}");
                             return None;
                         }
+
+                        log::info!(
+                            "retrying installation of language server {server_name:?} in {}s",
+                            SERVER_REINSTALL_DEBOUNCE_TIMEOUT.as_secs()
+                        );
+                        cx.background_executor()
+                            .timer(SERVER_REINSTALL_DEBOUNCE_TIMEOUT)
+                            .await;
 
                         let installation_test_binary = adapter
                             .installation_test_binary(container_dir.to_path_buf())
