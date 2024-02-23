@@ -1,5 +1,7 @@
 // todo!(linux): remove
 #![cfg_attr(target_os = "linux", allow(dead_code))]
+// todo!("windows"): remove
+#![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
 mod keystroke;
@@ -64,40 +66,6 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 // todo!("windows")
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    // Temporary ignore dead_code
-    let _ = |batch: &crate::PrimitiveBatch| {
-        match batch {
-            crate::PrimitiveBatch::MonochromeSprites {
-                texture_id,
-                sprites,
-            } => {
-                let _ = (texture_id, sprites);
-            }
-            crate::PrimitiveBatch::PolychromeSprites {
-                texture_id,
-                sprites,
-            } => {
-                let _ = (texture_id, sprites);
-            }
-            _ => {}
-        }
-        (
-            AtlasKey::texture_kind,
-            AtlasTextureKind::Monochrome,
-            AtlasTextureKind::Polychrome,
-            AtlasTextureKind::Path,
-            PlatformInputHandler::selected_text_range,
-            PlatformInputHandler::marked_text_range,
-            PlatformInputHandler::text_for_range,
-            PlatformInputHandler::replace_text_in_range,
-            PlatformInputHandler::unmark_text,
-            PlatformInputHandler::bounds_for_range,
-            PlatformInputHandler::replace_and_mark_text_in_range,
-            ClipboardItem::text_hash,
-            Scene::paths,
-            Scene::batches,
-        )
-    };
     unimplemented!()
 }
 
