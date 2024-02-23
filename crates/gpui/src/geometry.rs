@@ -828,6 +828,28 @@ where
             y: self.origin.y.clone() + self.size.height.clone().half(),
         }
     }
+
+    /// Calculates the half perimeter of a rectangle defined by the bounds.
+    ///
+    /// The half perimeter is calculated as the sum of the width and the height of the rectangle.
+    /// This method is generic over the type `T` which must implement the `Sub` trait to allow
+    /// calculation of the width and height from the bounds' origin and size, as well as the `Add` trait
+    /// to sum the width and height for the half perimeter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let half_perimeter = bounds.half_perimeter();
+    /// assert_eq!(half_perimeter, 30);
+    /// ```
+    pub fn half_perimeter(&self) -> T {
+        self.size.width.clone() + self.size.height.clone()
+    }
 }
 
 impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {

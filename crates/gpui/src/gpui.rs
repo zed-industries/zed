@@ -70,6 +70,7 @@ mod app;
 
 mod arena;
 mod assets;
+mod bounds_tree;
 mod color;
 mod element;
 mod elements;
@@ -117,6 +118,7 @@ pub use anyhow::Result;
 pub use app::*;
 pub(crate) use arena::*;
 pub use assets::*;
+pub(crate) use bounds_tree::*;
 pub use color::*;
 pub use ctor::ctor;
 pub use element::*;
