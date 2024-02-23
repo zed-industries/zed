@@ -204,10 +204,7 @@ globset = "0.4"
 hex = "0.4.3"
 indoc = "1"
 # We explicitly disable a http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = [
-    "static-curl",
-    "text-decoding",
-] }
+isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
 lazy_static = "1.4.0"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
@@ -228,10 +225,7 @@ semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-serde_json_lenient = { version = "0.1", features = [
-    "preserve_order",
-    "raw_value",
-] }
+serde_json_lenient = { version = "0.1", features = ["preserve_order", "raw_value"] }
 serde_repr = "0.1"
 sha2 = "0.10"
 smallvec = { version = "1.6", features = ["union"] }
@@ -241,11 +235,7 @@ sysinfo = "0.29.10"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
-time = { version = "0.3", features = [
-    "serde",
-    "serde-well-known",
-    "formatting",
-] }
+time = { version = "0.3", features = ["serde", "serde-well-known", "formatting"] }
 toml = "0.8"
 tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-astro = { git = "https://github.com/virchau13/tree-sitter-astro.git", rev = "e924787e12e8a03194f36a113290ac11d6dc10f3" }
