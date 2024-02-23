@@ -199,8 +199,9 @@ fn show_hover(
             if symbol_range
                 .as_text_range()
                 .map(|range| {
-                    range
-                        .to_offset(&snapshot.buffer_snapshot)
+                    let hover_range = range
+                        .to_offset(&snapshot.buffer_snapshot);
+                    (hover_range.start..=hover_range.end)
                         .contains(&multibuffer_offset)
                 })
                 .unwrap_or(false)
