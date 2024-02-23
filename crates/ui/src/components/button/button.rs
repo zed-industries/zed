@@ -112,6 +112,12 @@ impl Button {
         }
     }
 
+    /// Sets the label of the button.
+    pub fn label<L: Into<SharedString>>(mut self, label: L) -> Self {
+        self.label = label.into();
+        self
+    }
+
     /// Sets the color of the button's label.
     pub fn color(mut self, label_color: impl Into<Option<Color>>) -> Self {
         self.label_color = label_color.into();

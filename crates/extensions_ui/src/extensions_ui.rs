@@ -192,7 +192,11 @@ impl ExtensionsPage {
                             this.install_extension(extension_id.clone(), version.clone(), cx);
                         }
                     }))
-                    .disabled(matches!(status, ExtensionStatus::Installing))
+                    .when(matches!(status, ExtensionStatus::Installing), |button| {
+                        button
+                            .label("Installing...")
+                            .disabled(true)
+                    })
             }
             ExtensionStatus::Installed(_)
             | ExtensionStatus::Upgrading
@@ -206,6 +210,14 @@ impl ExtensionsPage {
                             this.uninstall_extension(extension_id.clone(), cx);
                         }
                     }))
+                    .when(
+                        matches!(status, ExtensionStatus::Removing),
+                        |button| button.label("Uninstalling...")
+                    )
+                    .when(
+                        matches!(status, ExtensionStatus::Upgrading),
+                        |button| button.label("Upgrading...")
+                    )
                     .disabled(matches!(
                         status,
                         ExtensionStatus::Upgrading | ExtensionStatus::Removing
