@@ -55,8 +55,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
-    OpenRequest,
+    handle_keymap_file_changes, initialize_workspace, IsOnlyInstance, OpenListener, OpenRequest,
 };
 
 #[global_allocator]
@@ -140,9 +139,10 @@ fn main() {
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
 
+        let clock = Arc::new(clock::RealSystemClock);
         let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
 
-        let client = client::Client::new(http.clone(), cx);
+        let client = client::Client::new(clock, http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.background_executor().clone());
@@ -838,8 +838,29 @@ async fn load_login_shell_environment() -> Result<()> {
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
+
+    // If possible, we want to `cd` in the user's `$HOME` to trigger programs
+    // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
+    // into shell's `cd` command (and hooks) to manipulate env.
+    // We do this so that we get the env a user would have when spawning a shell
+    // in home directory.
+    let shell_cmd_prefix = std::env::var_os("HOME")
+        .and_then(|home| home.into_string().ok())
+        .map(|home| format!("cd {home};"));
+
+    // The `exit 0` is the result of hours of debugging, trying to find out
+    // why running this command here, without `exit 0`, would mess
+    // up signal process for our process so that `ctrl-c` doesn't work
+    // anymore.
+    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+    // do that, but it does, and `exit 0` helps.
+    let shell_cmd = format!(
+        "{}echo {marker}; /usr/bin/env -0; exit 0;",
+        shell_cmd_prefix.as_deref().unwrap_or("")
+    );
+
     let output = Command::new(&shell)
-        .args(["-l", "-i", "-c", &format!("echo {marker}; /usr/bin/env -0")])
+        .args(["-l", "-i", "-c", &shell_cmd])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;

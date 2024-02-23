@@ -1,3 +1,4 @@
+pub mod events;
 mod extensions;
 
 use crate::{

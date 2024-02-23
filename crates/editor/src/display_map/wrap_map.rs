@@ -3,10 +3,10 @@ use super::{
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     Highlights,
 };
-use crate::MultiBufferSnapshot;
 use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
+use multi_buffer::MultiBufferSnapshot;
 use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};

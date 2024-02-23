@@ -397,8 +397,9 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test());
+        let clock = Arc::new(clock::FakeSystemClock::default());
         let http_client = util::http::FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone(), cx);
+        let client = Client::new(clock, http_client.clone(), cx);
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -1386,7 +1387,9 @@ impl Workspace {
             };
 
             if let Some(task) = this
-                .update(&mut cx, |this, cx| this.open_workspace_for_paths(paths, cx))
+                .update(&mut cx, |this, cx| {
+                    this.open_workspace_for_paths(false, paths, cx)
+                })
                 .log_err()
             {
                 task.await.log_err();
@@ -1397,6 +1400,7 @@ impl Workspace {
 
     pub fn open_workspace_for_paths(
         &mut self,
+        replace_current_window: bool,
         paths: Vec<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -1404,7 +1408,10 @@ impl Workspace {
         let is_remote = self.project.read(cx).is_remote();
         let has_worktree = self.project.read(cx).worktrees().next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-        let window_to_replace = if is_remote || has_worktree || has_dirty_items {
+
+        let window_to_replace = if replace_current_window {
+            window
+        } else if is_remote || has_worktree || has_dirty_items {
             None
         } else {
             window
