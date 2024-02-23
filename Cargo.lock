@@ -5023,6 +5023,7 @@ dependencies = [
  "shellexpand 3.1.0",
  "smol",
  "task",
+ "text",
  "toml 0.8.10",
  "tree-sitter",
  "tree-sitter-astro",

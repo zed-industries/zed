@@ -189,7 +189,7 @@ mod tests {
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
         let language =
-            crate::languages::language("python", tree_sitter_python::language(), None).await;
+            crate::language("python", tree_sitter_python::language(), None).await;
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);

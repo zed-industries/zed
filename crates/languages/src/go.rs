@@ -417,7 +417,7 @@ fn adjust_runs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::languages::language;
+    use crate::language;
     use gpui::Hsla;
     use theme::SyntaxTheme;
 

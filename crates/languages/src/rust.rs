@@ -310,7 +310,7 @@ mod tests {
     use std::num::NonZeroU32;
 
     use super::*;
-    use crate::languages::language;
+    use crate::language;
     use gpui::{Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
@@ -524,7 +524,7 @@ mod tests {
             });
         });
 
-        let language = crate::languages::language("rust", tree_sitter_rust::language(), None).await;
+        let language = crate::language("rust", tree_sitter_rust::language(), None).await;
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")

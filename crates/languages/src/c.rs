@@ -296,7 +296,7 @@ mod tests {
                 });
             });
         });
-        let language = crate::languages::language("c", tree_sitter_c::language(), None).await;
+        let language = crate::language("c", tree_sitter_c::language(), None).await;
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")

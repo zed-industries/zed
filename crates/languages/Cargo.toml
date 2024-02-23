@@ -81,3 +81,8 @@ feature_flags.workspace = true
 project.workspace = true
 serde.workspace = true
 rope.workspace = true
+
+[dev-dependencies]
+text.workspace = true
+theme.workspace = true
+unindent.workspace = true
