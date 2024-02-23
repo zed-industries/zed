@@ -162,6 +162,7 @@ impl<'a> MarkdownParser<'a> {
         let mut text = String::new();
         let mut bold_depth = 0;
         let mut italic_depth = 0;
+        let mut strikethrough_depth = 0;
         let mut link: Option<Link> = None;
         let mut region_ranges: Vec<Range<usize>> = vec![];
         let mut regions: Vec<ParsedRegion> = vec![];
@@ -199,6 +200,10 @@ impl<'a> MarkdownParser<'a> {
 
                     if italic_depth > 0 {
                         style.italic = true;
+                    }
+
+                    if strikethrough_depth > 0 {
+                        style.strikethrough = true;
                     }
 
                     if let Some(link) = link.clone() {
@@ -248,24 +253,18 @@ impl<'a> MarkdownParser<'a> {
                     });
                 }
 
-                Event::Start(tag) => {
-                    match tag {
-                        Tag::Emphasis => italic_depth += 1,
-                        Tag::Strong => bold_depth += 1,
-                        Tag::Link(_type, url, _title) => {
-                            link = Link::identify(
-                                self.file_location_directory.clone(),
-                                url.to_string(),
-                            );
-                        }
-                        Tag::Strikethrough => {
-                            // TODO: Confirm that gpui currently doesn't support strikethroughs
-                        }
-                        _ => {
-                            break;
-                        }
+                Event::Start(tag) => match tag {
+                    Tag::Emphasis => italic_depth += 1,
+                    Tag::Strong => bold_depth += 1,
+                    Tag::Strikethrough => strikethrough_depth += 1,
+                    Tag::Link(_type, url, _title) => {
+                        link =
+                            Link::identify(self.file_location_directory.clone(), url.to_string());
                     }
-                }
+                    _ => {
+                        break;
+                    }
+                },
 
                 Event::End(tag) => match tag {
                     Tag::Emphasis => {
@@ -274,11 +273,11 @@ impl<'a> MarkdownParser<'a> {
                     Tag::Strong => {
                         bold_depth -= 1;
                     }
+                    Tag::Strikethrough => {
+                        strikethrough_depth -= 1;
+                    }
                     Tag::Link(_, _, _) => {
                         link = None;
-                    }
-                    Tag::Strikethrough => {
-                        // TODO: Confirm that gpui currently doesn't support strikethroughs
                     }
                     Tag::Paragraph => {
                         self.cursor += 1;

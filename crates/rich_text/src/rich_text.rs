@@ -1,7 +1,7 @@
 use futures::FutureExt;
 use gpui::{
     AnyElement, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText, IntoElement,
-    SharedString, StyledText, UnderlineStyle, WindowContext,
+    SharedString, StrikethroughStyle, StyledText, UnderlineStyle, WindowContext,
 };
 use language::{HighlightId, Language, LanguageRegistry};
 use std::{ops::Range, sync::Arc};
@@ -138,6 +138,7 @@ pub fn render_markdown_mut(
 
     let mut bold_depth = 0;
     let mut italic_depth = 0;
+    let mut strikethrough_depth = 0;
     let mut link_url = None;
     let mut current_language = None;
     let mut list_stack = Vec::new();
@@ -174,6 +175,12 @@ pub fn render_markdown_mut(
                     }
                     if italic_depth > 0 {
                         style.font_style = Some(FontStyle::Italic);
+                    }
+                    if strikethrough_depth > 0 {
+                        style.strikethrough = Some(StrikethroughStyle {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        });
                     }
                     let last_run_len = if let Some(link_url) = link_url.clone() {
                         link_ranges.push(prev_len..text.len());
@@ -266,6 +273,7 @@ pub fn render_markdown_mut(
                 }
                 Tag::Emphasis => italic_depth += 1,
                 Tag::Strong => bold_depth += 1,
+                Tag::Strikethrough => strikethrough_depth += 1,
                 Tag::Link(_, url, _) => link_url = Some(url.to_string()),
                 Tag::List(number) => {
                     list_stack.push((number, false));
@@ -296,6 +304,7 @@ pub fn render_markdown_mut(
                 Tag::CodeBlock(_) => current_language = None,
                 Tag::Emphasis => italic_depth -= 1,
                 Tag::Strong => bold_depth -= 1,
+                Tag::Strikethrough => strikethrough_depth -= 1,
                 Tag::Link(_, _, _) => link_url = None,
                 Tag::List(_) => drop(list_stack.pop()),
                 _ => {}
