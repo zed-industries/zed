@@ -61,6 +61,7 @@ tokio-tungstenite = "0.17"
 toml.workspace = true
 tonic = "0.6"
 tower = "0.4"
+tower-http = { workspace = true, features = ["trace"] }
 tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
