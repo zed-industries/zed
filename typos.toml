@@ -12,7 +12,8 @@ extend-exclude = [
     # Vim makes heavy use of partial typing tables
     "crates/vim/",
     # Editor and file finder rely on partial typing and custom in-string syntax
-    "crates/file_finder/src/file_finder_tests.rs"
+    "crates/file_finder/src/file_finder_tests.rs",
+    "crates/editor/src/editor_tests.rs",
 ]
 
 [default]
