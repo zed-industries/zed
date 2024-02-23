@@ -147,7 +147,11 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
-        "Search recent projects...".into()
+        Arc::from(format!(
+            "`{:?}` reuses the window, `{:?}` opens in new",
+            menu::Confirm,
+            menu::SecondaryConfirm,
+        ))
     }
 
     fn match_count(&self) -> usize {
