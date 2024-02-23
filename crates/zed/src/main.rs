@@ -840,16 +840,7 @@ async fn load_login_shell_environment() -> Result<()> {
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
     let output = Command::new(&shell)
-        .args([
-            "-l",
-            "-i",
-            "-c",
-            // We `cd $HOME` because some tools (asdf, mise, direnv, ...) hook into $SHELL's `cd`
-            // and only trigger after `cd`s been used.
-            // Since `cd $HOME` is safe (POSIX dicates that $HOME has to be set), we do that
-            // before getting the `env`.
-            &format!("cd $HOME; echo {marker}; /usr/bin/env -0; exit 0"),
-        ])
+        .args(["-l", "-i", "-c", &format!("echo {marker}; /usr/bin/env -0")])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;
