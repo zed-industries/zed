@@ -425,7 +425,7 @@ pub struct CallEventRow {
     release_channel: String,
 
     // ClientEventBase
-    installation_id: Option<String>,
+    installation_id: String,
     session_id: Option<String>,
     is_staff: Option<bool>,
     time: i64,
@@ -453,7 +453,7 @@ impl CallEventRow {
             minor: semver.map(|s| s.minor as i32),
             patch: semver.map(|s| s.patch as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
-            installation_id: body.installation_id.clone(),
+            installation_id: body.installation_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
             time: time.timestamp_millis(),
@@ -480,7 +480,7 @@ pub struct AssistantEventRow {
     time: i64,
 
     // AssistantEventRow
-    conversation_id: Option<String>,
+    conversation_id: String,
     kind: String,
     model: String,
 }
@@ -506,7 +506,7 @@ impl AssistantEventRow {
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
             time: time.timestamp_millis(),
-            conversation_id: event.conversation_id,
+            conversation_id: event.conversation_id.unwrap_or_default(),
             kind: event.kind.to_string(),
             model: event.model,
         }
