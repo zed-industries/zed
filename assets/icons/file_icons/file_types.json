@@ -18,7 +18,7 @@
         "cc": "code",
         "cjs": "code",
         "conf": "settings",
-        "cpp": "code",
+        "cpp": "cpp",
         "css": "css",
         "csv": "storage",
         "cts": "typescript",
@@ -168,6 +168,9 @@
         },
         "collapsed_folder": {
             "icon": "icons/file_icons/folder.svg"
+        },
+        "cpp": {
+            "icon": "icons/file_icons/cpp.svg"
         },
         "css": {
             "icon": "icons/file_icons/css.svg"
