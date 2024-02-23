@@ -22,5 +22,8 @@ extend-ignore-re = [
     ":ba\\|z",
     # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
     "COLUMN enviroment",
+    # Typo in ClickHouse column name.
+    # crates/collab/src/api/events.rs
+    "rename = \"sesssion_id\""
 ]
 check-filename = true

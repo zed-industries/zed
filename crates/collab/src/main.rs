@@ -61,6 +61,7 @@ async fn main() -> Result<()> {
                     Router::new()
                         .route("/", get(handle_root))
                         .route("/healthz", get(handle_liveness_probe))
+                        .merge(collab::api::events::router())
                         .layer(Extension(state.clone())),
                 );
 
