@@ -38,7 +38,7 @@ use serde_json::Value;
 use std::{
     any::Any,
     cell::RefCell,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     fmt::Debug,
     hash::Hash,
     mem,
