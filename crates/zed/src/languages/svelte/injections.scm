@@ -1,7 +1,11 @@
 ; injections.scm
 ; --------------
-(script_element
-  (raw_text) @content
+((script_element
+    (start_tag
+      (attribute
+        (quoted_attribute_value (attribute_value) @_language))?)
+     (raw_text) @content)
+  (#eq? @_language "")
   (#set! "language" "javascript"))
 
  ((script_element
