@@ -35,7 +35,7 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: collab
+      app: ${ZED_SERVICE_NAME}
   template:
     metadata:
       labels:
