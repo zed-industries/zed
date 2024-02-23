@@ -5,7 +5,7 @@ use std::{
     ops::{Add, Sub},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BoundsTree<U: Default + Clone + Debug> {
     root: Option<usize>,
     nodes: Vec<Node<U>>,
@@ -17,11 +17,13 @@ where
     U: Clone + Debug + PartialOrd + Add<U, Output = U> + Sub<Output = U> + Half + Default,
 {
     pub fn new() -> Self {
-        BoundsTree {
-            root: None,
-            nodes: Vec::new(),
-            stack: Vec::new(),
-        }
+        BoundsTree::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.root = None;
+        self.nodes.clear();
+        self.stack.clear();
     }
 
     pub fn insert(&mut self, new_bounds: Bounds<U>) -> u32 {

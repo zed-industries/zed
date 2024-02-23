@@ -1,6 +1,6 @@
 use crate::{
-    point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, EntityId, Hsla, Pixels,
-    Point, ScaledPixels, StackingOrder,
+    point, AtlasTextureId, AtlasTile, Bounds, BoundsTree, ContentMask, Corners, Edges, EntityId,
+    Hsla, Pixels, Point, ScaledPixels, StackingOrder,
 };
 use collections::{BTreeMap, FxHashSet};
 use std::{fmt::Debug, iter::Peekable, slice};
@@ -37,9 +37,6 @@ impl From<ViewId> for EntityId {
 
 #[derive(Default)]
 pub(crate) struct Scene {
-    last_layer: Option<(StackingOrder, LayerId)>,
-    layers_by_order: BTreeMap<StackingOrder, LayerId>,
-    orders_by_layer: BTreeMap<LayerId, StackingOrder>,
     pub(crate) shadows: Vec<Shadow>,
     pub(crate) quads: Vec<Quad>,
     pub(crate) paths: Vec<Path<ScaledPixels>>,
@@ -47,13 +44,11 @@ pub(crate) struct Scene {
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
     pub(crate) surfaces: Vec<Surface>,
+    bounds_tree: BoundsTree<ScaledPixels>,
 }
 
 impl Scene {
     pub fn clear(&mut self) {
-        self.last_layer = None;
-        self.layers_by_order.clear();
-        self.orders_by_layer.clear();
         self.shadows.clear();
         self.quads.clear();
         self.paths.clear();
@@ -61,6 +56,7 @@ impl Scene {
         self.monochrome_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.bounds_tree.clear();
     }
 
     pub fn paths(&self) -> &[Path<ScaledPixels>] {
@@ -93,7 +89,11 @@ impl Scene {
         }
     }
 
-    pub(crate) fn insert(&mut self, order: &StackingOrder, primitive: impl Into<Primitive>) {
+    pub(crate) fn insert(
+        &mut self,
+        order: &StackingOrder,
+        primitive: impl Into<Primitive>,
+    ) -> Option<u32> {
         let primitive = primitive.into();
         let clipped_bounds = primitive
             .bounds()
@@ -101,153 +101,108 @@ impl Scene {
         if clipped_bounds.size.width <= ScaledPixels(0.)
             || clipped_bounds.size.height <= ScaledPixels(0.)
         {
-            return;
+            return None;
         }
 
-        let layer_id = self.layer_id_for_order(order);
+        let order = u32::MAX - self.bounds_tree.insert(clipped_bounds);
         match primitive {
             Primitive::Shadow(mut shadow) => {
-                shadow.layer_id = layer_id;
+                shadow.order = order;
                 self.shadows.push(shadow);
             }
             Primitive::Quad(mut quad) => {
-                quad.layer_id = layer_id;
+                quad.order = order;
                 self.quads.push(quad);
             }
             Primitive::Path(mut path) => {
-                path.layer_id = layer_id;
+                path.order = order;
                 path.id = PathId(self.paths.len());
                 self.paths.push(path);
             }
             Primitive::Underline(mut underline) => {
-                underline.layer_id = layer_id;
+                underline.order = order;
                 self.underlines.push(underline);
             }
             Primitive::MonochromeSprite(mut sprite) => {
-                sprite.layer_id = layer_id;
+                sprite.order = order;
                 self.monochrome_sprites.push(sprite);
             }
             Primitive::PolychromeSprite(mut sprite) => {
-                sprite.layer_id = layer_id;
+                sprite.order = order;
                 self.polychrome_sprites.push(sprite);
             }
             Primitive::Surface(mut surface) => {
-                surface.layer_id = layer_id;
+                surface.order = order;
                 self.surfaces.push(surface);
             }
         }
-    }
 
-    fn layer_id_for_order(&mut self, order: &StackingOrder) -> LayerId {
-        if let Some((last_order, last_layer_id)) = self.last_layer.as_ref() {
-            if order == last_order {
-                return *last_layer_id;
-            }
-        }
-
-        let layer_id = if let Some(layer_id) = self.layers_by_order.get(order) {
-            *layer_id
-        } else {
-            let next_id = self.layers_by_order.len() as LayerId;
-            self.layers_by_order.insert(order.clone(), next_id);
-            self.orders_by_layer.insert(next_id, order.clone());
-            next_id
-        };
-        self.last_layer = Some((order.clone(), layer_id));
-        layer_id
+        Some(order)
     }
 
     pub fn reuse_views(&mut self, views: &FxHashSet<EntityId>, prev_scene: &mut Self) {
-        for shadow in prev_scene.shadows.drain(..) {
-            if views.contains(&shadow.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&shadow.layer_id];
-                self.insert(order, shadow);
-            }
-        }
+        todo!()
+        // for shadow in prev_scene.shadows.drain(..) {
+        //     if views.contains(&shadow.view_id.into()) {
+        //         let order = &prev_scene.orders_by_layer[&shadow.layer_id];
+        //         self.insert(order, shadow);
+        //     }
+        // }
 
-        for quad in prev_scene.quads.drain(..) {
-            if views.contains(&quad.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&quad.layer_id];
-                self.insert(order, quad);
-            }
-        }
+        // for quad in prev_scene.quads.drain(..) {
+        //     if views.contains(&quad.view_id.into()) {
+        //         let order = &prev_scene.orders_by_layer[&quad.layer_id];
+        //         self.insert(order, quad);
+        //     }
+        // }
 
-        for path in prev_scene.paths.drain(..) {
-            if views.contains(&path.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&path.layer_id];
-                self.insert(order, path);
-            }
-        }
+        // for path in prev_scene.paths.drain(..) {
+        //     if views.contains(&path.view_id.into()) {
+        //         let order = &prev_scene.orders_by_layer[&path.layer_id];
+        //         self.insert(order, path);
+        //     }
+        // }
 
-        for underline in prev_scene.underlines.drain(..) {
-            if views.contains(&underline.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&underline.layer_id];
-                self.insert(order, underline);
-            }
-        }
+        // for underline in prev_scene.underlines.drain(..) {
+        //     if views.contains(&underline.view_id.into()) {
+        //         let order = &prev_scene.orders_by_layer[&underline.layer_id];
+        //         self.insert(order, underline);
+        //     }
+        // }
 
-        for sprite in prev_scene.monochrome_sprites.drain(..) {
-            if views.contains(&sprite.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&sprite.layer_id];
-                self.insert(order, sprite);
-            }
-        }
+        // for sprite in prev_scene.monochrome_sprites.drain(..) {
+        //     if views.contains(&sprite.view_id.into()) {
+        //         let order = &prev_scene.orders_by_layer[&sprite.layer_id];
+        //         self.insert(order, sprite);
+        //     }
+        // }
 
-        for sprite in prev_scene.polychrome_sprites.drain(..) {
-            if views.contains(&sprite.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&sprite.layer_id];
-                self.insert(order, sprite);
-            }
-        }
+        // for sprite in prev_scene.polychrome_sprites.drain(..) {
+        //     if views.contains(&sprite.view_id.into()) {
+        //         let order = &prev_scene.orders_by_layer[&sprite.layer_id];
+        //         self.insert(order, sprite);
+        //     }
+        // }
 
-        for surface in prev_scene.surfaces.drain(..) {
-            if views.contains(&surface.view_id.into()) {
-                let order = &prev_scene.orders_by_layer[&surface.layer_id];
-                self.insert(order, surface);
-            }
-        }
+        // for surface in prev_scene.surfaces.drain(..) {
+        //     if views.contains(&surface.view_id.into()) {
+        //         let order = &prev_scene.orders_by_layer[&surface.layer_id];
+        //         self.insert(order, surface);
+        //     }
+        // }
     }
 
     pub fn finish(&mut self) {
-        let mut orders = vec![0; self.layers_by_order.len()];
-        for (ix, layer_id) in self.layers_by_order.values().enumerate() {
-            orders[*layer_id as usize] = ix as u32;
-        }
-
-        for shadow in &mut self.shadows {
-            shadow.order = orders[shadow.layer_id as usize];
-        }
-        self.shadows.sort_by_key(|shadow| shadow.order);
-
-        for quad in &mut self.quads {
-            quad.order = orders[quad.layer_id as usize];
-        }
-        self.quads.sort_by_key(|quad| quad.order);
-
-        for path in &mut self.paths {
-            path.order = orders[path.layer_id as usize];
-        }
-        self.paths.sort_by_key(|path| path.order);
-
-        for underline in &mut self.underlines {
-            underline.order = orders[underline.layer_id as usize];
-        }
-        self.underlines.sort_by_key(|underline| underline.order);
-
-        for monochrome_sprite in &mut self.monochrome_sprites {
-            monochrome_sprite.order = orders[monochrome_sprite.layer_id as usize];
-        }
-        self.monochrome_sprites.sort_by_key(|sprite| sprite.order);
-
-        for polychrome_sprite in &mut self.polychrome_sprites {
-            polychrome_sprite.order = orders[polychrome_sprite.layer_id as usize];
-        }
-        self.polychrome_sprites.sort_by_key(|sprite| sprite.order);
-
-        for surface in &mut self.surfaces {
-            surface.order = orders[surface.layer_id as usize];
-        }
-        self.surfaces.sort_by_key(|surface| surface.order);
+        self.shadows.sort_unstable_by_key(|shadow| shadow.order);
+        self.quads.sort_unstable_by_key(|quad| quad.order);
+        self.paths.sort_unstable_by_key(|path| path.order);
+        self.underlines
+            .sort_unstable_by_key(|underline| underline.order);
+        self.monochrome_sprites
+            .sort_unstable_by_key(|sprite| sprite.order);
+        self.polychrome_sprites
+            .sort_unstable_by_key(|sprite| sprite.order);
+        self.surfaces.sort_unstable_by_key(|surface| surface.order);
     }
 }
 
