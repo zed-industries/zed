@@ -1,8 +1,9 @@
-use crate::{ItemHandle, Pane};
+use crate::{workspace_settings::WorkspaceSettings, ItemHandle, Pane};
 use gpui::{
-    AnyView, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    div, AnyView, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
+use settings::Settings;
 use std::any::TypeId;
 use ui::{h_flex, prelude::*};
 use util::ResultExt;
@@ -34,6 +35,13 @@ pub struct StatusBar {
 
 impl Render for StatusBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if !WorkspaceSettings::get_global(cx)
+            .status_bar
+            .show_status_bar
+            .unwrap_or(true)
+        {
+            return div();
+        }
         h_flex()
             .w_full()
             .justify_between()

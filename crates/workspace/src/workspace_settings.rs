@@ -6,7 +6,7 @@ use settings::Settings;
 pub struct WorkspaceSettings {
     pub active_pane_magnification: f32,
     pub confirm_quit: bool,
-    pub show_call_status_icon: bool,
+    pub status_bar: StatusBarSettings,
     pub autosave: AutosaveSetting,
 }
 
@@ -22,6 +22,9 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub confirm_quit: Option<bool>,
+    /// Status bar settings.
+    ///
+    pub status_bar: Option<StatusBarSettings>,
     /// Whether or not to show the call status icon in the status bar.
     ///
     /// Default: true
@@ -30,6 +33,22 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct StatusBarSettings {
+    /// Whether or not to show the call status icon in the status bar.
+    ///
+    /// Default: true
+    pub show_status_bar: Option<bool>,
+    /// Whether or not to show the call status icon in the status bar.
+    ///
+    /// Default: true
+    pub show_share_feedback_icon: Option<bool>,
+    /// Whether or not to show the language selector in the status bar.
+    ///
+    /// Default: true
+    pub show_language_selector: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

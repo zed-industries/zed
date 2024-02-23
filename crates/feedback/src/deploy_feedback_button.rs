@@ -1,6 +1,7 @@
 use gpui::{Render, ViewContext, WeakView};
+use settings::Settings as _;
 use ui::{prelude::*, ButtonCommon, IconButton, IconName, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{item::ItemHandle, StatusItemView, Workspace, WorkspaceSettings};
 
 use crate::{feedback_modal::FeedbackModal, GiveFeedback};
 
@@ -18,6 +19,13 @@ impl DeployFeedbackButton {
 
 impl Render for DeployFeedbackButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if !WorkspaceSettings::get_global(cx)
+            .status_bar
+            .show_share_feedback_icon
+            .unwrap_or(true)
+        {
+            return ().into_any_element();
+        }
         let is_open = self
             .workspace
             .upgrade()
