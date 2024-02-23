@@ -9464,7 +9464,7 @@ fn include_text(server: &lsp::LanguageServer) -> bool {
 }
 
 async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
-    let marker = "ZED_LOGIN_SHELL_START";
+    let marker = "ZED_SHELL_START";
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
@@ -9488,26 +9488,29 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
 
-    if let Some(env_output_start) = stdout.find(marker) {
-        let mut parsed_env = HashMap::default();
-        let env_output = &stdout[env_output_start + marker.len()..];
-        for line in env_output.split_terminator('\0') {
-            if let Some(separator_index) = line.find('=') {
-                let key = line[..separator_index].to_string();
-                let value = line[separator_index + 1..].to_string();
-                parsed_env.insert(key, value);
-            }
-        }
-        Ok(parsed_env)
-    } else {
-        Err(anyhow!(
+    anyhow::ensure!(
+        output.status.success(),
+        "login shell exited with error {:?}",
+        output.status
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let env_output_start = stdout.find(marker).ok_or_else(|| {
+        anyhow!(
             "failed to parse output of `env` command in login shell: {}",
             stdout
-        ))
+        )
+    })?;
+
+    let mut parsed_env = HashMap::default();
+    let env_output = &stdout[env_output_start + marker.len()..];
+    for line in env_output.split_terminator('\0') {
+        if let Some(separator_index) = line.find('=') {
+            let key = line[..separator_index].to_string();
+            let value = line[separator_index + 1..].to_string();
+            parsed_env.insert(key, value);
+        }
     }
+    Ok(parsed_env)
 }

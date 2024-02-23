@@ -583,7 +583,7 @@ impl LanguageRegistry {
                     // the login shell to be set on our process.
                     login_shell_env_loaded.await;
 
-                    let binary = get_or_install_binary(
+                    get_or_install_binary(
                         this,
                         &adapter,
                         language,
@@ -592,12 +592,7 @@ impl LanguageRegistry {
                         container_dir,
                         lsp_binary_statuses,
                     )
-                    .await;
-
-                    match binary {
-                        Ok(binary) => binary,
-                        Err(err) => anyhow::bail!("{err}"),
-                    }
+                    .await?
                 };
 
                 if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
@@ -765,7 +760,7 @@ async fn get_or_install_binary(
     cx: &AsyncAppContext,
     container_dir: Arc<Path>,
     lsp_binary_statuses: LspBinaryStatusSender,
-) -> Result<LanguageServerBinary, Arc<anyhow::Error>> {
+) -> Result<LanguageServerBinary> {
     let entry = registry
         .lsp_binary_paths
         .lock()
@@ -789,7 +784,7 @@ async fn get_or_install_binary(
         })
         .clone();
 
-    entry.await
+    entry.await.map_err(|err| anyhow!("{:?}", err))
 }
 
 async fn get_binary(
