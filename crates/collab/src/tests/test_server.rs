@@ -482,6 +482,7 @@ impl TestServer {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
             blob_store_client: None,
+            clickhouse_client: None,
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
@@ -499,6 +500,11 @@ impl TestServer {
                 blob_store_access_key: None,
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
+                clickhouse_url: None,
+                clickhouse_user: None,
+                clickhouse_password: None,
+                clickhouse_database: None,
+                zed_client_checksum_seed: None,
             },
         })
     }

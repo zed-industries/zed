@@ -15,7 +15,6 @@ use ai::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use client::telemetry::AssistantKind;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
@@ -52,6 +51,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{
     prelude::*,

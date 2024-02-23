@@ -360,6 +360,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry_events",
  "theme",
  "tiktoken-rs",
  "ui",
@@ -1902,6 +1903,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "clickhouse"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0875e527e299fc5f4faba42870bf199a39ab0bb2dbba1b8aef0a2151451130f"
+dependencies = [
+ "bstr",
+ "bytes 1.5.0",
+ "clickhouse-derive",
+ "clickhouse-rs-cityhash-sys",
+ "futures 0.3.28",
+ "hyper",
+ "hyper-tls",
+ "lz4",
+ "sealed",
+ "serde",
+ "static_assertions",
+ "thiserror",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "clickhouse-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18af5425854858c507eec70f7deb4d5d8cec4216fcb086283a78872387281ea5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "clickhouse-rs-cityhash-sys"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4baf9d4700a28d6cb600e17ed6ae2b43298a5245f1f76b4eab63027ebfd592b9"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "client"
 version = "0.1.0"
 dependencies = [
@@ -1933,6 +1977,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "sysinfo",
+ "telemetry_events",
  "tempfile",
  "text",
  "thiserror",
@@ -2018,6 +2063,7 @@ dependencies = [
  "channel",
  "chrono",
  "clap 3.2.25",
+ "clickhouse",
  "client",
  "clock",
  "collab_ui",
@@ -2032,6 +2078,7 @@ dependencies = [
  "futures 0.3.28",
  "git",
  "gpui",
+ "hex",
  "hyper",
  "indoc",
  "language",
@@ -2062,8 +2109,10 @@ dependencies = [
  "serde_json",
  "settings",
  "sha-1 0.9.8",
+ "sha2 0.10.7",
  "smallvec",
  "sqlx",
+ "telemetry_events",
  "text",
  "theme",
  "time",
@@ -5256,6 +5305,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4"
+version = "1.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e9e2dd86df36ce760a60f6ff6ad526f7ba1f14ba0356f8254fb6905e6494df1"
+dependencies = [
+ "libc",
+ "lz4-sys",
+]
+
+[[package]]
+name = "lz4-sys"
+version = "1.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57d27b317e207b10f69f5e75494119e391a96f48861ae870d1da6edac98ca900"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8177,6 +8246,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
+name = "sealed"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b5e421024b5e5edfbaa8e60ecf90bda9dbffc602dbb230e6028763f85f0c68c"
+dependencies = [
+ "heck 0.3.3",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "search"
 version = "0.1.0"
 dependencies = [
@@ -9373,6 +9454,14 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "telemetry_events"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "util",
 ]
 
 [[package]]
