@@ -2225,7 +2225,6 @@ impl EditorElement {
                 .width;
             let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
 
-            let editor_view = cx.view().clone();
             let (scroll_width, blocks) = cx.with_element_context(|cx| {
              cx.with_element_id(Some("editor_blocks"), |cx| {
                 self.layout_blocks(
@@ -2241,7 +2240,6 @@ impl EditorElement {
                     &style,
                     &line_layouts,
                     editor,
-                    editor_view,
                     cx,
                 )
             })
@@ -2436,7 +2434,6 @@ impl EditorElement {
         style: &EditorStyle,
         line_layouts: &[LineWithInvisibles],
         editor: &mut Editor,
-        editor_view: View<Editor>,
         cx: &mut ElementContext,
     ) -> (Pixels, Vec<BlockLayout>) {
         let mut block_id = 0;
@@ -2477,7 +2474,6 @@ impl EditorElement {
                         em_width,
                         block_id,
                         max_width: scroll_width.max(text_width),
-                        view: editor_view.clone(),
                         editor_style: &self.style,
                     })
                 }

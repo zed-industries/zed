@@ -378,7 +378,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
-        let language = crate::languages::language(
+        let language = crate::language(
             "typescript",
             tree_sitter_typescript::language_typescript(),
             None,

@@ -415,9 +415,9 @@ dependencies = [
 
 [[package]]
 name = "async-compression"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc2d0cfb2a7388d34f590e76686704c494ed7aaceed62ee1ba35cbf363abc2a5"
+checksum = "a116f46a969224200a0a97f29cfd4c50e7534e4b4826bd23ea2c3c533039c82c"
 dependencies = [
  "flate2",
  "futures-core",
@@ -692,9 +692,9 @@ checksum = "fbb36e985947064623dbd357f727af08ffd077f93d696782f3c56365fa2e2799"
 
 [[package]]
 name = "async-trait"
-version = "0.1.73"
+version = "0.1.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc00ceb34980c03614e35a3a4e218276a0a824e911d07651cd0d858a51e8c0f0"
+checksum = "c980ee35e870bd1a4d2c8294d4c04d0499e67bca1e4b5cefcc693c2fa00caea9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3313,7 +3313,6 @@ dependencies = [
  "fuzzy",
  "gpui",
  "log",
- "picker",
  "project",
  "serde",
  "serde_json",
@@ -4799,7 +4798,7 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
- "shellexpand",
+ "shellexpand 2.1.2",
  "util",
  "workspace",
 ]
@@ -4992,6 +4991,89 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "languages"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "async-trait",
+ "collections",
+ "feature_flags",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "lazy_static",
+ "log",
+ "lsp",
+ "node_runtime",
+ "parking_lot 0.11.2",
+ "project",
+ "regex",
+ "rope",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings",
+ "shellexpand 3.1.0",
+ "smol",
+ "task",
+ "text",
+ "theme",
+ "toml 0.8.10",
+ "tree-sitter",
+ "tree-sitter-astro",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-c-sharp",
+ "tree-sitter-clojure",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-dart",
+ "tree-sitter-dockerfile",
+ "tree-sitter-elixir",
+ "tree-sitter-elm",
+ "tree-sitter-embedded-template",
+ "tree-sitter-erlang",
+ "tree-sitter-gitcommit",
+ "tree-sitter-gleam",
+ "tree-sitter-glsl",
+ "tree-sitter-go",
+ "tree-sitter-gomod",
+ "tree-sitter-gowork",
+ "tree-sitter-haskell",
+ "tree-sitter-hcl",
+ "tree-sitter-heex",
+ "tree-sitter-html",
+ "tree-sitter-json 0.20.0",
+ "tree-sitter-lua",
+ "tree-sitter-markdown",
+ "tree-sitter-nix",
+ "tree-sitter-nu",
+ "tree-sitter-ocaml",
+ "tree-sitter-php",
+ "tree-sitter-prisma-io",
+ "tree-sitter-proto",
+ "tree-sitter-purescript",
+ "tree-sitter-python",
+ "tree-sitter-racket",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-scheme",
+ "tree-sitter-svelte",
+ "tree-sitter-toml",
+ "tree-sitter-typescript",
+ "tree-sitter-uiua",
+ "tree-sitter-vue",
+ "tree-sitter-yaml",
+ "tree-sitter-zig",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -7339,7 +7421,6 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
- "editor",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
@@ -7801,9 +7882,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed"
-version = "8.0.0"
+version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1e7d90385b59f0a6bf3d3b757f3ca4ece2048265d70db20a2016043d4509a40"
+checksum = "a82c0bbc10308ed323529fd3c1dce8badda635aa319a5ff0e6466f33b8101e3f"
 dependencies = [
  "rust-embed-impl",
  "rust-embed-utils",
@@ -7812,9 +7893,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed-impl"
-version = "8.0.0"
+version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3d8c6fd84090ae348e63a84336b112b5c3918b3bf0493a581f7bd8ee623c29"
+checksum = "6227c01b1783cdfee1bcf844eb44594cd16ec71c35305bf1c9fb5aade2735e16"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7825,9 +7906,9 @@ dependencies = [
 
 [[package]]
 name = "rust-embed-utils"
-version = "8.0.0"
+version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "873feff8cb7bf86fdf0a71bb21c95159f4e4a37dd7a4bd1855a940909b583ada"
+checksum = "8cb0a25bfbb2d4b4402179c2cf030387d9990857ce08a32592c6238db9fa8665"
 dependencies = [
  "globset",
  "sha2 0.10.7",
@@ -8542,6 +8623,15 @@ name = "shellexpand"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ccc8076840c4da029af4f87e4e8daeb0fca6b87bbb02e10cb60b791450e11e4"
+dependencies = [
+ "dirs 4.0.0",
+]
+
+[[package]]
+name = "shellexpand"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da03fa3b94cc19e3ebfc88c4229c49d8f08cdbd1228870a45f0ffdf84988e14b"
 dependencies = [
  "dirs 4.0.0",
 ]
@@ -9381,7 +9471,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "db",
- "editor",
  "fs",
  "futures 0.3.28",
  "fuzzy",
@@ -9456,7 +9545,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "shellexpand",
+ "shellexpand 2.1.2",
  "smallvec",
  "smol",
  "task",
@@ -9491,7 +9580,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "shellexpand",
+ "shellexpand 2.1.2",
  "smallvec",
  "smol",
  "task",
@@ -12006,6 +12095,7 @@ dependencies = [
  "language",
  "language_selector",
  "language_tools",
+ "languages",
  "lazy_static",
  "libc",
  "log",
@@ -12039,7 +12129,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "shellexpand",
+ "shellexpand 2.1.2",
  "simplelog",
  "smallvec",
  "smol",
@@ -12054,52 +12144,7 @@ dependencies = [
  "thiserror",
  "tiny_http",
  "toml 0.8.10",
- "tree-sitter",
- "tree-sitter-astro",
- "tree-sitter-bash",
- "tree-sitter-c",
- "tree-sitter-c-sharp",
- "tree-sitter-clojure",
- "tree-sitter-cpp",
- "tree-sitter-css",
- "tree-sitter-dart",
- "tree-sitter-dockerfile",
- "tree-sitter-elixir",
- "tree-sitter-elm",
- "tree-sitter-embedded-template",
- "tree-sitter-erlang",
- "tree-sitter-gitcommit",
- "tree-sitter-gleam",
- "tree-sitter-glsl",
- "tree-sitter-go",
- "tree-sitter-gomod",
- "tree-sitter-gowork",
- "tree-sitter-haskell",
- "tree-sitter-hcl",
- "tree-sitter-heex",
- "tree-sitter-html",
- "tree-sitter-json 0.20.0",
- "tree-sitter-lua",
- "tree-sitter-markdown",
- "tree-sitter-nix",
- "tree-sitter-nu",
- "tree-sitter-ocaml",
- "tree-sitter-php",
- "tree-sitter-prisma-io",
- "tree-sitter-proto",
- "tree-sitter-purescript",
- "tree-sitter-python",
- "tree-sitter-racket",
- "tree-sitter-ruby",
  "tree-sitter-rust",
- "tree-sitter-scheme",
- "tree-sitter-svelte",
- "tree-sitter-toml",
- "tree-sitter-typescript",
- "tree-sitter-uiua",
- "tree-sitter-vue",
- "tree-sitter-yaml",
- "tree-sitter-zig",
  "unindent",
  "url",
  "urlencoding",

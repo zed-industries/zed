@@ -2,8 +2,8 @@ use super::{
     fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
     Highlights,
 };
-use crate::MultiBufferSnapshot;
 use language::{Chunk, Point};
+use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 

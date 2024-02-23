@@ -55,7 +55,7 @@ mod zig;
 // 6. If the language has injections add an injections.scm query file
 
 #[derive(RustEmbed)]
-#[folder = "src/languages"]
+#[folder = "src/"]
 #[exclude = "*.rs"]
 struct LanguageDir;
 

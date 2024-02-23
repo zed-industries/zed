@@ -1584,7 +1584,6 @@ mod tests {
     }
 
     fn editor_blocks(editor: &View<Editor>, cx: &mut WindowContext) -> Vec<(u32, SharedString)> {
-        let editor_view = editor.clone();
         editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             snapshot
@@ -1593,7 +1592,6 @@ mod tests {
                 .filter_map(|(ix, (row, block))| {
                     let name: SharedString = match block {
                         TransformBlock::Custom(block) => cx.with_element_context({
-                            let editor_view = editor_view.clone();
                             |cx| -> Option<SharedString> {
                                 block
                                     .render(&mut BlockContext {
@@ -1604,7 +1602,6 @@ mod tests {
                                         em_width: px(0.),
                                         max_width: px(0.),
                                         block_id: ix,
-                                        view: editor_view,
                                         editor_style: &editor::EditorStyle::default(),
                                     })
                                     .inner_id()?

@@ -15,7 +15,6 @@ client.workspace = true
 collections.workspace = true
 # HACK: We're only depending on `copilot` here for `CommandPaletteFilter`.  See the attached comment on that type.
 copilot.workspace = true
-editor.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 picker.workspace = true
