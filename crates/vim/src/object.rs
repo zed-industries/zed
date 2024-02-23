@@ -6,7 +6,7 @@ use editor::{
     Bias, DisplayPoint,
 };
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
-use language::{char_kind, CharKind, Selection};
+use language::{char_kind, BufferSnapshot, CharKind, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -327,7 +327,136 @@ fn argument(
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
 
-    let result = buffer.comma_delimited_range_at(excerpt.map_offset_to_buffer(offset), around)?;
+    fn comma_delimited_range_at(
+        buffer: &BufferSnapshot,
+        mut offset: usize,
+        include_comma: bool,
+    ) -> Option<Range<usize>> {
+        // Seek to the first non-whitespace character
+        offset += buffer
+            .chars_at(offset)
+            .take_while(|c| c.is_whitespace())
+            .map(char::len_utf8)
+            .sum::<usize>();
+
+        let bracket_filter = |open: Range<usize>, close: Range<usize>| {
+            // Filter out empty ranges
+            if open.end == close.start {
+                return false;
+            }
+
+            // If the cursor is outside the brackets, ignore them
+            if open.start == offset || close.end == offset {
+                return false;
+            }
+
+            // TODO: Is there any better way to filter out string brackets?
+            // Used to filter out string brackets
+            return matches!(
+                buffer.chars_at(open.start).next(),
+                Some('(' | '[' | '{' | '<' | '|')
+            );
+        };
+
+        // Find the brackets containing the cursor
+        let (open_bracket, close_bracket) =
+            buffer.innermost_enclosing_bracket_ranges(offset..offset, Some(&bracket_filter))?;
+
+        let inner_bracket_range = open_bracket.end..close_bracket.start;
+
+        let layer = buffer.syntax_layer_at(offset)?;
+        let node = layer.node();
+        let mut cursor = node.walk();
+
+        // Loop until we find the smallest node whose parent covers the bracket range. This node is the argument in the parent argument list
+        let mut parent_covers_bracket_range = false;
+        loop {
+            let node = cursor.node();
+            let range = node.byte_range();
+            let covers_bracket_range =
+                range.start == open_bracket.start && range.end == close_bracket.end;
+            if parent_covers_bracket_range && !covers_bracket_range {
+                break;
+            }
+            parent_covers_bracket_range = covers_bracket_range;
+
+            // Unable to find a child node with a parent that covers the bracket range, so no argument to select
+            if !cursor.goto_first_child_for_byte(offset).is_some() {
+                return None;
+            }
+        }
+
+        let mut argument_node = cursor.node();
+
+        // If the child node is the open bracket, move to the next sibling.
+        if argument_node.byte_range() == open_bracket {
+            if !cursor.goto_next_sibling() {
+                return Some(inner_bracket_range);
+            }
+            argument_node = cursor.node();
+        }
+        // While the child node is the close bracket or a comma, move to the previous sibling
+        while argument_node.byte_range() == close_bracket || argument_node.kind() == "," {
+            if !cursor.goto_previous_sibling() {
+                return Some(inner_bracket_range);
+            }
+            argument_node = cursor.node();
+            if argument_node.byte_range() == open_bracket {
+                return Some(inner_bracket_range);
+            }
+        }
+
+        // The start and end of the argument range, defaulting to the start and end of the argument node
+        let mut start = argument_node.start_byte();
+        let mut end = argument_node.end_byte();
+
+        let mut needs_surrounding_comma = include_comma;
+
+        // Seek backwards to find the start of the argument - either the previous comma or the opening bracket.
+        // We do this because multiple nodes can represent a single argument, such as with rust `vec![a.b.c, d.e.f]`
+        while cursor.goto_previous_sibling() {
+            let prev = cursor.node();
+
+            if prev.start_byte() < open_bracket.end {
+                start = open_bracket.end;
+                break;
+            } else if prev.kind() == "," {
+                if needs_surrounding_comma {
+                    start = prev.start_byte();
+                    needs_surrounding_comma = false;
+                }
+                break;
+            } else if prev.start_byte() < start {
+                start = prev.start_byte();
+            }
+        }
+
+        // Do the same for the end of the argument, extending to next comma or the end of the argument list
+        while cursor.goto_next_sibling() {
+            let next = cursor.node();
+
+            if next.end_byte() > close_bracket.start {
+                end = close_bracket.start;
+                break;
+            } else if next.kind() == "," {
+                if needs_surrounding_comma {
+                    // Select up to the beginning of the next argument if there is one, otherwise to the end of the comma
+                    if let Some(next_arg) = next.next_sibling() {
+                        end = next_arg.start_byte();
+                    } else {
+                        end = next.end_byte();
+                    }
+                }
+                break;
+            } else if next.end_byte() > end {
+                end = next.end_byte();
+            }
+        }
+
+        Some(start..end)
+    }
+
+    let result = comma_delimited_range_at(buffer, excerpt.map_offset_to_buffer(offset), around)?;
 
     if excerpt.contains_buffer_range(result.clone()) {
         let result = excerpt.map_range_from_buffer(result);
