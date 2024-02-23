@@ -87,7 +87,7 @@ members = [
     "crates/welcome",
     "crates/workspace",
     "crates/zed",
-    "crates/zed_actions",
+    "crates/zed_actions", "crates/languages",
 ]
 default-members = ["crates/zed"]
 resolver = "2"
