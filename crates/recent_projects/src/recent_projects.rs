@@ -213,15 +213,20 @@ impl PickerDelegate for RecentProjectsDelegate {
             .get(self.selected_index())
             .zip(self.workspace.upgrade())
         {
-            let (_, workspace_location) = &self.workspaces[selected_match.candidate_id];
+            let (candidate_workspace_id, candidate_workspace_location) =
+                &self.workspaces[selected_match.candidate_id];
             let replace_current_window = !secondary;
             workspace
                 .update(cx, |workspace, cx| {
-                    workspace.open_workspace_for_paths(
-                        replace_current_window,
-                        workspace_location.paths().as_ref().clone(),
-                        cx,
-                    )
+                    if workspace.database_id() != *candidate_workspace_id {
+                        workspace.open_workspace_for_paths(
+                            replace_current_window,
+                            candidate_workspace_location.paths().as_ref().clone(),
+                            cx,
+                        )
+                    } else {
+                        Task::ready(Ok(()))
+                    }
                 })
                 .detach_and_log_err(cx);
             cx.emit(DismissEvent);
