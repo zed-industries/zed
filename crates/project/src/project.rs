@@ -2833,7 +2833,6 @@ impl Project {
         let project_settings =
             ProjectSettings::get(Some((worktree_id.to_proto() as usize, Path::new(""))), cx);
         let lsp = project_settings.lsp.get(&adapter.name.0);
-        // TODO: here is where we want to get the `binary_path` override options too
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
         let server_id = pending_server.server_id;
