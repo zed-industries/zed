@@ -196,6 +196,8 @@ blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
+core-foundation = { version = "0.9.3", features = ["with-uuid"] }
+core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
 env_logger = "0.9"
 futures = "0.3"
