@@ -201,6 +201,8 @@ fn show_hover(
                 .map(|range| {
                     let hover_range = range
                         .to_offset(&snapshot.buffer_snapshot);
+                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+                    // use an inclusive range here to check if we should dismiss the popover
                     (hover_range.start..=hover_range.end)
                         .contains(&multibuffer_offset)
                 })
