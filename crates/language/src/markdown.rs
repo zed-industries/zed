@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
-use gpui::{px, FontStyle, FontWeight, HighlightStyle, UnderlineStyle};
+use gpui::{px, FontStyle, FontWeight, HighlightStyle, UnderlineStyle, StrikethroughStyle};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
 /// Parsed Markdown content.
@@ -42,6 +42,13 @@ impl MarkdownHighlight {
 
                 if style.underline {
                     highlight.underline = Some(UnderlineStyle {
+                        thickness: px(1.),
+                        ..Default::default()
+                    });
+                }
+
+                if style.strikethrough {
+                    highlight.strikethrough = Some(StrikethroughStyle {
                         thickness: px(1.),
                         ..Default::default()
                     });
