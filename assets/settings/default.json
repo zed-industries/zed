@@ -64,7 +64,7 @@
   "show_completion_documentation": true,
   // The debounce delay before re-querying the language server for completion
   // documentation when not included in original completion list.
-  "completion_documentation_secondary_query_debounce": 300,
+  "completion_documentation_secondary_query_debounce": 0,
   // Whether to show wrap guides in the editor. Setting this to true will
   // show a guide at the 'preferred_line_length' value if softwrap is set to
   // 'preferred_line_length', and will show any additional guides as specified
@@ -339,9 +339,7 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
@@ -450,12 +448,7 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [
-          ".env",
-          "env",
-          ".venv",
-          "venv"
-        ],
+        "directories": [".env", "env", ".venv", "venv"],
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
