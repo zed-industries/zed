@@ -14,6 +14,7 @@ mod c;
 mod clojure;
 mod csharp;
 mod css;
+mod dart;
 mod deno;
 mod dockerfile;
 mod elixir;
@@ -120,6 +121,7 @@ pub fn init(
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
         ("zig", tree_sitter_zig::language()),
+        ("dart", tree_sitter_dart::language()),
     ]);
 
     let language = |asset_dir_name: &'static str, adapters| {
@@ -326,6 +328,7 @@ pub fn init(
             node_runtime.clone(),
         ))],
     );
+    language("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 }
 
 #[cfg(any(test, feature = "test-support"))]

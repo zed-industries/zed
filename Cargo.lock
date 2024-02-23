@@ -6905,6 +6905,7 @@ dependencies = [
  "regex",
  "release_channel",
  "rpc",
+ "runnable",
  "schemars",
  "serde",
  "serde_derive",
@@ -7759,6 +7760,48 @@ dependencies = [
  "spki 0.7.2",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "runnable"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
+ "gpui",
+ "parking_lot 0.11.2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "smol",
+ "util",
+]
+
+[[package]]
+name = "runnables_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui",
+ "log",
+ "picker",
+ "project",
+ "runnable",
+ "schemars",
+ "serde",
+ "serde_json",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -9384,6 +9427,7 @@ dependencies = [
  "ordered-float 2.10.0",
  "procinfo",
  "rand 0.8.5",
+ "runnable",
  "schemars",
  "serde",
  "serde_derive",
@@ -9418,6 +9462,7 @@ dependencies = [
  "procinfo",
  "project",
  "rand 0.8.5",
+ "runnable",
  "search",
  "serde",
  "serde_derive",
@@ -10100,6 +10145,15 @@ dependencies = [
 name = "tree-sitter-css"
 version = "0.19.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-css?rev=769203d0f9abe1a9a691ac2b9fe4bb4397a73c51#769203d0f9abe1a9a691ac2b9fe4bb4397a73c51"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-dart"
+version = "0.0.1"
+source = "git+https://github.com/agent3bood/tree-sitter-dart?rev=48934e3bf757a9b78f17bdfaa3e2b4284656fdc7#48934e3bf757a9b78f17bdfaa3e2b4284656fdc7"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -11688,6 +11742,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "project",
+ "runnable",
  "schemars",
  "serde",
  "serde_derive",
@@ -11948,6 +12003,8 @@ dependencies = [
  "rope",
  "rpc",
  "rsa 0.4.0",
+ "runnable",
+ "runnables_ui",
  "rust-embed",
  "schemars",
  "search",
@@ -11977,6 +12034,7 @@ dependencies = [
  "tree-sitter-clojure",
  "tree-sitter-cpp",
  "tree-sitter-css",
+ "tree-sitter-dart",
  "tree-sitter-dockerfile",
  "tree-sitter-elixir",
  "tree-sitter-elm",
