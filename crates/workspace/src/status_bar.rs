@@ -37,7 +37,7 @@ impl Render for StatusBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if !WorkspaceSettings::get_global(cx)
             .status_bar
-            .show_status_bar
+            .visible
             .unwrap_or(true)
         {
             return div();
