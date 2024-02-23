@@ -2,6 +2,7 @@ mod event_coalescer;
 
 use crate::TelemetrySettings;
 use chrono::{DateTime, Utc};
+use clock::SystemClock;
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
 use once_cell::sync::Lazy;
@@ -27,6 +28,7 @@ use util::TryFutureExt;
 use self::event_coalescer::EventCoalescer;
 
 pub struct Telemetry {
+    clock: Arc<dyn SystemClock>,
     http_client: Arc<ZedHttpClient>,
     executor: BackgroundExecutor,
     state: Arc<Mutex<TelemetryState>>,
@@ -71,7 +73,11 @@ static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
 });
 
 impl Telemetry {
-    pub fn new(client: Arc<ZedHttpClient>, cx: &mut AppContext) -> Arc<Self> {
+    pub fn new(
+        clock: Arc<dyn SystemClock>,
+        client: Arc<ZedHttpClient>,
+        cx: &mut AppContext,
+    ) -> Arc<Self> {
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
 
@@ -120,6 +126,7 @@ impl Telemetry {
 
         // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
+            clock,
             http_client: client,
             executor: cx.background_executor().clone(),
             state,
@@ -361,7 +368,7 @@ impl Telemetry {
             }));
         }
 
-        let date_time = Utc::now();
+        let date_time = self.clock.utc_now();
 
         let milliseconds_since_first_event = match state.first_event_date_time {
             Some(first_event_date_time) => {
@@ -487,25 +494,30 @@ impl Telemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+    use clock::FakeSystemClock;
     use gpui::TestAppContext;
-    use telemetry_events::Event;
     use util::http::FakeHttpClient;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
         init_test(cx);
+        let clock = Arc::new(FakeSystemClock::new(
+            Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
+        ));
         let http = FakeHttpClient::with_200_response();
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
         cx.update(|cx| {
-            let telemetry = Telemetry::new(http, cx);
+            let telemetry = Telemetry::new(clock.clone(), http, cx);
 
             telemetry.state.lock().max_queue_size = 4;
             telemetry.start(installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
 
+            let first_date_time = clock.utc_now();
             let operation = "test".to_string();
 
             let event = telemetry.report_app_event(operation.clone());
@@ -517,6 +529,12 @@ mod tests {
             );
             assert_eq!(telemetry.state.lock().events_queue.len(), 1);
             assert!(telemetry.state.lock().flush_events_task.is_some());
+            assert_eq!(
+                telemetry.state.lock().first_event_date_time,
+                Some(first_date_time)
+            );
+
+            clock.advance(chrono::Duration::milliseconds(100));
 
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
@@ -527,6 +545,12 @@ mod tests {
             );
             assert_eq!(telemetry.state.lock().events_queue.len(), 2);
             assert!(telemetry.state.lock().flush_events_task.is_some());
+            assert_eq!(
+                telemetry.state.lock().first_event_date_time,
+                Some(first_date_time)
+            );
+
+            clock.advance(chrono::Duration::milliseconds(100));
 
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
@@ -537,6 +561,12 @@ mod tests {
             );
             assert_eq!(telemetry.state.lock().events_queue.len(), 3);
             assert!(telemetry.state.lock().flush_events_task.is_some());
+            assert_eq!(
+                telemetry.state.lock().first_event_date_time,
+                Some(first_date_time)
+            );
+
+            clock.advance(chrono::Duration::milliseconds(100));
 
             // Adding a 4th event should cause a flush
             let event = telemetry.report_app_event(operation.clone());
@@ -554,17 +584,21 @@ mod tests {
     #[gpui::test]
     async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx);
+        let clock = Arc::new(FakeSystemClock::new(
+            Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
+        ));
         let http = FakeHttpClient::with_200_response();
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
         cx.update(|cx| {
-            let telemetry = Telemetry::new(http, cx);
+            let telemetry = Telemetry::new(clock.clone(), http, cx);
             telemetry.state.lock().max_queue_size = 4;
             telemetry.start(installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
 
+            let first_date_time = clock.utc_now();
             let operation = "test".to_string();
 
             let event = telemetry.report_app_event(operation.clone());
@@ -576,6 +610,10 @@ mod tests {
             );
             assert_eq!(telemetry.state.lock().events_queue.len(), 1);
             assert!(telemetry.state.lock().flush_events_task.is_some());
+            assert_eq!(
+                telemetry.state.lock().first_event_date_time,
+                Some(first_date_time)
+            );
 
             let duration = Duration::from_millis(1);
 
