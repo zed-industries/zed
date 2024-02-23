@@ -1,4 +1,3 @@
-use assistant::assistant_settings::AssistantSettings;
 use assistant::{AssistantPanel, InlineAssist};
 use editor::{Editor, EditorSettings};
 
@@ -9,6 +8,7 @@ use gpui::{
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
+use workspace::WorkspaceSettings;
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -121,15 +121,22 @@ impl Render for QuickActionBar {
                 }
             },
         );
+        let mut assistant_icon = true;
+        if let Some(elements) = WorkspaceSettings::get_global(cx)
+            .status_bar
+            .clone()
+            .elements
+        {
+            // Now that we have elements, check cursor_position
+            assistant_icon = elements.assistant.unwrap_or(true);
+        }
 
         h_flex()
             .id("quick action bar")
             .gap_2()
             .children(inlay_hints_button)
             .children(search_button)
-            .when(AssistantSettings::get_global(cx).button, |bar| {
-                bar.child(assistant_button)
-            })
+            .when(assistant_icon, |bar| bar.child(assistant_button))
     }
 }
 

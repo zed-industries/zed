@@ -26,7 +26,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, Pane, Workspace,
+    DraggedTab, Pane, Workspace, WorkspaceSettings,
 };
 
 use anyhow::Result;
@@ -689,6 +689,15 @@ impl Panel for TerminalPanel {
     }
 
     fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
+        if let Some(elements) = WorkspaceSettings::get_global(_cx)
+            .status_bar
+            .clone()
+            .elements
+        {
+            if !elements.terminal.unwrap_or(true) {
+                return None;
+            }
+        }
         Some(IconName::Terminal)
     }
 

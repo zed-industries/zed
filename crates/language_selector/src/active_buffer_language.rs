@@ -38,13 +38,18 @@ impl ActiveBufferLanguage {
 
 impl Render for ActiveBufferLanguage {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if !WorkspaceSettings::get_global(cx)
+        if let Some(elements) = WorkspaceSettings::get_global(cx)
             .status_bar
-            .show_language_selector
-            .unwrap_or(true)
+            .clone()
+            .elements
         {
-            return div();
+            // Now that we have elements, check cursor_position
+            if !elements.language_selector.unwrap_or(true) {
+                // If cursor_position is true or None (defaulting to true)
+                return div();
+            }
         }
+
         div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()

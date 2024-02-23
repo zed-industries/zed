@@ -6,8 +6,9 @@ use gpui::{
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
+use settings::Settings as _;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
+use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace, WorkspaceSettings};
 
 use crate::{Deploy, ProjectDiagnosticsEditor};
 
@@ -22,6 +23,17 @@ pub struct DiagnosticIndicator {
 
 impl Render for DiagnosticIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if let Some(elements) = WorkspaceSettings::get_global(cx)
+            .status_bar
+            .clone()
+            .elements
+        {
+            // Now that we have elements, check cursor_position
+            if !elements.diagnostics.unwrap_or(true) {
+                // If cursor_position is true or None (defaulting to true)
+                return div();
+            }
+        }
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_flex().map(|this| {
                 this.child(

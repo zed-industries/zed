@@ -20,6 +20,7 @@ use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPat
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::ItemSettings;
+use workspace::WorkspaceSettings;
 
 use std::fmt::Write;
 use std::{
@@ -1235,7 +1236,18 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if let Some(elements) = WorkspaceSettings::get_global(cx)
+            .status_bar
+            .clone()
+            .elements
+        {
+            // Now that we have elements, check cursor_position
+            if !elements.cursor_position.unwrap_or(true) {
+                // If cursor_position is true or None (defaulting to true)
+                return div();
+            }
+        }
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",

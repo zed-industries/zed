@@ -31,7 +31,7 @@ use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    Workspace,
+    Workspace, WorkspaceSettings,
 };
 
 const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
@@ -1638,7 +1638,18 @@ impl Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
+        if let Some(elements) = WorkspaceSettings::get_global(cx)
+            .status_bar
+            .clone()
+            .elements
+        {
+            // Now that we have elements, check cursor_position
+            if !elements.project.unwrap_or(true) {
+                // If cursor_position is true or None (defaulting to true)
+                return None;
+            }
+        }
         Some(ui::IconName::FileTree)
     }
 
