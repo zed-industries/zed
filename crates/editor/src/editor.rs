@@ -1686,10 +1686,6 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
-    pub fn pane(&self, cx: &AppContext) -> Option<View<Pane>> {
-        self.workspace()?.read(cx).pane_for(&self.handle.upgrade()?)
-    }
-
     pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
         self.buffer().read(cx).title(cx)
     }
