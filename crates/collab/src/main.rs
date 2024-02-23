@@ -66,8 +66,9 @@ async fn main() -> Result<()> {
                         .merge(collab::api::events::router())
                         .layer(Extension(state.clone())),
                 )
-                .layer(TraceLayer::new_for_http()
-                    .on_response(trace::DefaultOnResponse::new().level(Level::INFO))
+                .layer(
+                    TraceLayer::new_for_http()
+                        .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
                 );
 
             axum::Server::from_tcp(listener)?
