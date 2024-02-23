@@ -228,6 +228,7 @@ pub struct LanguageServerPromptRequest {
     pub level: PromptLevel,
     pub message: String,
     pub actions: Vec<MessageActionItem>,
+    pub lsp_name: String,
     response_channel: Sender<MessageActionItem>,
 }
 
@@ -3010,6 +3011,7 @@ impl Project {
             cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
         let language_server = pending_server.task.await?;
 
+        let name = language_server.name();
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                 let adapter = adapter.clone();
@@ -3148,8 +3150,10 @@ impl Project {
         language_server
             .on_request::<lsp::request::ShowMessageRequest, _, _>({
                 let this = this.clone();
+                let name = name.to_string();
                 move |params, mut cx| {
                     let this = this.clone();
+                    let name = name.to_string();
                     async move {
                         if let Some(actions) = params.actions {
                             let (tx, mut rx) = smol::channel::bounded(1);
@@ -3162,6 +3166,7 @@ impl Project {
                                 message: params.message,
                                 actions,
                                 response_channel: tx,
+                                lsp_name: name.clone(),
                             };
 
                             if let Ok(_) = this.update(&mut cx, |_, cx| {
@@ -3199,6 +3204,7 @@ impl Project {
                 }
             })
             .detach();
+
         let mut initialization_options = adapter.adapter.initialization_options();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
