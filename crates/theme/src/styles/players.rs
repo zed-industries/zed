@@ -122,11 +122,11 @@ impl PlayerColors {
 
 impl PlayerColors {
     pub fn local(&self) -> PlayerColor {
-        *self.0.first().unwrap()
+        self.0.first().copied().unwrap_or_default()
     }
 
     pub fn absent(&self) -> PlayerColor {
-        *self.0.last().unwrap()
+        self.0.last().copied().unwrap_or_default()
     }
 
     pub fn read_only(&self) -> PlayerColor {
@@ -139,7 +139,9 @@ impl PlayerColors {
     }
 
     pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
-        let len = self.0.len() - 1;
-        self.0[(participant_index as usize % len) + 1]
+        if self.0.len() <= 1 {
+            return self.local();
+        }
+        self.0[1 + participant_index as usize % (self.0.len() - 1)]
     }
 }
