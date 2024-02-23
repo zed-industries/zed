@@ -2,27 +2,64 @@ use anyhow::Result;
 use lazy_static::lazy_static;
 use time::{OffsetDateTime, UtcOffset};
 
-/// Formats a timestamp, which respects the user's 12-hour clock preference/current locale.
+/// Formats a timestamp, which respects the user's date and time preferences/custom format.
 pub fn format_localized_timestamp(
     reference: OffsetDateTime,
     timestamp: OffsetDateTime,
     timezone: UtcOffset,
 ) -> String {
-    format_timestamp(reference, timestamp, timezone, is_12_hour_clock())
+    #[cfg(target_os = "macos")]
+    {
+        let timestamp_local = timestamp.to_offset(timezone);
+        let reference_local = reference.to_offset(timezone);
+        let reference_local_date = reference_local.date();
+        let timestamp_local_date = timestamp_local.date();
+
+        let native_fmt = if timestamp_local_date == reference_local_date {
+            macos::format_time(&timestamp)
+        } else if reference_local_date.previous_day() == Some(timestamp_local_date) {
+            macos::format_time(&timestamp).map(|t| format!("yesterday at {}", t).to_string())
+        } else {
+            macos::format_date(&timestamp)
+        };
+        native_fmt.unwrap_or_else(|_| format_timestamp_fallback(reference, timestamp, timezone))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        //todo!(linux) respect user's date/time preferences
+        //todo!(windows) respect user's date/time preferences
+        format_timestamp_fallback(reference, timestamp, timezone)
+    }
 }
 
-/// Formats a timestamp, which is either in 12-hour or 24-hour clock format.
-pub fn format_timestamp(
+fn format_timestamp_fallback(
     reference: OffsetDateTime,
     timestamp: OffsetDateTime,
     timezone: UtcOffset,
-    is_12_hour_clock: bool,
+) -> String {
+    lazy_static! {
+        static ref CURRENT_LOCALE: String =
+            sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
+    }
+    let is_12_hour_time = is_12_hour_time_by_locale(CURRENT_LOCALE.as_str());
+    format_timestamp_naive(reference, timestamp, timezone, is_12_hour_time)
+}
+
+/// Formats a timestamp, which is either in 12-hour or 24-hour clock format.
+/// Note:
+/// This function does not respect the user's date and time preferences.
+/// This should only be used as a fallback mechanism when the os time formatting fails.
+pub fn format_timestamp_naive(
+    reference: OffsetDateTime,
+    timestamp: OffsetDateTime,
+    timezone: UtcOffset,
+    is_12_hour_time: bool,
 ) -> String {
     let timestamp_local = timestamp.to_offset(timezone);
     let timestamp_local_hour = timestamp_local.hour();
     let timestamp_local_minute = timestamp_local.minute();
 
-    let (hour, meridiem) = if is_12_hour_clock {
+    let (hour, meridiem) = if is_12_hour_time {
         let meridiem = if timestamp_local_hour >= 12 {
             "pm"
         } else {
@@ -73,17 +110,8 @@ pub fn format_timestamp(
     }
 }
 
-/// Returns true if the users configuration is set to 12-hour clock,
-/// or if the locale is recognized as a 12-hour clock locale.
-pub fn is_12_hour_clock() -> bool {
-    IS_12_HOUR_CLOCK_USER_PREFERENCE
-        .as_ref()
-        .map(|c| *c)
-        .unwrap_or_else(|_| is_12_hour_clock_by_locale(CURRENT_LOCALE.as_str()))
-}
-
 /// Returns true if the locale is recognized as a 12-hour clock locale.
-pub fn is_12_hour_clock_by_locale(locale: &str) -> bool {
+fn is_12_hour_time_by_locale(locale: &str) -> bool {
     [
         "es-MX", "es-CO", "es-SV", "es-NI",
         "es-HN", // Mexico, Colombia, El Salvador, Nicaragua, Honduras
@@ -99,35 +127,67 @@ pub fn is_12_hour_clock_by_locale(locale: &str) -> bool {
     .contains(&locale)
 }
 
-lazy_static! {
-    static ref CURRENT_LOCALE: String =
-        sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
-    static ref IS_12_HOUR_CLOCK_USER_PREFERENCE: Result<bool> =
-        read_is_12_hour_clock_from_user_preferences();
-}
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::*;
+    use core_foundation::base::TCFType;
+    use core_foundation::date::CFAbsoluteTime;
+    use core_foundation::string::CFString;
+    use core_foundation_sys::date_formatter::CFDateFormatterCreateStringWithAbsoluteTime;
+    use core_foundation_sys::date_formatter::CFDateFormatterRef;
+    use core_foundation_sys::locale::CFLocaleRef;
+    use core_foundation_sys::{
+        base::kCFAllocatorDefault,
+        date_formatter::{
+            kCFDateFormatterNoStyle, kCFDateFormatterShortStyle, CFDateFormatterCreate,
+        },
+        locale::CFLocaleCopyCurrent,
+    };
 
-fn read_is_12_hour_clock_from_user_preferences() -> Result<bool> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut file_path = util::paths::HOME.clone();
-        file_path.push("Library");
-        file_path.push("Preferences");
-        file_path.push(".GlobalPreferences.plist");
-
-        let value: plist::Value = plist::from_file(file_path.as_path())?;
-        if let Some(root_dict) = value.as_dictionary() {
-            if let Some(plist::Value::Boolean(force_12_hour_format)) =
-                root_dict.get("AppleICUForce12HourTime")
-            {
-                return Ok(*force_12_hour_format);
-            }
-        }
-        Ok(false)
+    pub fn format_time(timestamp: &time::OffsetDateTime) -> Result<String> {
+        format_with_date_formatter(timestamp, TIME_FORMATTER.with(|f| *f))
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        //todo!(linux)
-        Err(anyhow::Error::msg("Not implemented"))
+
+    pub fn format_date(timestamp: &time::OffsetDateTime) -> Result<String> {
+        format_with_date_formatter(timestamp, DATE_FORMATTER.with(|f| *f))
+    }
+
+    fn format_with_date_formatter(
+        timestamp: &time::OffsetDateTime,
+        fmt: CFDateFormatterRef,
+    ) -> Result<String> {
+        const UNIX_TO_CF_ABSOLUTE_TIME_OFFSET: i64 = 978307200;
+        // Convert timestamp to macOS absolute time
+        let timestamp_macos = timestamp.unix_timestamp() - UNIX_TO_CF_ABSOLUTE_TIME_OFFSET;
+        let cf_absolute_time = timestamp_macos as CFAbsoluteTime;
+        unsafe {
+            let s = CFDateFormatterCreateStringWithAbsoluteTime(
+                kCFAllocatorDefault,
+                fmt,
+                cf_absolute_time,
+            );
+            Ok(CFString::wrap_under_create_rule(s).to_string())
+        }
+    }
+
+    thread_local! {
+        static CURRENT_LOCALE: CFLocaleRef = unsafe { CFLocaleCopyCurrent() };
+        static TIME_FORMATTER: CFDateFormatterRef = unsafe {
+            CFDateFormatterCreate(
+                kCFAllocatorDefault,
+                CURRENT_LOCALE.with(|locale| *locale),
+                kCFDateFormatterNoStyle,
+                kCFDateFormatterShortStyle,
+            )
+        };
+        static DATE_FORMATTER: CFDateFormatterRef = unsafe {
+            CFDateFormatterCreate(
+                kCFAllocatorDefault,
+                CURRENT_LOCALE.with(|locale| *locale),
+                kCFDateFormatterShortStyle,
+                kCFDateFormatterNoStyle,
+            )
+        };
     }
 }
 
@@ -141,7 +201,7 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone(), false),
+            format_timestamp_naive(reference, timestamp, test_timezone(), false),
             "15:30"
         );
     }
@@ -152,7 +212,7 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone(), true),
+            format_timestamp_naive(reference, timestamp, test_timezone(), true),
             "03:30 pm"
         );
     }
@@ -163,7 +223,7 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 9, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone(), true),
+            format_timestamp_naive(reference, timestamp, test_timezone(), true),
             "yesterday at 09:00 am"
         );
     }
@@ -174,7 +234,7 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 20, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone(), true),
+            format_timestamp_naive(reference, timestamp, test_timezone(), true),
             "yesterday at 08:00 pm"
         );
     }
@@ -185,7 +245,7 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 18, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone(), true),
+            format_timestamp_naive(reference, timestamp, test_timezone(), true),
             "yesterday at 06:00 pm"
         );
     }
@@ -196,7 +256,7 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 11, 23, 55, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone(), true),
+            format_timestamp_naive(reference, timestamp, test_timezone(), true),
             "yesterday at 11:55 pm"
         );
     }
@@ -207,7 +267,7 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 1, 20, 0, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone(), true),
+            format_timestamp_naive(reference, timestamp, test_timezone(), true),
             "yesterday at 08:00 pm"
         );
     }
@@ -218,7 +278,7 @@ mod tests {
         let timestamp = create_offset_datetime(1990, 4, 10, 20, 20, 0);
 
         assert_eq!(
-            format_timestamp(reference, timestamp, test_timezone(), true),
+            format_timestamp_naive(reference, timestamp, test_timezone(), true),
             "04/10/1990"
         );
     }

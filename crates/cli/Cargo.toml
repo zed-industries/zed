@@ -25,4 +25,4 @@ util.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"
 core-services = "0.2"
-plist.workspace = true
+plist = "1.3"

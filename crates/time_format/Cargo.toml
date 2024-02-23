@@ -17,4 +17,5 @@ time.workspace = true
 util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-plist.workspace = true
+core-foundation = "0.9.4"
+core-foundation-sys = "0.8.6"
