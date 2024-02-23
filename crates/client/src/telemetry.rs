@@ -2,7 +2,7 @@ mod event_coalescer;
 
 use crate::TelemetrySettings;
 use chrono::{DateTime, Utc};
-use futures::Future;
+use futures::{AsyncReadExt, Future};
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -345,20 +345,6 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    fn milliseconds_since_first_event(self: &Arc<Self>, date_time: DateTime<Utc>) -> i64 {
-        let mut state = self.state.lock();
-
-        match state.first_event_date_time {
-            Some(first_event_date_time) => {
-                date_time.timestamp_millis() - first_event_date_time.timestamp_millis()
-            }
-            None => {
-                state.first_event_date_time = Some(date_time);
-                0
-            }
-        }
-    }
-
     fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
@@ -375,10 +361,22 @@ impl Telemetry {
             }));
         }
 
+        let date_time = Utc::now();
+
+        let milliseconds_since_first_event = match state.first_event_date_time {
+            Some(first_event_date_time) => {
+                date_time.timestamp_millis() - first_event_date_time.timestamp_millis()
+            }
+            None => {
+                state.first_event_date_time = Some(date_time);
+                0
+            }
+        };
+
         let signed_in = state.metrics_id.is_some();
         state.events_queue.push(EventWrapper {
             signed_in,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
+            milliseconds_since_first_event,
             event,
         });
 
@@ -415,7 +413,6 @@ impl Telemetry {
         let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
             return;
         };
-        dbg!("FLUSHING EVENTS");
 
         let this = self.clone();
         self.executor
@@ -432,7 +429,6 @@ impl Telemetry {
                             file.write(b"\n")?;
                         }
                     }
-                    dbg!("BEFOER");
 
                     {
                         let state = this.state.lock();
@@ -459,7 +455,6 @@ impl Telemetry {
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
 
-                    dbg!("AFTER");
                     let mut summer = Sha256::new();
                     summer.update(checksum_seed);
                     summer.update(&json_bytes);
@@ -477,9 +472,12 @@ impl Telemetry {
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());
 
-                    let response = this.http_client.send(request?).await?;
+                    let mut response = this.http_client.send(request?).await?;
                     if response.status() != 200 {
                         log::error!("Failed to send events: HTTP {:?}", response.status());
+                        let mut buf = Vec::new();
+                        response.body_mut().read_to_end(&mut buf).await.unwrap();
+                        String::from_utf8_lossy(&buf);
                     }
                     anyhow::Ok(())
                 }

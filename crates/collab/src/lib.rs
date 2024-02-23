@@ -58,11 +58,24 @@ impl From<serde_json::Error> for Error {
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {
-            Error::Http(code, message) => (code, message).into_response(),
+            Error::Http(code, message) => {
+                log::error!("HTTP error {}: {}", code, &message);
+                (code, message).into_response()
+            }
             Error::Database(error) => {
+                log::error!(
+                    "HTTP error {}: {}",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &error
+                );
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
             Error::Internal(error) => {
+                log::error!(
+                    "HTTP error {}: {}",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &error
+                );
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
         }
