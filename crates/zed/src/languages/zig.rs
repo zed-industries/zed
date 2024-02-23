@@ -3,10 +3,13 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
+use gpui::{AsyncAppContext, Task};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
 use std::env::consts::{ARCH, OS};
+use std::ffi::OsString;
+use std::sync::Arc;
 use std::{any::Any, path::PathBuf};
 use util::async_maybe;
 use util::github::latest_github_release;
@@ -42,6 +45,25 @@ impl LspAdapter for ZlsAdapter {
         };
 
         Ok(Box::new(version) as Box<_>)
+    }
+
+    fn check_if_user_installed(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        let delegate = delegate.clone();
+
+        Some(cx.spawn(|cx| async move {
+            match cx.update(|cx| delegate.which_command(OsString::from("zls"), cx)) {
+                Ok(task) => task.await.map(|(path, env)| LanguageServerBinary {
+                    path,
+                    arguments: vec![],
+                    env: Some(env),
+                }),
+                Err(_) => None,
+            }
+        }))
     }
 
     async fn fetch_server_binary(
