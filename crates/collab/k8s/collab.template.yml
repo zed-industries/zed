@@ -90,6 +90,11 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
+            - name: ZED_CLIENT_CHECKSUM_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: zed-client
+                  key: checksum-seed
             - name: LIVE_KIT_SERVER
               valueFrom:
                 secretKeyRef:
