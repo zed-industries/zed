@@ -10402,8 +10402,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-purescript"
-version = "1.0.0"
-source = "git+https://github.com/ivanmoreau/tree-sitter-purescript?rev=a37140f0c7034977b90faa73c94fcb8a5e45ed08#a37140f0c7034977b90faa73c94fcb8a5e45ed08"
+version = "0.1.0"
+source = "git+https://github.com/postsolar/tree-sitter-purescript?rev=v0.1.0#0554811a512b9cec08b5a83ce9096eb22da18213"
 dependencies = [
  "cc",
  "tree-sitter",

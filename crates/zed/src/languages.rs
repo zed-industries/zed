@@ -106,7 +106,6 @@ pub fn init(
         ("php", tree_sitter_php::language_php()),
         ("prisma", tree_sitter_prisma_io::language()),
         ("proto", tree_sitter_proto::language()),
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
@@ -294,10 +293,6 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
-
-    // Produces a link error on linux due to duplicated `state_new` symbol
-    // todo!(linux): Restore purescript
-    #[cfg(not(target_os = "linux"))]
     language(
         "purescript",
         vec![Arc::new(purescript::PurescriptLspAdapter::new(
