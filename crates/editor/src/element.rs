@@ -727,6 +727,51 @@ impl EditorElement {
 
         let gutter_settings = EditorSettings::get_global(cx).gutter;
 
+        if let Some(indicator) = layout.code_actions_indicator.take() {
+            debug_assert!(gutter_settings.code_actions);
+            let mut button = indicator.button.into_any_element();
+            let available_space = size(
+                AvailableSpace::MinContent,
+                AvailableSpace::Definite(line_height),
+            );
+            let indicator_size = button.measure(available_space, cx);
+
+            let mut x = Pixels::ZERO;
+            let mut y = indicator.row as f32 * line_height - scroll_top;
+            // Center indicator.
+            x += (layout.gutter_dimensions.margin + layout.gutter_dimensions.left_padding
+                - indicator_size.width)
+                / 2.;
+            y += (line_height - indicator_size.height) / 2.;
+
+            button.draw(bounds.origin + point(x, y), available_space, cx);
+        }
+
+        for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
+            if let Some(fold_indicator) = fold_indicator {
+                debug_assert!(gutter_settings.folds);
+                let mut fold_indicator = fold_indicator.into_any_element();
+                let available_space = size(
+                    AvailableSpace::MinContent,
+                    AvailableSpace::Definite(line_height * 0.55),
+                );
+                let fold_indicator_size = fold_indicator.measure(available_space, cx);
+
+                let position = point(
+                    bounds.size.width - layout.gutter_dimensions.right_padding,
+                    ix as f32 * line_height - (scroll_top % line_height),
+                );
+                let centering_offset = point(
+                    (layout.gutter_dimensions.right_padding + layout.gutter_dimensions.margin
+                        - fold_indicator_size.width)
+                        / 2.,
+                    (line_height - fold_indicator_size.height) / 2.,
+                );
+                let origin = bounds.origin + position + centering_offset;
+                fold_indicator.draw(origin, available_space, cx);
+            }
+        }
+
         for (ix, line) in layout.line_numbers.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin
@@ -738,53 +783,6 @@ impl EditorElement {
                 line.paint(line_origin, line_height, cx).log_err();
             }
         }
-
-        cx.with_z_index(1, |cx| {
-            for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
-                if let Some(fold_indicator) = fold_indicator {
-                    debug_assert!(gutter_settings.folds);
-                    let mut fold_indicator = fold_indicator.into_any_element();
-                    let available_space = size(
-                        AvailableSpace::MinContent,
-                        AvailableSpace::Definite(line_height * 0.55),
-                    );
-                    let fold_indicator_size = fold_indicator.measure(available_space, cx);
-
-                    let position = point(
-                        bounds.size.width - layout.gutter_dimensions.right_padding,
-                        ix as f32 * line_height - (scroll_top % line_height),
-                    );
-                    let centering_offset = point(
-                        (layout.gutter_dimensions.right_padding + layout.gutter_dimensions.margin
-                            - fold_indicator_size.width)
-                            / 2.,
-                        (line_height - fold_indicator_size.height) / 2.,
-                    );
-                    let origin = bounds.origin + position + centering_offset;
-                    fold_indicator.draw(origin, available_space, cx);
-                }
-            }
-
-            if let Some(indicator) = layout.code_actions_indicator.take() {
-                debug_assert!(gutter_settings.code_actions);
-                let mut button = indicator.button.into_any_element();
-                let available_space = size(
-                    AvailableSpace::MinContent,
-                    AvailableSpace::Definite(line_height),
-                );
-                let indicator_size = button.measure(available_space, cx);
-
-                let mut x = Pixels::ZERO;
-                let mut y = indicator.row as f32 * line_height - scroll_top;
-                // Center indicator.
-                x += (layout.gutter_dimensions.margin + layout.gutter_dimensions.left_padding
-                    - indicator_size.width)
-                    / 2.;
-                y += (line_height - indicator_size.height) / 2.;
-
-                button.draw(bounds.origin + point(x, y), available_space, cx);
-            }
-        });
     }
 
     fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &LayoutState, cx: &mut ElementContext) {
@@ -928,6 +926,153 @@ impl EditorElement {
                     }
                 }
 
+                let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
+                for (participant_ix, (player_color, selections)) in
+                    layout.selections.iter().enumerate()
+                {
+                    for selection in selections {
+                        if selection.is_local && !selection.range.is_empty() {
+                            invisible_display_ranges.push(selection.range.clone());
+                        }
+
+                        if !selection.is_local || self.editor.read(cx).show_local_cursors(cx) {
+                            let cursor_position = selection.head;
+                            if layout
+                                .visible_display_row_range
+                                .contains(&cursor_position.row())
+                            {
+                                let cursor_row_layout = &layout.position_map.line_layouts
+                                    [(cursor_position.row() - start_row) as usize]
+                                    .line;
+                                let cursor_column = cursor_position.column() as usize;
+
+                                let cursor_character_x =
+                                    cursor_row_layout.x_for_index(cursor_column);
+                                let mut block_width = cursor_row_layout
+                                    .x_for_index(cursor_column + 1)
+                                    - cursor_character_x;
+                                if block_width == Pixels::ZERO {
+                                    block_width = layout.position_map.em_width;
+                                }
+                                let block_text = if let CursorShape::Block = selection.cursor_shape
+                                {
+                                    layout
+                                        .position_map
+                                        .snapshot
+                                        .chars_at(cursor_position)
+                                        .next()
+                                        .and_then(|(character, _)| {
+                                            let text = if character == '\n' {
+                                                SharedString::from(" ")
+                                            } else {
+                                                SharedString::from(character.to_string())
+                                            };
+                                            let len = text.len();
+                                            cx.text_system()
+                                                .shape_line(
+                                                    text,
+                                                    cursor_row_layout.font_size,
+                                                    &[TextRun {
+                                                        len,
+                                                        font: self.style.text.font(),
+                                                        color: self.style.background,
+                                                        background_color: None,
+                                                        strikethrough: None,
+                                                        underline: None,
+                                                    }],
+                                                )
+                                                .log_err()
+                                        })
+                                } else {
+                                    None
+                                };
+
+                                let x = cursor_character_x - layout.position_map.scroll_position.x;
+                                let y = cursor_position.row() as f32
+                                    * layout.position_map.line_height
+                                    - layout.position_map.scroll_position.y;
+                                if selection.is_newest {
+                                    self.editor.update(cx, |editor, _| {
+                                        editor.pixel_position_of_newest_cursor = Some(point(
+                                            text_bounds.origin.x + x + block_width / 2.,
+                                            text_bounds.origin.y
+                                                + y
+                                                + layout.position_map.line_height / 2.,
+                                        ))
+                                    });
+                                }
+
+                                let cursor = Cursor {
+                                    color: player_color.cursor,
+                                    block_width,
+                                    origin: point(x, y),
+                                    line_height: layout.position_map.line_height,
+                                    shape: selection.cursor_shape,
+                                    block_text,
+                                    cursor_name: selection.user_name.clone().map(|name| {
+                                        CursorName {
+                                            string: name,
+                                            color: self.style.background,
+                                            is_top_row: cursor_position.row() == 0,
+                                            z_index: (participant_ix % 256).try_into().unwrap(),
+                                        }
+                                    }),
+                                };
+                                cursor.paint(content_origin, cx);
+                            }
+                        }
+                    }
+                }
+
+                self.paint_redactions(text_bounds, &layout, cx);
+
+                for (ix, line_with_invisibles) in
+                    layout.position_map.line_layouts.iter().enumerate()
+                {
+                    let row = start_row + ix as u32;
+                    line_with_invisibles.draw(
+                        layout,
+                        row,
+                        content_origin,
+                        whitespace_setting,
+                        &invisible_display_ranges,
+                        cx,
+                    )
+                }
+
+                let corner_radius = 0.15 * layout.position_map.line_height;
+                for (player_color, selections) in &layout.selections {
+                    for selection in selections.into_iter() {
+                        self.paint_highlighted_range(
+                            selection.range.clone(),
+                            player_color.selection,
+                            corner_radius,
+                            corner_radius * 2.,
+                            layout,
+                            content_origin,
+                            text_bounds,
+                            cx,
+                        );
+
+                        if selection.is_local && !selection.range.is_empty() {
+                            invisible_display_ranges.push(selection.range.clone());
+                        }
+                    }
+                }
+
+                for (range, color) in &layout.highlighted_ranges {
+                    self.paint_highlighted_range(
+                        range.clone(),
+                        *color,
+                        Pixels::ZERO,
+                        line_end_overshoot,
+                        layout,
+                        content_origin,
+                        text_bounds,
+                        cx,
+                    );
+                }
+
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
                 cx.with_element_id(Some("folds"), |cx| {
                     let snapshot = &layout.position_map.snapshot;
@@ -1006,152 +1151,6 @@ impl EditorElement {
                             text_bounds,
                             cx,
                         );
-                    }
-                });
-
-                for (range, color) in &layout.highlighted_ranges {
-                    self.paint_highlighted_range(
-                        range.clone(),
-                        *color,
-                        Pixels::ZERO,
-                        line_end_overshoot,
-                        layout,
-                        content_origin,
-                        text_bounds,
-                        cx,
-                    );
-                }
-
-                let mut cursors = SmallVec::<[Cursor; 32]>::new();
-                let corner_radius = 0.15 * layout.position_map.line_height;
-                let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
-
-                for (participant_ix, (player_color, selections)) in
-                    layout.selections.iter().enumerate()
-                {
-                    for selection in selections.into_iter() {
-                        self.paint_highlighted_range(
-                            selection.range.clone(),
-                            player_color.selection,
-                            corner_radius,
-                            corner_radius * 2.,
-                            layout,
-                            content_origin,
-                            text_bounds,
-                            cx,
-                        );
-
-                        if selection.is_local && !selection.range.is_empty() {
-                            invisible_display_ranges.push(selection.range.clone());
-                        }
-
-                        if !selection.is_local || self.editor.read(cx).show_local_cursors(cx) {
-                            let cursor_position = selection.head;
-                            if layout
-                                .visible_display_row_range
-                                .contains(&cursor_position.row())
-                            {
-                                let cursor_row_layout = &layout.position_map.line_layouts
-                                    [(cursor_position.row() - start_row) as usize]
-                                    .line;
-                                let cursor_column = cursor_position.column() as usize;
-
-                                let cursor_character_x =
-                                    cursor_row_layout.x_for_index(cursor_column);
-                                let mut block_width = cursor_row_layout
-                                    .x_for_index(cursor_column + 1)
-                                    - cursor_character_x;
-                                if block_width == Pixels::ZERO {
-                                    block_width = layout.position_map.em_width;
-                                }
-                                let block_text = if let CursorShape::Block = selection.cursor_shape
-                                {
-                                    layout
-                                        .position_map
-                                        .snapshot
-                                        .chars_at(cursor_position)
-                                        .next()
-                                        .and_then(|(character, _)| {
-                                            let text = if character == '\n' {
-                                                SharedString::from(" ")
-                                            } else {
-                                                SharedString::from(character.to_string())
-                                            };
-                                            let len = text.len();
-                                            cx.text_system()
-                                                .shape_line(
-                                                    text,
-                                                    cursor_row_layout.font_size,
-                                                    &[TextRun {
-                                                        len,
-                                                        font: self.style.text.font(),
-                                                        color: self.style.background,
-                                                        background_color: None,
-                                                        strikethrough: None,
-                                                        underline: None,
-                                                    }],
-                                                )
-                                                .log_err()
-                                        })
-                                } else {
-                                    None
-                                };
-
-                                let x = cursor_character_x - layout.position_map.scroll_position.x;
-                                let y = cursor_position.row() as f32
-                                    * layout.position_map.line_height
-                                    - layout.position_map.scroll_position.y;
-                                if selection.is_newest {
-                                    self.editor.update(cx, |editor, _| {
-                                        editor.pixel_position_of_newest_cursor = Some(point(
-                                            text_bounds.origin.x + x + block_width / 2.,
-                                            text_bounds.origin.y
-                                                + y
-                                                + layout.position_map.line_height / 2.,
-                                        ))
-                                    });
-                                }
-
-                                cursors.push(Cursor {
-                                    color: player_color.cursor,
-                                    block_width,
-                                    origin: point(x, y),
-                                    line_height: layout.position_map.line_height,
-                                    shape: selection.cursor_shape,
-                                    block_text,
-                                    cursor_name: selection.user_name.clone().map(|name| {
-                                        CursorName {
-                                            string: name,
-                                            color: self.style.background,
-                                            is_top_row: cursor_position.row() == 0,
-                                            z_index: (participant_ix % 256).try_into().unwrap(),
-                                        }
-                                    }),
-                                });
-                            }
-                        }
-                    }
-                }
-
-                for (ix, line_with_invisibles) in
-                    layout.position_map.line_layouts.iter().enumerate()
-                {
-                    let row = start_row + ix as u32;
-                    line_with_invisibles.draw(
-                        layout,
-                        row,
-                        content_origin,
-                        whitespace_setting,
-                        &invisible_display_ranges,
-                        cx,
-                    )
-                }
-
-                cx.with_z_index(0, |cx| self.paint_redactions(text_bounds, &layout, cx));
-
-                cx.with_z_index(1, |cx| {
-                    for cursor in cursors {
-                        cursor.paint(content_origin, cx);
                     }
                 });
             },
@@ -1346,132 +1345,20 @@ impl EditorElement {
         let thumb_bounds = Bounds::from_corners(point(left, thumb_top), point(right, thumb_bottom));
 
         if layout.show_scrollbars {
+            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+
             cx.paint_quad(quad(
-                track_bounds,
+                thumb_bounds,
                 Corners::default(),
-                cx.theme().colors().scrollbar_track_background,
+                cx.theme().colors().scrollbar_thumb_background,
                 Edges {
                     top: Pixels::ZERO,
-                    right: Pixels::ZERO,
+                    right: px(1.),
                     bottom: Pixels::ZERO,
                     left: px(1.),
                 },
-                cx.theme().colors().scrollbar_track_border,
+                cx.theme().colors().scrollbar_thumb_border,
             ));
-            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-            if layout.is_singleton && scrollbar_settings.selections {
-                let start_anchor = Anchor::min();
-                let end_anchor = Anchor::max();
-                let background_ranges = self
-                    .editor
-                    .read(cx)
-                    .background_highlight_row_ranges::<BufferSearchHighlights>(
-                        start_anchor..end_anchor,
-                        &layout.position_map.snapshot,
-                        50000,
-                    );
-                for range in background_ranges {
-                    let start_y = y_for_row(range.start().row() as f32);
-                    let mut end_y = y_for_row(range.end().row() as f32);
-                    if end_y - start_y < px(1.) {
-                        end_y = start_y + px(1.);
-                    }
-                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
-                    cx.paint_quad(quad(
-                        bounds,
-                        Corners::default(),
-                        cx.theme().status().info,
-                        Edges {
-                            top: Pixels::ZERO,
-                            right: px(1.),
-                            bottom: Pixels::ZERO,
-                            left: px(1.),
-                        },
-                        cx.theme().colors().scrollbar_thumb_border,
-                    ));
-                }
-            }
-
-            if layout.is_singleton && scrollbar_settings.symbols_selections {
-                let selection_ranges = self.editor.read(cx).background_highlights_in_range(
-                    Anchor::min()..Anchor::max(),
-                    &layout.position_map.snapshot,
-                    cx.theme().colors(),
-                );
-                for hunk in selection_ranges {
-                    let start_display = Point::new(hunk.0.start.row(), 0)
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let end_display = Point::new(hunk.0.end.row(), 0)
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let start_y = y_for_row(start_display.row() as f32);
-                    let mut end_y = if hunk.0.start == hunk.0.end {
-                        y_for_row((end_display.row() + 1) as f32)
-                    } else {
-                        y_for_row((end_display.row()) as f32)
-                    };
-
-                    if end_y - start_y < px(1.) {
-                        end_y = start_y + px(1.);
-                    }
-                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
-
-                    cx.paint_quad(quad(
-                        bounds,
-                        Corners::default(),
-                        cx.theme().status().info,
-                        Edges {
-                            top: Pixels::ZERO,
-                            right: px(1.),
-                            bottom: Pixels::ZERO,
-                            left: px(1.),
-                        },
-                        cx.theme().colors().scrollbar_thumb_border,
-                    ));
-                }
-            }
-
-            if layout.is_singleton && scrollbar_settings.git_diff {
-                for hunk in layout
-                    .position_map
-                    .snapshot
-                    .buffer_snapshot
-                    .git_diff_hunks_in_range(0..(max_row.floor() as u32))
-                {
-                    let start_display = Point::new(hunk.buffer_range.start, 0)
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let end_display = Point::new(hunk.buffer_range.end, 0)
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let start_y = y_for_row(start_display.row() as f32);
-                    let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
-                        y_for_row((end_display.row() + 1) as f32)
-                    } else {
-                        y_for_row((end_display.row()) as f32)
-                    };
-
-                    if end_y - start_y < px(1.) {
-                        end_y = start_y + px(1.);
-                    }
-                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
-
-                    let color = match hunk.status() {
-                        DiffHunkStatus::Added => cx.theme().status().created,
-                        DiffHunkStatus::Modified => cx.theme().status().modified,
-                        DiffHunkStatus::Removed => cx.theme().status().deleted,
-                    };
-                    cx.paint_quad(quad(
-                        bounds,
-                        Corners::default(),
-                        color,
-                        Edges {
-                            top: Pixels::ZERO,
-                            right: px(1.),
-                            bottom: Pixels::ZERO,
-                            left: px(1.),
-                        },
-                        cx.theme().colors().scrollbar_thumb_border,
-                    ));
-                }
-            }
 
             if layout.is_singleton && scrollbar_settings.diagnostics {
                 let max_point = layout
@@ -1531,17 +1418,131 @@ impl EditorElement {
                 }
             }
 
+            if layout.is_singleton && scrollbar_settings.git_diff {
+                for hunk in layout
+                    .position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range(0..(max_row.floor() as u32))
+                {
+                    let start_display = Point::new(hunk.buffer_range.start, 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = Point::new(hunk.buffer_range.end, 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
+
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+
+                    let color = match hunk.status() {
+                        DiffHunkStatus::Added => cx.theme().status().created,
+                        DiffHunkStatus::Modified => cx.theme().status().modified,
+                        DiffHunkStatus::Removed => cx.theme().status().deleted,
+                    };
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        color,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
+            if layout.is_singleton && scrollbar_settings.symbols_selections {
+                let selection_ranges = self.editor.read(cx).background_highlights_in_range(
+                    Anchor::min()..Anchor::max(),
+                    &layout.position_map.snapshot,
+                    cx.theme().colors(),
+                );
+                for hunk in selection_ranges {
+                    let start_display = Point::new(hunk.0.start.row(), 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = Point::new(hunk.0.end.row(), 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if hunk.0.start == hunk.0.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
+
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        cx.theme().status().info,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
+            if layout.is_singleton && scrollbar_settings.selections {
+                let start_anchor = Anchor::min();
+                let end_anchor = Anchor::max();
+                let background_ranges = self
+                    .editor
+                    .read(cx)
+                    .background_highlight_row_ranges::<BufferSearchHighlights>(
+                        start_anchor..end_anchor,
+                        &layout.position_map.snapshot,
+                        50000,
+                    );
+                for range in background_ranges {
+                    let start_y = y_for_row(range.start().row() as f32);
+                    let mut end_y = y_for_row(range.end().row() as f32);
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        cx.theme().status().info,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
+                }
+            }
+
             cx.paint_quad(quad(
-                thumb_bounds,
+                track_bounds,
                 Corners::default(),
-                cx.theme().colors().scrollbar_thumb_background,
+                cx.theme().colors().scrollbar_track_background,
                 Edges {
                     top: Pixels::ZERO,
-                    right: px(1.),
+                    right: Pixels::ZERO,
                     bottom: Pixels::ZERO,
                     left: px(1.),
                 },
-                cx.theme().colors().scrollbar_thumb_border,
+                cx.theme().colors().scrollbar_track_border,
             ));
         }
 
