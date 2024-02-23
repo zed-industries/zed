@@ -9784,7 +9784,6 @@ impl Render for Editor {
                 status: cx.theme().status().clone(),
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
-                    font_weight: Some(FontWeight::BOLD),
                     ..HighlightStyle::default()
                 },
                 suggestions_style: HighlightStyle {
