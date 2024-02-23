@@ -10,10 +10,11 @@ path = "src/client.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
+test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+clock.workspace = true
 collections.workspace = true
 db.workspace = true
 gpui.workspace = true
@@ -51,6 +52,7 @@ uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
