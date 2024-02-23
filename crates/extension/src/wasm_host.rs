@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use fs::Fs;
 use futures::{
     channel::{mpsc::UnboundedSender, oneshot},
     future::BoxFuture,
@@ -25,13 +26,12 @@ pub mod wit {
     });
 }
 
-pub(crate) use wit::ZedExtension;
-
 pub(crate) struct WasmHost {
     engine: Engine,
     linker: Arc<wasmtime::component::Linker<WasmState>>,
     http_client: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
+    fs: Arc<dyn Fs>,
 }
 
 #[derive(Clone)]
@@ -46,18 +46,24 @@ pub(crate) struct WasmState {
 }
 
 type ExtensionCall = Box<
-    dyn Send + for<'a> FnOnce(&'a mut ZedExtension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
+    dyn Send
+        + for<'a> FnOnce(&'a mut wit::Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
 >;
 
 impl WasmHost {
-    pub fn new(http_client: Arc<dyn HttpClient>, node_runtime: Arc<dyn NodeRuntime>) -> Arc<Self> {
+    pub fn new(
+        fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
+        node_runtime: Arc<dyn NodeRuntime>,
+    ) -> Arc<Self> {
         let engine = WASM_ENGINE.clone();
         let mut linker = Linker::new(&engine);
         wasi_command::add_to_linker(&mut linker).unwrap();
-        wit::ZedExtension::add_to_linker(&mut linker, |state: &mut WasmState| state).unwrap();
+        wit::Extension::add_to_linker(&mut linker, |state: &mut WasmState| state).unwrap();
         Arc::new(Self {
             engine,
             linker: Arc::new(linker),
+            fs,
             http_client,
             node_runtime,
         })
@@ -81,7 +87,7 @@ impl WasmHost {
                 },
             );
             let (mut extension, instance) =
-                wit::ZedExtension::instantiate_async(&mut store, &component, &this.linker)
+                wit::Extension::instantiate_async(&mut store, &component, &this.linker)
                     .await
                     .context("failed to insantiate wasm component")?;
             let (tx, mut rx) = futures::channel::mpsc::unbounded::<ExtensionCall>();
@@ -104,7 +110,7 @@ impl WasmExtension {
         T: 'static + Send,
         Fn: 'static
             + Send
-            + for<'a> FnOnce(&'a mut ZedExtension, &'a mut Store<WasmState>) -> BoxFuture<'a, T>,
+            + for<'a> FnOnce(&'a mut wit::Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, T>,
     {
         let (return_tx, return_rx) = oneshot::channel();
         self.tx
@@ -125,10 +131,16 @@ impl WasmExtension {
 impl wit::HostWorktree for WasmState {
     async fn read_text_file(
         &mut self,
-        _worktree: Resource<wit::Worktree>,
-        _path: String,
+        worktree: Resource<project::worktree::Snapshot>,
+        path: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        Ok(Ok("the text file".into()))
+        let tree = self.table().get(&worktree)?;
+        if tree.entry_for_path(&path).is_none() {
+            return Ok(Err(format!("no such path '{path}'")));
+        }
+        let path = tree.absolutize(path.as_ref())?;
+        let content = self.host.fs.load(&path).await?;
+        Ok(Ok(content))
     }
 
     fn drop(&mut self, _worktree: Resource<wit::Worktree>) -> Result<()> {
@@ -138,7 +150,7 @@ impl wit::HostWorktree for WasmState {
 }
 
 #[async_trait]
-impl wit::ZedExtensionImports for WasmState {
+impl wit::ExtensionImports for WasmState {
     async fn npm_package_latest_version(
         &mut self,
         package_name: String,

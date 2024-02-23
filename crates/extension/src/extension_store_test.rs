@@ -1,5 +1,5 @@
 use crate::{
-    wasm_host::{WasmState, ZedExtension},
+    wasm_host::{wit, WasmState},
     ExtensionStore, LanguageManifestEntry, Manifest, ManifestEntry, ThemeManifestEntry,
 };
 use fs::FakeFs;
@@ -364,32 +364,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
     init_test(cx);
 
-    let example_dir = "example-extensions/rust-analyzer-example";
-
-    let output = std::process::Command::new("cargo")
-        .args(["component", "build"])
-        .current_dir(
-            std::env::current_dir()
-                .unwrap()
-                .join(example_dir)
-                .canonicalize()
-                .unwrap(),
-        )
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "failed to build component {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let wasm_bytes = std::fs::read(&PathBuf::from_iter([
-        example_dir,
-        "target/wasm32-wasi/debug/rust_analyzer_example.wasm",
-    ]))
-    .unwrap();
-
     let fs = FakeFs::new(cx.executor());
     let http_client = FakeHttpClient::create(|_| async move {
         Ok(Response::new(
@@ -416,16 +390,16 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
         "/the-extension-dir",
         json!({
             "installed": {
-                "rust-analyzer": {
+                "language_server_example": {
                     "extension.json": r#"{
                         "id": "rust-analyzer",
                         "name": "Zed Rust Analyzer",
                         "version": "2.0.0"
                     }"#,
                     "language_servers": {
-                        "rust-analyzer": {
+                        "example": {
                             "language_server.toml": r#"
-                                name = "rust-analyzer"
+                                name = "language"
                                 language = "Rust"
                             "#,
                             "language_server.wasm": "",
@@ -438,8 +412,8 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
     .await;
 
     fs.insert_file(
-        "/the-extension-dir/installed/rust-analyzer/language_servers/rust-analyzer/language_server.wasm",
-        wasm_bytes.clone(),
+        "/the-extension-dir/installed/language_server_example/language_servers/example/language_server.wasm",
+        compile_example_extension("language_server_example"),
     )
     .await;
 
@@ -465,7 +439,7 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
     fs.insert_tree(
         "/the-project-dir",
         json!({
-            "something": "foo"
+            ".tool-versions": "rust 1.73.0",
         }),
     )
     .await;
@@ -477,7 +451,7 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
 
     let command = extension
         .call(
-            |extension: &mut ZedExtension, store: &mut Store<WasmState>| {
+            |extension: &mut wit::Extension, store: &mut Store<WasmState>| {
                 async move {
                     let resource = store.data_mut().table().push(worktree).unwrap();
                     let command = extension
@@ -493,6 +467,29 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
         .unwrap();
 
     dbg!(&command);
+}
+
+fn compile_example_extension(name: &str) -> Vec<u8> {
+    let mut example_dir = std::env::current_dir().unwrap();
+    example_dir.extend(["example_extensions", name]);
+
+    let output = std::process::Command::new("cargo")
+        .args(["component", "build"])
+        .current_dir(&example_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "failed to build component {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut wasm_path = example_dir;
+    wasm_path.extend(["target", "wasm32-wasi", "debug", name]);
+    wasm_path.set_extension("wasm");
+
+    std::fs::read(&wasm_path).unwrap()
 }
 
 fn init_test(cx: &mut TestAppContext) {
