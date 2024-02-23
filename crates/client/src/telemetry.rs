@@ -474,7 +474,7 @@ impl Telemetry {
 
                     let request = http::Request::builder()
                         .method(Method::POST)
-                        .uri("http://localhost:8080/events")
+                        .uri(this.http_client.zed_api_url("/telemetry/events"))
                         .header("Content-Type", "text/plain")
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());

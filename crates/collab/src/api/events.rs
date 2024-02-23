@@ -16,7 +16,7 @@ use telemetry_events::{
 use crate::{AppState, Error, Result};
 
 pub fn router() -> Router {
-    Router::new().route("/events", post(post_events))
+    Router::new().route("/telemetry/events", post(post_events))
 }
 
 lazy_static! {
