@@ -2,7 +2,7 @@ mod event_coalescer;
 
 use crate::TelemetrySettings;
 use chrono::{DateTime, Utc};
-use futures::{AsyncReadExt, Future};
+use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -472,12 +472,9 @@ impl Telemetry {
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());
 
-                    let mut response = this.http_client.send(request?).await?;
+                    let response = this.http_client.send(request?).await?;
                     if response.status() != 200 {
                         log::error!("Failed to send events: HTTP {:?}", response.status());
-                        let mut buf = Vec::new();
-                        response.body_mut().read_to_end(&mut buf).await.unwrap();
-                        String::from_utf8_lossy(&buf);
                     }
                     anyhow::Ok(())
                 }
@@ -487,146 +484,127 @@ impl Telemetry {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use chrono::TimeZone;
-//     use gpui::TestAppContext;
-//     use telemetry_events::Event;
-//     use util::http::FakeHttpClient;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use telemetry_events::Event;
+    use util::http::FakeHttpClient;
 
-//     // #[gpui::test]
-//     // fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
-//     //     init_test(cx);
-//     //     let http = FakeHttpClient::with_200_response();
-//     //     let installation_id = Some("installation_id".to_string());
-//     //     let session_id = "session_id".to_string();
+    #[gpui::test]
+    fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
+        init_test(cx);
+        let http = FakeHttpClient::with_200_response();
+        let installation_id = Some("installation_id".to_string());
+        let session_id = "session_id".to_string();
 
-//     //     cx.update(|cx| {
-//     //         let telemetry = Telemetry::new(http, cx);
+        cx.update(|cx| {
+            let telemetry = Telemetry::new(http, cx);
 
-//     //         telemetry.state.lock().max_queue_size = 4;
-//     //         telemetry.start(installation_id, session_id, cx);
+            telemetry.state.lock().max_queue_size = 4;
+            telemetry.start(installation_id, session_id, cx);
 
-//     //         assert!(is_empty_state(&telemetry));
+            assert!(is_empty_state(&telemetry));
 
-//     //         let first_date_time = Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap();
-//     //         let operation = "test".to_string();
+            let operation = "test".to_string();
 
-//     //         let event = telemetry.report_app_event(operation.clone());
-//     //         assert_eq!(
-//     //             event,
-//     //             Event::App(AppEvent {
-//     //                 operation: operation.clone(),
-//     //             })
-//     //         );
-//     //         assert_eq!(telemetry.state.lock().events_queue.len(), 1);
-//     //         assert!(telemetry.state.lock().flush_events_task.is_some());
-//     //         assert_eq!(
-//     //             telemetry.state.lock().first_event_date_time,
-//     //             Some(first_date_time)
-//     //         );
+            let event = telemetry.report_app_event(operation.clone());
+            assert_eq!(
+                event,
+                Event::App(AppEvent {
+                    operation: operation.clone(),
+                })
+            );
+            assert_eq!(telemetry.state.lock().events_queue.len(), 1);
+            assert!(telemetry.state.lock().flush_events_task.is_some());
 
-//     //         let event = telemetry.report_app_event(operation.clone());
-//     //         assert_eq!(
-//     //             event,
-//     //             Event::App(AppEvent {
-//     //                 operation: operation.clone(),
-//     //             })
-//     //         );
-//     //         assert_eq!(telemetry.state.lock().events_queue.len(), 2);
-//     //         assert!(telemetry.state.lock().flush_events_task.is_some());
-//     //         assert_eq!(
-//     //             telemetry.state.lock().first_event_date_time,
-//     //             Some(first_date_time)
-//     //         );
+            let event = telemetry.report_app_event(operation.clone());
+            assert_eq!(
+                event,
+                Event::App(AppEvent {
+                    operation: operation.clone(),
+                })
+            );
+            assert_eq!(telemetry.state.lock().events_queue.len(), 2);
+            assert!(telemetry.state.lock().flush_events_task.is_some());
 
-//     //         let event = telemetry.report_app_event(operation.clone());
-//     //         assert_eq!(
-//     //             event,
-//     //             Event::App(AppEvent {
-//     //                 operation: operation.clone(),
-//     //             })
-//     //         );
-//     //         assert_eq!(telemetry.state.lock().events_queue.len(), 3);
-//     //         assert!(telemetry.state.lock().flush_events_task.is_some());
-//     //         assert_eq!(
-//     //             telemetry.state.lock().first_event_date_time,
-//     //             Some(first_date_time)
-//     //         );
+            let event = telemetry.report_app_event(operation.clone());
+            assert_eq!(
+                event,
+                Event::App(AppEvent {
+                    operation: operation.clone(),
+                })
+            );
+            assert_eq!(telemetry.state.lock().events_queue.len(), 3);
+            assert!(telemetry.state.lock().flush_events_task.is_some());
 
-//     //         // Adding a 4th event should cause a flush
-//     //         let event = telemetry.report_app_event(operation.clone());
-//     //         assert_eq!(
-//     //             event,
-//     //             Event::App(AppEvent {
-//     //                 operation: operation.clone(),
-//     //             })
-//     //         );
+            // Adding a 4th event should cause a flush
+            let event = telemetry.report_app_event(operation.clone());
+            assert_eq!(
+                event,
+                Event::App(AppEvent {
+                    operation: operation.clone(),
+                })
+            );
 
-//     //         assert!(is_empty_state(&telemetry));
-//     //     });
-//     // }
+            assert!(is_empty_state(&telemetry));
+        });
+    }
 
-//     // #[gpui::test]
-//     // async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
-//     //     init_test(cx);
-//     //     let http = FakeHttpClient::with_200_response();
-//     //     let installation_id = Some("installation_id".to_string());
-//     //     let session_id = "session_id".to_string();
+    #[gpui::test]
+    async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        init_test(cx);
+        let http = FakeHttpClient::with_200_response();
+        let installation_id = Some("installation_id".to_string());
+        let session_id = "session_id".to_string();
 
-//     //     cx.update(|cx| {
-//     //         let telemetry = Telemetry::new(http, cx);
-//     //         telemetry.state.lock().max_queue_size = 4;
-//     //         telemetry.start(installation_id, session_id, cx);
+        cx.update(|cx| {
+            let telemetry = Telemetry::new(http, cx);
+            telemetry.state.lock().max_queue_size = 4;
+            telemetry.start(installation_id, session_id, cx);
 
-//     //         assert!(is_empty_state(&telemetry));
+            assert!(is_empty_state(&telemetry));
 
-//     //         let first_date_time = Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap();
-//     //         let operation = "test".to_string();
+            let operation = "test".to_string();
 
-//     //         let event = telemetry.report_app_event(operation.clone());
-//     //         assert_eq!(
-//     //             event,
-//     //             Event::App(AppEvent {
-//     //                 operation: operation.clone(),
-//     //             })
-//     //         );
-//     //         assert_eq!(telemetry.state.lock().events_queue.len(), 1);
-//     //         assert!(telemetry.state.lock().flush_events_task.is_some());
-//     //         assert_eq!(
-//     //             telemetry.state.lock().first_event_date_time,
-//     //             Some(first_date_time)
-//     //         );
+            let event = telemetry.report_app_event(operation.clone());
+            assert_eq!(
+                event,
+                Event::App(AppEvent {
+                    operation: operation.clone(),
+                })
+            );
+            assert_eq!(telemetry.state.lock().events_queue.len(), 1);
+            assert!(telemetry.state.lock().flush_events_task.is_some());
 
-//     //         let duration = Duration::from_millis(1);
+            let duration = Duration::from_millis(1);
 
-//     //         // Test 1 millisecond before the flush interval limit is met
-//     //         executor.advance_clock(FLUSH_INTERVAL - duration);
+            // Test 1 millisecond before the flush interval limit is met
+            executor.advance_clock(FLUSH_INTERVAL - duration);
 
-//     //         assert!(!is_empty_state(&telemetry));
+            assert!(!is_empty_state(&telemetry));
 
-//     //         // Test the exact moment the flush interval limit is met
-//     //         executor.advance_clock(duration);
+            // Test the exact moment the flush interval limit is met
+            executor.advance_clock(duration);
 
-//     //         assert!(is_empty_state(&telemetry));
-//     //     });
-//     // }
+            assert!(is_empty_state(&telemetry));
+        });
+    }
 
-//     // TODO:
-//     // Test settings
-//     // Update FakeHTTPClient to keep track of the number of requests and assert on it
+    // TODO:
+    // Test settings
+    // Update FakeHTTPClient to keep track of the number of requests and assert on it
 
-//     fn init_test(cx: &mut TestAppContext) {
-//         cx.update(|cx| {
-//             let settings_store = SettingsStore::test(cx);
-//             cx.set_global(settings_store);
-//         });
-//     }
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
 
-//     fn is_empty_state(telemetry: &Telemetry) -> bool {
-//         telemetry.state.lock().events_queue.is_empty()
-//             && telemetry.state.lock().flush_events_task.is_none()
-//             && telemetry.state.lock().first_event_date_time.is_none()
-//     }
-// }
+    fn is_empty_state(telemetry: &Telemetry) -> bool {
+        telemetry.state.lock().events_queue.is_empty()
+            && telemetry.state.lock().flush_events_task.is_none()
+            && telemetry.state.lock().first_event_date_time.is_none()
+    }
+}
