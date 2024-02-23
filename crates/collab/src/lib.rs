@@ -64,7 +64,7 @@ impl IntoResponse for Error {
             }
             Error::Database(error) => {
                 log::error!(
-                    "HTTP error {}: {}",
+                    "HTTP error {}: {:?}",
                     StatusCode::INTERNAL_SERVER_ERROR,
                     &error
                 );
@@ -72,7 +72,7 @@ impl IntoResponse for Error {
             }
             Error::Internal(error) => {
                 log::error!(
-                    "HTTP error {}: {}",
+                    "HTTP error {}: {:?}",
                     StatusCode::INTERNAL_SERVER_ERROR,
                     &error
                 );
