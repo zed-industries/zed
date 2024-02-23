@@ -28,7 +28,8 @@ async fn main() -> Result<()> {
         );
     }
 
-    match args().skip(1).next().as_deref() {
+    let mut args = args().skip(1);
+    match args.next().as_deref() {
         Some("version") => {
             println!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"));
         }
@@ -36,6 +37,8 @@ async fn main() -> Result<()> {
             run_migrations().await?;
         }
         Some("serve") => {
+            let is_api_only = args.next().is_some_and(|arg| arg == "api");
+
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
 
@@ -46,24 +49,33 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let epoch = state
-                .db
-                .create_server(&state.config.zed_environment)
-                .await?;
-            let rpc_server = collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
-            rpc_server.start().await?;
+            let rpc_server = if !is_api_only {
+                let epoch = state
+                    .db
+                    .create_server(&state.config.zed_environment)
+                    .await?;
+                let rpc_server =
+                    collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
+                rpc_server.start().await?;
+
+                Some(rpc_server)
+            } else {
+                None
+            };
 
             fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
 
-            let app = collab::api::routes(rpc_server.clone(), state.clone())
-                .merge(collab::rpc::routes(rpc_server.clone()))
-                .merge(
-                    Router::new()
-                        .route("/", get(handle_root))
-                        .route("/healthz", get(handle_liveness_probe))
-                        .merge(collab::api::events::router())
-                        .layer(Extension(state.clone())),
-                );
+            let mut app = collab::api::routes(rpc_server.clone(), state.clone());
+            if let Some(rpc_server) = rpc_server.clone() {
+                app = app.merge(collab::rpc::routes(rpc_server))
+            }
+            app = app.merge(
+                Router::new()
+                    .route("/", get(handle_root))
+                    .route("/healthz", get(handle_liveness_probe))
+                    .merge(collab::api::events::router())
+                    .layer(Extension(state.clone())),
+            );
 
             axum::Server::from_tcp(listener)?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
@@ -77,7 +89,10 @@ async fn main() -> Result<()> {
                     futures::pin_mut!(sigterm, sigint);
                     futures::future::select(sigterm, sigint).await;
                     tracing::info!("Received interrupt signal");
-                    rpc_server.teardown();
+
+                    if let Some(rpc_server) = rpc_server {
+                        rpc_server.teardown();
+                    }
                 })
                 .await?;
         }

@@ -58,7 +58,7 @@ spec:
         - name: ${ZED_SERVICE_NAME}
           image: "${ZED_IMAGE_ID}"
           args:
-            - serve
+            - serve ${ZED_SERVICE_NAME}
           ports:
             - containerPort: 8080
               protocol: TCP

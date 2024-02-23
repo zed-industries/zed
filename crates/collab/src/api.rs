@@ -25,7 +25,7 @@ use tracing::instrument;
 
 pub use extensions::fetch_extensions_from_blob_store_periodically;
 
-pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
+pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
@@ -136,8 +136,12 @@ async fn trace_panic(panic: Json<Panic>) -> Result<()> {
 }
 
 async fn get_rpc_server_snapshot(
-    Extension(rpc_server): Extension<Arc<rpc::Server>>,
+    Extension(rpc_server): Extension<Option<Arc<rpc::Server>>>,
 ) -> Result<ErasedJson> {
+    let Some(rpc_server) = rpc_server else {
+        return Err(Error::Internal(anyhow!("rpc server is not available")));
+    };
+
     Ok(ErasedJson::pretty(rpc_server.snapshot().await))
 }
 
