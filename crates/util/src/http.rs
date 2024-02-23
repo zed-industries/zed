@@ -31,7 +31,7 @@ impl ZedHttpClient {
             "https://zed.dev" => "https://api.zed.dev",
             "https://staging.zed.dev" => "https://api-staging.zed.dev",
             "http://localhost:3000" => "http://localhost:8080",
-            other => &other,
+            other => other,
         };
 
         format!("{}{}", host, path)
