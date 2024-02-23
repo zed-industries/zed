@@ -1101,18 +1101,8 @@ impl<'a> WindowContext<'a> {
 
     /// Dispatch a given keystroke as though the user had typed it.
     /// You can create a keystroke with Keystroke::parse("").
-    pub fn dispatch_keystroke(&mut self, mut keystroke: Keystroke) -> bool {
-        if keystroke.ime_key.is_none()
-            && !keystroke.modifiers.command
-            && !keystroke.modifiers.control
-            && !keystroke.modifiers.function
-        {
-            keystroke.ime_key = Some(if keystroke.modifiers.shift {
-                keystroke.key.to_uppercase().clone()
-            } else {
-                keystroke.key.clone()
-            })
-        }
+    pub fn dispatch_keystroke(&mut self, keystroke: Keystroke) -> bool {
+        let keystroke = keystroke.with_simulated_ime();
         if self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
             keystroke: keystroke.clone(),
             is_held: false,
