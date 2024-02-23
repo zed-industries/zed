@@ -824,8 +824,29 @@ async fn load_login_shell_environment() -> Result<()> {
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
+
+    // If possible, we want to `cd` in the user's `$HOME` to trigger programs
+    // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
+    // into shell's `cd` command (and hooks) to manipulate env.
+    // We do this so that we get the env a user would have when spawning a shell
+    // in home directory.
+    let shell_cmd_prefix = std::env::var_os("HOME")
+        .and_then(|home| home.into_string().ok())
+        .map(|home| format!("cd {home};"));
+
+    // The `exit 0` is the result of hours of debugging, trying to find out
+    // why running this command here, without `exit 0`, would mess
+    // up signal process for our process so that `ctrl-c` doesn't work
+    // anymore.
+    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+    // do that, but it does, and `exit 0` helps.
+    let shell_cmd = format!(
+        "{}echo {marker}; /usr/bin/env -0; exit 0;",
+        shell_cmd_prefix.as_deref().unwrap_or("")
+    );
+
     let output = Command::new(&shell)
-        .args(["-l", "-i", "-c", &format!("echo {marker}; /usr/bin/env -0")])
+        .args(["-l", "-i", "-c", &shell_cmd])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;

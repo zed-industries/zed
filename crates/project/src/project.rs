@@ -9318,7 +9318,9 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
                     Ok(command_path) => Some((command_path, shell_env)),
                     Err(error) => {
                         log::warn!(
-                            "failed to determine path for command {:?} in env {shell_env:?}: {error}", command.to_string_lossy()
+                            "failed to determine path for command {:?} in shell PATH {:?}: {error}",
+                            command.to_string_lossy(),
+                            shell_path.map(String::as_str).unwrap_or("")
                         );
                         None
                     }
