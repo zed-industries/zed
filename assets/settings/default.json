@@ -206,8 +206,6 @@
     "default_width": 380
   },
   "assistant": {
-    // Whether to show the assistant panel button in the status bar.
-    "button": true,
     // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
     // Default width when the assistant is docked to the left or right.
@@ -227,12 +225,32 @@
   // Whether the call status icon is shown in the os status bar.
   "show_call_status_icon": true,
   "status_bar": {
-    // Whether the statusbar is shown in.
-    "show_status_bar": true,
-    // Whether the share feedback icon is shown in the os status bar.
-    "show_share_feedback_icon": true,
-    // Whether the language selector is shown in the os status bar.
-    "show_language_selector": true
+    // Whether or not to show the status bar
+    "visible": true,
+    "elements": {
+      /// Whether or not to show the assistant icon in the status bar.
+      "assistant": true,
+      /// Whether or not to show the chat icon in the status bar.
+      "chat": true,
+      /// Whether or not to show the collaboration panel icon in the status bar.
+      "collaboration": true,
+      /// Whether or not to show the copilot icon in the status bar.
+      "copilot": true,
+      /// Whether or not to show the cursor position in the status bar.
+      "cursor_position": true,
+      /// Whether or not to show the diagnostics in the status bar.
+      "diagnostics": true,
+      /// Whether or not to show the feedback icon in the status bar.
+      "feedback": true,
+      /// Whether or not to show the language selector in the status bar.
+      "language_selector": true,
+      /// Whether or not to show the notification icon in the status bar.
+      "notification": true,
+      /// Whether or not to show the project panel icon in the status bar.
+      "project": true,
+      /// Whether or not to show the terminal icon in the status bar.
+      "terminal": true
+    }
   },
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
