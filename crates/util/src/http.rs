@@ -23,6 +23,19 @@ impl ZedHttpClient {
     pub fn zed_url(&self, path: &str) -> String {
         format!("{}{}", self.zed_host.lock(), path)
     }
+
+    pub fn zed_api_url(&self, path: &str) -> String {
+        let zed_host = self.zed_host.lock().clone();
+
+        let host = match zed_host.as_ref() {
+            "https://zed.dev" => "https://api.zed.dev",
+            "https://staging.zed.dev" => "https://api-staging.zed.dev",
+            "http://localhost:3000" => "http://localhost:8080",
+            other => other,
+        };
+
+        format!("{}{}", host, path)
+    }
 }
 
 impl HttpClient for Arc<ZedHttpClient> {
