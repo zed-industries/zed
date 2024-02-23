@@ -15,6 +15,7 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
+menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
 postage.workspace = true
