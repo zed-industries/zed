@@ -851,10 +851,13 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> Model<Project> {
+        use clock::FakeSystemClock;
+
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.executor());
+        let clock = Arc::new(FakeSystemClock::default());
         let http_client = util::http::FakeHttpClient::with_404_response();
-        let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
+        let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let project = cx.update(|cx| {
             Project::local(

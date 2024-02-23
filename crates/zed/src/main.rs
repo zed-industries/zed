@@ -140,9 +140,10 @@ fn main() {
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
 
+        let clock = Arc::new(clock::RealSystemClock);
         let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
 
-        let client = client::Client::new(http.clone(), cx);
+        let client = client::Client::new(clock, http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.background_executor().clone());
