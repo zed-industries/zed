@@ -120,7 +120,8 @@ impl ChannelMembership {
                 proto::ChannelRole::Admin => 0,
                 proto::ChannelRole::Member => 1,
                 proto::ChannelRole::Banned => 2,
-                proto::ChannelRole::Guest => 3,
+                proto::ChannelRole::Talker => 3,
+                proto::ChannelRole::Guest => 4,
             },
             kind_order: match self.kind {
                 proto::channel_member::Kind::Member => 0,

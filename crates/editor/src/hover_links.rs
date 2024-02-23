@@ -138,7 +138,7 @@ impl Editor {
                     cx.focus(&self.focus_handle);
                 }
 
-                self.navigate_to_hover_links(hovered_link_state.links, modifiers.alt, cx);
+                self.navigate_to_hover_links(None, hovered_link_state.links, modifiers.alt, cx);
                 return;
             }
         }

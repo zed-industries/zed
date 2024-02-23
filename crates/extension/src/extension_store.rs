@@ -34,7 +34,7 @@ pub struct ExtensionsApiResponse {
     pub data: Vec<Extension>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Extension {
     pub id: Arc<str>,
     pub version: Arc<str>,
@@ -651,6 +651,12 @@ impl ExtensionStore {
                 let Ok(relative_path) = language_path.strip_prefix(&extension_dir) else {
                     continue;
                 };
+                let Ok(Some(fs_metadata)) = fs.metadata(&language_path).await else {
+                    continue;
+                };
+                if !fs_metadata.is_dir {
+                    continue;
+                }
                 let config = fs.load(&language_path.join("config.toml")).await?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 

@@ -187,9 +187,10 @@ impl Render for CollabTitlebarItem {
                         let is_muted = room.is_muted();
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
-                        let read_only = room.read_only();
+                        let can_use_microphone = room.can_use_microphone();
+                        let can_share_projects = room.can_share_projects();
 
-                        this.when(is_local && !read_only, |this| {
+                        this.when(is_local && can_share_projects, |this| {
                             this.child(
                                 Button::new(
                                     "toggle_sharing",
@@ -235,7 +236,7 @@ impl Render for CollabTitlebarItem {
                                 )
                                 .pr_2(),
                         )
-                        .when(!read_only, |this| {
+                        .when(can_use_microphone, |this| {
                             this.child(
                                 IconButton::new(
                                     "mute-microphone",
@@ -276,7 +277,7 @@ impl Render for CollabTitlebarItem {
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
-                                if !read_only {
+                                if can_use_microphone {
                                     Tooltip::with_meta(
                                         "Deafen Audio",
                                         None,
@@ -289,7 +290,7 @@ impl Render for CollabTitlebarItem {
                             })
                             .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
                         )
-                        .when(!read_only, |this| {
+                        .when(can_share_projects, |this| {
                             this.child(
                                 IconButton::new("screen-share", ui::IconName::Screen)
                                     .style(ButtonStyle::Subtle)
@@ -421,14 +422,20 @@ impl CollabTitlebarItem {
                 worktree.root_name()
             });
 
-            names.next().unwrap_or("")
+            names.next()
+        };
+        let is_project_selected = name.is_some();
+        let name = if let Some(name) = name {
+            util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
+        } else {
+            "Open recent project".to_string()
         };
 
-        let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
         let workspace = self.workspace.clone();
         popover_menu("project_name_trigger")
             .trigger(
                 Button::new("project_name_trigger", name)
+                    .when(!is_project_selected, |b| b.color(Color::Muted))
                     .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
@@ -689,6 +696,7 @@ impl CollabTitlebarItem {
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .action("Theme", theme_selector::Toggle.boxed_clone())
                             .separator()
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
@@ -714,6 +722,7 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Theme", theme_selector::Toggle.boxed_clone())
+                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .separator()
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
                     })

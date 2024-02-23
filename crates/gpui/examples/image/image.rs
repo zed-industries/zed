@@ -64,9 +64,8 @@ fn main() {
     App::new().run(|cx: &mut AppContext| {
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|_cx| ImageShowcase {
-                local_resource: Arc::new(
-                    PathBuf::from_str("crates/zed/resources/app-icon.png").unwrap(),
-                ),
+                // Relative path to your root project path
+                local_resource: Arc::new(PathBuf::from_str("examples/image/app-icon.png").unwrap()),
                 remote_resource: "https://picsum.photos/512/512".into(),
             })
         });

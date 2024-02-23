@@ -1,7 +1,7 @@
 use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
+    rpc::{Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState, Config,
 };
 use anyhow::anyhow;
@@ -37,7 +37,7 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
+use util::{http::FakeHttpClient, SemanticVersion};
 use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
@@ -231,6 +231,7 @@ impl TestServer {
                                 server_conn,
                                 client_name,
                                 user,
+                                ZedVersion(SemanticVersion::new(1, 0, 0)),
                                 None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),

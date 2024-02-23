@@ -119,7 +119,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
                 times -= 1;
             }
 
-            vim.update_active_editor(cx, |editor, cx| {
+            vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     for _ in 0..times {
                         editor.join_lines(&Default::default(), cx)
@@ -182,7 +182,7 @@ pub(crate) fn move_cursor(
     times: Option<usize>,
     cx: &mut WindowContext,
 ) {
-    vim.update_active_editor(cx, |editor, cx| {
+    vim.update_active_editor(cx, |_, editor, cx| {
         let text_layout_details = editor.text_layout_details(cx);
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
@@ -198,7 +198,7 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
     Vim::update(cx, |vim, cx| {
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
             });
@@ -221,7 +221,7 @@ fn insert_first_non_whitespace(
     Vim::update(cx, |vim, cx| {
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (
@@ -238,7 +238,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
     Vim::update(cx, |vim, cx| {
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
@@ -252,7 +252,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
     Vim::update(cx, |vim, cx| {
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);
                 let selection_start_rows: HashSet<u32> = old_selections
@@ -285,7 +285,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
     Vim::update(cx, |vim, cx| {
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);
@@ -330,7 +330,7 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let (map, display_selections) = editor.selections.all_display(cx);

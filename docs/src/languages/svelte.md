@@ -51,6 +51,7 @@ Use
     }
   }
 }
+```
 
 to override these settings.
 

@@ -33,6 +33,7 @@ impl LinuxDispatcher {
     ) -> Self {
         let (background_sender, background_receiver) = flume::unbounded::<Runnable>();
         let background_thread = thread::spawn(move || {
+            profiling::register_thread!("background");
             for runnable in background_receiver {
                 let _ignore_panic = panic::catch_unwind(|| runnable.run());
             }

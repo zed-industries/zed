@@ -1346,6 +1346,7 @@ pub(crate) struct NavigationData {
 enum GotoDefinitionKind {
     Symbol,
     Type,
+    Implementation,
 }
 
 #[derive(Debug, Clone)]
@@ -4206,8 +4207,43 @@ impl Editor {
                 active_index: 0,
                 ranges: tabstops,
             });
-        }
 
+            // Check whether the just-entered snippet ends with an auto-closable bracket.
+            if self.autoclose_regions.is_empty() {
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                for selection in &mut self.selections.all::<Point>(cx) {
+                    let selection_head = selection.head();
+                    let Some(scope) = snapshot.language_scope_at(selection_head) else {
+                        continue;
+                    };
+
+                    let mut bracket_pair = None;
+                    let next_chars = snapshot.chars_at(selection_head).collect::<String>();
+                    let prev_chars = snapshot
+                        .reversed_chars_at(selection_head)
+                        .collect::<String>();
+                    for (pair, enabled) in scope.brackets() {
+                        if enabled
+                            && pair.close
+                            && prev_chars.starts_with(pair.start.as_str())
+                            && next_chars.starts_with(pair.end.as_str())
+                        {
+                            bracket_pair = Some(pair.clone());
+                            break;
+                        }
+                    }
+                    if let Some(pair) = bracket_pair {
+                        let start = snapshot.anchor_after(selection_head);
+                        let end = snapshot.anchor_after(selection_head);
+                        self.autoclose_regions.push(AutocloseRegion {
+                            selection_id: selection.id,
+                            range: start..end,
+                            pair,
+                        });
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -7317,6 +7353,18 @@ impl Editor {
         self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
     }
 
+    pub fn go_to_implementation(&mut self, _: &GoToImplementation, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, false, cx);
+    }
+
+    pub fn go_to_implementation_split(
+        &mut self,
+        _: &GoToImplementationSplit,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, true, cx);
+    }
+
     pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
         self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx);
     }
@@ -7354,12 +7402,14 @@ impl Editor {
         let definitions = project.update(cx, |project, cx| match kind {
             GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
+            GotoDefinitionKind::Implementation => project.implementation(&buffer, head, cx),
         });
 
         cx.spawn(|editor, mut cx| async move {
             let definitions = definitions.await?;
             editor.update(&mut cx, |editor, cx| {
                 editor.navigate_to_hover_links(
+                    Some(kind),
                     definitions.into_iter().map(HoverLink::Text).collect(),
                     split,
                     cx,
@@ -7392,8 +7442,9 @@ impl Editor {
         .detach();
     }
 
-    pub fn navigate_to_hover_links(
+    pub(crate) fn navigate_to_hover_links(
         &mut self,
+        kind: Option<GotoDefinitionKind>,
         mut definitions: Vec<HoverLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
@@ -7462,13 +7513,18 @@ impl Editor {
             cx.spawn(|editor, mut cx| async move {
                 let (title, location_tasks, workspace) = editor
                     .update(&mut cx, |editor, cx| {
+                        let tab_kind = match kind {
+                            Some(GotoDefinitionKind::Implementation) => "Implementations",
+                            _ => "Definitions",
+                        };
                         let title = definitions
                             .iter()
                             .find_map(|definition| match definition {
                                 HoverLink::Text(link) => link.origin.as_ref().map(|origin| {
                                     let buffer = origin.buffer.read(cx);
                                     format!(
-                                        "Definitions for {}",
+                                        "{} for {}",
+                                        tab_kind,
                                         buffer
                                             .text_for_range(origin.range.clone())
                                             .collect::<String>()
@@ -7477,7 +7533,7 @@ impl Editor {
                                 HoverLink::InlayHint(_, _) => None,
                                 HoverLink::Url(_) => None,
                             })
-                            .unwrap_or("Definitions".to_string());
+                            .unwrap_or(tab_kind.to_string());
                         let location_tasks = definitions
                             .into_iter()
                             .map(|definition| match definition {

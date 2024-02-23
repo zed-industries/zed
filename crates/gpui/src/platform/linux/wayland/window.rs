@@ -228,6 +228,12 @@ impl WaylandWindowState {
             }
         }
     }
+
+    pub fn set_focused(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.lock().active_status_change {
+            fun(focus);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -349,7 +355,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        //todo!(linux)
+        self.0.callbacks.lock().active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {

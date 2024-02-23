@@ -50,7 +50,6 @@ pub use persistence::{
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-use runnable::SpawnInTerminal;
 use serde::Deserialize;
 use settings::Settings;
 use shared_screen::SharedScreen;
@@ -66,6 +65,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc, Weak},
     time::Duration,
 };
+use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -468,7 +468,7 @@ pub enum Event {
     PaneAdded(View<Pane>),
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
-    SpawnRunnable(SpawnInTerminal),
+    SpawnTask(SpawnInTerminal),
 }
 
 pub enum OpenVisible {
@@ -3004,7 +3004,9 @@ impl Workspace {
             let mut item_tasks = Vec::new();
             let mut leader_view_ids = Vec::new();
             for view in &views {
-                let Some(id) = &view.id else { continue };
+                let Some(id) = &view.id else {
+                    continue;
+                };
                 let id = ViewId::from_proto(id.clone())?;
                 let mut variant = view.variant.clone();
                 if variant.is_none() {
@@ -3749,7 +3751,7 @@ enum ActivateInDirectionTarget {
 }
 
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncAppContext) {
-    const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/zed/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
+    const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
 
     workspace
         .update(cx, |workspace, cx| {
@@ -4193,7 +4195,7 @@ async fn join_channel_internal(
             Status::SignedOut => return Err(ErrorCode::SignedOut.into()),
             Status::UpgradeRequired => return Err(ErrorCode::UpgradeRequired.into()),
             Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
-                return Err(ErrorCode::Disconnected.into())
+                return Err(ErrorCode::Disconnected.into());
             }
         }
     }
@@ -4270,7 +4272,7 @@ pub fn join_channel(
             &active_call,
             &mut cx,
         )
-        .await;
+            .await;
 
         // join channel succeeded, and opened a window
         if matches!(result, Ok(true)) {
@@ -4305,16 +4307,16 @@ pub fn join_channel(
                         let detail: SharedString = match err.error_code() {
                             ErrorCode::SignedOut => {
                                 "Please sign in to continue.".into()
-                            },
+                            }
                             ErrorCode::UpgradeRequired => {
                                 "Your are running an unsupported version of Zed. Please update to continue.".into()
-                            },
+                            }
                             ErrorCode::NoSuchChannel => {
                                 "No matching channel was found. Please check the link and try again.".into()
-                            },
+                            }
                             ErrorCode::Forbidden => {
                                 "This channel is private, and you do not have access. Please ask someone to add you and try again.".into()
-                            },
+                            }
                             ErrorCode::Disconnected => "Please check your internet connection and try again.".into(),
                             _ => format!("{}\n\nPlease try again.", err).into(),
                         };

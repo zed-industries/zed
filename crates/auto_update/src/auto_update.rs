@@ -4,12 +4,14 @@ use anyhow::{anyhow, Context, Result};
 use client::{Client, TelemetrySettings, ZED_APP_PATH};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
+use editor::{Editor, MultiBuffer};
 use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
-    SemanticVersion, Task, ViewContext, VisualContext, WindowContext,
+    SemanticVersion, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use isahc::AsyncBody;
 
+use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
@@ -26,13 +28,24 @@ use std::{
     time::Duration,
 };
 use update_notification::UpdateNotification;
-use util::http::{HttpClient, ZedHttpClient};
+use util::{
+    http::{HttpClient, ZedHttpClient},
+    ResultExt,
+};
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes]);
+actions!(
+    auto_update,
+    [
+        Check,
+        DismissErrorMessage,
+        ViewReleaseNotes,
+        ViewReleaseNotesLocally
+    ]
+);
 
 #[derive(Serialize)]
 struct UpdateRequestBody {
@@ -96,6 +109,12 @@ struct GlobalAutoUpdate(Option<Model<AutoUpdater>>);
 
 impl Global for GlobalAutoUpdate {}
 
+#[derive(Deserialize)]
+struct ReleaseNotesBody {
+    title: String,
+    release_notes: String,
+}
+
 pub fn init(http_client: Arc<ZedHttpClient>, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
@@ -104,6 +123,10 @@ pub fn init(http_client: Arc<ZedHttpClient>, cx: &mut AppContext) {
 
         workspace.register_action(|_, action, cx| {
             view_release_notes(action, cx);
+        });
+
+        workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, cx| {
+            view_release_notes_locally(workspace, cx);
         });
     })
     .detach();
@@ -163,6 +186,71 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
     }
 
     None
+}
+
+fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    let release_channel = ReleaseChannel::global(cx);
+    let version = env!("CARGO_PKG_VERSION");
+
+    let client = client::Client::global(cx).http_client();
+    let url = client.zed_url(&format!(
+        "/api/release_notes/{}/{}",
+        release_channel.dev_name(),
+        version
+    ));
+
+    let markdown = workspace
+        .app_state()
+        .languages
+        .language_for_name("Markdown");
+
+    workspace
+        .with_local_workspace(cx, move |_, cx| {
+            cx.spawn(|workspace, mut cx| async move {
+                let markdown = markdown.await.log_err();
+                let response = client.get(&url, Default::default(), true).await;
+                let Some(mut response) = response.log_err() else {
+                    return;
+                };
+
+                let mut body = Vec::new();
+                response.body_mut().read_to_end(&mut body).await.ok();
+
+                let body: serde_json::Result<ReleaseNotesBody> =
+                    serde_json::from_slice(body.as_slice());
+
+                if let Ok(body) = body {
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            let project = workspace.project().clone();
+                            let buffer = project
+                                .update(cx, |project, cx| project.create_buffer("", markdown, cx))
+                                .expect("creating buffers on a local workspace always succeeds");
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit([(0..0, body.release_notes)], None, cx)
+                            });
+
+                            let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+
+                            let tab_description = SharedString::from(body.title.to_string());
+                            let editor = cx
+                                .new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx));
+                            let workspace_handle = workspace.weak_handle();
+                            let view: View<MarkdownPreviewView> = MarkdownPreviewView::new(
+                                editor,
+                                workspace_handle,
+                                Some(tab_description),
+                                cx,
+                            );
+                            workspace.add_item(Box::new(view.clone()), cx);
+                            cx.notify();
+                        })
+                        .log_err();
+                }
+            })
+            .detach();
+        })
+        .detach();
 }
 
 pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
