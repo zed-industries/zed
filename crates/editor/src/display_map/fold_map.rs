@@ -2,9 +2,9 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
     Highlights,
 };
-use crate::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
 use gpui::{ElementId, HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
+use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
 use std::{
     any::TypeId,
     cmp::{self, Ordering},
