@@ -1,5 +1,4 @@
 mod highlighted_workspace_location;
-mod projects;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -14,7 +13,7 @@ use ui::{prelude::*, tooltip_container, HighlightedLabel, ListItem, ListItemSpac
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_DB};
 
-pub use projects::OpenRecent;
+gpui::actions!(projects, [OpenRecent]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(RecentProjects::register).detach();
@@ -94,6 +93,7 @@ impl RecentProjects {
             Ok(())
         }))
     }
+
     pub fn open_popover(workspace: WeakView<Workspace>, cx: &mut WindowContext<'_>) -> View<Self> {
         cx.new_view(|cx| Self::new(RecentProjectsDelegate::new(workspace, false), 20., cx))
     }
@@ -147,7 +147,11 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
-        "Search recent projects...".into()
+        Arc::from(format!(
+            "`{:?}` reuses the window, `{:?}` opens in new",
+            menu::Confirm,
+            menu::SecondaryConfirm,
+        ))
     }
 
     fn match_count(&self) -> usize {
@@ -207,17 +211,26 @@ impl PickerDelegate for RecentProjectsDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some((selected_match, workspace)) = self
             .matches
             .get(self.selected_index())
             .zip(self.workspace.upgrade())
         {
-            let (_, workspace_location) = &self.workspaces[selected_match.candidate_id];
+            let (candidate_workspace_id, candidate_workspace_location) =
+                &self.workspaces[selected_match.candidate_id];
+            let replace_current_window = !secondary;
             workspace
                 .update(cx, |workspace, cx| {
-                    workspace
-                        .open_workspace_for_paths(workspace_location.paths().as_ref().clone(), cx)
+                    if workspace.database_id() != *candidate_workspace_id {
+                        workspace.open_workspace_for_paths(
+                            replace_current_window,
+                            candidate_workspace_location.paths().as_ref().clone(),
+                            cx,
+                        )
+                    } else {
+                        Task::ready(Ok(()))
+                    }
                 })
                 .detach_and_log_err(cx);
             cx.emit(DismissEvent);

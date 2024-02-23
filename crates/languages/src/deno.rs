@@ -134,6 +134,7 @@ impl LspAdapter for DenoLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
+            env: None,
             arguments: deno_server_binary_arguments(),
         })
     }
@@ -220,6 +221,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
                 if fs::metadata(&binary).await.is_ok() {
                     return Ok(LanguageServerBinary {
                         path: binary,
+                        env: None,
                         arguments: deno_server_binary_arguments(),
                     });
                 }

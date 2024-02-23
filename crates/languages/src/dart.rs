@@ -39,6 +39,7 @@ impl LspAdapter for DartLanguageServer {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "dart".into(),
+            env: None,
             arguments: vec!["language-server".into(), "--protocol=lsp".into()],
         })
     }

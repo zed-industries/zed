@@ -47,6 +47,7 @@ impl LspAdapter for OCamlLspAdapter {
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
             path: "ocamllsp".into(),
+            env: None,
             arguments: vec![],
         })
     }

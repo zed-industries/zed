@@ -174,6 +174,7 @@ impl LspAdapter for ElixirLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
+            env: None,
             arguments: vec![],
         })
     }
@@ -284,6 +285,7 @@ async fn get_cached_server_binary_elixir_ls(
     if server_path.exists() {
         Some(LanguageServerBinary {
             path: server_path,
+            env: None,
             arguments: vec![],
         })
     } else {
@@ -369,6 +371,7 @@ impl LspAdapter for NextLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
+            env: None,
             arguments: vec!["--stdio".into()],
         })
     }
@@ -435,6 +438,7 @@ async fn get_cached_server_binary_next(container_dir: PathBuf) -> Option<Languag
         if let Some(path) = last_binary_path {
             Ok(LanguageServerBinary {
                 path,
+                env: None,
                 arguments: Vec::new(),
             })
         } else {
@@ -476,6 +480,7 @@ impl LspAdapter for LocalLspAdapter {
         let path = shellexpand::full(&self.path)?;
         Ok(LanguageServerBinary {
             path: PathBuf::from(path.deref()),
+            env: None,
             arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
         })
     }
@@ -488,6 +493,7 @@ impl LspAdapter for LocalLspAdapter {
         let path = shellexpand::full(&self.path).ok()?;
         Some(LanguageServerBinary {
             path: PathBuf::from(path.deref()),
+            env: None,
             arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
         })
     }
@@ -496,6 +502,7 @@ impl LspAdapter for LocalLspAdapter {
         let path = shellexpand::full(&self.path).ok()?;
         Some(LanguageServerBinary {
             path: PathBuf::from(path.deref()),
+            env: None,
             arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
         })
     }

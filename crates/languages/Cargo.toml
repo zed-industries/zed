@@ -45,6 +45,7 @@ tree-sitter-ocaml.workspace = true
 tree-sitter-php.workspace = true
 tree-sitter-prisma-io.workspace = true
 tree-sitter-proto.workspace = true
+tree-sitter-purescript.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-racket.workspace = true
 tree-sitter-ruby.workspace = true
@@ -80,5 +81,3 @@ feature_flags.workspace = true
 project.workspace = true
 serde.workspace = true
 rope.workspace = true
-[target.'cfg(not(windows))'.dependencies]
-tree-sitter-purescript.workspace = true

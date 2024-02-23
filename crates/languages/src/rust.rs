@@ -89,6 +89,7 @@ impl LspAdapter for RustLspAdapter {
 
         Ok(LanguageServerBinary {
             path: destination_path,
+            env: None,
             arguments: Default::default(),
         })
     }
@@ -296,6 +297,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
         anyhow::Ok(LanguageServerBinary {
             path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            env: None,
             arguments: Default::default(),
         })
     })
