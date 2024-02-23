@@ -887,9 +887,7 @@ impl EditorElement {
         cx: &mut ElementContext,
     ) {
         let start_row = layout.visible_display_row_range.start;
-        // This additional padding added to the text bounds offsets text rendering by about half a character's width
-        // so that the cursor 'snaps' to the nearest position without `LineLayout::index_for_x`
-        // actually searching for the closest index
+        // Offset the content_bounds from the text_bounds by the gutter margin (which is roughly half a character wide) to make hit testing work more like how we want.
         let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
         let whitespace_setting = self
