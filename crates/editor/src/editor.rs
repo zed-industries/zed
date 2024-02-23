@@ -122,7 +122,7 @@ use ui::{
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
-use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
+use workspace::{searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace};
 
 use crate::hover_links::find_url;
 
@@ -356,7 +356,6 @@ type InlayBackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<InlayHighlight>);
 ///
 /// See the [module level documentation](self) for more information.
 pub struct Editor {
-    handle: WeakView<Self>,
     focus_handle: FocusHandle,
     /// The text buffer being edited
     buffer: Model<MultiBuffer>,
