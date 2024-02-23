@@ -45,7 +45,7 @@ fn format_timestamp_fallback(
     format_timestamp_naive(reference, timestamp, timezone, is_12_hour_time)
 }
 
-/// Formats a timestamp, which is either in 12-hour or 24-hour clock format.
+/// Formats a timestamp, which is either in 12-hour or 24-hour time format.
 /// Note:
 /// This function does not respect the user's date and time preferences.
 /// This should only be used as a fallback mechanism when the os time formatting fails.
@@ -110,7 +110,7 @@ pub fn format_timestamp_naive(
     }
 }
 
-/// Returns true if the locale is recognized as a 12-hour clock locale.
+/// Returns true if the locale is recognized as a 12-hour time locale.
 fn is_12_hour_time_by_locale(locale: &str) -> bool {
     [
         "es-MX", "es-CO", "es-SV", "es-NI",
@@ -196,7 +196,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_format_24_hour_clock() {
+    fn test_format_24_hour_time() {
         let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
         let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
 
