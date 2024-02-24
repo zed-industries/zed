@@ -75,7 +75,6 @@ impl PlatformTextSystem for LinuxTextSystem {
             .collect()
     }
 
-    // todo!(linux)
     fn all_font_families(&self) -> Vec<String> {
         self.0
             .read()
