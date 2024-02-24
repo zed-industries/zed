@@ -47,6 +47,7 @@ use language::{
     PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
+use lsp::{notification::Notification, ServerStatus};
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
@@ -69,6 +70,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use std::{
+    borrow::Borrow,
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -3200,6 +3202,29 @@ impl Project {
 
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token.clone();
+
+        language_server
+            .on_notification::<ServerStatus, _>(move |params, mut xs| {
+                match params.health.as_str() {
+                    "ok" => log::info!("Health: {}", params.health),
+                    "warning" => {
+                        log::warn!(
+                            "Health: {}.\nMessage: {}",
+                            params.health,
+                            params.message.unwrap_or_default()
+                        )
+                    }
+                    "error" => {
+                        log::error!(
+                            "Health: {}.\nMessage: {}",
+                            params.health,
+                            params.message.unwrap_or_default()
+                        )
+                    }
+                    _ => log::info!("Uncaught health status"), // this shouldn't occur as health is only 1 of the 3 statuses.
+                }
+            })
+            .detach();
 
         language_server
             .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {

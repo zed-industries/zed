@@ -164,6 +164,24 @@ struct Error {
     message: String,
 }
 
+#[derive(Debug)]
+pub enum ServerStatus {}
+
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerStatusParams {
+    pub health: String, // "ok" | "warning" | "error"
+    /// Is there any pending background work which might change the status?
+    /// For example, are dependencies being downloaded?
+    pub quiescent: bool,
+    pub message: Option<String>,
+}
+
+impl lsp_types::notification::Notification for ServerStatus {
+    type Params = ServerStatusParams;
+    const METHOD: &'static str = "experimental/serverStatus";
+}
+
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
