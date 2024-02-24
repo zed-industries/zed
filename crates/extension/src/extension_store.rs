@@ -52,6 +52,20 @@ pub enum ExtensionStatus {
     Removing,
 }
 
+impl ExtensionStatus {
+    pub fn is_installing(&self) -> bool {
+        matches!(self, Self::Installing)
+    }
+
+    pub fn is_upgrading(&self) -> bool {
+        matches!(self, Self::Upgrading)
+    }
+
+    pub fn is_removing(&self) -> bool {
+        matches!(self, Self::Removing)
+    }
+}
+
 pub struct ExtensionStore {
     manifest: Arc<RwLock<Manifest>>,
     fs: Arc<dyn Fs>,
