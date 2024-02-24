@@ -12,6 +12,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+#[cfg(unix)]
 use tokio::signal::unix::SignalKind;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
@@ -109,6 +110,7 @@ async fn main() -> Result<()> {
                         .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
                 );
 
+            #[cfg(unix)]
             axum::Server::from_tcp(listener)?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
@@ -127,6 +129,10 @@ async fn main() -> Result<()> {
                     }
                 })
                 .await?;
+
+            // todo!("windows")
+            #[cfg(windows)]
+            unimplemented!();
         }
         _ => {
             Err(anyhow!(
