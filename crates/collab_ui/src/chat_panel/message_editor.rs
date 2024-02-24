@@ -3,7 +3,7 @@ use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
 use client::UserId;
 use collections::{HashMap, HashSet};
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
-use fuzzy::StringMatchCandidate;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
     Render, SharedString, Task, TextStyle, View, ViewContext, WeakView, WhiteSpace,
@@ -16,7 +16,7 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use project::search::SearchQuery;
 use settings::Settings;
-use std::{sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, UiTextSize};
 
@@ -219,6 +219,92 @@ impl MessageEditor {
         end_anchor: Anchor,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
+        if let Some((start_anchor, query, candidates)) =
+            self.collect_mention_candidates(buffer, end_anchor, cx)
+        {
+            if !candidates.is_empty() {
+                return cx.spawn(|_, cx| async move {
+                    let matches = fuzzy::match_strings(
+                        &candidates,
+                        &query,
+                        true,
+                        10,
+                        &Default::default(),
+                        cx.background_executor().clone(),
+                    )
+                    .await;
+
+                    Ok(matches
+                        .into_iter()
+                        .map(|mat| Self::completion_for_mention(&mat, start_anchor..end_anchor))
+                        .collect())
+                });
+            }
+        }
+
+        if let Some((start_anchor, query, candidates)) =
+            self.collect_emoji_candidates(buffer, end_anchor, cx)
+        {
+            if !candidates.is_empty() {
+                return cx.spawn(|_, cx| async move {
+                    let matches = fuzzy::match_strings(
+                        &candidates,
+                        &query,
+                        true,
+                        10,
+                        &Default::default(),
+                        cx.background_executor().clone(),
+                    )
+                    .await;
+
+                    Ok(matches
+                        .into_iter()
+                        .map(|mat| Self::completion_for_emoji(&mat, start_anchor..end_anchor))
+                        .collect())
+                });
+            }
+        }
+
+        Task::ready(Ok(vec![]))
+    }
+
+    fn completion_for_mention(mat: &StringMatch, range: Range<Anchor>) -> Completion {
+        Completion {
+            old_range: range,
+            new_text: mat.string.clone(),
+            label: CodeLabel {
+                filter_range: 1..mat.string.len() + 1,
+                text: format!("@{}", mat.string),
+                runs: Vec::new(),
+            },
+            documentation: None,
+            server_id: LanguageServerId(0), // TODO: Make this optional or something?
+            lsp_completion: Default::default(), // TODO: Make this optional or something?
+        }
+    }
+
+    fn completion_for_emoji(mat: &StringMatch, range: Range<Anchor>) -> Completion {
+        let emoji = emojis::get_by_shortcode(&mat.string).unwrap();
+        Completion {
+            old_range: range,
+            new_text: emoji.to_string(),
+            label: CodeLabel {
+                filter_range: 1..mat.string.len() + 1,
+                text: format!(":{}: {}", mat.string, emoji),
+                runs: Vec::new(),
+            },
+            documentation: None,
+            server_id: LanguageServerId(0), // TODO: Make this optional or something?
+            lsp_completion: Default::default(), // TODO: Make this optional or something?
+        }
+    }
+
+    fn collect_mention_candidates(
+        &mut self,
+        buffer: &Model<Buffer>,
+        end_anchor: Anchor,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Anchor, String, Vec<StringMatchCandidate>)> {
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
         let Some(query) = buffer.update(cx, |buffer, _| {
@@ -232,9 +318,9 @@ impl MessageEditor {
                 }
                 query.push(ch);
             }
-            return None;
+            None
         }) else {
-            return Task::ready(Ok(vec![]));
+            return None;
         };
 
         let start_offset = end_offset - query.len();
@@ -258,33 +344,52 @@ impl MessageEditor {
                 char_bag: user.chars().collect(),
             })
             .collect::<Vec<_>>();
-        cx.spawn(|_, cx| async move {
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                true,
-                10,
-                &Default::default(),
-                cx.background_executor().clone(),
-            )
-            .await;
 
-            Ok(matches
-                .into_iter()
-                .map(|mat| Completion {
-                    old_range: start_anchor..end_anchor,
-                    new_text: mat.string.clone(),
-                    label: CodeLabel {
-                        filter_range: 1..mat.string.len() + 1,
-                        text: format!("@{}", mat.string),
-                        runs: Vec::new(),
-                    },
-                    documentation: None,
-                    server_id: LanguageServerId(0), // TODO: Make this optional or something?
-                    lsp_completion: Default::default(), // TODO: Make this optional or something?
-                })
-                .collect())
-        })
+        Some((start_anchor, query, candidates))
+    }
+
+    fn collect_emoji_candidates(
+        &mut self,
+        buffer: &Model<Buffer>,
+        end_anchor: Anchor,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Anchor, String, &'static [StringMatchCandidate])> {
+        lazy_static! {
+            static ref EMOJI_FUZZY_MATCH_CANDIDATES: Vec<StringMatchCandidate> = {
+                let emojis = emojis::iter()
+                    .filter_map(|s| s.shortcode())
+                    .map(|emoji| StringMatchCandidate {
+                        id: 0,
+                        string: emoji.to_string(),
+                        char_bag: emoji.chars().collect(),
+                    })
+                    .collect::<Vec<_>>();
+                emojis
+            };
+        }
+
+        let end_offset = end_anchor.to_offset(buffer.read(cx));
+
+        let Some(query) = buffer.update(cx, |buffer, _| {
+            let mut query = String::new();
+            for ch in buffer.reversed_chars_at(end_offset).take(100) {
+                if ch == ':' {
+                    return Some(query.chars().rev().collect::<String>());
+                }
+                if ch.is_whitespace() || !ch.is_ascii() {
+                    break;
+                }
+                query.push(ch);
+            }
+            None
+        }) else {
+            return None;
+        };
+
+        let start_offset = end_offset - query.len() - 1;
+        let start_anchor = buffer.read(cx).anchor_before(start_offset);
+
+        Some((start_anchor, query, &EMOJI_FUZZY_MATCH_CANDIDATES))
     }
 
     async fn find_mentions(
