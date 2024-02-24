@@ -307,7 +307,6 @@ impl PlatformWindow for WaylandWindow {
         self.0.inner.lock().input_handler.take()
     }
 
-    //todo!(linux)
     fn prompt(
         &self,
         level: PromptLevel,
@@ -315,7 +314,42 @@ impl PlatformWindow for WaylandWindow {
         detail: Option<&str>,
         answers: &[&str],
     ) -> Receiver<usize> {
-        unimplemented!()
+        let level = match level {
+            crate::PromptLevel::Info => rfd::MessageLevel::Info,
+            crate::PromptLevel::Warning => rfd::MessageLevel::Warning,
+            crate::PromptLevel::Critical => rfd::MessageLevel::Error,
+        };
+
+        let buttons = match answers.len() {
+            1 => rfd::MessageButtons::OkCustom(answers[0].to_string()),
+            2 => {
+                rfd::MessageButtons::OkCancelCustom(answers[0].to_string(), answers[1].to_string())
+            }
+            3 => rfd::MessageButtons::YesNoCancelCustom(
+                answers[0].to_string(),
+                answers[1].to_string(),
+                answers[2].to_string(),
+            ),
+            _ => todo!(),
+        };
+
+        let result = rfd::MessageDialog::new()
+            .set_title(msg)
+            .set_description(detail.unwrap_or_default())
+            .set_level(level)
+            .set_buttons(buttons)
+            .show();
+
+        let selected_answer = match result {
+            rfd::MessageDialogResult::Custom(value) => value,
+            _ => answers[answers.len() - 1].to_string()
+        };
+        let index = answers.iter().position(|a| *a == selected_answer).expect("selected answer to be one of the provided answers");
+
+        let (done_tx, done_rx) = futures::channel::oneshot::channel();
+        done_tx.send(index).unwrap();
+
+        done_rx
     }
 
     fn activate(&self) {
