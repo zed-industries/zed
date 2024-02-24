@@ -50,6 +50,7 @@ pub enum AssistantDockPosition {
 
 #[derive(Deserialize, Debug)]
 pub struct AssistantSettings {
+    pub button: bool,
     pub dock: AssistantDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
@@ -60,6 +61,10 @@ pub struct AssistantSettings {
 /// Assistant panel settings
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct AssistantSettingsContent {
+    /// Whether to show the assistant button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     /// Where to dock the assistant.
     ///
     /// Default: right

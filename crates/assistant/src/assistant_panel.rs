@@ -63,7 +63,7 @@ use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
-    Save, Toast, ToggleZoom, Toolbar, Workspace, WorkspaceSettings,
+    Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
 
 pub fn init(cx: &mut AppContext) {
@@ -1377,18 +1377,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
-        if let Some(elements) = WorkspaceSettings::get_global(cx)
-            .status_bar
-            .clone()
-            .elements
-        {
-            // Now that we have elements, check cursor_position
-            if !elements.assistant.unwrap_or(true) {
-                // If cursor_position is true or None (defaulting to true)
-                return None;
-            }
-        }
-        Some(IconName::Ai)
+        Some(IconName::Ai).filter(|_| AssistantSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

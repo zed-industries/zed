@@ -26,7 +26,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, Pane, Workspace, WorkspaceSettings,
+    DraggedTab, Pane, Workspace,
 };
 
 use anyhow::Result;

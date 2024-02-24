@@ -208,6 +208,8 @@
     "default_width": 380
   },
   "assistant": {
+    // Whether to show the assistant button in the status bar.
+    "button": true,
     // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
     // Default width when the assistant is docked to the left or right.

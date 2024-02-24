@@ -31,7 +31,7 @@ use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    Workspace, WorkspaceSettings,
+    Workspace,
 };
 
 const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
