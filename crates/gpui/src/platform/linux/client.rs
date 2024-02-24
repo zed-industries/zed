@@ -4,6 +4,7 @@ use crate::platform::PlatformWindow;
 use crate::{AnyWindowHandle, DisplayId, PlatformDisplay, WindowOptions};
 
 pub trait Client {
+    fn event_loop_will_wait(&self);
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn open_window(

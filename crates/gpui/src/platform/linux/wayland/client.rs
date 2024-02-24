@@ -128,6 +128,8 @@ impl WaylandClient {
 }
 
 impl Client for WaylandClient {
+    fn event_loop_will_wait(&self) {}
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         Vec::new()
     }

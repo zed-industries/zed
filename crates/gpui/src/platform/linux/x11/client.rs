@@ -264,6 +264,14 @@ impl X11Client {
 }
 
 impl Client for X11Client {
+    fn event_loop_will_wait(&self) {
+        // Before the event loop will go to sleep, we have to make sure no more X11 events arrived
+        // and are waiting in libxcb's internal buffer.
+        while let Some(event) = self.xcb_connection.poll_for_event().unwrap() {
+            self.handle_event(event);
+        }
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let setup = self.xcb_connection.get_setup();
         setup

@@ -135,6 +135,7 @@ impl Platform for LinuxPlatform {
         let signal = event_loop.get_signal();
         event_loop
             .run(None, &mut (), |data| {
+                self.client.event_loop_will_wait();
                 if self.inner.state.lock().quit_requested {
                     signal.stop();
                 }
