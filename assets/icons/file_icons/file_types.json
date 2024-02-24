@@ -75,6 +75,7 @@
         "jxl": "image",
         "ldf": "storage",
         "lock": "lock",
+        "lockb": "bun",
         "log": "log",
         "lua": "lua",
         "m4a": "audio",
@@ -211,6 +212,9 @@
         },
         "lock": {
             "icon": "icons/file_icons/lock.svg"
+        },
+        "bun": {
+            "icon": "icons/file_icons/bun.svg"
         },
         "log": {
             "icon": "icons/file_icons/info.svg"
