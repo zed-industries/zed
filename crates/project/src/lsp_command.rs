@@ -1561,11 +1561,13 @@ impl LspCommand for GetCompletions {
                         }
 
                         let documentation = if let Some(lsp_docs) = &lsp_completion.documentation {
+                            println!("reee {}", lsp_completion.label);
                             Some(
                                 prepare_completion_documentation(
                                     lsp_docs,
                                     &language_registry,
                                     language.clone(),
+                                    lsp_completion.label.len(),
                                 )
                                 .await,
                             )

@@ -209,11 +209,19 @@ pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
+    completion_length: usize,
 ) -> Documentation {
+    let max_name_len = (10.max(100 - completion_length as i32)) as usize; //ephram
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
-                Documentation::SingleLine(text.clone())
+                println!("{} to max len {}", text, max_name_len);
+                let mut t = text.clone();
+                if t.len() > max_name_len {
+                    t.truncate(max_name_len);
+                    t.push_str("...");
+                }
+                Documentation::SingleLine(t)
             } else {
                 Documentation::MultiLinePlainText(text.clone())
             }
@@ -222,7 +230,18 @@ pub async fn prepare_completion_documentation(
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
-                    Documentation::SingleLine(value.clone())
+                    // println!("hahaha lsp {}, len: {}", value, value.len()); //ephram
+                    // value = "trolololol"
+                    println!("{} to max len {}", value, max_name_len);
+                    // Documentation::SingleLine("Trolololol".to_string())
+                    let mut t = value.clone();
+                    if t.len() > max_name_len {
+                        t.truncate(max_name_len);
+                        t.push_str("...");
+                    }
+                    // name.push_str(value.len().to_string().as_str());
+
+                    Documentation::SingleLine(t)
                 } else {
                     Documentation::MultiLinePlainText(value.clone())
                 }
