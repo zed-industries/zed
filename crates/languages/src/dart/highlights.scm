@@ -4,14 +4,10 @@
 ; --------------------
 (super) @function
 
-; TODO: add method/call_expression to grammar and
-; distinguish method call from variable access
 (function_expression_body
   (identifier) @function)
 
 ; ((identifier)(selector (argument_part)) @function)
-; NOTE: This query is a bit of a work around for the fact that the dart grammar doesn't
-; specifically identify a node as a function call
 (((identifier) @function
   (#lua-match? @function "^_?[%l]"))
   .
@@ -122,7 +118,7 @@
 (inferred_type) @keyword
 
 ((identifier) @type
-  (#lua-match? @type "^_?[%u].*[%l]")) ; catch Classes or IClasses not CLASSES
+  (#lua-match? @type "^_?[%u].*[%l]"))
 
 "Function" @type
 
@@ -154,9 +150,6 @@
   (hex_integer_literal)
   (decimal_integer_literal)
   (decimal_floating_point_literal)
-  ; TODO: inaccessible nodes
-  ; (octal_integer_literal)
-  ; (hex_floating_point_literal)
 ] @number
 
 (symbol_literal) @string.special.symbol
@@ -186,13 +179,6 @@
 
 ; Reserved words (cannot be used as identifiers)
 [
-  ; TODO:
-  ; "rethrow" cannot be targeted at all and seems to be an invisible node
-  ; TODO:
-  ; the assert keyword cannot be specifically targeted
-  ; because the grammar selects the whole node or the content
-  ; of the assertion not just the keyword
-  ; assert
   (case_builtin)
   "late"
   "required"
