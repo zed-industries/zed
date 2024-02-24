@@ -1558,12 +1558,12 @@ impl LspCommand for GetCompletions {
                         let mut label = None;
                         if let Some(language) = language.as_ref() {
                             //EPHRAM HERE
-                            let max_completion_len = 40;
+                            let max_completion_len = 45;
                             if lsp_completion.label.len() > max_completion_len {
-                                lsp_completion.label.truncate(max_completion_len);
+                                lsp_completion.label.truncate(max_completion_len - 3);
                                 lsp_completion.label.push_str("...");
                             }
-
+                            lsp_completion.label.push_str("               ");
                             language.process_completion(&mut lsp_completion).await;
                             label = language.label_for_completion(&lsp_completion).await;
                         }

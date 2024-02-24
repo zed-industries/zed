@@ -211,14 +211,14 @@ pub async fn prepare_completion_documentation(
     language: Option<Arc<Language>>,
     completion_length: usize,
 ) -> Documentation {
-    let max_name_len = (10.max(40 - completion_length as i32)) as usize; //ephram
+    let max_name_len = 10.max(57 - (completion_length - 15) as i32) as usize; //ephram
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
                 println!("{} to max len {}", text, max_name_len);
                 let mut t = text.clone();
                 if t.len() > max_name_len {
-                    t.truncate(max_name_len);
+                    t.truncate(max_name_len - 3);
                     t.push_str("...");
                 }
                 Documentation::SingleLine(t)
