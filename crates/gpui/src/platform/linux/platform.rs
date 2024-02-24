@@ -33,7 +33,7 @@ pub(crate) struct Callbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
-    pub(crate) quit: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
@@ -129,6 +129,9 @@ impl Platform for LinuxPlatform {
                 self.client.event_loop_will_wait();
             })
             .unwrap();
+        if let Some(ref mut fun) = self.inner.callbacks.lock().quit {
+            fun();
+        }
     }
 
     fn quit(&self) {

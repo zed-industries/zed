@@ -243,10 +243,6 @@ impl X11Client {
             }
             _ => {}
         }
-
-        if let Some(ref mut fun) = self.platform_inner.callbacks.lock().quit {
-            fun();
-        }
     }
 }
 
