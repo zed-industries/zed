@@ -94,7 +94,7 @@ pub struct EditorSettingsContent {
     /// The debounce delay before re-querying the language server for completion
     /// documentation when not included in original completion list.
     ///
-    /// Default: 0 ms
+    /// Default: 300 ms
     pub completion_documentation_secondary_query_debounce: Option<u64>,
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
