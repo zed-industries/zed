@@ -22,7 +22,7 @@ use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLab
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use similar::{ChangeTag, TextDiff};
+use similar::{ChangeTag, DiffableStr, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -211,9 +211,21 @@ pub async fn prepare_completion_documentation(
     language: Option<Arc<Language>>,
     completion_length: usize,
 ) -> Documentation {
-    let max_name_len = 10.max(57 - (completion_length - 15) as i32) as usize; //ephram
+    let mut space_offset = 0;
+
+    if language.is_some() && language.clone().unwrap().name().to_string().as_str() == "Python" {
+        space_offset = 15;
+    }
+    //Python justifies its lsp text strangely so this workaround is required. I'm not a huge fan either.
+    let max_name_len: usize = 10
+        .max(57 - (completion_length - space_offset) as i32)
+        // .max(57 - (completion_length) as i32)
+        .try_into()
+        .unwrap();
     match documentation {
         lsp::Documentation::String(text) => {
+            println!("Doc::String: {}", text);
+
             if text.lines().count() <= 1 {
                 let mut t = text.clone();
                 if t.len() > max_name_len {
@@ -228,6 +240,8 @@ pub async fn prepare_completion_documentation(
 
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
+                println!("Markup Plaintext: {}", value);
+
                 if value.lines().count() <= 1 {
                     let mut t = value.clone();
                     if t.len() > max_name_len {
@@ -242,6 +256,8 @@ pub async fn prepare_completion_documentation(
             }
 
             lsp::MarkupKind::Markdown => {
+                println!("Markup Markdown: {}", value);
+
                 let parsed = parse_markdown(value, language_registry, language).await;
                 Documentation::MultiLineMarkdown(parsed)
             }

@@ -1562,7 +1562,12 @@ impl LspCommand for GetCompletions {
                                 lsp_completion.label.truncate(max_completion_len - 3);
                                 lsp_completion.label.push_str("...");
                             }
-                            lsp_completion.label.push_str("               ");
+
+                            println!("Language {}", language.name());
+                            //Python justifies its lsp text strangely so this workaround is required. I'm not a huge fan either.
+                            if language.name().to_string().as_str() == "Python" {
+                                lsp_completion.label.push_str("               ");
+                            }
                             language.process_completion(&mut lsp_completion).await;
                             label = language.label_for_completion(&lsp_completion).await;
                         }
