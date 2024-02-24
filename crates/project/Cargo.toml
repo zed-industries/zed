@@ -65,6 +65,7 @@ text.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 util.workspace = true
+which.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

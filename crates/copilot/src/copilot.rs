@@ -428,6 +428,8 @@ impl Copilot {
                 let binary = LanguageServerBinary {
                     path: node_path,
                     arguments,
+                    // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
+                    env: None,
                 };
 
                 let server = LanguageServer::new(

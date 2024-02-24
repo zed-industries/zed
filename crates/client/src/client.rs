@@ -10,6 +10,7 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
+use clock::SystemClock;
 use collections::HashMap;
 use futures::{
     channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt,
@@ -45,7 +46,7 @@ use util::http::{HttpClient, ZedHttpClient};
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
-pub use telemetry::Event;
+pub use telemetry_events::Event;
 pub use user::*;
 
 lazy_static! {
@@ -421,11 +422,15 @@ impl settings::Settings for TelemetrySettings {
 }
 
 impl Client {
-    pub fn new(http: Arc<ZedHttpClient>, cx: &mut AppContext) -> Arc<Self> {
+    pub fn new(
+        clock: Arc<dyn SystemClock>,
+        http: Arc<ZedHttpClient>,
+        cx: &mut AppContext,
+    ) -> Arc<Self> {
         let client = Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
-            telemetry: Telemetry::new(http.clone(), cx),
+            telemetry: Telemetry::new(clock, http.clone(), cx),
             http,
             state: Default::default(),
 
@@ -1455,6 +1460,7 @@ mod tests {
     use super::*;
     use crate::test::FakeServer;
 
+    use clock::FakeSystemClock;
     use gpui::{BackgroundExecutor, Context, TestAppContext};
     use parking_lot::Mutex;
     use settings::SettingsStore;
@@ -1465,7 +1471,13 @@ mod tests {
     async fn test_reconnection(cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let server = FakeServer::for_client(user_id, &client, cx).await;
         let mut status = client.status();
         assert!(matches!(
@@ -1500,7 +1512,13 @@ mod tests {
     async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let mut status = client.status();
 
         // Time out when client tries to connect.
@@ -1573,7 +1591,13 @@ mod tests {
         init_test(cx);
         let auth_count = Arc::new(Mutex::new(0));
         let dropped_auth_count = Arc::new(Mutex::new(0));
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         client.override_authenticate({
             let auth_count = auth_count.clone();
             let dropped_auth_count = dropped_auth_count.clone();
@@ -1621,7 +1645,13 @@ mod tests {
     async fn test_subscribing_to_entity(cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
@@ -1675,7 +1705,13 @@ mod tests {
     async fn test_subscribing_after_dropping_subscription(cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.new_model(|_| TestModel::default());
@@ -1704,7 +1740,13 @@ mod tests {
     async fn test_dropping_subscription_in_handler(cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.new_model(|_| TestModel::default());

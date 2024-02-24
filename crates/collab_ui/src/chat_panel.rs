@@ -7,9 +7,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
-    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, CursorStyle,
-    DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
-    HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
+    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
+    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle,
+    FontWeight, HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
     Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
@@ -627,6 +627,20 @@ impl ChatPanel {
                             editor.set_reply_to_message_id(message_id);
                             editor.focus_handle(cx).focus(cx);
                         })
+                    }),
+                )
+                .entry(
+                    "Copy message text",
+                    None,
+                    cx.handler_for(&this, move |this, cx| {
+                        this.active_chat().map(|active_chat| {
+                            if let Some(message) =
+                                active_chat.read(cx).find_loaded_message(message_id)
+                            {
+                                let text = message.body.clone();
+                                cx.write_to_clipboard(ClipboardItem::new(text))
+                            }
+                        });
                     }),
                 )
                 .when(can_delete_message, move |menu| {
