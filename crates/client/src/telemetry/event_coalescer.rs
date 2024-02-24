@@ -191,47 +191,52 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn test_switching_environment_while_within_timeout() {
-    //     let environment_1 = "environment_1";
-    //     let mut event_coalescer = EventCoalescer::new();
+    #[test]
+    fn test_switching_environment_while_within_timeout() {
+        let clock = Arc::new(FakeSystemClock::new(
+            Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap(),
+        ));
+        let environment_1 = "environment_1";
+        let mut event_coalescer = EventCoalescer::new(clock.clone());
 
-    //     assert_eq!(event_coalescer.state, None);
+        assert_eq!(event_coalescer.state, None);
 
-    //     let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
-    //     let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
+        let period_start = clock.utc_now();
+        let period_data = event_coalescer.log_event(environment_1);
 
-    //     assert_eq!(period_data, None);
-    //     assert_eq!(
-    //         event_coalescer.state,
-    //         Some(PeriodData {
-    //             start: period_start,
-    //             end: None,
-    //             environment: environment_1,
-    //         })
-    //     );
+        assert_eq!(period_data, None);
+        assert_eq!(
+            event_coalescer.state,
+            Some(PeriodData {
+                start: period_start,
+                end: None,
+                environment: environment_1,
+            })
+        );
 
-    //     let within_timeout_adjustment = Duration::from_std(COALESCE_TIMEOUT / 2).unwrap();
-    //     let period_end = period_start + within_timeout_adjustment;
-    //     let environment_2 = "environment_2";
-    //     let period_data = event_coalescer.log_event_with_time(period_end, environment_2);
+        let within_timeout_adjustment = Duration::from_std(COALESCE_TIMEOUT / 2).unwrap();
+        clock.advance(within_timeout_adjustment);
+        let period_end = clock.utc_now();
+        let environment_2 = "environment_2";
+        let period_data = event_coalescer.log_event(environment_2);
 
-    //     assert_eq!(period_data, Some((period_start, period_end, environment_1)));
-    //     assert_eq!(
-    //         event_coalescer.state,
-    //         Some(PeriodData {
-    //             start: period_end,
-    //             end: None,
-    //             environment: environment_2,
-    //         })
-    //     );
-    // }
-    // // // 0                   20                  40                  60
-    // // // |-------------------|-------------------|-------------------|-------------------
-    // // // |--------|----------env change
-    // // //          |-------------------
-    // // // |period_start       |period_end
-    // // //                     |new_period_start
+        assert_eq!(period_data, Some((period_start, period_end, environment_1)));
+        assert_eq!(
+            event_coalescer.state,
+            Some(PeriodData {
+                start: period_end,
+                end: None,
+                environment: environment_2,
+            })
+        );
+    }
+
+    // 0                   20                  40                  60
+    // |-------------------|-------------------|-------------------|-------------------
+    // |--------|----------env change
+    //          |-------------------
+    // |period_start       |period_end
+    //                     |new_period_start
 
     // #[test]
     // fn test_switching_environment_while_exceeding_timeout() {
