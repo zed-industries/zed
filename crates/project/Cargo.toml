@@ -24,14 +24,12 @@ test-support = [
 aho-corasick = "1.1"
 anyhow.workspace = true
 async-trait.workspace = true
-backtrace = "0.3"
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
 copilot.workspace = true
 db.workspace = true
 fs.workspace = true
-fsevent.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
@@ -40,7 +38,6 @@ gpui.workspace = true
 ignore = "0.4"
 itertools = "0.10"
 language.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
@@ -53,7 +50,6 @@ rpc.workspace = true
 task.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 sha2 = "0.10"
@@ -62,15 +58,12 @@ smol.workspace = true
 sum_tree.workspace = true
 terminal.workspace = true
 text.workspace = true
-thiserror.workspace = true
-toml.workspace = true
 util.workspace = true
 which.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
-ctor.workspace = true
 db = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
@@ -83,6 +76,5 @@ prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-tempfile.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
