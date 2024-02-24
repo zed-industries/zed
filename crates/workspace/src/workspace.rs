@@ -1602,7 +1602,7 @@ impl Workspace {
 
         if retain_active_pane {
             if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
-                pane.close_inactive_items(&CloseInactiveItems, cx)
+                pane.close_inactive_items(&CloseInactiveItems { save_intent: None }, cx)
             }) {
                 tasks.push(current_pane_close);
             };

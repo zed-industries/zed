@@ -201,6 +201,20 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
             }
             .boxed_clone(),
         ),
+        "tabo" | "tabon" | "tabonl" | "tabonly" => (
+            "tabonly",
+            workspace::CloseInactiveItems {
+                save_intent: Some(SaveIntent::Close),
+            }
+            .boxed_clone(),
+        ),
+        "tabo!" | "tabon!" | "tabonl!" | "tabonly!" => (
+            "tabonly!",
+            workspace::CloseInactiveItems {
+                save_intent: Some(SaveIntent::Skip),
+            }
+            .boxed_clone(),
+        ),
 
         // quickfix / loclist (merged together for now)
         "cl" | "cli" | "clis" | "clist" => (
