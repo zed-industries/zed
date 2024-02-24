@@ -14,6 +14,7 @@ use crate::{
 };
 
 use super::{X11Display, X11Window, X11WindowState, XcbAtoms};
+use calloop::generic::{FdWrapper, Generic};
 
 pub(crate) struct X11ClientState {
     pub(crate) windows: HashMap<x::Window, Rc<X11WindowState>>,
@@ -71,37 +72,30 @@ impl X11Client {
             }),
         });
 
-        let (event_sender, event_receiver) = calloop::channel::channel::<xcb::Event>();
-        {
-            let client = Rc::clone(&client);
-            inner
-                .loop_handle
-                .insert_source(event_receiver, move |event, _, _| match event {
-                    calloop::channel::Event::Msg(event) => {
-                        client.handle_event(event);
-                    }
-                    calloop::channel::Event::Closed => {}
-                })
-                .unwrap();
-        }
+        // Safety: Safe if xcb::Connection always returns a valid fd
+        let fd = unsafe { FdWrapper::new(Arc::clone(&xcb_connection)) };
 
-        {
-            let xcb_connection = Arc::clone(&xcb_connection);
-            std::thread::spawn(move || loop {
-                profiling::scope!("Wait for event");
-                match xcb_connection.wait_for_event() {
-                    Ok(event) => match event_sender.send(event) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            panic!("{e}");
+        inner
+            .loop_handle
+            .insert_source(
+                Generic::new_with_error::<xcb::Error>(
+                    fd,
+                    calloop::Interest::READ,
+                    calloop::Mode::Level,
+                ),
+                {
+                    let client = Rc::clone(&client);
+                    move |readiness, _, _| {
+                        if readiness.readable {
+                            while let Some(event) = xcb_connection.poll_for_event()? {
+                                client.handle_event(event);
+                            }
                         }
-                    },
-                    Err(e) => {
-                        panic!("{e}");
+                        Ok(calloop::PostAction::Continue)
                     }
-                }
-            });
-        }
+                },
+            )
+            .unwrap();
 
         client
     }
