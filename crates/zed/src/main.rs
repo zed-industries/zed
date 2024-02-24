@@ -46,7 +46,7 @@ use std::{
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
-    http::{self, HttpClient, ZedHttpClient},
+    http::{HttpClient, HttpClientWithUrl},
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt,
 };
@@ -140,7 +140,9 @@ fn main() {
         client::init_settings(cx);
 
         let clock = Arc::new(clock::RealSystemClock);
-        let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
+        let http = Arc::new(HttpClientWithUrl::new(
+            &client::ClientSettings::get_global(cx).server_url,
+        ));
 
         let client = client::Client::new(clock, http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
@@ -198,9 +200,8 @@ fn main() {
             move |cx| {
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
-                let mut host = http.zed_host.lock();
-                if &*host != new_host {
-                    *host = new_host.clone();
+                if &http.base_url() != new_host {
+                    http.set_base_url(new_host);
                     if client.status().borrow().is_connected() {
                         client.reconnect(&cx.to_async());
                     }
@@ -677,7 +678,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
     }));
 }
 
-fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
+fn upload_panics_and_crashes(http: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
         .spawn(async move {
@@ -692,12 +693,12 @@ fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
         .detach()
 }
 
-/// upload panics to us (via zed.dev)
+/// Uploads panics via `zed.dev`.
 async fn upload_previous_panics(
-    http: Arc<ZedHttpClient>,
+    http: Arc<HttpClientWithUrl>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<Option<(i64, String)>> {
-    let panic_report_url = http.zed_url("/api/panic");
+    let panic_report_url = http.build_url("/api/panic");
     let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
 
     let mut most_recent_panic = None;
@@ -766,7 +767,7 @@ static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)
 async fn upload_previous_crashes(
-    http: Arc<ZedHttpClient>,
+    http: Arc<HttpClientWithUrl>,
     most_recent_panic: Option<(i64, String)>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
@@ -778,7 +779,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = http.zed_url("/api/crash");
+    let crash_report_url = http.build_url("/api/crash");
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
