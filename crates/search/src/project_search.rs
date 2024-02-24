@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use editor::scroll::Axis;
 use editor::{
     actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor, EditorEvent,
     MultiBuffer, MAX_TAB_TITLE_LEN,
@@ -14,9 +15,9 @@ use editor::{EditorElement, EditorStyle};
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global, Hsla,
-    InteractiveElement, IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakModel, WeakView, WhiteSpace, WindowContext,
+    InteractiveElement, IntoElement, KeyContext, Model, ModelContext, ParentElement, Point,
+    PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -1302,6 +1303,7 @@ impl ProjectSearchView {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_ranges(range_to_select)
                     });
+                    editor.scroll(Point::default(), Some(Axis::Vertical), cx);
                 }
                 editor.highlight_background::<Self>(
                     match_ranges,
