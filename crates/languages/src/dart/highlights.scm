@@ -4,113 +4,102 @@
 ; --------------------
 (super) @function
 
-(function_expression_body
-  (identifier) @function)
-
+(function_expression_body (identifier) @type)
 ; ((identifier)(selector (argument_part)) @function)
-(((identifier) @function
-  (#lua-match? @function "^_?[%l]"))
-  .
-  (selector
-    .
-    (argument_part))) @function
+
+(((identifier) @function (#match? @function "^_?[a-z]"))
+ . (selector . (argument_part))) @function
 
 ; Annotations
 ; --------------------
 (annotation
-  name: (identifier) @attribute)
+ name: (identifier) @attribute)
 
 ; Operators and Tokens
 ; --------------------
 (template_substitution
-  "$" @punctuation.special
-  "{" @punctuation.special
-  "}" @punctuation.special) @none
+ "$" @punctuation.special
+ "{" @punctuation.special
+ "}" @punctuation.special) @none
 
 (template_substitution
-  "$" @punctuation.special
-  (identifier_dollar_escaped) @variable) @none
+ "$" @punctuation.special
+ (identifier_dollar_escaped) @variable) @none
 
 (escape_sequence) @string.escape
 
 [
-  "@"
-  "=>"
-  ".."
-  "??"
-  "=="
-  "?"
-  ":"
-  "&&"
-  "%"
-  "<"
-  ">"
-  "="
-  ">="
-  "<="
-  "||"
-  (multiplicative_operator)
-  (increment_operator)
-  (is_operator)
-  (prefix_operator)
-  (equality_operator)
-  (additive_operator)
-] @operator
+ "@"
+ "=>"
+ ".."
+ "??"
+ "=="
+ "?"
+ ":"
+ "&&"
+ "%"
+ "<"
+ ">"
+ "="
+ ">="
+ "<="
+ "||"
+ (multiplicative_operator)
+ (increment_operator)
+ (is_operator)
+ (prefix_operator)
+ (equality_operator)
+ (additive_operator)
+ ] @operator
 
 [
-  "("
-  ")"
-  "["
-  "]"
-  "{"
-  "}"
-] @punctuation.bracket
+ "("
+ ")"
+ "["
+ "]"
+ "{"
+ "}"
+ ] @punctuation.bracket
 
 ; Delimiters
 ; --------------------
 [
-  ";"
-  "."
-  ","
-] @punctuation.delimiter
+ ";"
+ "."
+ ","
+ ] @punctuation.delimiter
 
 ; Types
 ; --------------------
 (class_definition
-  name: (identifier) @type)
-
+ name: (identifier) @type)
 (constructor_signature
-  name: (identifier) @type)
-
+ name: (identifier) @type)
 (scoped_identifier
-  scope: (identifier) @type)
-
+ scope: (identifier) @type)
 (function_signature
-  name: (identifier) @function.method)
+ name: (identifier) @function.method)
 
 (getter_signature
-  (identifier) @function.method)
+ (identifier) @function.method)
 
 (setter_signature
-  name: (identifier) @function.method)
-
+ name: (identifier) @function.method)
 (enum_declaration
-  name: (identifier) @type)
-
+ name: (identifier) @type)
 (enum_constant
-  name: (identifier) @type)
-
+ name: (identifier) @type)
 (void_type) @type
 
 ((scoped_identifier
   scope: (identifier) @type
   name: (identifier) @type)
-  (#lua-match? @type "^[%u%l]"))
+ (#match? @type "^[a-zA-Z]"))
 
 (type_identifier) @type
 
 (type_alias
-  (type_identifier) @type.definition)
+ (type_identifier) @type.definition)
 
 ; Variables
 ; --------------------
@@ -118,48 +107,48 @@
 (inferred_type) @keyword
 
 ((identifier) @type
-  (#lua-match? @type "^_?[%u].*[%l]"))
+ (#match? @type "^_?[A-Z].*[a-z]"))
 
-"Function" @type
+("Function" @type)
 
 ; properties
 (unconditional_assignable_selector
-  (identifier) @property)
+ (identifier) @property)
 
 (conditional_assignable_selector
-  (identifier) @property)
+ (identifier) @property)
 
 ; assignments
 (assignment_expression
-  left: (assignable_expression) @variable)
+ left: (assignable_expression) @variable)
 
 (this) @variable.builtin
 
 ; Parameters
 ; --------------------
 (formal_parameter
-  name: (identifier) @variable.parameter)
+ name: (identifier) @variable.parameter)
 
 (named_argument
-  (label
+ (label
     (identifier) @variable.parameter))
 
 ; Literals
 ; --------------------
 [
-  (hex_integer_literal)
-  (decimal_integer_literal)
-  (decimal_floating_point_literal)
-] @number
+ (hex_integer_literal)
+ (decimal_integer_literal)
+ (decimal_floating_point_literal)
+ ; TODO: inaccessbile nodes
+ ; (octal_integer_literal)
+ ; (hex_floating_point_literal)
+ ] @number
 
 (symbol_literal) @string.special.symbol
 
 (string_literal) @string
-
 (true) @boolean
-
 (false) @boolean
-
 (null_literal) @constant.builtin
 
 (comment) @comment @spell
@@ -169,30 +158,30 @@
 ; Keywords
 ; --------------------
 [
-  "import"
-  "library"
-  "export"
-  "as"
-  "show"
-  "hide"
-] @keyword.import
+ "import"
+ "library"
+ "export"
+ "as"
+ "show"
+ "hide"
+ ] @keyword.import
 
 ; Reserved words (cannot be used as identifiers)
 [
   (case_builtin)
-  "late"
-  "required"
-  "extension"
-  "on"
-  "class"
-  "enum"
-  "extends"
-  "in"
-  "is"
-  "new"
-  "super"
-  "with"
-] @keyword
+ "late"
+ "required"
+ "extension"
+ "on"
+ "class"
+ "enum"
+ "extends"
+ "in"
+ "is"
+ "new"
+ "super"
+ "with"
+ ] @keyword
 
 "return" @keyword.return
 
@@ -200,17 +189,17 @@
 ; alone these are marked as keywords
 [
   "deferred"
-  "factory"
-  "get"
-  "implements"
-  "interface"
-  "library"
-  "operator"
-  "mixin"
-  "part"
-  "set"
-  "typedef"
-] @keyword
+ "factory"
+ "get"
+ "implements"
+ "interface"
+ "library"
+ "operator"
+ "mixin"
+ "part"
+ "set"
+ "typedef"
+ ] @keyword
 
 [
   "async"
@@ -221,23 +210,41 @@
 ] @keyword.coroutine
 
 [
-  (const_builtin)
-  (final_builtin)
-  "abstract"
+ (const_builtin)
+ (final_builtin)
+ "abstract"
   "covariant"
-  "dynamic"
-  "external"
-  "static"
-  "final"
+ "dynamic"
+ "external"
+ "static"
+ "final"
   "base"
   "sealed"
-] @type.qualifier
+ ] @type.qualifier
 
 ; when used as an identifier:
 ((identifier) @variable.builtin
-  (#any-of? @variable.builtin
-    "abstract" "as" "covariant" "deferred" "dynamic" "export" "external" "factory" "Function" "get"
-    "implements" "import" "interface" "library" "operator" "mixin" "part" "set" "static" "typedef"))
+ (#any-of? @variable.builtin
+           "abstract"
+           "as"
+           "covariant"
+           "deferred"
+           "dynamic"
+           "export"
+           "external"
+           "factory"
+           "Function"
+           "get"
+           "implements"
+           "import"
+           "interface"
+           "library"
+           "operator"
+           "mixin"
+           "part"
+           "set"
+           "static"
+           "typedef"))
 
 [
   "if"
