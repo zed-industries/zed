@@ -1749,7 +1749,7 @@ impl Editor {
         self.completion_provider = Some(hub);
     }
 
-    pub fn placeholder_text(&self) -> Option<&str> {
+    pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&str> {
         self.placeholder_text.as_deref()
     }
 
@@ -9618,7 +9618,7 @@ impl EditorSnapshot {
         self.is_focused
     }
 
-    pub fn placeholder_text(&self) -> Option<&Arc<str>> {
+    pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&Arc<str>> {
         self.placeholder_text.as_ref()
     }
 

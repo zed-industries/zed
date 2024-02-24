@@ -146,7 +146,7 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         Arc::from(format!(
             "`{:?}` reuses the window, `{:?}` opens in new",
             menu::Confirm,

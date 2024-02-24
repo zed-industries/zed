@@ -37,7 +37,7 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
-    fn placeholder_text(&self) -> Arc<str>;
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
     // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
@@ -98,7 +98,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn new(delegate: D, cx: &mut ViewContext<Self>, is_uniform: bool) -> Self {
-        let editor = create_editor(delegate.placeholder_text(), cx);
+        let editor = create_editor(delegate.placeholder_text(cx), cx);
         cx.subscribe(&editor, Self::on_input_editor_event).detach();
         let mut this = Self {
             delegate,

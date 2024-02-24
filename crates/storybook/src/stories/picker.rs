@@ -41,7 +41,7 @@ impl PickerDelegate for Delegate {
         self.candidates.len()
     }
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Test".into()
     }
 
