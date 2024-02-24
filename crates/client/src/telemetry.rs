@@ -96,7 +96,7 @@ impl Telemetry {
             log_file: None,
             is_staff: None,
             first_event_date_time: None,
-            event_coalescer: EventCoalescer::new(),
+            event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
         }));
 
