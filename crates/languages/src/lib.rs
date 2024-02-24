@@ -25,8 +25,6 @@ mod go;
 mod haskell;
 mod html;
 mod json;
-#[cfg(feature = "plugin_runtime")]
-mod language_plugin;
 mod lua;
 mod nu;
 mod ocaml;
