@@ -312,7 +312,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
                     true
                 }
             });
-            state.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
+            state.platform_inner.loop_signal.stop();
         }
     }
 }

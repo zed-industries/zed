@@ -130,7 +130,9 @@ impl X11Client {
                         let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                         window.destroy();
                         let state = self.state.lock();
-                        self.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
+                        if state.windows.is_empty() {
+                            self.platform_inner.loop_signal.stop();
+                        }
                     }
                 }
             }

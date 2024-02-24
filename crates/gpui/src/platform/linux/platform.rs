@@ -57,9 +57,7 @@ pub(crate) struct LinuxPlatform {
     inner: Rc<LinuxPlatformInner>,
 }
 
-pub(crate) struct LinuxPlatformState {
-    pub(crate) quit_requested: bool,
-}
+pub(crate) struct LinuxPlatformState {}
 
 impl Default for LinuxPlatform {
     fn default() -> Self {
@@ -75,9 +73,7 @@ impl LinuxPlatform {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(LinuxTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
-        let state = Mutex::new(LinuxPlatformState {
-            quit_requested: false,
-        });
+        let state = Mutex::new(LinuxPlatformState {});
 
         let event_loop = EventLoop::try_new().unwrap();
         event_loop
@@ -131,20 +127,17 @@ impl Platform for LinuxPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
-        let mut event_loop = self.inner.event_loop.lock();
-        let signal = event_loop.get_signal();
-        event_loop
+        self.inner
+            .event_loop
+            .lock()
             .run(None, &mut (), |data| {
                 self.client.event_loop_will_wait();
-                if self.inner.state.lock().quit_requested {
-                    signal.stop();
-                }
             })
             .unwrap();
     }
 
     fn quit(&self) {
-        self.inner.state.lock().quit_requested = true;
+        self.inner.loop_signal.stop();
     }
 
     //todo!(linux)
