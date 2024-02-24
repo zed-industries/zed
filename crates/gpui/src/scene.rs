@@ -1,8 +1,8 @@
 use crate::{
     point, AtlasTextureId, AtlasTile, Bounds, BoundsTree, ContentMask, Corners, Edges, EntityId,
-    Hsla, Pixels, Point, ScaledPixels, StackingOrder,
+    Hsla, Pixels, Point, ScaledPixels,
 };
-use collections::{BTreeMap, FxHashSet};
+use collections::FxHashSet;
 use std::{fmt::Debug, iter::Peekable, slice};
 
 #[allow(non_camel_case_types, unused)]
@@ -89,11 +89,7 @@ impl Scene {
         }
     }
 
-    pub(crate) fn insert(
-        &mut self,
-        order: &StackingOrder,
-        primitive: impl Into<Primitive>,
-    ) -> Option<u32> {
+    pub(crate) fn insert(&mut self, primitive: impl Into<Primitive>) -> Option<u32> {
         let primitive = primitive.into();
         let clipped_bounds = primitive
             .bounds()
@@ -104,7 +100,7 @@ impl Scene {
             return None;
         }
 
-        let order = u32::MAX - self.bounds_tree.insert(clipped_bounds);
+        let order = self.bounds_tree.insert(clipped_bounds);
         match primitive {
             Primitive::Shadow(mut shadow) => {
                 shadow.order = order;
