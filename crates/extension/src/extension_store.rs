@@ -415,10 +415,6 @@ impl ExtensionStore {
             }));
 
         for language_name in &languages_to_add {
-            if language_name.as_ref() == "Swift" {
-                continue;
-            }
-
             let language = manifest.languages.get(language_name.as_ref()).unwrap();
             let mut language_path = self.extensions_dir.clone();
             language_path.extend([language.extension.as_ref(), language.path.as_path()]);
