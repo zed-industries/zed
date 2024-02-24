@@ -14,6 +14,34 @@ use std::fmt;
 use std::{sync::Arc, time::Duration};
 pub use url::Url;
 
+pub struct ZedUrl(Mutex<String>);
+
+impl ZedUrl {
+    pub fn new(base_url: impl Into<String>) -> Self {
+        Self(Mutex::new(base_url.into()))
+    }
+
+    pub fn set_base_url(&self, base_url: impl Into<String>) {
+        *self.0.lock() = base_url.into();
+    }
+
+    pub fn build_url(&self, path: &str) -> String {
+        format!("{}{}", self.0.lock(), path)
+    }
+
+    pub fn build_api_url(&self, path: &str) -> String {
+        let base_url = self.0.lock().clone();
+        let base_api_url = match base_url.as_ref() {
+            "https://zed.dev" => "https://api.zed.dev",
+            "https://staging.zed.dev" => "https://api-staging.zed.dev",
+            "http://localhost:3000" => "http://localhost:8080",
+            other => other,
+        };
+
+        format!("{}{}", base_api_url, path)
+    }
+}
+
 pub struct ZedHttpClient {
     pub zed_host: Mutex<String>,
     client: Box<dyn HttpClient>,
