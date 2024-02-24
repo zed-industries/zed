@@ -22,7 +22,7 @@ use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLab
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use similar::{ChangeTag, DiffableStr, TextDiff};
+use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
