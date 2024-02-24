@@ -329,7 +329,7 @@ impl LinuxTextSystemState {
             let font = &self.fonts[run.font_id.0];
             let font = self.font_system.db().face(font.id()).unwrap();
             attrs_list.add_span(
-                offs..run.len,
+                offs..offs + run.len,
                 Attrs::new()
                     .family(Family::Name(&font.families.first().unwrap().0))
                     .stretch(font.stretch)
