@@ -365,14 +365,7 @@ impl FileFinderDelegate {
         history_items: Vec<FoundPath>,
         cx: &mut ViewContext<FileFinder>,
     ) -> Self {
-        cx.observe(&project, |file_finder, _, cx| {
-            //todo We should probably not re-render on every project anything
-            file_finder
-                .picker
-                .update(cx, |picker, cx| picker.refresh(cx))
-        })
-        .detach();
-
+        Self::subscribe_to_updates(&project, cx);
         Self {
             file_finder,
             workspace,
@@ -386,6 +379,18 @@ impl FileFinderDelegate {
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
+        }
+    }
+
+    fn subscribe_to_updates(project: &Model<Project>, cx: &mut ViewContext<FileFinder>) {
+        let worktrees = project.update(cx, move |project, _| Vec::from_iter(project.worktrees()));
+        for worktree in worktrees {
+            cx.observe(&worktree, |file_finder, _, cx| {
+                file_finder
+                    .picker
+                    .update(cx, |picker, cx| picker.refresh(cx))
+            })
+            .detach();
         }
     }
 
