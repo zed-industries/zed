@@ -703,11 +703,6 @@ pub struct EditEventRow {
     patch: Option<i32>,
     release_channel: String,
 
-    // SystemInfoBase
-    os_name: String,
-    os_version: Option<String>,
-    architecture: String,
-
     // ClientEventBase
     installation_id: Option<String>,
     // Note: This column name has a typo in the ClickHouse table.
@@ -742,9 +737,6 @@ impl EditEventRow {
             minor: semver.map(|s| s.minor as i32),
             patch: semver.map(|s| s.patch as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
-            os_name: body.os_name.clone(),
-            os_version: body.os_version.clone(),
-            architecture: body.architecture.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
