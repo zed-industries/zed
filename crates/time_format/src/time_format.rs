@@ -1,4 +1,3 @@
-use anyhow::Result;
 use lazy_static::lazy_static;
 use time::{OffsetDateTime, UtcOffset};
 
