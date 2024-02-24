@@ -134,7 +134,7 @@ impl Platform for LinuxPlatform {
         let mut event_loop = self.inner.event_loop.lock();
         let signal = event_loop.get_signal();
         event_loop
-            .run(Duration::MAX, &mut (), |data| {
+            .run(None, &mut (), |data| {
                 if self.inner.state.lock().quit_requested {
                     signal.stop();
                 }
