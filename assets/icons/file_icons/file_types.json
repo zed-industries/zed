@@ -49,6 +49,7 @@
         "gitkeep": "vcs",
         "gitmodules": "vcs",
         "go": "go",
+        "graphql": "graphql",
         "h": "code",
         "handlebars": "code",
         "hbs": "template",
@@ -201,6 +202,9 @@
         },
         "go": {
             "icon": "icons/file_icons/go.svg"
+        },
+        "graphql": {
+            "icon": "icons/file_icons/graphql.svg"
         },
         "image": {
             "icon": "icons/file_icons/image.svg"
