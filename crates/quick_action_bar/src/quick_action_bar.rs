@@ -1,4 +1,3 @@
-use assistant::assistant_settings::AssistantSettings;
 use assistant::{AssistantPanel, InlineAssist};
 use editor::{Editor, EditorSettings};
 
@@ -105,23 +104,6 @@ impl Render for QuickActionBar {
         ))
         .filter(|_| editor.is_singleton(cx));
 
-        let assistant_button = QuickActionBarButton::new(
-            "toggle inline assistant",
-            IconName::MagicWand,
-            false,
-            Box::new(InlineAssist),
-            "Inline Assist",
-            {
-                let workspace = self.workspace.clone();
-                move |_, cx| {
-                    if let Some(workspace) = workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            AssistantPanel::inline_assist(workspace, &InlineAssist, cx);
-                        });
-                    }
-                }
-            },
-        );
         h_flex()
             .id("quick action bar")
             .gap_2()

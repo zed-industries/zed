@@ -1377,7 +1377,18 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
-        Some(IconName::Ai).filter(|_| AssistantSettings::get_global(cx).button)
+        if let Some(elements) = WorkspaceSettings::get_global(cx)
+            .status_bar
+            .clone()
+            .elements
+        {
+            // Now that we have elements, check cursor_position
+            if !elements.assistant.unwrap_or(true) {
+                // If cursor_position is true or None (defaulting to true)
+                return None;
+            }
+        }
+        Some(IconName::Ai)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
