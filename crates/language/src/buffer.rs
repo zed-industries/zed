@@ -215,7 +215,6 @@ pub async fn prepare_completion_documentation(
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
-                println!("{} to max len {}", text, max_name_len);
                 let mut t = text.clone();
                 if t.len() > max_name_len {
                     t.truncate(max_name_len - 3);
@@ -230,16 +229,11 @@ pub async fn prepare_completion_documentation(
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
-                    // println!("hahaha lsp {}, len: {}", value, value.len()); //ephram
-                    // value = "trolololol"
-                    println!("{} to max len {}", value, max_name_len);
-                    // Documentation::SingleLine("Trolololol".to_string())
                     let mut t = value.clone();
                     if t.len() > max_name_len {
                         t.truncate(max_name_len);
                         t.push_str("...");
                     }
-                    // name.push_str(value.len().to_string().as_str());
 
                     Documentation::SingleLine(t)
                 } else {

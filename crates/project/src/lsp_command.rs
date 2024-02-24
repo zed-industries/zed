@@ -1557,7 +1557,6 @@ impl LspCommand for GetCompletions {
                     Some(async move {
                         let mut label = None;
                         if let Some(language) = language.as_ref() {
-                            //EPHRAM HERE
                             let max_completion_len = 45;
                             if lsp_completion.label.len() > max_completion_len {
                                 lsp_completion.label.truncate(max_completion_len - 3);
@@ -1569,7 +1568,6 @@ impl LspCommand for GetCompletions {
                         }
 
                         let documentation = if let Some(lsp_docs) = &lsp_completion.documentation {
-                            println!("reee {}", lsp_completion.label);
                             Some(
                                 prepare_completion_documentation(
                                     lsp_docs,

@@ -5145,7 +5145,6 @@ impl Project {
         };
 
         if let Some(lsp_documentation) = completion_item.documentation {
-            println!("GAGA {}", completion_item.label);
             let documentation = language::prepare_completion_documentation(
                 &lsp_documentation,
                 &language_registry,
