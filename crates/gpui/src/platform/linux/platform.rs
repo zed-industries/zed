@@ -49,15 +49,12 @@ pub(crate) struct LinuxPlatformInner {
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<LinuxTextSystem>,
     pub(crate) callbacks: Mutex<Callbacks>,
-    pub(crate) state: Mutex<LinuxPlatformState>,
 }
 
 pub(crate) struct LinuxPlatform {
     client: Rc<dyn Client>,
     inner: Rc<LinuxPlatformInner>,
 }
-
-pub(crate) struct LinuxPlatformState {}
 
 impl Default for LinuxPlatform {
     fn default() -> Self {
@@ -73,7 +70,6 @@ impl LinuxPlatform {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(LinuxTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
-        let state = Mutex::new(LinuxPlatformState {});
 
         let event_loop = EventLoop::try_new().unwrap();
         event_loop
@@ -95,7 +91,6 @@ impl LinuxPlatform {
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
             callbacks,
-            state,
         });
 
         if use_wayland {
