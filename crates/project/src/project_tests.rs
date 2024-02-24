@@ -45,6 +45,7 @@ async fn test_block_via_smol(cx: &mut gpui::TestAppContext) {
     task.await;
 }
 
+#[cfg(not(windows))]
 #[gpui::test]
 async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     init_test(cx);

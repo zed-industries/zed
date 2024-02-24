@@ -61,6 +61,7 @@ smallvec.workspace = true
 story = { workspace = true, optional = true }
 theme.workspace = true
 theme_selector.workspace = true
+time_format.workspace = true
 time.workspace = true
 ui.workspace = true
 util.workspace = true

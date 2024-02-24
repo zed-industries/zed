@@ -82,6 +82,7 @@ members = [
     "crates/theme_importer",
     "crates/theme_selector",
     "crates/telemetry_events",
+    "crates/time_format",
     "crates/ui",
     "crates/util",
     "crates/vcs_menu",
@@ -174,7 +175,8 @@ text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
-telemetry_events = { path ="crates/telemetry_events" }
+telemetry_events = { path = "crates/telemetry_events" }
+time_format = { path = "crates/time_format" }
 ui = { path = "crates/ui" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
@@ -194,6 +196,8 @@ blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
+core-foundation = { version = "0.9.3" }
+core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
 env_logger = "0.9"
 futures = "0.3"

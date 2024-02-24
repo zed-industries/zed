@@ -507,15 +507,15 @@ impl BladeRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) {
+        self.command_encoder.start();
+        self.atlas.before_frame(&mut self.command_encoder);
+        self.rasterize_paths(scene.paths());
+
         let frame = {
             profiling::scope!("acquire frame");
             self.gpu.acquire_frame()
         };
-        self.command_encoder.start();
         self.command_encoder.init_texture(frame.texture());
-
-        self.atlas.before_frame(&mut self.command_encoder);
-        self.rasterize_paths(scene.paths());
 
         let globals = GlobalParams {
             viewport_size: [

@@ -11,8 +11,6 @@ path = "src/storybook.rs"
 
 [dependencies]
 anyhow.workspace = true
-# TODO: Remove after diagnosing stack overflow.
-backtrace-on-stack-overflow = "0.3.0"
 chrono = "0.4"
 clap = { version = "4.4", features = ["derive", "string"] }
 collab_ui = { workspace = true, features = ["stories"] }

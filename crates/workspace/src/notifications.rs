@@ -1,10 +1,14 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
-    AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter, Global,
-    PromptLevel, Render, Task, View, ViewContext, VisualContext, WindowContext,
+    svg, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter,
+    Global, PromptLevel, Render, Task, View, ViewContext, VisualContext, WindowContext,
 };
+use language::DiagnosticSeverity;
+
 use std::{any::TypeId, ops::DerefMut};
+use ui::prelude::*;
+use util::ResultExt;
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(NotificationTracker::new());
@@ -167,6 +171,105 @@ impl Workspace {
             });
     }
 }
+
+pub struct LanguageServerPrompt {
+    request: Option<project::LanguageServerPromptRequest>,
+}
+
+impl LanguageServerPrompt {
+    pub fn new(request: project::LanguageServerPromptRequest) -> Self {
+        Self {
+            request: Some(request),
+        }
+    }
+
+    async fn select_option(this: View<Self>, ix: usize, mut cx: AsyncWindowContext) {
+        util::async_maybe!({
+            let potential_future = this.update(&mut cx, |this, _| {
+                this.request.take().map(|request| request.respond(ix))
+            });
+
+            potential_future? // App Closed
+                .ok_or_else(|| anyhow::anyhow!("Response already sent"))?
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
+
+            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))?;
+
+            anyhow::Ok(())
+        })
+        .await
+        .log_err();
+    }
+}
+
+impl Render for LanguageServerPrompt {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let Some(request) = &self.request else {
+            return div().id("language_server_prompt_notification");
+        };
+
+        h_flex()
+            .id("language_server_prompt_notification")
+            .elevation_3(cx)
+            .items_start()
+            .p_2()
+            .gap_2()
+            .w_full()
+            .child(
+                v_flex()
+                    .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .children(
+                                match request.level {
+                                    PromptLevel::Info => None,
+                                    PromptLevel::Warning => Some(DiagnosticSeverity::WARNING),
+                                    PromptLevel::Critical => Some(DiagnosticSeverity::ERROR),
+                                }
+                                .map(|severity| {
+                                    svg()
+                                        .size(cx.text_style().font_size)
+                                        .flex_none()
+                                        .mr_1()
+                                        .map(|icon| {
+                                            if severity == DiagnosticSeverity::ERROR {
+                                                icon.path(IconName::ExclamationTriangle.path())
+                                                    .text_color(Color::Error.color(cx))
+                                            } else {
+                                                icon.path(IconName::ExclamationTriangle.path())
+                                                    .text_color(Color::Warning.color(cx))
+                                            }
+                                        })
+                                }),
+                            )
+                            .child(
+                                Label::new(format!("{}:", request.lsp_name))
+                                    .size(LabelSize::Default),
+                            ),
+                    )
+                    .child(Label::new(request.message.to_string()))
+                    .children(request.actions.iter().enumerate().map(|(ix, action)| {
+                        let this_handle = cx.view().clone();
+                        ui::Button::new(ix, action.title.clone())
+                            .size(ButtonSize::Large)
+                            .on_click(move |_, cx| {
+                                let this_handle = this_handle.clone();
+                                cx.spawn(|cx| async move {
+                                    LanguageServerPrompt::select_option(this_handle, ix, cx).await
+                                })
+                                .detach()
+                            })
+                    })),
+            )
+            .child(
+                ui::IconButton::new("close", ui::IconName::Close)
+                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
+            )
+    }
+}
+
+impl EventEmitter<DismissEvent> for LanguageServerPrompt {}
 
 pub mod simple_message_notification {
     use gpui::{

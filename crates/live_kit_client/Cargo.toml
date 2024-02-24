@@ -37,7 +37,7 @@ parking_lot.workspace = true
 postage.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.9.3"
+core-foundation.workspace = true
 
 [target.'cfg(all(not(target_os = "macos")))'.dependencies]
 async-trait = { workspace = true }
@@ -69,7 +69,7 @@ simplelog = "0.9"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 cocoa = "0.25"
-core-foundation = "0.9.3"
+core-foundation.workspace = true
 core-graphics = "0.22.3"
 foreign-types = "0.3"
 objc = "0.2"
