@@ -1235,9 +1235,7 @@ mod test {
     async fn test_visual_paragraph_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // Nvim in the test suite seems to be returning strange landing position.
-        // Also, our landing position should be changed from the end of the last line
-        // to the beginning of the last line.
+        // The current test method does not properly test the visual line mode.
         for paragraph_example in PARAGRAPH_EXAMPLES {
             cx.assert_binding_matches_all_exempted(
                 ["v", "i", "p"],
