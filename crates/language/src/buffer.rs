@@ -211,7 +211,7 @@ pub async fn prepare_completion_documentation(
     language: Option<Arc<Language>>,
     completion_length: usize,
 ) -> Documentation {
-    let max_name_len = (10.max(100 - completion_length as i32)) as usize; //ephram
+    let max_name_len = (10.max(40 - completion_length as i32)) as usize; //ephram
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {

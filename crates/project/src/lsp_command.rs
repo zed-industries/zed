@@ -1542,6 +1542,7 @@ impl LspCommand for GetCompletions {
                                 .unwrap_or(&lsp_completion.label)
                                 .clone();
                             (range, text)
+                            // (range, text)
                         }
 
                         Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
@@ -1556,6 +1557,13 @@ impl LspCommand for GetCompletions {
                     Some(async move {
                         let mut label = None;
                         if let Some(language) = language.as_ref() {
+                            //EPHRAM HERE
+                            let max_completion_len = 40;
+                            if lsp_completion.label.len() > max_completion_len {
+                                lsp_completion.label.truncate(max_completion_len);
+                                lsp_completion.label.push_str("...");
+                            }
+
                             language.process_completion(&mut lsp_completion).await;
                             label = language.label_for_completion(&lsp_completion).await;
                         }
