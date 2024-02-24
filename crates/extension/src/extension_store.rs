@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 use theme::{ThemeRegistry, ThemeSettings};
-use util::http::{AsyncBody, ZedHttpClient};
+use util::http::{AsyncBody, HttpClientWithUrl};
 use util::TryFutureExt;
 use util::{http::HttpClient, paths::EXTENSIONS_DIR, ResultExt};
 
@@ -69,7 +69,7 @@ impl ExtensionStatus {
 pub struct ExtensionStore {
     manifest: Arc<RwLock<Manifest>>,
     fs: Arc<dyn Fs>,
-    http_client: Arc<ZedHttpClient>,
+    http_client: Arc<HttpClientWithUrl>,
     extensions_dir: PathBuf,
     extensions_being_installed: HashSet<Arc<str>>,
     extensions_being_uninstalled: HashSet<Arc<str>>,
@@ -125,7 +125,7 @@ actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
-    http_client: Arc<ZedHttpClient>,
+    http_client: Arc<HttpClientWithUrl>,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
@@ -157,7 +157,7 @@ impl ExtensionStore {
     pub fn new(
         extensions_dir: PathBuf,
         fs: Arc<dyn Fs>,
-        http_client: Arc<ZedHttpClient>,
+        http_client: Arc<HttpClientWithUrl>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         cx: &mut ModelContext<Self>,
@@ -236,7 +236,7 @@ impl ExtensionStore {
         search: Option<&str>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Extension>>> {
-        let url = self.http_client.zed_api_url(&format!(
+        let url = self.http_client.build_zed_api_url(&format!(
             "/extensions{query}",
             query = search
                 .map(|search| format!("?filter={search}"))
@@ -276,7 +276,7 @@ impl ExtensionStore {
         log::info!("installing extension {extension_id} {version}");
         let url = self
             .http_client
-            .zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
+            .build_zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
 
         let extensions_dir = self.extensions_dir();
         let http_client = self.http_client.clone();
