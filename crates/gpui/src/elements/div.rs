@@ -1127,7 +1127,7 @@ impl Element for Div {
             cx,
             |_style, scroll_offset, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
-                    for child in &mut self.children {
+                    for child in self.children.iter_mut().rev() {
                         child.paint(cx);
                     }
                 })
