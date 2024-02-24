@@ -1,22 +1,19 @@
-//todo!(linux) remove
-#[allow(unused)]
-use crate::{point, size, FontStyle, FontWeight, Point, ShapedGlyph};
 use crate::{
-    Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
-    Pixels, PlatformTextSystem, RenderGlyphParams, SharedString, Size,
+    point, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle,
+    FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
+    ShapedGlyph, SharedString, Size,
 };
-use anyhow::Ok;
-use anyhow::Result;
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context, Ok, Result};
 use collections::HashMap;
-use cosmic_text::fontdb::Query;
 use cosmic_text::{
-    Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont, FontSystem, SwashCache,
+    fontdb::Query, Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont,
+    FontSystem, SwashCache,
 };
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use pathfinder_geometry::rect::RectF;
-use pathfinder_geometry::rect::RectI;
-use pathfinder_geometry::vector::{Vector2F, Vector2I};
+use pathfinder_geometry::{
+    rect::{RectF, RectI},
+    vector::{Vector2F, Vector2I},
+};
 use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
 
@@ -197,6 +194,7 @@ impl PlatformTextSystem for LinuxTextSystem {
 }
 
 impl LinuxTextSystemState {
+    #[profiling::function]
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         let db = self.font_system.db_mut();
         for bytes in fonts {
@@ -212,6 +210,7 @@ impl LinuxTextSystemState {
         Ok(())
     }
 
+    #[profiling::function]
     fn load_family(
         &mut self,
         name: &SharedString,
@@ -289,6 +288,7 @@ impl LinuxTextSystemState {
         })
     }
 
+    #[profiling::function]
     fn rasterize_glyph(
         &mut self,
         params: &RenderGlyphParams,
@@ -321,6 +321,7 @@ impl LinuxTextSystemState {
     }
 
     // todo!(linux) This is all a quick first pass, maybe we should be using cosmic_text::Buffer
+    #[profiling::function]
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         let mut attrs_list = AttrsList::new(Attrs::new());
         let mut offs = 0;
