@@ -90,7 +90,7 @@ cbindgen = "0.26.0"
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
 cocoa = "0.25"
-core-foundation = { version = "0.9.3", features = ["with-uuid"] }
+core-foundation.workspace = true
 core-graphics = "0.23"
 core-text = "20.1"
 foreign-types = "0.5"

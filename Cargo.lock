@@ -365,7 +365,7 @@ dependencies = [
  "tiktoken-rs",
  "ui",
  "util",
- "uuid 1.4.1",
+ "uuid",
  "workspace",
 ]
 
@@ -861,7 +861,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite 0.2.13",
  "tracing",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -1754,7 +1754,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -1976,7 +1976,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -2118,7 +2118,7 @@ dependencies = [
  "tracing-subscriber",
  "unindent",
  "util",
- "uuid 1.4.1",
+ "uuid",
  "workspace",
 ]
 
@@ -2165,6 +2165,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "time",
+ "time_format",
  "tree-sitter-markdown",
  "ui",
  "util",
@@ -2345,7 +2346,6 @@ checksum = "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f"
 dependencies = [
  "core-foundation-sys 0.8.6",
  "libc",
- "uuid 0.5.1",
 ]
 
 [[package]]
@@ -4185,7 +4185,7 @@ dependencies = [
  "tiny-skia",
  "usvg",
  "util",
- "uuid 1.4.1",
+ "uuid",
  "waker-fn",
  "wayland-backend",
  "wayland-client",
@@ -4710,7 +4710,7 @@ dependencies = [
  "rand 0.7.3",
  "serde",
  "tempfile",
- "uuid 1.4.1",
+ "uuid",
  "winapi 0.3.9",
 ]
 
@@ -7756,7 +7756,7 @@ dependencies = [
  "rkyv_derive",
  "seahash",
  "tinyvec",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -8263,7 +8263,7 @@ dependencies = [
  "time",
  "tracing",
  "url",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -8294,7 +8294,7 @@ dependencies = [
  "rust_decimal",
  "serde_json",
  "time",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -8310,7 +8310,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "time",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -8947,7 +8947,7 @@ dependencies = [
  "smol",
  "thread_local",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -9030,7 +9030,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
- "uuid 1.4.1",
+ "uuid",
  "webpki-roots",
 ]
 
@@ -9116,7 +9116,7 @@ dependencies = [
  "thiserror",
  "time",
  "tracing",
- "uuid 1.4.1",
+ "uuid",
  "whoami",
 ]
 
@@ -9161,7 +9161,7 @@ dependencies = [
  "thiserror",
  "time",
  "tracing",
- "uuid 1.4.1",
+ "uuid",
  "whoami",
 ]
 
@@ -9187,7 +9187,7 @@ dependencies = [
  "time",
  "tracing",
  "url",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -9703,7 +9703,7 @@ dependencies = [
  "story",
  "toml 0.8.10",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -9728,7 +9728,7 @@ dependencies = [
  "simplelog",
  "strum",
  "theme",
- "uuid 1.4.1",
+ "uuid",
  "vscode_theme",
 ]
 
@@ -9842,6 +9842,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a942f44339478ef67935ab2bbaec2fb0322496cf3cbe84b261e06ac3814c572"
 dependencies = [
  "time-core",
+]
+
+[[package]]
+name = "time_format"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core-foundation",
+ "core-foundation-sys 0.8.6",
+ "lazy_static",
+ "sys-locale",
+ "time",
+ "util",
 ]
 
 [[package]]
@@ -10988,12 +11001,6 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcc7e3b898aa6f6c08e5295b6c89258d1331e9ac578cc992fb818759951bdc22"
-
-[[package]]
-name = "uuid"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
@@ -11944,7 +11951,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -12224,7 +12231,7 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
- "uuid 1.4.1",
+ "uuid",
  "vim",
  "welcome",
  "workspace",

@@ -15,7 +15,7 @@ block = "0.1"
 bytes = "1.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.9.3"
+core-foundation.workspace = true
 foreign-types = "0.5"
 metal = "0.25"
 objc = "0.2"
