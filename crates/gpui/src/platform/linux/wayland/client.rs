@@ -128,6 +128,8 @@ impl WaylandClient {
 }
 
 impl Client for WaylandClient {
+    fn event_loop_will_wait(&self) {}
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         Vec::new()
     }
@@ -310,7 +312,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
                     true
                 }
             });
-            state.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
+            state.platform_inner.loop_signal.stop();
         }
     }
 }

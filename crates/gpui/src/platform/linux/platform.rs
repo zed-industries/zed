@@ -33,7 +33,7 @@ pub(crate) struct Callbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
-    pub(crate) quit: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
@@ -49,16 +49,11 @@ pub(crate) struct LinuxPlatformInner {
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<LinuxTextSystem>,
     pub(crate) callbacks: Mutex<Callbacks>,
-    pub(crate) state: Mutex<LinuxPlatformState>,
 }
 
 pub(crate) struct LinuxPlatform {
     client: Rc<dyn Client>,
     inner: Rc<LinuxPlatformInner>,
-}
-
-pub(crate) struct LinuxPlatformState {
-    pub(crate) quit_requested: bool,
 }
 
 impl Default for LinuxPlatform {
@@ -75,9 +70,6 @@ impl LinuxPlatform {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(LinuxTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
-        let state = Mutex::new(LinuxPlatformState {
-            quit_requested: false,
-        });
 
         let event_loop = EventLoop::try_new().unwrap();
         event_loop
@@ -99,7 +91,6 @@ impl LinuxPlatform {
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
             callbacks,
-            state,
         });
 
         if use_wayland {
@@ -131,19 +122,20 @@ impl Platform for LinuxPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
-        let mut event_loop = self.inner.event_loop.lock();
-        let signal = event_loop.get_signal();
-        event_loop
-            .run(Duration::MAX, &mut (), |data| {
-                if self.inner.state.lock().quit_requested {
-                    signal.stop();
-                }
+        self.inner
+            .event_loop
+            .lock()
+            .run(None, &mut (), |data| {
+                self.client.event_loop_will_wait();
             })
             .unwrap();
+        if let Some(ref mut fun) = self.inner.callbacks.lock().quit {
+            fun();
+        }
     }
 
     fn quit(&self) {
-        self.inner.state.lock().quit_requested = true;
+        self.inner.loop_signal.stop();
     }
 
     //todo!(linux)

@@ -14,6 +14,7 @@ use crate::{
 };
 
 use super::{X11Display, X11Window, X11WindowState, XcbAtoms};
+use calloop::generic::{FdWrapper, Generic};
 
 pub(crate) struct X11ClientState {
     pub(crate) windows: HashMap<x::Window, Rc<X11WindowState>>,
@@ -71,37 +72,30 @@ impl X11Client {
             }),
         });
 
-        let (event_sender, event_receiver) = calloop::channel::channel::<xcb::Event>();
-        {
-            let client = Rc::clone(&client);
-            inner
-                .loop_handle
-                .insert_source(event_receiver, move |event, _, _| match event {
-                    calloop::channel::Event::Msg(event) => {
-                        client.handle_event(event);
-                    }
-                    calloop::channel::Event::Closed => {}
-                })
-                .unwrap();
-        }
+        // Safety: Safe if xcb::Connection always returns a valid fd
+        let fd = unsafe { FdWrapper::new(Arc::clone(&xcb_connection)) };
 
-        {
-            let xcb_connection = Arc::clone(&xcb_connection);
-            std::thread::spawn(move || loop {
-                profiling::scope!("Wait for event");
-                match xcb_connection.wait_for_event() {
-                    Ok(event) => match event_sender.send(event) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            panic!("{e}");
+        inner
+            .loop_handle
+            .insert_source(
+                Generic::new_with_error::<xcb::Error>(
+                    fd,
+                    calloop::Interest::READ,
+                    calloop::Mode::Level,
+                ),
+                {
+                    let client = Rc::clone(&client);
+                    move |readiness, _, _| {
+                        if readiness.readable {
+                            while let Some(event) = xcb_connection.poll_for_event()? {
+                                client.handle_event(event);
+                            }
                         }
-                    },
-                    Err(e) => {
-                        panic!("{e}");
+                        Ok(calloop::PostAction::Continue)
                     }
-                }
-            });
-        }
+                },
+            )
+            .unwrap();
 
         client
     }
@@ -112,21 +106,6 @@ impl X11Client {
     }
 
     fn handle_event(&self, event: xcb::Event) {
-        // We prioritize work in the following order:
-        //   1. input events from X11
-        //   2. drawing/presentation
-        {
-            let mut state = self.state.lock();
-            if let Some(x_window) = state.windows_to_refresh.iter().next().cloned() {
-                state.windows_to_refresh.remove(&x_window);
-                drop(state);
-                let window = self.get_window(x_window);
-                window.refresh();
-                window.request_refresh();
-                return;
-            }
-        }
-
         match event {
             xcb::Event::X(x::Event::ClientMessage(ev)) => {
                 if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
@@ -136,7 +115,9 @@ impl X11Client {
                         let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                         window.destroy();
                         let state = self.state.lock();
-                        self.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
+                        if state.windows.is_empty() {
+                            self.platform_inner.loop_signal.stop();
+                        }
                     }
                 }
             }
@@ -262,14 +243,33 @@ impl X11Client {
             }
             _ => {}
         }
-
-        if let Some(ref mut fun) = self.platform_inner.callbacks.lock().quit {
-            fun();
-        }
     }
 }
 
 impl Client for X11Client {
+    fn event_loop_will_wait(&self) {
+        // Just in case, check if we've received any more events before we draw.
+        while let Some(event) = self.xcb_connection.poll_for_event().unwrap() {
+            self.handle_event(event);
+        }
+
+        // Drawing is done here to make sure we process all other event loop tasks first.
+        let mut state = self.state.lock();
+        if let Some(x_window) = state.windows_to_refresh.iter().next().cloned() {
+            state.windows_to_refresh.remove(&x_window);
+            drop(state);
+            let window = self.get_window(x_window);
+            window.refresh();
+            window.request_refresh();
+        }
+
+        // Before the event loop will go to sleep, we have to make sure no more X11 events arrived
+        // and are waiting in libxcb's internal buffer.
+        while let Some(event) = self.xcb_connection.poll_for_event().unwrap() {
+            self.handle_event(event);
+        }
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let setup = self.xcb_connection.get_setup();
         setup
