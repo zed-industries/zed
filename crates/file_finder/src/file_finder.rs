@@ -383,7 +383,7 @@ impl FileFinderDelegate {
     }
 
     fn subscribe_to_updates(project: &Model<Project>, cx: &mut ViewContext<FileFinder>) {
-        let worktrees = project.update(cx, move |project, _| Vec::from_iter(project.worktrees()));
+        let worktrees = project.update(cx, |project, _| Vec::from_iter(project.worktrees()));
         for worktree in worktrees {
             cx.observe(&worktree, |file_finder, _, cx| {
                 file_finder
