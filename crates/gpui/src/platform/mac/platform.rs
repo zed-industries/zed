@@ -52,6 +52,8 @@ use std::{
 };
 use time::UtcOffset;
 
+use super::renderer;
+
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
 
@@ -145,7 +147,7 @@ pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<MacTextSystem>,
-    instance_buffer_pool: Arc<Mutex<Vec<metal::Buffer>>>,
+    renderer_context: renderer::Context,
     pasteboard: id,
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
@@ -175,7 +177,7 @@ impl MacPlatform {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system: Arc::new(MacTextSystem::new()),
-            instance_buffer_pool: Arc::default(),
+            renderer_context: renderer::Context::default(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
@@ -494,12 +496,11 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let instance_buffer_pool = self.0.lock().instance_buffer_pool.clone();
         Box::new(MacWindow::open(
             handle,
             options,
             self.foreground_executor(),
-            instance_buffer_pool,
+            self.0.lock().renderer_context.clone(),
         ))
     }
 

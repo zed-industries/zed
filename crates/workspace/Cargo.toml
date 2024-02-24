@@ -16,7 +16,7 @@ test-support = [
     "project/test-support",
     "settings/test-support",
     "gpui/test-support",
-    "fs/test-support"
+    "fs/test-support",
 ]
 
 [dependencies]
@@ -25,6 +25,7 @@ async-recursion = "1.0.0"
 bincode = "1.2.1"
 call.workspace = true
 client.workspace = true
+clock.workspace = true
 collections.workspace = true
 db.workspace = true
 derive_more.workspace = true
@@ -40,6 +41,7 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
+task.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

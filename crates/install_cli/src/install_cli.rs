@@ -18,12 +18,16 @@ pub async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
     // If the symlink is not there or is outdated, first try replacing it
     // without escalating.
     smol::fs::remove_file(link_path).await.log_err();
-    if smol::fs::unix::symlink(&cli_path, link_path)
-        .await
-        .log_err()
-        .is_some()
+    // todo!("windows")
+    #[cfg(not(windows))]
     {
-        return Ok(());
+        if smol::fs::unix::symlink(&cli_path, link_path)
+            .await
+            .log_err()
+            .is_some()
+        {
+            return Ok(());
+        }
     }
 
     // The symlink could not be created, so use osascript with admin privileges

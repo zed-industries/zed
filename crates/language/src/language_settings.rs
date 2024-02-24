@@ -93,6 +93,8 @@ pub struct LanguageSettings {
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
+    /// Which code actions to run on save
+    pub code_actions_on_format: HashMap<String, bool>,
 }
 
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
@@ -215,6 +217,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
+
+    /// Which code actions to run on save
+    ///
+    /// Default: {} (or {"source.organizeImports": true} for Go).
+    pub code_actions_on_format: Option<HashMap<String, bool>>,
 }
 
 /// The contents of the GitHub Copilot settings.
@@ -550,6 +557,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
+    merge(
+        &mut settings.code_actions_on_format,
+        src.code_actions_on_format.clone(),
+    );
 
     merge(
         &mut settings.preferred_line_length,

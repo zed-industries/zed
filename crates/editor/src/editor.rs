@@ -88,6 +88,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
+use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -121,7 +122,9 @@ use ui::{
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
-use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
+use workspace::{searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace};
+
+use crate::hover_links::find_url;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -290,7 +293,7 @@ pub enum SelectPhase {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum SelectMode {
+pub enum SelectMode {
     Character,
     Word(Range<Anchor>),
     Line(Range<Anchor>),
@@ -349,10 +352,15 @@ type CompletionId = usize;
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
 type InlayBackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<InlayHighlight>);
 
+/// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
+///
+/// See the [module level documentation](self) for more information.
 pub struct Editor {
-    handle: WeakView<Self>,
     focus_handle: FocusHandle,
+    /// The text buffer being edited
     buffer: Model<MultiBuffer>,
+    /// Map of how text in the buffer should be displayed.
+    /// Handles soft wraps, folds, fake inlay text insertions, etc.
     display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,
@@ -399,6 +407,7 @@ pub struct Editor {
     workspace: Option<(WeakView<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
+    use_modal_editing: bool,
     read_only: bool,
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
@@ -434,7 +443,8 @@ pub struct EditorSnapshot {
 }
 
 pub struct GutterDimensions {
-    pub padding: Pixels,
+    pub left_padding: Pixels,
+    pub right_padding: Pixels,
     pub width: Pixels,
     pub margin: Pixels,
 }
@@ -442,7 +452,8 @@ pub struct GutterDimensions {
 impl Default for GutterDimensions {
     fn default() -> Self {
         Self {
-            padding: Pixels::ZERO,
+            left_padding: Pixels::ZERO,
+            right_padding: Pixels::ZERO,
             width: Pixels::ZERO,
             margin: Pixels::ZERO,
         }
@@ -1016,12 +1027,53 @@ impl CompletionsMenu {
 
         let completions = self.completions.read();
         matches.sort_unstable_by_key(|mat| {
+            // We do want to strike a balance here between what the language server tells us
+            // to sort by (the sort_text) and what are "obvious" good matches (i.e. when you type
+            // `Creat` and there is a local variable called `CreateComponent`).
+            // So what we do is: we bucket all matches into two buckets
+            // - Strong matches
+            // - Weak matches
+            // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
+            // and the Weak matches are the rest.
+            //
+            // For the strong matches, we sort by the language-servers score first and for the weak
+            // matches, we prefer our fuzzy finder first.
+            //
+            // The thinking behind that: it's useless to take the sort_text the language-server gives
+            // us into account when it's obviously a bad match.
+
+            #[derive(PartialEq, Eq, PartialOrd, Ord)]
+            enum MatchScore<'a> {
+                Strong {
+                    sort_text: Option<&'a str>,
+                    score: Reverse<OrderedFloat<f64>>,
+                    sort_key: (usize, &'a str),
+                },
+                Weak {
+                    score: Reverse<OrderedFloat<f64>>,
+                    sort_text: Option<&'a str>,
+                    sort_key: (usize, &'a str),
+                },
+            }
+
             let completion = &completions[mat.candidate_id];
-            (
-                completion.lsp_completion.sort_text.as_ref(),
-                Reverse(OrderedFloat(mat.score)),
-                completion.sort_key(),
-            )
+            let sort_key = completion.sort_key();
+            let sort_text = completion.lsp_completion.sort_text.as_deref();
+            let score = Reverse(OrderedFloat(mat.score));
+
+            if mat.score >= 0.2 {
+                MatchScore::Strong {
+                    sort_text,
+                    score,
+                    sort_key,
+                }
+            } else {
+                MatchScore::Weak {
+                    score,
+                    sort_text,
+                    sort_key,
+                }
+            }
         });
 
         for mat in &mut matches {
@@ -1296,6 +1348,7 @@ pub(crate) struct NavigationData {
 enum GotoDefinitionKind {
     Symbol,
     Type,
+    Implementation,
 }
 
 #[derive(Debug, Clone)]
@@ -1434,7 +1487,6 @@ impl Editor {
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let mut this = Self {
-            handle: cx.view().downgrade(),
             focus_handle,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
@@ -1482,6 +1534,7 @@ impl Editor {
             workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
+            use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
             leader_peer_id: None,
@@ -1631,10 +1684,6 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
-    pub fn pane(&self, cx: &AppContext) -> Option<View<Pane>> {
-        self.workspace()?.read(cx).pane_for(&self.handle.upgrade()?)
-    }
-
     pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
         self.buffer().read(cx).title(cx)
     }
@@ -1780,6 +1829,14 @@ impl Editor {
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
         self.show_copilot_suggestions = show_copilot_suggestions;
+    }
+
+    pub fn set_use_modal_editing(&mut self, to: bool) {
+        self.use_modal_editing = to;
+    }
+
+    pub fn use_modal_editing(&self) -> bool {
+        self.use_modal_editing
     }
 
     fn selections_did_change(
@@ -3998,7 +4055,8 @@ impl Editor {
         if self.available_code_actions.is_some() {
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
-                    .icon_size(IconSize::Small)
+                    .icon_size(IconSize::XSmall)
+                    .size(ui::ButtonSize::None)
                     .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(|editor, _e, cx| {
@@ -4147,8 +4205,43 @@ impl Editor {
                 active_index: 0,
                 ranges: tabstops,
             });
-        }
 
+            // Check whether the just-entered snippet ends with an auto-closable bracket.
+            if self.autoclose_regions.is_empty() {
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                for selection in &mut self.selections.all::<Point>(cx) {
+                    let selection_head = selection.head();
+                    let Some(scope) = snapshot.language_scope_at(selection_head) else {
+                        continue;
+                    };
+
+                    let mut bracket_pair = None;
+                    let next_chars = snapshot.chars_at(selection_head).collect::<String>();
+                    let prev_chars = snapshot
+                        .reversed_chars_at(selection_head)
+                        .collect::<String>();
+                    for (pair, enabled) in scope.brackets() {
+                        if enabled
+                            && pair.close
+                            && prev_chars.starts_with(pair.start.as_str())
+                            && next_chars.starts_with(pair.end.as_str())
+                        {
+                            bracket_pair = Some(pair.clone());
+                            break;
+                        }
+                    }
+                    if let Some(pair) = bracket_pair {
+                        let start = snapshot.anchor_after(selection_head);
+                        let end = snapshot.anchor_after(selection_head);
+                        self.autoclose_regions.push(AutocloseRegion {
+                            selection_id: selection.id,
+                            range: start..end,
+                            pair,
+                        });
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -7258,6 +7351,18 @@ impl Editor {
         self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
     }
 
+    pub fn go_to_implementation(&mut self, _: &GoToImplementation, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, false, cx);
+    }
+
+    pub fn go_to_implementation_split(
+        &mut self,
+        _: &GoToImplementationSplit,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, true, cx);
+    }
+
     pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
         self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx);
     }
@@ -7295,12 +7400,14 @@ impl Editor {
         let definitions = project.update(cx, |project, cx| match kind {
             GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
+            GotoDefinitionKind::Implementation => project.implementation(&buffer, head, cx),
         });
 
         cx.spawn(|editor, mut cx| async move {
             let definitions = definitions.await?;
             editor.update(&mut cx, |editor, cx| {
                 editor.navigate_to_hover_links(
+                    Some(kind),
                     definitions.into_iter().map(HoverLink::Text).collect(),
                     split,
                     cx,
@@ -7311,8 +7418,31 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    pub fn navigate_to_hover_links(
+    pub fn open_url(&mut self, _: &OpenUrl, cx: &mut ViewContext<Self>) {
+        let position = self.selections.newest_anchor().head();
+        let Some((buffer, buffer_position)) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)
+        else {
+            return;
+        };
+
+        cx.spawn(|editor, mut cx| async move {
+            if let Some((_, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+                editor.update(&mut cx, |_, cx| {
+                    cx.open_url(&url);
+                })
+            } else {
+                Ok(())
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn navigate_to_hover_links(
         &mut self,
+        kind: Option<GotoDefinitionKind>,
         mut definitions: Vec<HoverLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
@@ -7381,13 +7511,18 @@ impl Editor {
             cx.spawn(|editor, mut cx| async move {
                 let (title, location_tasks, workspace) = editor
                     .update(&mut cx, |editor, cx| {
+                        let tab_kind = match kind {
+                            Some(GotoDefinitionKind::Implementation) => "Implementations",
+                            _ => "Definitions",
+                        };
                         let title = definitions
                             .iter()
                             .find_map(|definition| match definition {
                                 HoverLink::Text(link) => link.origin.as_ref().map(|origin| {
                                     let buffer = origin.buffer.read(cx);
                                     format!(
-                                        "Definitions for {}",
+                                        "{} for {}",
+                                        tab_kind,
                                         buffer
                                             .text_for_range(origin.range.clone())
                                             .collect::<String>()
@@ -7396,7 +7531,7 @@ impl Editor {
                                 HoverLink::InlayHint(_, _) => None,
                                 HoverLink::Url(_) => None,
                             })
-                            .unwrap_or("Definitions".to_string());
+                            .unwrap_or(tab_kind.to_string());
                         let location_tasks = definitions
                             .into_iter()
                             .map(|definition| match definition {
@@ -7609,8 +7744,9 @@ impl Editor {
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
-            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
+            project.prepare_rename(cursor_buffer.clone(), cursor_buffer_offset, cx)
         });
+        drop(snapshot);
 
         Some(cx.spawn(|this, mut cx| async move {
             let rename_range = if let Some(range) = prepare_rename.await? {
@@ -7630,11 +7766,12 @@ impl Editor {
                 })?
             };
             if let Some(rename_range) = rename_range {
-                let rename_buffer_range = rename_range.to_offset(&snapshot);
-                let cursor_offset_in_rename_range =
-                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-
                 this.update(&mut cx, |this, cx| {
+                    let snapshot = cursor_buffer.read(cx).snapshot();
+                    let rename_buffer_range = rename_range.to_offset(&snapshot);
+                    let cursor_offset_in_rename_range =
+                        cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+
                     this.take_rename(false, cx);
                     let buffer = this.buffer.read(cx).read(cx);
                     let cursor_offset = selection.head().to_offset(&buffer);
@@ -7836,7 +7973,6 @@ impl Editor {
         Some(rename)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
     }
@@ -8505,6 +8641,17 @@ impl Editor {
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
+        let snapshot = self.snapshot(cx);
+        // this is to try and catch a panic sooner
+        for range in &ranges {
+            snapshot
+                .buffer_snapshot
+                .summary_for_anchor::<usize>(&range.start);
+            snapshot
+                .buffer_snapshot
+                .summary_for_anchor::<usize>(&range.end);
+        }
+
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, ranges));
         cx.notify();
@@ -9487,23 +9634,50 @@ impl EditorSnapshot {
         max_line_number_width: Pixels,
         cx: &AppContext,
     ) -> GutterDimensions {
-        if self.show_gutter {
-            let descent = cx.text_system().descent(font_id, font_size);
-            let gutter_padding_factor = 4.0;
-            let gutter_padding = (em_width * gutter_padding_factor).round();
+        if !self.show_gutter {
+            return GutterDimensions::default();
+        }
+        let descent = cx.text_system().descent(font_id, font_size);
+
+        let show_git_gutter = matches!(
+            ProjectSettings::get_global(cx).git.git_gutter,
+            Some(GitGutterSetting::TrackedFiles)
+        );
+        let gutter_settings = EditorSettings::get_global(cx).gutter;
+
+        let line_gutter_width = if gutter_settings.line_numbers {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
             let min_width_for_number_on_gutter = em_width * 4.0;
-            let gutter_width =
-                max_line_number_width.max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
-            let gutter_margin = -descent;
-
-            GutterDimensions {
-                padding: gutter_padding,
-                width: gutter_width,
-                margin: gutter_margin,
-            }
+            max_line_number_width.max(min_width_for_number_on_gutter)
         } else {
-            GutterDimensions::default()
+            0.0.into()
+        };
+
+        let left_padding = if gutter_settings.code_actions {
+            em_width * 3.0
+        } else if show_git_gutter && gutter_settings.line_numbers {
+            em_width * 2.0
+        } else if show_git_gutter || gutter_settings.line_numbers {
+            em_width
+        } else {
+            px(0.)
+        };
+
+        let right_padding = if gutter_settings.folds && gutter_settings.line_numbers {
+            em_width * 4.0
+        } else if gutter_settings.folds {
+            em_width * 3.0
+        } else if gutter_settings.line_numbers {
+            em_width
+        } else {
+            px(0.)
+        };
+
+        GutterDimensions {
+            left_padding,
+            right_padding,
+            width: line_gutter_width + left_padding + right_padding,
+            margin: -descent,
         }
     }
 }
@@ -9610,7 +9784,6 @@ impl Render for Editor {
                 status: cx.theme().status().clone(),
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
-                    font_weight: Some(FontWeight::BOLD),
                     ..HighlightStyle::default()
                 },
                 suggestions_style: HighlightStyle {
@@ -10010,9 +10183,14 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
             .group(group_id.clone())
             .relative()
             .size_full()
-            .pl(cx.gutter_width)
-            .w(cx.max_width + cx.gutter_width)
-            .child(div().flex().w(cx.anchor_x - cx.gutter_width).flex_shrink())
+            .pl(cx.gutter_dimensions.width)
+            .w(cx.max_width + cx.gutter_dimensions.width)
+            .child(
+                div()
+                    .flex()
+                    .w(cx.anchor_x - cx.gutter_dimensions.width)
+                    .flex_shrink(),
+            )
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,

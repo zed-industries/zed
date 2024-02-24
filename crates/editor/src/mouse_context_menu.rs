@@ -1,6 +1,6 @@
 use crate::{
-    DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToTypeDefinition,
-    Rename, RevealInFinder, SelectMode, ToggleCodeActions,
+    DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
+    GoToTypeDefinition, Rename, RevealInFinder, SelectMode, ToggleCodeActions,
 };
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 
@@ -48,6 +48,7 @@ pub fn deploy_context_menu(
             menu.action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+                .action("Go to Implementation", Box::new(GoToImplementation))
                 .action("Find All References", Box::new(FindAllReferences))
                 .action(
                     "Code Actions",

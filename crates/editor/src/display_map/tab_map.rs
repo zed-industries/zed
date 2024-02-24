@@ -2,13 +2,16 @@ use super::{
     fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
     Highlights,
 };
-use crate::MultiBufferSnapshot;
 use language::{Chunk, Point};
+use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 
+/// Keeps track of hard tabs in a text buffer.
+///
+/// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct TabMap(TabSnapshot);
 
 impl TabMap {

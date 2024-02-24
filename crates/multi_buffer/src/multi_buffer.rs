@@ -47,11 +47,17 @@ const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExcerptId(usize);
 
+/// One or more [`Buffers`](Buffer) being edited in a single view.
+///
+/// See <https://zed.dev/features#multi-buffers>
 pub struct MultiBuffer {
+    /// A snapshot of the [`Excerpt`]s in the MultiBuffer.
+    /// Use [`MultiBuffer::snapshot`] to get a up-to-date snapshot.
     snapshot: RefCell<MultiBufferSnapshot>,
+    /// Contains the state of the buffers being edited
     buffers: RefCell<HashMap<BufferId, BufferState>>,
-    next_excerpt_id: usize,
     subscriptions: Topic,
+    /// If true, the multi-buffer only contains a single [`Buffer`] and a single [`Excerpt`]
     singleton: bool,
     replica_id: ReplicaId,
     history: History,
@@ -136,6 +142,7 @@ struct BufferState {
     _subscriptions: [gpui::Subscription; 2],
 }
 
+/// The contents of a [`MultiBuffer`] at a single point in time.
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
     singleton: bool,
@@ -150,24 +157,48 @@ pub struct MultiBufferSnapshot {
     has_conflict: bool,
 }
 
+/// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
 pub struct ExcerptBoundary {
     pub id: ExcerptId,
+    /// The row in the `MultiBuffer` where the boundary is located
     pub row: u32,
     pub buffer: BufferSnapshot,
     pub range: ExcerptRange<text::Anchor>,
+    /// It's possible to have multiple excerpts in the same buffer,
+    /// and they are rendered together without a new File header.
+    ///
+    /// This flag indicates that the excerpt is the first one in the buffer.
     pub starts_new_buffer: bool,
 }
 
+/// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
 #[derive(Clone)]
 struct Excerpt {
+    /// The unique identifier for this excerpt
     id: ExcerptId,
+    /// The location of the excerpt in the [`MultiBuffer`]
     locator: Locator,
+    /// The buffer being excerpted
     buffer_id: BufferId,
+    /// A snapshot of the buffer being excerpted
     buffer: BufferSnapshot,
+    /// The range of the buffer to be shown in the excerpt
     range: ExcerptRange<text::Anchor>,
+    /// The last row in the excerpted slice of the buffer
     max_buffer_row: u32,
+    /// A summary of the text in the excerpt
     text_summary: TextSummary,
     has_trailing_newline: bool,
+}
+
+/// A public view into an [`Excerpt`] in a [`MultiBuffer`].
+///
+/// Contains methods for getting the [`Buffer`] of the excerpt,
+/// as well as mapping offsets to/from buffer and multibuffer coordinates.
+#[derive(Copy, Clone)]
+pub struct MultiBufferExcerpt<'a> {
+    excerpt: &'a Excerpt,
+    excerpt_offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -176,16 +207,23 @@ struct ExcerptIdMapping {
     locator: Locator,
 }
 
+/// A range of text from a single [`Buffer`], to be shown as an [`Excerpt`].
+/// These ranges are relative to the buffer itself
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExcerptRange<T> {
+    /// The full range of text to be shown in the excerpt.
     pub context: Range<T>,
+    /// The primary range of text to be highlighted in the excerpt.
+    /// In a multi-buffer search, this would be the text that matched the search
     pub primary: Option<Range<T>>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct ExcerptSummary {
     excerpt_id: ExcerptId,
+    /// The location of the last [`Excerpt`] being summarized
     excerpt_locator: Locator,
+    /// The maximum row of the [`Excerpt`]s being summarized
     max_buffer_row: u32,
     text: TextSummary,
 }
@@ -232,7 +270,6 @@ impl MultiBuffer {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
-            next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: false,
             capability,
@@ -272,7 +309,6 @@ impl MultiBuffer {
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
             buffers: RefCell::new(buffers),
-            next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: self.singleton,
             capability: self.capability,
@@ -310,6 +346,7 @@ impl MultiBuffer {
         self.replica_id
     }
 
+    /// Returns an up-to-date snapshot of the MultiBuffer.
     pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
         self.sync(cx);
         self.snapshot.borrow().clone()
@@ -993,7 +1030,12 @@ impl MultiBuffer {
         O: text::ToOffset,
     {
         let mut ids = Vec::new();
-        let mut next_excerpt_id = self.next_excerpt_id;
+        let mut next_excerpt_id =
+            if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
+                last_entry.id.0 + 1
+            } else {
+                1
+            };
         self.insert_excerpts_with_ids_after(
             prev_excerpt_id,
             buffer,
@@ -1079,9 +1121,6 @@ impl MultiBuffer {
                         ..buffer_snapshot.anchor_after(&primary.end)
                 }),
             };
-            if id.0 >= self.next_excerpt_id {
-                self.next_excerpt_id = id.0 + 1;
-            }
             excerpts.push((id, range.clone()));
             let excerpt = Excerpt::new(
                 id,
@@ -1093,6 +1132,10 @@ impl MultiBuffer {
             );
             new_excerpts.push(excerpt, &());
             prev_locator = locator.clone();
+
+            if let Some(last_mapping_entry) = new_excerpt_ids.last() {
+                assert!(id > last_mapping_entry.id, "excerpt ids must be increasing");
+            }
             new_excerpt_ids.push(ExcerptIdMapping { id, locator }, &());
         }
 
@@ -2879,33 +2922,36 @@ impl MultiBufferSnapshot {
     /// Returns the smallest enclosing bracket ranges containing the given range or
     /// None if no brackets contain range or the range is not contained in a single
     /// excerpt
+    ///
+    /// Can optionally pass a range_filter to filter the ranges of brackets to consider
     pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
+        range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
     ) -> Option<(Range<usize>, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let excerpt = self.excerpt_containing(range.clone())?;
 
-        // Get the ranges of the innermost pair of brackets.
-        let mut result: Option<(Range<usize>, Range<usize>)> = None;
-
-        let Some(enclosing_bracket_ranges) = self.enclosing_bracket_ranges(range.clone()) else {
-            return None;
+        // Filter to ranges contained in the excerpt
+        let range_filter = |open: Range<usize>, close: Range<usize>| -> bool {
+            excerpt.contains_buffer_range(open.start..close.end)
+                && range_filter.map_or(true, |filter| {
+                    filter(
+                        excerpt.map_range_from_buffer(open),
+                        excerpt.map_range_from_buffer(close),
+                    )
+                })
         };
 
-        for (open, close) in enclosing_bracket_ranges {
-            let len = close.end - open.start;
+        let (open, close) = excerpt.buffer().innermost_enclosing_bracket_ranges(
+            excerpt.map_range_to_buffer(range),
+            Some(&range_filter),
+        )?;
 
-            if let Some((existing_open, existing_close)) = &result {
-                let existing_len = existing_close.end - existing_open.start;
-                if len > existing_len {
-                    continue;
-                }
-            }
-
-            result = Some((open, close));
-        }
-
-        result
+        Some((
+            excerpt.map_range_from_buffer(open),
+            excerpt.map_range_from_buffer(close),
+        ))
     }
 
     /// Returns enclosing bracket ranges containing the given range or returns None if the range is
@@ -2915,11 +2961,14 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let excerpt = self.excerpt_containing(range.clone())?;
 
-        self.bracket_ranges(range.clone()).map(|range_pairs| {
-            range_pairs
-                .filter(move |(open, close)| open.start <= range.start && close.end >= range.end)
-        })
+        Some(
+            excerpt
+                .buffer()
+                .enclosing_bracket_ranges(excerpt.map_range_to_buffer(range))
+                .filter(move |(open, close)| excerpt.contains_buffer_range(open.start..close.end)),
+        )
     }
 
     /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is
@@ -2929,38 +2978,24 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let excerpt = self.excerpt_containing(range.clone());
-        excerpt.map(|(excerpt, excerpt_offset)| {
-            let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let excerpt_buffer_end = excerpt_buffer_start + excerpt.text_summary.len;
+        let excerpt = self.excerpt_containing(range.clone())?;
 
-            let start_in_buffer = excerpt_buffer_start + range.start.saturating_sub(excerpt_offset);
-            let end_in_buffer = excerpt_buffer_start + range.end.saturating_sub(excerpt_offset);
-
+        Some(
             excerpt
-                .buffer
-                .bracket_ranges(start_in_buffer..end_in_buffer)
-                .filter_map(move |(start_bracket_range, end_bracket_range)| {
-                    if start_bracket_range.start < excerpt_buffer_start
-                        || end_bracket_range.end > excerpt_buffer_end
-                    {
-                        return None;
+                .buffer()
+                .bracket_ranges(excerpt.map_range_to_buffer(range))
+                .filter_map(move |(start_bracket_range, close_bracket_range)| {
+                    let buffer_range = start_bracket_range.start..close_bracket_range.end;
+                    if excerpt.contains_buffer_range(buffer_range) {
+                        Some((
+                            excerpt.map_range_from_buffer(start_bracket_range),
+                            excerpt.map_range_from_buffer(close_bracket_range),
+                        ))
+                    } else {
+                        None
                     }
-
-                    let mut start_bracket_range = start_bracket_range.clone();
-                    start_bracket_range.start =
-                        excerpt_offset + (start_bracket_range.start - excerpt_buffer_start);
-                    start_bracket_range.end =
-                        excerpt_offset + (start_bracket_range.end - excerpt_buffer_start);
-
-                    let mut end_bracket_range = end_bracket_range.clone();
-                    end_bracket_range.start =
-                        excerpt_offset + (end_bracket_range.start - excerpt_buffer_start);
-                    end_bracket_range.end =
-                        excerpt_offset + (end_bracket_range.end - excerpt_buffer_start);
-                    Some((start_bracket_range, end_bracket_range))
-                })
-        })
+                }),
+        )
     }
 
     pub fn redacted_ranges<'a, T: ToOffset>(
@@ -3227,26 +3262,13 @@ impl MultiBufferSnapshot {
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let excerpt = self.excerpt_containing(range.clone())?;
 
-        self.excerpt_containing(range.clone())
-            .and_then(|(excerpt, excerpt_offset)| {
-                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-                let excerpt_buffer_end = excerpt_buffer_start + excerpt.text_summary.len;
+        let ancestor_buffer_range = excerpt
+            .buffer()
+            .range_for_syntax_ancestor(excerpt.map_range_to_buffer(range))?;
 
-                let start_in_buffer =
-                    excerpt_buffer_start + range.start.saturating_sub(excerpt_offset);
-                let end_in_buffer = excerpt_buffer_start + range.end.saturating_sub(excerpt_offset);
-                let mut ancestor_buffer_range = excerpt
-                    .buffer
-                    .range_for_syntax_ancestor(start_in_buffer..end_in_buffer)?;
-                ancestor_buffer_range.start =
-                    cmp::max(ancestor_buffer_range.start, excerpt_buffer_start);
-                ancestor_buffer_range.end = cmp::min(ancestor_buffer_range.end, excerpt_buffer_end);
-
-                let start = excerpt_offset + (ancestor_buffer_range.start - excerpt_buffer_start);
-                let end = excerpt_offset + (ancestor_buffer_range.end - excerpt_buffer_start);
-                Some(start..end)
-            })
+        Some(excerpt.map_range_from_buffer(ancestor_buffer_range))
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
@@ -3333,32 +3355,25 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
-    fn excerpt_containing<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-    ) -> Option<(&'a Excerpt, usize)> {
+    pub fn excerpt_containing<T: ToOffset>(&self, range: Range<T>) -> Option<MultiBufferExcerpt> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&range.start, Bias::Right, &());
-        let start_excerpt = cursor.item();
+        let start_excerpt = cursor.item()?;
 
         if range.start == range.end {
-            return start_excerpt.map(|excerpt| (excerpt, *cursor.start()));
+            return Some(MultiBufferExcerpt::new(start_excerpt, *cursor.start()));
         }
 
         cursor.seek(&range.end, Bias::Right, &());
-        let end_excerpt = cursor.item();
+        let end_excerpt = cursor.item()?;
 
-        start_excerpt
-            .zip(end_excerpt)
-            .and_then(|(start_excerpt, end_excerpt)| {
-                if start_excerpt.id != end_excerpt.id {
-                    return None;
-                }
-
-                Some((start_excerpt, *cursor.start()))
-            })
+        if start_excerpt.id != end_excerpt.id {
+            None
+        } else {
+            Some(MultiBufferExcerpt::new(start_excerpt, *cursor.start()))
+        }
     }
 
     pub fn remote_selections_in_range<'a>(
@@ -3734,6 +3749,61 @@ impl Excerpt {
                 .end
                 .cmp(&anchor.text_anchor, &self.buffer)
                 .is_ge()
+    }
+
+    /// The [`Excerpt`]'s start offset in its [`Buffer`]
+    fn buffer_start_offset(&self) -> usize {
+        self.range.context.start.to_offset(&self.buffer)
+    }
+
+    /// The [`Excerpt`]'s end offset in its [`Buffer`]
+    fn buffer_end_offset(&self) -> usize {
+        self.buffer_start_offset() + self.text_summary.len
+    }
+}
+
+impl<'a> MultiBufferExcerpt<'a> {
+    fn new(excerpt: &'a Excerpt, excerpt_offset: usize) -> Self {
+        MultiBufferExcerpt {
+            excerpt,
+            excerpt_offset,
+        }
+    }
+
+    pub fn buffer(&self) -> &'a BufferSnapshot {
+        &self.excerpt.buffer
+    }
+
+    /// Maps an offset within the [`MultiBuffer`] to an offset within the [`Buffer`]
+    pub fn map_offset_to_buffer(&self, offset: usize) -> usize {
+        self.excerpt.buffer_start_offset() + offset.saturating_sub(self.excerpt_offset)
+    }
+
+    /// Maps a range within the [`MultiBuffer`] to a range within the [`Buffer`]
+    pub fn map_range_to_buffer(&self, range: Range<usize>) -> Range<usize> {
+        self.map_offset_to_buffer(range.start)..self.map_offset_to_buffer(range.end)
+    }
+
+    /// Map an offset within the [`Buffer`] to an offset within the [`MultiBuffer`]
+    pub fn map_offset_from_buffer(&self, buffer_offset: usize) -> usize {
+        let mut buffer_offset_in_excerpt =
+            buffer_offset.saturating_sub(self.excerpt.buffer_start_offset());
+        buffer_offset_in_excerpt =
+            cmp::min(buffer_offset_in_excerpt, self.excerpt.text_summary.len);
+
+        self.excerpt_offset + buffer_offset_in_excerpt
+    }
+
+    /// Map a range within the [`Buffer`] to a range within the [`MultiBuffer`]
+    pub fn map_range_from_buffer(&self, buffer_range: Range<usize>) -> Range<usize> {
+        self.map_offset_from_buffer(buffer_range.start)
+            ..self.map_offset_from_buffer(buffer_range.end)
+    }
+
+    /// Returns true if the entirety of the given range is in the buffer's excerpt
+    pub fn contains_buffer_range(&self, range: Range<usize>) -> bool {
+        range.start >= self.excerpt.buffer_start_offset()
+            && range.end <= self.excerpt.buffer_end_offset()
     }
 }
 

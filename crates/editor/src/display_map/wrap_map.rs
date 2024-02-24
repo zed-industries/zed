@@ -3,10 +3,10 @@ use super::{
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     Highlights,
 };
-use crate::MultiBufferSnapshot;
 use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
+use multi_buffer::MultiBufferSnapshot;
 use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
@@ -15,6 +15,9 @@ use text::Patch;
 pub use super::tab_map::TextSummary;
 pub type WrapEdit = text::Edit<u32>;
 
+/// Handles soft wrapping of text.
+///
+/// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct WrapMap {
     snapshot: WrapSnapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,

@@ -1,98 +1,98 @@
 name: Release Nightly
 
 on:
-    schedule:
-        # Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
-        - cron: "0 7 * * *"
-    push:
-        tags:
-            - "nightly"
+  schedule:
+    # Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
+    - cron: "0 7 * * *"
+  push:
+    tags:
+      - "nightly"
 
 env:
-    CARGO_TERM_COLOR: always
-    CARGO_INCREMENTAL: 0
-    RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
 
 jobs:
-    style:
-        name: Check formatting and Clippy lints
-        if: github.repository_owner == 'zed-industries'
-        runs-on:
-            - self-hosted
-            - test
-        steps:
-            - name: Checkout repo
-              uses: actions/checkout@v4
-              with:
-                  clean: false
-                  submodules: "recursive"
-                  fetch-depth: 0
+  style:
+    name: Check formatting and Clippy lints
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - self-hosted
+      - test
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+          fetch-depth: 0
 
-            - name: Run style checks
-              uses: ./.github/actions/check_style
+      - name: Run style checks
+        uses: ./.github/actions/check_style
 
-            - name: Run clippy
-              shell: bash -euxo pipefail {0}
-              run: script/clippy
-    tests:
-        name: Run tests
-        if: github.repository_owner == 'zed-industries'
-        runs-on:
-            - self-hosted
-            - test
-        needs: style
-        steps:
-            - name: Checkout repo
-              uses: actions/checkout@v4
-              with:
-                  clean: false
-                  submodules: "recursive"
+      - name: Run clippy
+        shell: bash -euxo pipefail {0}
+        run: script/clippy
+  tests:
+    name: Run tests
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - self-hosted
+      - test
+    needs: style
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
 
-            - name: Run tests
-              uses: ./.github/actions/run_tests
+      - name: Run tests
+        uses: ./.github/actions/run_tests
 
-    bundle:
-        name: Bundle app
-        if: github.repository_owner == 'zed-industries'
-        runs-on:
-            - self-hosted
-            - bundle
-        needs: tests
-        env:
-            MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-            MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-            APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
-            APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
-            DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-            DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-            ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-        steps:
-            - name: Install Node
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "18"
+  bundle:
+    name: Bundle app
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - self-hosted
+      - bundle
+    needs: tests
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
+      APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+    steps:
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
 
-            - name: Checkout repo
-              uses: actions/checkout@v4
-              with:
-                  clean: false
-                  submodules: "recursive"
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
 
-            - name: Limit target directory size
-              run: script/clear-target-dir-if-larger-than 100
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 100
 
-            - name: Set release channel to nightly
-              run: |
-                  set -eu
-                  version=$(git rev-parse --short HEAD)
-                  echo "Publishing version: ${version} on release channel nightly"
-                  echo "nightly" > crates/zed/RELEASE_CHANNEL
+      - name: Set release channel to nightly
+        run: |
+          set -eu
+          version=$(git rev-parse --short HEAD)
+          echo "Publishing version: ${version} on release channel nightly"
+          echo "nightly" > crates/zed/RELEASE_CHANNEL
 
-            - name: Generate license file
-              run: script/generate-licenses
+      - name: Generate license file
+        run: script/generate-licenses
 
-            - name: Create app bundle
-              run: script/bundle
+      - name: Create app bundle
+        run: script/bundle
 
-            - name: Upload Zed Nightly
-              run: script/upload-nightly
+      - name: Upload Zed Nightly
+        run: script/upload-nightly

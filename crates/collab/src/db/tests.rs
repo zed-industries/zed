@@ -2,6 +2,7 @@ mod buffer_tests;
 mod channel_tests;
 mod contributor_tests;
 mod db_tests;
+mod extension_tests;
 mod feature_flag_tests;
 mod message_tests;
 
@@ -14,8 +15,6 @@ use std::sync::{
     atomic::{AtomicI32, AtomicU32, Ordering::SeqCst},
     Arc,
 };
-
-const TEST_RELEASE_CHANNEL: &'static str = "test";
 
 pub struct TestDb {
     pub db: Option<Arc<Database>>,

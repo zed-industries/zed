@@ -1,0 +1,14 @@
+name = "Markdown"
+grammar = "markdown"
+path_suffixes = ["md", "mdx"]
+word_characters = ["-"]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "<", end = ">", close = true, newline = true },
+    { start = "\"", end = "\"", close = false, newline = false },
+    { start = "'", end = "'", close = false, newline = false },
+    { start = "`", end = "`", close = false, newline = false },
+]
+prettier_parser_name = "markdown"

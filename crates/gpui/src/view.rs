@@ -282,7 +282,10 @@ impl Element for AnyView {
         cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         cx.with_view_id(self.entity_id(), |cx| {
-            if self.cache {
+            if self.cache
+                && !cx.window.dirty_views.contains(&self.entity_id())
+                && !cx.window.refreshing
+            {
                 if let Some(state) = state {
                     let layout_id = cx.request_layout(&state.root_style, None);
                     return (layout_id, state);
@@ -313,8 +316,6 @@ impl Element for AnyView {
                     && cache_key.content_mask == cx.content_mask()
                     && cache_key.stacking_order == *cx.stacking_order()
                     && cache_key.text_style == cx.text_style()
-                    && !cx.window.dirty_views.contains(&self.entity_id())
-                    && !cx.window.refreshing
                 {
                     cx.reuse_view(state.next_stacking_order_id);
                     return;

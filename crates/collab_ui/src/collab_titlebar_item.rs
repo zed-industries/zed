@@ -102,10 +102,6 @@ impl Render for CollabTitlebarItem {
                                 room.remote_participants().values().collect::<Vec<_>>();
                             remote_participants.sort_by_key(|p| p.participant_index.0);
 
-                            if !room.in_call() {
-                                return this;
-                            }
-
                             let current_user_face_pile = self.render_collaborator(
                                 &current_user,
                                 peer_id,
@@ -136,10 +132,6 @@ impl Render for CollabTitlebarItem {
                                         collaborator.location
                                             == ParticipantLocation::SharedProject { project_id }
                                     });
-
-                                    if !collaborator.in_call {
-                                        return None;
-                                    }
 
                                     let face_pile = self.render_collaborator(
                                         &collaborator.user,
@@ -193,11 +185,12 @@ impl Render for CollabTitlebarItem {
                         let is_local = project.is_local();
                         let is_shared = is_local && project.is_shared();
                         let is_muted = room.is_muted();
-                        let is_connected_to_livekit = room.in_call();
+                        let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
-                        let read_only = room.read_only();
+                        let can_use_microphone = room.can_use_microphone();
+                        let can_share_projects = room.can_share_projects();
 
-                        this.when(is_local && !read_only, |this| {
+                        this.when(is_local && can_share_projects, |this| {
                             this.child(
                                 Button::new(
                                     "toggle_sharing",
@@ -228,28 +221,22 @@ impl Render for CollabTitlebarItem {
                                 )),
                             )
                         })
-                        .when(is_connected_to_livekit, |el| {
-                            el.child(
-                                div()
-                                    .child(
-                                        IconButton::new("leave-call", ui::IconName::Exit)
-                                            .style(ButtonStyle::Subtle)
-                                            .tooltip(|cx| Tooltip::text("Leave call", cx))
-                                            .icon_size(IconSize::Small)
-                                            .on_click(move |_, cx| {
-                                                ActiveCall::global(cx).update(cx, |call, cx| {
-                                                    if let Some(room) = call.room() {
-                                                        room.update(cx, |room, cx| {
-                                                            room.leave_call(cx)
-                                                        })
-                                                    }
-                                                })
-                                            }),
-                                    )
-                                    .pl_2(),
-                            )
-                        })
-                        .when(!read_only && is_connected_to_livekit, |this| {
+                        .child(
+                            div()
+                                .child(
+                                    IconButton::new("leave-call", ui::IconName::Exit)
+                                        .style(ButtonStyle::Subtle)
+                                        .tooltip(|cx| Tooltip::text("Leave call", cx))
+                                        .icon_size(IconSize::Small)
+                                        .on_click(move |_, cx| {
+                                            ActiveCall::global(cx)
+                                                .update(cx, |call, cx| call.hang_up(cx))
+                                                .detach_and_log_err(cx);
+                                        }),
+                                )
+                                .pr_2(),
+                        )
+                        .when(can_use_microphone, |this| {
                             this.child(
                                 IconButton::new(
                                     "mute-microphone",
@@ -276,7 +263,34 @@ impl Render for CollabTitlebarItem {
                                 .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
                         })
-                        .when(!read_only && is_connected_to_livekit, |this| {
+                        .child(
+                            IconButton::new(
+                                "mute-sound",
+                                if is_deafened {
+                                    ui::IconName::AudioOff
+                                } else {
+                                    ui::IconName::AudioOn
+                                },
+                            )
+                            .style(ButtonStyle::Subtle)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                            .icon_size(IconSize::Small)
+                            .selected(is_deafened)
+                            .tooltip(move |cx| {
+                                if can_use_microphone {
+                                    Tooltip::with_meta(
+                                        "Deafen Audio",
+                                        None,
+                                        "Mic will be muted",
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::text("Deafen Audio", cx)
+                                }
+                            })
+                            .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
+                        )
+                        .when(can_share_projects, |this| {
                             this.child(
                                 IconButton::new("screen-share", ui::IconName::Screen)
                                     .style(ButtonStyle::Subtle)
@@ -408,14 +422,20 @@ impl CollabTitlebarItem {
                 worktree.root_name()
             });
 
-            names.next().unwrap_or("")
+            names.next()
+        };
+        let is_project_selected = name.is_some();
+        let name = if let Some(name) = name {
+            util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
+        } else {
+            "Open recent project".to_string()
         };
 
-        let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
         let workspace = self.workspace.clone();
         popover_menu("project_name_trigger")
             .trigger(
                 Button::new("project_name_trigger", name)
+                    .when(!is_project_selected, |b| b.color(Color::Muted))
                     .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
@@ -553,10 +573,7 @@ impl CollabTitlebarItem {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
                 .detach_and_log_err(cx);
-            return;
-        }
-
-        if cx.active_window().is_none() {
+        } else if cx.active_window().is_none() {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(None, cx))
                 .detach_and_log_err(cx);
@@ -679,6 +696,7 @@ impl CollabTitlebarItem {
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .action("Theme", theme_selector::Toggle.boxed_clone())
                             .separator()
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
@@ -704,6 +722,7 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Theme", theme_selector::Toggle.boxed_clone())
+                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .separator()
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
                     })

@@ -15,7 +15,7 @@ fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<
         let count = vim.take_count(cx).unwrap_or(1);
         vim.stop_recording_immediately(action.boxed_clone());
         if count <= 1 || vim.workspace_state.replaying {
-            vim.update_active_editor(cx, |editor, cx| {
+            vim.update_active_editor(cx, |_, editor, cx| {
                 editor.cancel(&Default::default(), cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_cursors_with(|map, mut cursor, _| {

@@ -272,6 +272,7 @@ pub struct Window {
     appearance_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
@@ -338,13 +339,21 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
         let active = Rc::new(Cell::new(false));
+        let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
+        platform_window.on_close(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                let _ = handle.update(&mut cx, |_, cx| cx.remove_window());
+            }
+        }));
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let dirty = dirty.clone();
             let active = active.clone();
+            let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move || {
@@ -359,6 +368,12 @@ impl Window {
                         .log_err();
                 }
 
+                // Keep presenting the current scene for 1 extra second since the
+                // last input to prevent the display from underclocking the refresh rate.
+                let needs_present = needs_present.get()
+                    || (active.get()
+                        && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
+
                 if dirty.get() {
                     measure("frame duration", || {
                         handle
@@ -368,12 +383,7 @@ impl Window {
                             })
                             .log_err();
                     })
-                }
-                // Keep presenting the current scene for 1 extra second since the
-                // last input to prevent the display from underclocking the refresh rate.
-                else if active.get()
-                    && last_input_timestamp.get().elapsed() < Duration::from_secs(1)
-                {
+                } else if needs_present {
                     handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
             }
@@ -456,6 +466,7 @@ impl Window {
             appearance_observers: SubscriberSet::new(),
             active,
             dirty,
+            needs_present,
             last_input_timestamp,
             refreshing: false,
             drawing: false,
@@ -939,7 +950,8 @@ impl<'a> WindowContext<'a> {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
-    pub(crate) fn draw(&mut self) {
+    #[profiling::function]
+    pub fn draw(&mut self) {
         self.window.dirty.set(false);
         self.window.drawing = true;
 
@@ -1078,15 +1090,42 @@ impl<'a> WindowContext<'a> {
         }
         self.window.refreshing = false;
         self.window.drawing = false;
+        self.window.needs_present.set(true);
     }
 
+    #[profiling::function]
     fn present(&self) {
         self.window
             .platform_window
             .draw(&self.window.rendered_frame.scene);
+        self.window.needs_present.set(false);
+        profiling::finish_frame!();
+    }
+
+    /// Dispatch a given keystroke as though the user had typed it.
+    /// You can create a keystroke with Keystroke::parse("").
+    pub fn dispatch_keystroke(&mut self, keystroke: Keystroke) -> bool {
+        let keystroke = keystroke.with_simulated_ime();
+        if self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+        })) {
+            return true;
+        }
+
+        if let Some(input) = keystroke.ime_key {
+            if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                input_handler.dispatch_input(&input, self);
+                self.window.platform_window.set_input_handler(input_handler);
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Dispatch a mouse or keyboard event on the window.
+    #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
         self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
@@ -1234,6 +1273,10 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any) {
+        if self.window.dirty.get() {
+            self.draw();
+        }
+
         let node_id = self
             .window
             .focus
@@ -1406,7 +1449,7 @@ impl<'a> WindowContext<'a> {
 
         if !input.is_empty() {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
-                input_handler.flush_pending_input(&input, self);
+                input_handler.dispatch_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler)
             }
         }
@@ -1595,17 +1638,7 @@ impl<'a> WindowContext<'a> {
         let mut this = self.to_async();
         self.window
             .platform_window
-            .on_should_close(Box::new(move || {
-                this.update(|cx| {
-                    // Ensure that the window is removed from the app if it's been closed
-                    // by always pre-empting the system close event.
-                    if f(cx) {
-                        cx.remove_window();
-                    }
-                    false
-                })
-                .unwrap_or(true)
-            }))
+            .on_should_close(Box::new(move || this.update(|cx| f(cx)).unwrap_or(true)))
     }
 
     pub(crate) fn parent_view_id(&self) -> EntityId {
@@ -2521,11 +2554,11 @@ impl<V: 'static + Render> WindowHandle<V> {
 
     /// Check if this window is 'active'.
     ///
-    /// Will return `None` if the window is closed.
-    pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
-        cx.windows
-            .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active.get()))
+    /// Will return `None` if the window is closed or currently
+    /// borrowed.
+    pub fn is_active(&self, cx: &mut AppContext) -> Option<bool> {
+        cx.update_window(self.any_handle, |_, cx| cx.is_window_active())
+            .ok()
     }
 }
 

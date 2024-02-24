@@ -10,7 +10,7 @@ use language::{Point, Selection};
 
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.stop_recording();
-    vim.update_active_editor(cx, |editor, cx| {
+    vim.update_active_editor(cx, |vim, editor, cx| {
         let text_layout_details = editor.text_layout_details(cx);
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -43,7 +43,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                     }
                 });
             });
-            copy_selections_content(editor, motion.linewise(), cx);
+            copy_selections_content(vim, editor, motion.linewise(), cx);
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion
@@ -66,7 +66,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
 
 pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut WindowContext) {
     vim.stop_recording();
-    vim.update_active_editor(cx, |editor, cx| {
+    vim.update_active_editor(cx, |vim, editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             // Emulates behavior in vim where if we expanded backwards to include a newline
@@ -120,7 +120,7 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                     }
                 });
             });
-            copy_selections_content(editor, false, cx);
+            copy_selections_content(vim, editor, false, cx);
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion

@@ -2,9 +2,9 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
     Highlights,
 };
-use crate::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
 use gpui::{ElementId, HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
+use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
 use std::{
     any::TypeId,
     cmp::{self, Ordering},
@@ -178,6 +178,9 @@ impl<'a> FoldMapWriter<'a> {
     }
 }
 
+/// Decides where the fold indicators should be; also tracks parts of a source file that are currently folded.
+///
+/// See the [`display_map` module documentation](crate::display_map) for more information.
 pub(crate) struct FoldMap {
     snapshot: FoldSnapshot,
     ellipses_color: Option<Hsla>,

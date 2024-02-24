@@ -1,7 +1,4 @@
-use crate::{
-    db::ChannelId,
-    tests::{test_server::join_channel_call, TestServer},
-};
+use crate::{db::ChannelId, tests::TestServer};
 use call::ActiveCall;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
@@ -35,7 +32,7 @@ async fn test_channel_guests(
     cx_a.executor().run_until_parked();
 
     // Client B joins channel A as a guest
-    cx_b.update(|cx| workspace::open_channel(channel_id, client_b.app_state.clone(), None, cx))
+    cx_b.update(|cx| workspace::join_channel(channel_id, client_b.app_state.clone(), None, cx))
         .await
         .unwrap();
 
@@ -75,7 +72,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
         .await;
 
     let project_a = client_a.build_test_project(cx_a).await;
-    cx_a.update(|cx| workspace::open_channel(channel_id, client_a.app_state.clone(), None, cx))
+    cx_a.update(|cx| workspace::join_channel(channel_id, client_a.app_state.clone(), None, cx))
         .await
         .unwrap();
 
@@ -87,12 +84,10 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     cx_a.run_until_parked();
 
     // Client B joins channel A as a guest
-    cx_b.update(|cx| workspace::open_channel(channel_id, client_b.app_state.clone(), None, cx))
+    cx_b.update(|cx| workspace::join_channel(channel_id, client_b.app_state.clone(), None, cx))
         .await
         .unwrap();
     cx_a.run_until_parked();
-
-    join_channel_call(cx_b).await.unwrap();
 
     // client B opens 1.txt as a guest
     let (workspace_b, cx_b) = client_b.active_workspace(cx_b);
@@ -109,7 +104,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     });
     assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
     assert!(editor_b.update(cx_b, |e, cx| e.read_only(cx)));
-    assert!(room_b.read_with(cx_b, |room, _| room.read_only()));
+    assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
     assert!(room_b
         .update(cx_b, |room, cx| room.share_microphone(cx))
         .await
@@ -135,7 +130,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     assert!(editor_b.update(cx_b, |editor, cx| !editor.read_only(cx)));
 
     // B sees themselves as muted, and can unmute.
-    assert!(room_b.read_with(cx_b, |room, _| !room.read_only()));
+    assert!(room_b.read_with(cx_b, |room, _| room.can_use_microphone()));
     room_b.read_with(cx_b, |room, _| assert!(room.is_muted()));
     room_b.update(cx_b, |room, cx| room.toggle_mute(cx));
     cx_a.run_until_parked();
@@ -228,7 +223,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     let room_b = cx_b
         .read(ActiveCall::global)
         .update(cx_b, |call, _| call.room().unwrap().clone());
-    assert!(room_b.read_with(cx_b, |room, _| room.read_only()));
+    assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
 
     // A tries to grant write access to B, but cannot because B has not
     // yet signed the zed CLA.
@@ -245,7 +240,26 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
         .await
         .unwrap_err();
     cx_a.run_until_parked();
-    assert!(room_b.read_with(cx_b, |room, _| room.read_only()));
+    assert!(room_b.read_with(cx_b, |room, _| !room.can_share_projects()));
+    assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
+
+    // A tries to grant write access to B, but cannot because B has not
+    // yet signed the zed CLA.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room().unwrap().update(cx, |room, cx| {
+                room.set_participant_role(
+                    client_b.user_id().unwrap(),
+                    proto::ChannelRole::Talker,
+                    cx,
+                )
+            })
+        })
+        .await
+        .unwrap();
+    cx_a.run_until_parked();
+    assert!(room_b.read_with(cx_b, |room, _| !room.can_share_projects()));
+    assert!(room_b.read_with(cx_b, |room, _| room.can_use_microphone()));
 
     // User B signs the zed CLA.
     server
@@ -269,5 +283,6 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
         .await
         .unwrap();
     cx_a.run_until_parked();
-    assert!(room_b.read_with(cx_b, |room, _| !room.read_only()));
+    assert!(room_b.read_with(cx_b, |room, _| room.can_share_projects()));
+    assert!(room_b.read_with(cx_b, |room, _| room.can_use_microphone()));
 }

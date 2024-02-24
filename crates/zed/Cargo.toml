@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.123.0"
+version = "0.125.0"
 publish = false
 license = "GPL-3.0-or-later"
 
@@ -23,7 +23,7 @@ assets.workspace = true
 assistant.workspace = true
 async-compression.workspace = true
 async-recursion = "0.3"
-async-tar = "0.4.2"
+async-tar.workspace = true
 async-trait.workspace = true
 audio.workspace = true
 auto_update.workspace = true
@@ -34,6 +34,7 @@ channel.workspace = true
 chrono = "0.4"
 cli.workspace = true
 client.workspace = true
+clock.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
@@ -45,6 +46,7 @@ diagnostics.workspace = true
 editor.workspace = true
 env_logger.workspace = true
 extension.workspace = true
+extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
@@ -76,6 +78,7 @@ num_cpus = "1.13.0"
 outline.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
+profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
@@ -87,6 +90,8 @@ release_channel.workspace = true
 rope.workspace = true
 rpc.workspace = true
 rsa = "0.4"
+task.workspace = true
+tasks_ui.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 search.workspace = true
@@ -108,50 +113,6 @@ theme_selector.workspace = true
 thiserror.workspace = true
 tiny_http = "0.8"
 toml.workspace = true
-tree-sitter-bash.workspace = true
-tree-sitter-beancount.workspace = true
-tree-sitter-c-sharp.workspace = true
-tree-sitter-c.workspace = true
-tree-sitter-clojure.workspace = true
-tree-sitter-cpp.workspace = true
-tree-sitter-css.workspace = true
-tree-sitter-elixir.workspace = true
-tree-sitter-elm.workspace = true
-tree-sitter-embedded-template.workspace = true
-tree-sitter-erlang.workspace = true
-tree-sitter-gitcommit.workspace = true
-tree-sitter-gleam.workspace = true
-tree-sitter-glsl.workspace = true
-tree-sitter-go.workspace = true
-tree-sitter-gomod.workspace = true
-tree-sitter-gowork.workspace = true
-tree-sitter-haskell.workspace = true
-tree-sitter-hcl.workspace = true
-tree-sitter-heex.workspace = true
-tree-sitter-html.workspace = true
-tree-sitter-json.workspace = true
-tree-sitter-lua.workspace = true
-tree-sitter-markdown.workspace = true
-tree-sitter-nix.workspace = true
-tree-sitter-nu.workspace = true
-tree-sitter-ocaml.workspace = true
-tree-sitter-php.workspace = true
-tree-sitter-prisma-io.workspace = true
-tree-sitter-proto.workspace = true
-tree-sitter-purescript.workspace = true
-tree-sitter-python.workspace = true
-tree-sitter-racket.workspace = true
-tree-sitter-ruby.workspace = true
-tree-sitter-rust.workspace = true
-tree-sitter-scheme.workspace = true
-tree-sitter-svelte.workspace = true
-tree-sitter-toml.workspace = true
-tree-sitter-typescript.workspace = true
-tree-sitter-uiua.workspace = true
-tree-sitter-vue.workspace = true
-tree-sitter-yaml.workspace = true
-tree-sitter-zig.workspace = true
-tree-sitter.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
@@ -160,6 +121,8 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+languages = { version = "0.1.0", path = "../languages" }
+
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
@@ -168,6 +131,7 @@ gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
+tree-sitter-rust.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
