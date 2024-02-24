@@ -7,9 +7,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
-    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, CursorStyle,
-    DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
-    HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
+    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
+    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle,
+    FontWeight, HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
     Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
@@ -488,11 +488,10 @@ impl ChatPanel {
                                         .child(Label::new(message.sender.github_login.clone())),
                                 )
                                 .child(
-                                    Label::new(format_timestamp(
+                                    Label::new(time_format::format_localized_timestamp(
                                         OffsetDateTime::now_utc(),
                                         message.timestamp,
                                         self.local_timezone,
-                                        None,
                                     ))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
@@ -627,6 +626,20 @@ impl ChatPanel {
                             editor.set_reply_to_message_id(message_id);
                             editor.focus_handle(cx).focus(cx);
                         })
+                    }),
+                )
+                .entry(
+                    "Copy message text",
+                    None,
+                    cx.handler_for(&this, move |this, cx| {
+                        this.active_chat().map(|active_chat| {
+                            if let Some(message) =
+                                active_chat.read(cx).find_loaded_message(message_id)
+                            {
+                                let text = message.body.clone();
+                                cx.write_to_clipboard(ClipboardItem::new(text))
+                            }
+                        });
                     }),
                 )
                 .when(can_delete_message, move |menu| {
@@ -959,94 +972,13 @@ impl Panel for ChatPanel {
 
 impl EventEmitter<PanelEvent> for ChatPanel {}
 
-fn is_12_hour_clock(locale: String) -> bool {
-    [
-        "es-MX", "es-CO", "es-SV", "es-NI",
-        "es-HN", // Mexico, Colombia, El Salvador, Nicaragua, Honduras
-        "en-US", "en-CA", "en-AU", "en-NZ", // U.S, Canada, Australia, New Zealand
-        "ar-SA", "ar-EG", "ar-JO", // Saudi Arabia, Egypt, Jordan
-        "en-IN", "hi-IN", // India, Hindu
-        "en-PK", "ur-PK", // Pakistan, Urdu
-        "en-PH", "fil-PH", // Philippines, Filipino
-        "bn-BD", "ccp-BD", // Bangladesh, Chakma
-        "en-IE", "ga-IE", // Ireland, Irish
-        "en-MY", "ms-MY", // Malaysia, Malay
-    ]
-    .contains(&locale.as_str())
-}
-
-fn format_timestamp(
-    reference: OffsetDateTime,
-    timestamp: OffsetDateTime,
-    timezone: UtcOffset,
-    locale: Option<String>,
-) -> String {
-    let locale = match locale {
-        Some(locale) => locale,
-        None => sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")),
-    };
-    let timestamp_local = timestamp.to_offset(timezone);
-    let timestamp_local_hour = timestamp_local.hour();
-    let timestamp_local_minute = timestamp_local.minute();
-
-    let (hour, meridiem) = if is_12_hour_clock(locale) {
-        let meridiem = if timestamp_local_hour >= 12 {
-            "pm"
-        } else {
-            "am"
-        };
-
-        let hour_12 = match timestamp_local_hour {
-            0 => 12,                              // Midnight
-            13..=23 => timestamp_local_hour - 12, // PM hours
-            _ => timestamp_local_hour,            // AM hours
-        };
-
-        (hour_12, Some(meridiem))
-    } else {
-        (timestamp_local_hour, None)
-    };
-
-    let formatted_time = match meridiem {
-        Some(meridiem) => format!("{:02}:{:02} {}", hour, timestamp_local_minute, meridiem),
-        None => format!("{:02}:{:02}", hour, timestamp_local_minute),
-    };
-
-    let reference_local = reference.to_offset(timezone);
-    let reference_local_date = reference_local.date();
-    let timestamp_local_date = timestamp_local.date();
-
-    if timestamp_local_date == reference_local_date {
-        return formatted_time;
-    }
-
-    if reference_local_date.previous_day() == Some(timestamp_local_date) {
-        return format!("yesterday at {}", formatted_time);
-    }
-
-    match meridiem {
-        Some(_) => format!(
-            "{:02}/{:02}/{}",
-            timestamp_local_date.month() as u32,
-            timestamp_local_date.day(),
-            timestamp_local_date.year()
-        ),
-        None => format!(
-            "{:02}/{:02}/{}",
-            timestamp_local_date.day(),
-            timestamp_local_date.month() as u32,
-            timestamp_local_date.year()
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::HighlightStyle;
     use pretty_assertions::assert_eq;
     use rich_text::Highlight;
-    use time::{Date, OffsetDateTime, Time, UtcOffset};
+    use time::OffsetDateTime;
     use util::test::marked_text_ranges;
 
     #[gpui::test]
@@ -1196,151 +1128,5 @@ mod tests {
                 ),
             ]
         );
-    }
-
-    #[test]
-    fn test_format_locale() {
-        let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
-        let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
-
-        assert_eq!(
-            format_timestamp(
-                reference,
-                timestamp,
-                test_timezone(),
-                Some(String::from("en-GB"))
-            ),
-            "15:30"
-        );
-    }
-
-    #[test]
-    fn test_format_today() {
-        let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
-        let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
-
-        assert_eq!(
-            format_timestamp(
-                reference,
-                timestamp,
-                test_timezone(),
-                Some(String::from("en-US"))
-            ),
-            "03:30 pm"
-        );
-    }
-
-    #[test]
-    fn test_format_yesterday() {
-        let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
-        let timestamp = create_offset_datetime(1990, 4, 11, 9, 0, 0);
-
-        assert_eq!(
-            format_timestamp(
-                reference,
-                timestamp,
-                test_timezone(),
-                Some(String::from("en-US"))
-            ),
-            "yesterday at 09:00 am"
-        );
-    }
-
-    #[test]
-    fn test_format_yesterday_less_than_24_hours_ago() {
-        let reference = create_offset_datetime(1990, 4, 12, 19, 59, 0);
-        let timestamp = create_offset_datetime(1990, 4, 11, 20, 0, 0);
-
-        assert_eq!(
-            format_timestamp(
-                reference,
-                timestamp,
-                test_timezone(),
-                Some(String::from("en-US"))
-            ),
-            "yesterday at 08:00 pm"
-        );
-    }
-
-    #[test]
-    fn test_format_yesterday_more_than_24_hours_ago() {
-        let reference = create_offset_datetime(1990, 4, 12, 19, 59, 0);
-        let timestamp = create_offset_datetime(1990, 4, 11, 18, 0, 0);
-
-        assert_eq!(
-            format_timestamp(
-                reference,
-                timestamp,
-                test_timezone(),
-                Some(String::from("en-US"))
-            ),
-            "yesterday at 06:00 pm"
-        );
-    }
-
-    #[test]
-    fn test_format_yesterday_over_midnight() {
-        let reference = create_offset_datetime(1990, 4, 12, 0, 5, 0);
-        let timestamp = create_offset_datetime(1990, 4, 11, 23, 55, 0);
-
-        assert_eq!(
-            format_timestamp(
-                reference,
-                timestamp,
-                test_timezone(),
-                Some(String::from("en-US"))
-            ),
-            "yesterday at 11:55 pm"
-        );
-    }
-
-    #[test]
-    fn test_format_yesterday_over_month() {
-        let reference = create_offset_datetime(1990, 4, 2, 9, 0, 0);
-        let timestamp = create_offset_datetime(1990, 4, 1, 20, 0, 0);
-
-        assert_eq!(
-            format_timestamp(
-                reference,
-                timestamp,
-                test_timezone(),
-                Some(String::from("en-US"))
-            ),
-            "yesterday at 08:00 pm"
-        );
-    }
-
-    #[test]
-    fn test_format_before_yesterday() {
-        let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
-        let timestamp = create_offset_datetime(1990, 4, 10, 20, 20, 0);
-
-        assert_eq!(
-            format_timestamp(
-                reference,
-                timestamp,
-                test_timezone(),
-                Some(String::from("en-US"))
-            ),
-            "04/10/1990"
-        );
-    }
-
-    fn test_timezone() -> UtcOffset {
-        UtcOffset::from_hms(0, 0, 0).expect("Valid timezone offset")
-    }
-
-    fn create_offset_datetime(
-        year: i32,
-        month: u8,
-        day: u8,
-        hour: u8,
-        minute: u8,
-        second: u8,
-    ) -> OffsetDateTime {
-        let date =
-            Date::from_calendar_date(year, time::Month::try_from(month).unwrap(), day).unwrap();
-        let time = Time::from_hms(hour, minute, second).unwrap();
-        date.with_time(time).assume_utc() // Assume UTC for simplicity
     }
 }

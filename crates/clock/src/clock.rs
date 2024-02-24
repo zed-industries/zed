@@ -1,13 +1,17 @@
+mod system_clock;
+
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
     fmt, iter,
 };
 
-/// A unique identifier for each distributed node
+pub use system_clock::*;
+
+/// A unique identifier for each distributed node.
 pub type ReplicaId = u16;
 
-/// A [Lamport sequence number](https://en.wikipedia.org/wiki/Lamport_timestamp),
+/// A [Lamport sequence number](https://en.wikipedia.org/wiki/Lamport_timestamp).
 pub type Seq = u32;
 
 /// A [Lamport timestamp](https://en.wikipedia.org/wiki/Lamport_timestamp),
@@ -18,7 +22,7 @@ pub struct Lamport {
     pub value: Seq,
 }
 
-/// A [vector clock](https://en.wikipedia.org/wiki/Vector_clock)
+/// A [vector clock](https://en.wikipedia.org/wiki/Vector_clock).
 #[derive(Clone, Default, Hash, Eq, PartialEq)]
 pub struct Global(SmallVec<[u32; 8]>);
 

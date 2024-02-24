@@ -51,6 +51,7 @@ parking = "2.0.0"
 parking_lot.workspace = true
 pathfinder_geometry = "0.5"
 postage.workspace = true
+profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
@@ -89,7 +90,7 @@ cbindgen = "0.26.0"
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
 cocoa = "0.25"
-core-foundation = { version = "0.9.3", features = ["with-uuid"] }
+core-foundation.workspace = true
 core-graphics = "0.23"
 core-text = "20.1"
 foreign-types = "0.5"
@@ -115,3 +116,11 @@ blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.10.0"
+
+[[example]]
+name = "hello_world"
+path = "examples/hello_world.rs"
+
+[[example]]
+name = "image"
+path = "examples/image/image.rs"

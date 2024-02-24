@@ -9,7 +9,7 @@ kind: Service
 apiVersion: v1
 metadata:
   namespace: ${ZED_KUBE_NAMESPACE}
-  name: collab
+  name: ${ZED_SERVICE_NAME}
   annotations:
     service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
     service.beta.kubernetes.io/do-loadbalancer-certificate-id: ${ZED_DO_CERTIFICATE_ID}
@@ -17,7 +17,7 @@ metadata:
 spec:
   type: LoadBalancer
   selector:
-    app: collab
+    app: ${ZED_SERVICE_NAME}
   ports:
     - name: web
       protocol: TCP
@@ -29,17 +29,17 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: ${ZED_KUBE_NAMESPACE}
-  name: collab
+  name: ${ZED_SERVICE_NAME}
 
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: collab
+      app: ${ZED_SERVICE_NAME}
   template:
     metadata:
       labels:
-        app: collab
+        app: ${ZED_SERVICE_NAME}
       annotations:
         ad.datadoghq.com/collab.check_names: |
           ["openmetrics"]
@@ -55,10 +55,11 @@ spec:
           ]
     spec:
       containers:
-        - name: collab
+        - name: ${ZED_SERVICE_NAME}
           image: "${ZED_IMAGE_ID}"
           args:
             - serve
+            - ${ZED_SERVICE_NAME}
           ports:
             - containerPort: 8080
               protocol: TCP
@@ -90,6 +91,11 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
+            - name: ZED_CLIENT_CHECKSUM_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: zed-client
+                  key: checksum-seed
             - name: LIVE_KIT_SERVER
               valueFrom:
                 secretKeyRef:
@@ -130,6 +136,26 @@ spec:
                 secretKeyRef:
                   name: blob-store
                   key: bucket
+            - name: CLICKHOUSE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse
+                  key: url
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse
+                  key: user
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse
+                  key: password
+            - name: CLICKHOUSE_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse
+                  key: database
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE

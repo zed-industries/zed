@@ -101,8 +101,14 @@
       "ctrl-o": "pane::GoBack",
       "ctrl-i": "pane::GoForward",
       "ctrl-]": "editor::GoToDefinition",
-      "escape": ["vim::SwitchMode", "Normal"],
-      "ctrl-[": ["vim::SwitchMode", "Normal"],
+      "escape": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "ctrl-[": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
       "v": "vim::ToggleVisual",
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
@@ -235,36 +241,123 @@
         }
       ],
       // Count support
-      "1": ["vim::Number", 1],
-      "2": ["vim::Number", 2],
-      "3": ["vim::Number", 3],
-      "4": ["vim::Number", 4],
-      "5": ["vim::Number", 5],
-      "6": ["vim::Number", 6],
-      "7": ["vim::Number", 7],
-      "8": ["vim::Number", 8],
-      "9": ["vim::Number", 9],
+      "1": [
+        "vim::Number",
+        1
+      ],
+      "2": [
+        "vim::Number",
+        2
+      ],
+      "3": [
+        "vim::Number",
+        3
+      ],
+      "4": [
+        "vim::Number",
+        4
+      ],
+      "5": [
+        "vim::Number",
+        5
+      ],
+      "6": [
+        "vim::Number",
+        6
+      ],
+      "7": [
+        "vim::Number",
+        7
+      ],
+      "8": [
+        "vim::Number",
+        8
+      ],
+      "9": [
+        "vim::Number",
+        9
+      ],
       // window related commands (ctrl-w X)
-      "ctrl-w left": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-w right": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-w up": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-w down": ["workspace::ActivatePaneInDirection", "Down"],
-      "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"],
-      "ctrl-w ctrl-h": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-w ctrl-l": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-w ctrl-k": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-w ctrl-j": ["workspace::ActivatePaneInDirection", "Down"],
-      "ctrl-w shift-left": ["workspace::SwapPaneInDirection", "Left"],
-      "ctrl-w shift-right": ["workspace::SwapPaneInDirection", "Right"],
-      "ctrl-w shift-up": ["workspace::SwapPaneInDirection", "Up"],
-      "ctrl-w shift-down": ["workspace::SwapPaneInDirection", "Down"],
-      "ctrl-w shift-h": ["workspace::SwapPaneInDirection", "Left"],
-      "ctrl-w shift-l": ["workspace::SwapPaneInDirection", "Right"],
-      "ctrl-w shift-k": ["workspace::SwapPaneInDirection", "Up"],
-      "ctrl-w shift-j": ["workspace::SwapPaneInDirection", "Down"],
+      "ctrl-w left": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w right": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w up": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w down": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w h": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w l": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w k": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w j": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w ctrl-h": [
+        "workspace::ActivatePaneInDirection",
+        "Left"
+      ],
+      "ctrl-w ctrl-l": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-w ctrl-k": [
+        "workspace::ActivatePaneInDirection",
+        "Up"
+      ],
+      "ctrl-w ctrl-j": [
+        "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "ctrl-w shift-left": [
+        "workspace::SwapPaneInDirection",
+        "Left"
+      ],
+      "ctrl-w shift-right": [
+        "workspace::SwapPaneInDirection",
+        "Right"
+      ],
+      "ctrl-w shift-up": [
+        "workspace::SwapPaneInDirection",
+        "Up"
+      ],
+      "ctrl-w shift-down": [
+        "workspace::SwapPaneInDirection",
+        "Down"
+      ],
+      "ctrl-w shift-h": [
+        "workspace::SwapPaneInDirection",
+        "Left"
+      ],
+      "ctrl-w shift-l": [
+        "workspace::SwapPaneInDirection",
+        "Right"
+      ],
+      "ctrl-w shift-k": [
+        "workspace::SwapPaneInDirection",
+        "Up"
+      ],
+      "ctrl-w shift-j": [
+        "workspace::SwapPaneInDirection",
+        "Down"
+      ],
       "ctrl-w g t": "pane::ActivateNextItem",
       "ctrl-w ctrl-g t": "pane::ActivateNextItem",
       "ctrl-w g shift-t": "pane::ActivatePrevItem",
@@ -286,8 +379,14 @@
       "ctrl-w ctrl-q": "pane::CloseAllItems",
       "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
-      "ctrl-w n": ["workspace::NewFileInDirection", "Up"],
-      "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"],
+      "ctrl-w n": [
+        "workspace::NewFileInDirection",
+        "Up"
+      ],
+      "ctrl-w ctrl-n": [
+        "workspace::NewFileInDirection",
+        "Up"
+      ],
       "-": "pane::RevealInProjectPanel"
     }
   },
@@ -303,12 +402,21 @@
     "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
     "bindings": {
       ".": "vim::Repeat",
-      "c": ["vim::PushOperator", "Change"],
+      "c": [
+        "vim::PushOperator",
+        "Change"
+      ],
       "shift-c": "vim::ChangeToEndOfLine",
-      "d": ["vim::PushOperator", "Delete"],
+      "d": [
+        "vim::PushOperator",
+        "Delete"
+      ],
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
-      "y": ["vim::PushOperator", "Yank"],
+      "y": [
+        "vim::PushOperator",
+        "Yank"
+      ],
       "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
@@ -339,7 +447,10 @@
       ],
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
-      "r": ["vim::PushOperator", "Replace"],
+      "r": [
+        "vim::PushOperator",
+        "Replace"
+      ],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
       "> >": "editor::Indent",
@@ -351,7 +462,10 @@
   {
     "context": "Editor && VimCount",
     "bindings": {
-      "0": ["vim::Number", 0]
+      "0": [
+        "vim::Number",
+        0
+      ]
     }
   },
   {
@@ -398,7 +512,8 @@
       "}": "vim::CurlyBrackets",
       "shift-b": "vim::CurlyBrackets",
       "<": "vim::AngleBrackets",
-      ">": "vim::AngleBrackets"
+      ">": "vim::AngleBrackets",
+      "a": "vim::Argument"
     }
   },
   {
@@ -455,10 +570,22 @@
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
       "shift-j": "vim::JoinLines",
-      "r": ["vim::PushOperator", "Replace"],
-      "ctrl-c": ["vim::SwitchMode", "Normal"],
-      "escape": ["vim::SwitchMode", "Normal"],
-      "ctrl-[": ["vim::SwitchMode", "Normal"],
+      "r": [
+        "vim::PushOperator",
+        "Replace"
+      ],
+      "ctrl-c": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "escape": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "ctrl-[": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
       ">": "editor::Indent",
       "<": "editor::Outdent",
       "i": [
@@ -499,8 +626,14 @@
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
-      "escape": ["vim::SwitchMode", "Normal"],
-      "ctrl-[": ["vim::SwitchMode", "Normal"]
+      "escape": [
+        "vim::SwitchMode",
+        "Normal"
+      ],
+      "ctrl-[": [
+        "vim::SwitchMode",
+        "Normal"
+      ]
     }
   },
   {

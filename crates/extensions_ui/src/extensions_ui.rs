@@ -11,7 +11,7 @@ use settings::Settings;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, CheckboxWithLabel, Tooltip};
 
 use workspace::{
     item::{Item, ItemEvent},
@@ -34,7 +34,8 @@ pub struct ExtensionsPage {
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
-    extensions_entries: Vec<Extension>,
+    is_only_showing_installed_extensions: bool,
+    extension_entries: Vec<Extension>,
     query_editor: View<Editor>,
     query_contains_error: bool,
     _subscription: gpui::Subscription,
@@ -54,7 +55,8 @@ impl ExtensionsPage {
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
                 is_fetching_extensions: false,
-                extensions_entries: Vec::new(),
+                is_only_showing_installed_extensions: false,
+                extension_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
                 _subscription: subscription,
@@ -63,6 +65,24 @@ impl ExtensionsPage {
             this.fetch_extensions(None, cx);
             this
         })
+    }
+
+    fn filtered_extension_entries(&self, cx: &mut ViewContext<Self>) -> Vec<Extension> {
+        let extension_store = ExtensionStore::global(cx).read(cx);
+
+        self.extension_entries
+            .iter()
+            .filter(|extension| {
+                if self.is_only_showing_installed_extensions {
+                    let status = extension_store.extension_status(&extension.id);
+
+                    matches!(status, ExtensionStatus::Installed(_))
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect::<Vec<_>>()
     }
 
     fn install_extension(
@@ -94,7 +114,7 @@ impl ExtensionsPage {
             let fetch_result = extensions.await;
             match fetch_result {
                 Ok(extensions) => this.update(&mut cx, |this, cx| {
-                    this.extensions_entries = extensions;
+                    this.extension_entries = extensions;
                     this.is_fetching_extensions = false;
                     cx.notify();
                 }),
@@ -113,7 +133,7 @@ impl ExtensionsPage {
     }
 
     fn render_extensions(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>) -> Vec<Div> {
-        self.extensions_entries[range]
+        self.filtered_extension_entries(cx)[range]
             .iter()
             .map(|extension| self.render_entry(extension, cx))
             .collect()
@@ -161,40 +181,53 @@ impl ExtensionsPage {
         };
 
         let install_or_uninstall_button = match status {
-            ExtensionStatus::NotInstalled | ExtensionStatus::Installing => {
-                Button::new(SharedString::from(extension.id.clone()), "Install")
-                    .on_click(cx.listener({
-                        let extension_id = extension.id.clone();
-                        let version = extension.version.clone();
-                        move |this, _, cx| {
-                            this.telemetry
-                                .report_app_event("extensions: install extension".to_string());
-                            this.install_extension(extension_id.clone(), version.clone(), cx);
-                        }
-                    }))
-                    .disabled(matches!(status, ExtensionStatus::Installing))
-            }
+            ExtensionStatus::NotInstalled | ExtensionStatus::Installing => Button::new(
+                SharedString::from(extension.id.clone()),
+                if status.is_installing() {
+                    "Installing..."
+                } else {
+                    "Install"
+                },
+            )
+            .on_click(cx.listener({
+                let extension_id = extension.id.clone();
+                let version = extension.version.clone();
+                move |this, _, cx| {
+                    this.telemetry
+                        .report_app_event("extensions: install extension".to_string());
+                    this.install_extension(extension_id.clone(), version.clone(), cx);
+                }
+            }))
+            .disabled(status.is_installing()),
             ExtensionStatus::Installed(_)
             | ExtensionStatus::Upgrading
-            | ExtensionStatus::Removing => {
-                Button::new(SharedString::from(extension.id.clone()), "Uninstall")
-                    .on_click(cx.listener({
-                        let extension_id = extension.id.clone();
-                        move |this, _, cx| {
-                            this.telemetry
-                                .report_app_event("extensions: uninstall extension".to_string());
-                            this.uninstall_extension(extension_id.clone(), cx);
-                        }
-                    }))
-                    .disabled(matches!(
-                        status,
-                        ExtensionStatus::Upgrading | ExtensionStatus::Removing
-                    ))
-            }
+            | ExtensionStatus::Removing => Button::new(
+                SharedString::from(extension.id.clone()),
+                if status.is_upgrading() {
+                    "Upgrading..."
+                } else if status.is_removing() {
+                    "Removing..."
+                } else {
+                    "Uninstall"
+                },
+            )
+            .on_click(cx.listener({
+                let extension_id = extension.id.clone();
+                move |this, _, cx| {
+                    this.telemetry
+                        .report_app_event("extensions: uninstall extension".to_string());
+                    this.uninstall_extension(extension_id.clone(), cx);
+                }
+            }))
+            .disabled(matches!(
+                status,
+                ExtensionStatus::Upgrading | ExtensionStatus::Removing
+            )),
         }
         .color(Color::Accent);
 
         let repository_url = extension.repository.clone();
+        let tooltip_text = Tooltip::text(repository_url.clone(), cx);
 
         div().w_full().child(
             v_flex()
@@ -269,7 +302,8 @@ impl ExtensionsPage {
                             .style(ButtonStyle::Filled)
                             .on_click(cx.listener(move |_, _, cx| {
                                 cx.open_url(&repository_url);
-                            })),
+                            }))
+                            .tooltip(move |_| tooltip_text.clone()),
                         ),
                 ),
         )
@@ -379,10 +413,32 @@ impl ExtensionsPage {
             Some(search)
         }
     }
+
+    fn render_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let has_search = self.search_query(cx).is_some();
+
+        let message = if self.is_fetching_extensions {
+            "Loading extensions..."
+        } else if self.is_only_showing_installed_extensions {
+            if has_search {
+                "No installed extensions that match your search."
+            } else {
+                "No installed extensions."
+            }
+        } else {
+            if has_search {
+                "No extensions that match your search."
+            } else {
+                "No extensions."
+            }
+        };
+
+        Label::new(message)
+    }
 }
 
 impl Render for ExtensionsPage {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .p_4()
@@ -393,25 +449,39 @@ impl Render for ExtensionsPage {
                     .w_full()
                     .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
             )
-            .child(h_flex().w_56().child(self.render_search(cx)))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(h_flex().child(self.render_search(cx)))
+                    .child(CheckboxWithLabel::new(
+                        "installed",
+                        Label::new("Only show installed"),
+                        if self.is_only_showing_installed_extensions {
+                            Selection::Selected
+                        } else {
+                            Selection::Unselected
+                        },
+                        cx.listener(|this, selection, _cx| {
+                            this.is_only_showing_installed_extensions = match selection {
+                                Selection::Selected => true,
+                                Selection::Unselected => false,
+                                Selection::Indeterminate => return,
+                            }
+                        }),
+                    )),
+            )
             .child(v_flex().size_full().overflow_y_hidden().map(|this| {
-                if self.extensions_entries.is_empty() {
-                    let message = if self.is_fetching_extensions {
-                        "Loading extensions..."
-                    } else if self.search_query(cx).is_some() {
-                        "No extensions that match your search."
-                    } else {
-                        "No extensions."
-                    };
-
-                    return this.child(Label::new(message));
+                let entries = self.filtered_extension_entries(cx);
+                if entries.is_empty() {
+                    return this.child(self.render_empty_state(cx));
                 }
 
                 this.child(
                     canvas({
                         let view = cx.view().clone();
                         let scroll_handle = self.list.clone();
-                        let item_count = self.extensions_entries.len();
+                        let item_count = entries.len();
                         move |bounds, cx| {
                             uniform_list::<_, Div, _>(
                                 view,

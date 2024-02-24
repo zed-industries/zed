@@ -46,7 +46,7 @@ use std::{
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
-    http::{self, HttpClient, ZedHttpClient},
+    http::{HttpClient, HttpClientWithUrl},
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt,
 };
@@ -55,8 +55,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
-    OpenRequest,
+    handle_keymap_file_changes, initialize_workspace, IsOnlyInstance, OpenListener, OpenRequest,
 };
 
 #[global_allocator]
@@ -140,9 +139,12 @@ fn main() {
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
 
-        let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
+        let clock = Arc::new(clock::RealSystemClock);
+        let http = Arc::new(HttpClientWithUrl::new(
+            &client::ClientSettings::get_global(cx).server_url,
+        ));
 
-        let client = client::Client::new(http.clone(), cx);
+        let client = client::Client::new(clock, http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.background_executor().clone());
@@ -198,9 +200,8 @@ fn main() {
             move |cx| {
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
-                let mut host = http.zed_host.lock();
-                if &*host != new_host {
-                    *host = new_host.clone();
+                if &http.base_url() != new_host {
+                    http.set_base_url(new_host);
                     if client.status().borrow().is_connected() {
                         client.reconnect(&cx.to_async());
                     }
@@ -677,27 +678,31 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
     }));
 }
 
-fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
+fn upload_panics_and_crashes(http: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
         .spawn(async move {
-            upload_previous_panics(http.clone(), telemetry_settings)
+            let most_recent_panic = upload_previous_panics(http.clone(), telemetry_settings)
                 .await
-                .log_err();
-            upload_previous_crashes(http, telemetry_settings)
+                .log_err()
+                .flatten();
+            upload_previous_crashes(http, most_recent_panic, telemetry_settings)
                 .await
                 .log_err()
         })
         .detach()
 }
 
-/// upload panics to us (via zed.dev)
+/// Uploads panics via `zed.dev`.
 async fn upload_previous_panics(
-    http: Arc<ZedHttpClient>,
+    http: Arc<HttpClientWithUrl>,
     telemetry_settings: client::TelemetrySettings,
-) -> Result<()> {
-    let panic_report_url = http.zed_url("/api/panic");
+) -> Result<Option<(i64, String)>> {
+    let panic_report_url = http.build_url("/api/panic");
     let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+
+    let mut most_recent_panic = None;
+
     while let Some(child) = children.next().await {
         let child = child?;
         let child_path = child.path();
@@ -720,7 +725,7 @@ async fn upload_previous_panics(
                 .await
                 .context("error reading panic file")?;
 
-            let panic = serde_json::from_str(&panic_file_content)
+            let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
                 .ok()
                 .or_else(|| {
                     panic_file_content
@@ -734,6 +739,8 @@ async fn upload_previous_panics(
                 });
 
             if let Some(panic) = panic {
+                most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
+
                 let body = serde_json::to_string(&PanicRequest { panic }).unwrap();
 
                 let request = Request::post(&panic_report_url)
@@ -752,7 +759,7 @@ async fn upload_previous_panics(
             .context("error removing panic")
             .log_err();
     }
-    Ok::<_, anyhow::Error>(())
+    Ok::<_, anyhow::Error>(most_recent_panic)
 }
 
 static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
@@ -760,7 +767,8 @@ static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)
 async fn upload_previous_crashes(
-    http: Arc<ZedHttpClient>,
+    http: Arc<HttpClientWithUrl>,
+    most_recent_panic: Option<(i64, String)>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
     if !telemetry_settings.diagnostics {
@@ -771,7 +779,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = http.zed_url("/api/crash");
+    let crash_report_url = http.build_url("/api/crash");
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
@@ -797,10 +805,17 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let request = Request::post(&crash_report_url)
+            let mut request = Request::post(&crash_report_url)
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                .header("Content-Type", "text/plain")
-                .body(body.into())?;
+                .header("Content-Type", "text/plain");
+
+            if let Some((panicked_on, payload)) = most_recent_panic.as_ref() {
+                request = request
+                    .header("x-zed-panicked-on", format!("{}", panicked_on))
+                    .header("x-zed-panic", payload)
+            }
+
+            let request = request.body(body.into())?;
 
             let response = http.send(request).await.context("error sending crash")?;
             if !response.status().is_success() {
@@ -824,8 +839,29 @@ async fn load_login_shell_environment() -> Result<()> {
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
+
+    // If possible, we want to `cd` in the user's `$HOME` to trigger programs
+    // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
+    // into shell's `cd` command (and hooks) to manipulate env.
+    // We do this so that we get the env a user would have when spawning a shell
+    // in home directory.
+    let shell_cmd_prefix = std::env::var_os("HOME")
+        .and_then(|home| home.into_string().ok())
+        .map(|home| format!("cd {home};"));
+
+    // The `exit 0` is the result of hours of debugging, trying to find out
+    // why running this command here, without `exit 0`, would mess
+    // up signal process for our process so that `ctrl-c` doesn't work
+    // anymore.
+    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+    // do that, but it does, and `exit 0` helps.
+    let shell_cmd = format!(
+        "{}echo {marker}; /usr/bin/env -0; exit 0;",
+        shell_cmd_prefix.as_deref().unwrap_or("")
+    );
+
     let output = Command::new(&shell)
-        .args(["-l", "-i", "-c", &format!("echo {marker}; /usr/bin/env -0")])
+        .args(["-l", "-i", "-c", &shell_cmd])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;

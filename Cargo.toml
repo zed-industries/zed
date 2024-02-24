@@ -38,6 +38,7 @@ members = [
     "crates/language",
     "crates/language_selector",
     "crates/language_tools",
+    "crates/languages",
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
@@ -80,6 +81,8 @@ members = [
     "crates/theme",
     "crates/theme_importer",
     "crates/theme_selector",
+    "crates/telemetry_events",
+    "crates/time_format",
     "crates/ui",
     "crates/util",
     "crates/vcs_menu",
@@ -172,6 +175,8 @@ text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
+telemetry_events = { path = "crates/telemetry_events" }
+time_format = { path = "crates/time_format" }
 ui = { path = "crates/ui" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
@@ -189,12 +194,16 @@ blade-graphics = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f394
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
+clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
+core-foundation = { version = "0.9.3" }
+core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
 env_logger = "0.9"
 futures = "0.3"
 git2 = { version = "0.15", default-features = false }
 globset = "0.4"
+hex = "0.4.3"
 indoc = "1"
 # We explicitly disable a http2 support in isahc.
 isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
@@ -203,6 +212,7 @@ linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = "2.1.1"
 parking_lot = "0.11.1"
+profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
 prost = "0.8"
@@ -219,6 +229,7 @@ serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.1", features = ["preserve_order", "raw_value"] }
 serde_repr = "0.1"
+sha2 = "0.10"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
@@ -228,6 +239,7 @@ thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
 time = { version = "0.3", features = ["serde", "serde-well-known", "formatting"] }
 toml = "0.8"
+tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-astro = { git = "https://github.com/virchau13/tree-sitter-astro.git", rev = "e924787e12e8a03194f36a113290ac11d6dc10f3" }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
@@ -261,7 +273,7 @@ tree-sitter-ocaml = { git = "https://github.com/tree-sitter/tree-sitter-ocaml", 
 tree-sitter-php = "0.21.1"
 tree-sitter-prisma-io = { git = "https://github.com/victorhqc/tree-sitter-prisma" }
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
-tree-sitter-purescript = { git = "https://github.com/ivanmoreau/tree-sitter-purescript", rev = "a37140f0c7034977b90faa73c94fcb8a5e45ed08" }
+tree-sitter-purescript = { git = "https://github.com/postsolar/tree-sitter-purescript", rev = "v0.1.0" }
 tree-sitter-python = "0.20.2"
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
 tree-sitter-ruby = "0.20.0"
@@ -278,6 +290,7 @@ unindent = "0.1.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmtime = "16"
+which = "6.0.0"
 sys-locale = "0.3.1"
 
 [patch.crates-io]

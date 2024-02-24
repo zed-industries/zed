@@ -71,6 +71,8 @@ use smol::lock::Semaphore;
 use std::{
     cmp::{self, Ordering},
     convert::TryInto,
+    env,
+    ffi::OsString,
     hash::Hash,
     mem,
     num::NonZeroU32,
@@ -98,6 +100,7 @@ pub use task_inventory::Inventory;
 pub use worktree::*;
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
+const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub trait Item {
@@ -226,6 +229,7 @@ pub struct LanguageServerPromptRequest {
     pub level: PromptLevel,
     pub message: String,
     pub actions: Vec<MessageActionItem>,
+    pub lsp_name: String,
     response_channel: Sender<MessageActionItem>,
 }
 
@@ -502,11 +506,6 @@ impl ProjectEntryId {
 pub enum FormatTrigger {
     Save,
     Manual,
-}
-
-struct ProjectLspAdapterDelegate {
-    project: Model<Project>,
-    http_client: Arc<dyn HttpClient>,
 }
 
 // Currently, formatting operations are represented differently depending on
@@ -853,10 +852,13 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> Model<Project> {
+        use clock::FakeSystemClock;
+
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.executor());
+        let clock = Arc::new(FakeSystemClock::default());
         let http_client = util::http::FakeHttpClient::with_404_response();
-        let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
+        let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let project = cx.update(|cx| {
             Project::local(
@@ -2800,7 +2802,7 @@ impl Project {
 
     fn start_language_server(
         &mut self,
-        worktree: &Model<Worktree>,
+        worktree_handle: &Model<Worktree>,
         adapter: Arc<CachedLspAdapter>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
@@ -2809,7 +2811,7 @@ impl Project {
             return;
         }
 
-        let worktree = worktree.read(cx);
+        let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
         let worktree_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
@@ -2823,7 +2825,7 @@ impl Project {
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
-            ProjectLspAdapterDelegate::new(self, cx),
+            ProjectLspAdapterDelegate::new(self, worktree_handle, cx),
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -2876,6 +2878,14 @@ impl Project {
                             log::error!("Hit {max} reinstallation attempts for {server_name:?}");
                             return None;
                         }
+
+                        log::info!(
+                            "retrying installation of language server {server_name:?} in {}s",
+                            SERVER_REINSTALL_DEBOUNCE_TIMEOUT.as_secs()
+                        );
+                        cx.background_executor()
+                            .timer(SERVER_REINSTALL_DEBOUNCE_TIMEOUT)
+                            .await;
 
                         let installation_test_binary = adapter
                             .installation_test_binary(container_dir.to_path_buf())
@@ -3013,6 +3023,7 @@ impl Project {
             cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
         let language_server = pending_server.task.await?;
 
+        let name = language_server.name();
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                 let adapter = adapter.clone();
@@ -3151,8 +3162,10 @@ impl Project {
         language_server
             .on_request::<lsp::request::ShowMessageRequest, _, _>({
                 let this = this.clone();
+                let name = name.to_string();
                 move |params, mut cx| {
                     let this = this.clone();
+                    let name = name.to_string();
                     async move {
                         if let Some(actions) = params.actions {
                             let (tx, mut rx) = smol::channel::bounded(1);
@@ -3165,6 +3178,7 @@ impl Project {
                                 message: params.message,
                                 actions,
                                 response_channel: tx,
+                                lsp_name: name.clone(),
                             };
 
                             if let Ok(_) = this.update(&mut cx, |_, cx| {
@@ -3202,6 +3216,7 @@ impl Project {
                 }
             })
             .detach();
+
         let mut initialization_options = adapter.adapter.initialization_options();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
@@ -4646,6 +4661,7 @@ impl Project {
             cx,
         )
     }
+
     pub fn type_definition<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
@@ -4653,8 +4669,31 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-
         self.type_definition_impl(buffer, position, cx)
+    }
+
+    fn implementation_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetImplementation { position },
+            cx,
+        )
+    }
+
+    pub fn implementation<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.implementation_impl(buffer, position, cx)
     }
 
     fn references_impl(
@@ -9271,10 +9310,17 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
     }
 }
 
+struct ProjectLspAdapterDelegate {
+    project: Model<Project>,
+    worktree: Model<Worktree>,
+    http_client: Arc<dyn HttpClient>,
+}
+
 impl ProjectLspAdapterDelegate {
-    fn new(project: &Project, cx: &ModelContext<Project>) -> Arc<Self> {
+    fn new(project: &Project, worktree: &Model<Worktree>, cx: &ModelContext<Project>) -> Arc<Self> {
         Arc::new(Self {
             project: cx.handle(),
+            worktree: worktree.clone(),
             http_client: project.client.http_client(),
         })
     }
@@ -9288,6 +9334,43 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
+    }
+
+    fn which_command(
+        &self,
+        command: OsString,
+        cx: &AppContext,
+    ) -> Task<Option<(PathBuf, HashMap<String, String>)>> {
+        let worktree_abs_path = self.worktree.read(cx).abs_path();
+        let command = command.to_owned();
+
+        cx.background_executor().spawn(async move {
+            let shell_env = load_shell_environment(&worktree_abs_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to determine load login shell environment in {worktree_abs_path:?}"
+                    )
+                })
+                .log_err();
+
+            if let Some(shell_env) = shell_env {
+                let shell_path = shell_env.get("PATH");
+                match which::which_in(&command, shell_path, &worktree_abs_path) {
+                    Ok(command_path) => Some((command_path, shell_env)),
+                    Err(error) => {
+                        log::warn!(
+                            "failed to determine path for command {:?} in shell PATH {:?}: {error}",
+                            command.to_string_lossy(),
+                            shell_path.map(String::as_str).unwrap_or("")
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -9395,4 +9478,56 @@ fn include_text(server: &lsp::LanguageServer) -> bool {
             lsp::TextDocumentSyncSaveOptions::SaveOptions(options) => options.include_text,
         })
         .unwrap_or(false)
+}
+
+async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
+    let marker = "ZED_SHELL_START";
+    let shell = env::var("SHELL").context(
+        "SHELL environment variable is not assigned so we can't source login environment variables",
+    )?;
+    let output = smol::process::Command::new(&shell)
+        .args([
+            "-i",
+            "-c",
+            // What we're doing here is to spawn a shell and then `cd` into
+            // the project directory to get the env in there as if the user
+            // `cd`'d into it. We do that because tools like direnv, asdf, ...
+            // hook into `cd` and only set up the env after that.
+            //
+            // The `exit 0` is the result of hours of debugging, trying to find out
+            // why running this command here, without `exit 0`, would mess
+            // up signal process for our process so that `ctrl-c` doesn't work
+            // anymore.
+            // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+            // do that, but it does, and `exit 0` helps.
+            &format!("cd {dir:?}; echo {marker}; /usr/bin/env -0; exit 0;"),
+        ])
+        .output()
+        .await
+        .context("failed to spawn login shell to source login environment variables")?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "login shell exited with error {:?}",
+        output.status
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let env_output_start = stdout.find(marker).ok_or_else(|| {
+        anyhow!(
+            "failed to parse output of `env` command in login shell: {}",
+            stdout
+        )
+    })?;
+
+    let mut parsed_env = HashMap::default();
+    let env_output = &stdout[env_output_start + marker.len()..];
+    for line in env_output.split_terminator('\0') {
+        if let Some(separator_index) = line.find('=') {
+            let key = line[..separator_index].to_string();
+            let value = line[separator_index + 1..].to_string();
+            parsed_env.insert(key, value);
+        }
+    }
+    Ok(parsed_env)
 }

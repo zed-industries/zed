@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use xcb::{x, Xid as _};
 use xkbcommon::xkb;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 
 use crate::platform::linux::client::Client;
 use crate::platform::{
@@ -67,15 +67,33 @@ impl X11Client {
 impl Client for X11Client {
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
-        //Note: here and below, don't keep the lock() open when calling
-        // into window functions as they may invoke callbacks that need
-        // to immediately access the platform (self).
+        let mut windows_to_refresh = HashSet::<x::Window>::default();
         while !self.platform_inner.state.lock().quit_requested {
-            let event = self.xcb_connection.wait_for_event().unwrap();
+            // We prioritize work in the following order:
+            //   1. input events from X11
+            //   2. runnables for the main thread
+            //   3. drawing/presentation
+            let event = if let Some(event) = self.xcb_connection.poll_for_event().unwrap() {
+                event
+            } else if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
+                runnable.run();
+                continue;
+            } else if let Some(x_window) = windows_to_refresh.iter().next().cloned() {
+                windows_to_refresh.remove(&x_window);
+                let window = self.get_window(x_window);
+                window.refresh();
+                window.request_refresh();
+                continue;
+            } else {
+                profiling::scope!("Wait for event");
+                self.xcb_connection.wait_for_event().unwrap()
+            };
+
             match event {
                 xcb::Event::X(x::Event::ClientMessage(ev)) => {
                     if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
                         if atom == self.atoms.wm_del_window.resource_id() {
+                            windows_to_refresh.remove(&ev.window());
                             // window "x" button clicked by user, we gracefully exit
                             let window = self.state.lock().windows.remove(&ev.window()).unwrap();
                             window.destroy();
@@ -86,7 +104,7 @@ impl Client for X11Client {
                     }
                 }
                 xcb::Event::X(x::Event::Expose(ev)) => {
-                    self.get_window(ev.window()).refresh();
+                    windows_to_refresh.insert(ev.window());
                 }
                 xcb::Event::X(x::Event::ConfigureNotify(ev)) => {
                     let bounds = Bounds {
@@ -102,9 +120,7 @@ impl Client for X11Client {
                     self.get_window(ev.window()).configure(bounds)
                 }
                 xcb::Event::Present(xcb::present::Event::CompleteNotify(ev)) => {
-                    let window = self.get_window(ev.window());
-                    window.refresh();
-                    window.request_refresh();
+                    windows_to_refresh.insert(ev.window());
                 }
                 xcb::Event::Present(xcb::present::Event::IdleNotify(_ev)) => {}
                 xcb::Event::X(x::Event::FocusIn(ev)) => {
@@ -209,16 +225,13 @@ impl Client for X11Client {
                 }
                 _ => {}
             }
-
-            if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
-                runnable.run();
-            }
         }
 
         if let Some(ref mut fun) = self.platform_inner.callbacks.lock().quit {
             fun();
         }
     }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let setup = self.xcb_connection.get_setup();
         setup
@@ -230,6 +243,7 @@ impl Client for X11Client {
             })
             .collect()
     }
+
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         Some(Rc::new(X11Display::new(&self.xcb_connection, id.0 as i32)))
     }

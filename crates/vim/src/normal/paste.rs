@@ -1,14 +1,15 @@
-use std::{borrow::Cow, cmp};
+use std::cmp;
 
 use editor::{
     display_map::ToDisplayPoint, movement, scroll::Autoscroll, ClipboardSelection, DisplayPoint,
 };
-use gpui::{impl_actions, ViewContext};
+use gpui::{impl_actions, AppContext, ViewContext};
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
+use settings::Settings;
 use workspace::Workspace;
 
-use crate::{state::Mode, utils::copy_selections_content, Vim};
+use crate::{state::Mode, utils::copy_selections_content, UseSystemClipboard, Vim, VimSettings};
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -25,33 +26,59 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
     workspace.register_action(paste);
 }
 
+fn system_clipboard_is_newer(vim: &Vim, cx: &mut AppContext) -> bool {
+    cx.read_from_clipboard().is_some_and(|item| {
+        if let Some(last_state) = vim.workspace_state.registers.get(".system.") {
+            last_state != item.text()
+        } else {
+            true
+        }
+    })
+}
+
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let Some(item) = cx.read_from_clipboard() else {
-                    return;
-                };
-                let clipboard_text = Cow::Borrowed(item.text());
+                let (clipboard_text, clipboard_selections): (String, Option<_>) =
+                    if VimSettings::get_global(cx).use_system_clipboard == UseSystemClipboard::Never
+                        || VimSettings::get_global(cx).use_system_clipboard
+                            == UseSystemClipboard::OnYank
+                            && !system_clipboard_is_newer(vim, cx)
+                    {
+                        (
+                            vim.workspace_state
+                                .registers
+                                .get("\"")
+                                .cloned()
+                                .unwrap_or_else(|| "".to_string()),
+                            None,
+                        )
+                    } else {
+                        if let Some(item) = cx.read_from_clipboard() {
+                            let clipboard_selections = item
+                                .metadata::<Vec<ClipboardSelection>>()
+                                .filter(|clipboard_selections| {
+                                    clipboard_selections.len() > 1
+                                        && vim.state().mode != Mode::VisualLine
+                                });
+                            (item.text().clone(), clipboard_selections)
+                        } else {
+                            ("".into(), None)
+                        }
+                    };
+
                 if clipboard_text.is_empty() {
                     return;
                 }
 
                 if !action.preserve_clipboard && vim.state().mode.is_visual() {
-                    copy_selections_content(editor, vim.state().mode == Mode::VisualLine, cx);
+                    copy_selections_content(vim, editor, vim.state().mode == Mode::VisualLine, cx);
                 }
-
-                // if we are copying from multi-cursor (of visual block mode), we want
-                // to
-                let clipboard_selections =
-                    item.metadata::<Vec<ClipboardSelection>>()
-                        .filter(|clipboard_selections| {
-                            clipboard_selections.len() > 1 && vim.state().mode != Mode::VisualLine
-                        });
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
 
@@ -201,8 +228,11 @@ mod test {
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
+        UseSystemClipboard, VimSettings,
     };
+    use gpui::ClipboardItem;
     use indoc::indoc;
+    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {
@@ -289,6 +319,103 @@ mod test {
             the lazy doover
             the lazy dog"})
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_yank_system_clipboard_never(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox jˇumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["v", "i", "w", "y"]);
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox ˇjumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("p");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox jjumpˇsumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        assert_eq!(cx.read_from_clipboard(), None);
+    }
+
+    #[gpui::test]
+    async fn test_yank_system_clipboard_on_yank(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::OnYank)
+            });
+        });
+
+        // copy in visual mode
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox jˇumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["v", "i", "w", "y"]);
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox ˇjumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("p");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox jjumpˇsumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        assert_eq!(
+            cx.read_from_clipboard().map(|item| item.text().clone()),
+            Some("jumps".into())
+        );
+        cx.simulate_keystrokes(["d", "d", "p"]);
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                the lazy dog
+                ˇfox jjumpsumps over"},
+            Mode::Normal,
+        );
+        assert_eq!(
+            cx.read_from_clipboard().map(|item| item.text().clone()),
+            Some("jumps".into())
+        );
+        cx.write_to_clipboard(ClipboardItem::new("test-copy".to_string()));
+        cx.simulate_keystroke("shift-p");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                the lazy dog
+                test-copˇyfox jjumpsumps over"},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]

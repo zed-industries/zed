@@ -444,6 +444,7 @@ impl BladeRenderer {
         self.gpu.metal_layer().unwrap().as_ptr()
     }
 
+    #[profiling::function]
     fn rasterize_paths(&mut self, paths: &[Path<ScaledPixels>]) {
         self.path_tiles.clear();
         let mut vertices_by_texture_id = HashMap::default();
@@ -506,12 +507,15 @@ impl BladeRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) {
-        let frame = self.gpu.acquire_frame();
         self.command_encoder.start();
-        self.command_encoder.init_texture(frame.texture());
-
         self.atlas.before_frame(&mut self.command_encoder);
         self.rasterize_paths(scene.paths());
+
+        let frame = {
+            profiling::scope!("acquire frame");
+            self.gpu.acquire_frame()
+        };
+        self.command_encoder.init_texture(frame.texture());
 
         let globals = GlobalParams {
             viewport_size: [
@@ -529,6 +533,7 @@ impl BladeRenderer {
             }],
             depth_stencil: None,
         }) {
+            profiling::scope!("render pass");
             for batch in scene.batches() {
                 match batch {
                     PrimitiveBatch::Quads(quads) => {
@@ -718,6 +723,7 @@ impl BladeRenderer {
         self.command_encoder.present(frame);
         let sync_point = self.gpu.submit(&mut self.command_encoder);
 
+        profiling::scope!("finish");
         self.instance_belt.flush(&sync_point);
         self.atlas.after_frame(&sync_point);
         self.atlas.clear_textures(AtlasTextureKind::Path);

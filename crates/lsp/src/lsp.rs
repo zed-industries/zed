@@ -55,6 +55,7 @@ pub enum IoKind {
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 /// A running language server process.
@@ -189,6 +190,7 @@ impl LanguageServer {
         let mut server = process::Command::new(&binary.path)
             .current_dir(working_dir)
             .args(binary.arguments)
+            .envs(binary.env.unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1136,6 +1138,7 @@ impl LanguageServer {
             document_formatting_provider: Some(OneOf::Left(true)),
             document_range_formatting_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
+            implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
             ..Default::default()
         }

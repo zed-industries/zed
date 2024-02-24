@@ -950,6 +950,7 @@ impl<'a> WindowContext<'a> {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
+    #[profiling::function]
     pub fn draw(&mut self) {
         self.window.dirty.set(false);
         self.window.drawing = true;
@@ -1092,27 +1093,19 @@ impl<'a> WindowContext<'a> {
         self.window.needs_present.set(true);
     }
 
+    #[profiling::function]
     fn present(&self) {
         self.window
             .platform_window
             .draw(&self.window.rendered_frame.scene);
         self.window.needs_present.set(false);
+        profiling::finish_frame!();
     }
 
     /// Dispatch a given keystroke as though the user had typed it.
     /// You can create a keystroke with Keystroke::parse("").
-    pub fn dispatch_keystroke(&mut self, mut keystroke: Keystroke) -> bool {
-        if keystroke.ime_key.is_none()
-            && !keystroke.modifiers.command
-            && !keystroke.modifiers.control
-            && !keystroke.modifiers.function
-        {
-            keystroke.ime_key = Some(if keystroke.modifiers.shift {
-                keystroke.key.to_uppercase().clone()
-            } else {
-                keystroke.key.clone()
-            })
-        }
+    pub fn dispatch_keystroke(&mut self, keystroke: Keystroke) -> bool {
+        let keystroke = keystroke.with_simulated_ime();
         if self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
             keystroke: keystroke.clone(),
             is_held: false,
@@ -1132,6 +1125,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Dispatch a mouse or keyboard event on the window.
+    #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
         self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
