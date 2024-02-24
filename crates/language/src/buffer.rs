@@ -224,8 +224,6 @@ pub async fn prepare_completion_documentation(
         .unwrap();
     match documentation {
         lsp::Documentation::String(text) => {
-            println!("Doc::String: {}", text);
-
             if text.lines().count() <= 1 {
                 let mut t = text.clone();
                 if t.len() > max_name_len {
@@ -240,8 +238,6 @@ pub async fn prepare_completion_documentation(
 
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
-                println!("Markup Plaintext: {}", value);
-
                 if value.lines().count() <= 1 {
                     let mut t = value.clone();
                     if t.len() > max_name_len {
@@ -256,8 +252,6 @@ pub async fn prepare_completion_documentation(
             }
 
             lsp::MarkupKind::Markdown => {
-                println!("Markup Markdown: {}", value);
-
                 let parsed = parse_markdown(value, language_registry, language).await;
                 Documentation::MultiLineMarkdown(parsed)
             }
