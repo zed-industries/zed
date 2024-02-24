@@ -2434,7 +2434,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_inactive_items(&CloseInactiveItems, cx)
+            pane.close_inactive_items(&CloseInactiveItems { save_intent: None }, cx)
         })
         .unwrap()
         .await
