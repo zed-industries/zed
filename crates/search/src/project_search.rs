@@ -6,10 +6,11 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use editor::scroll::Axis;
 use editor::{
-    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor, EditorEvent,
-    MultiBuffer, MAX_TAB_TITLE_LEN,
+    actions::SelectAll,
+    items::active_match_index,
+    scroll::{Autoscroll, Axis},
+    Anchor, Editor, EditorEvent, MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use editor::{EditorElement, EditorStyle};
 use gpui::{
