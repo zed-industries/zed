@@ -16,6 +16,7 @@ members = [
     "crates/collab_ui",
     "crates/collections",
     "crates/command_palette",
+    "crates/command_palette_hooks",
     "crates/copilot",
     "crates/copilot_ui",
     "crates/db",
@@ -111,6 +112,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
+command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
 copilot_ui = { path = "crates/copilot_ui" }
 db = { path = "crates/db" }
@@ -133,6 +135,7 @@ journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
+languages = { path = "crates/languages" }
 live_kit_client = { path = "crates/live_kit_client" }
 live_kit_server = { path = "crates/live_kit_server" }
 lsp = { path = "crates/lsp" }
@@ -228,6 +231,7 @@ serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.1", features = ["preserve_order", "raw_value"] }
 serde_repr = "0.1"
 sha2 = "0.10"
+shellexpand = "2.1.0"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
@@ -238,7 +242,7 @@ tiktoken-rs = "0.5.7"
 time = { version = "0.3", features = ["serde", "serde-well-known", "formatting"] }
 toml = "0.8"
 tower-http = "0.4.4"
-tree-sitter = { version = ">= 0.20.100", features = ["wasm"] }
+tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-astro = { git = "https://github.com/virchau13/tree-sitter-astro.git", rev = "e924787e12e8a03194f36a113290ac11d6dc10f3" }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
@@ -262,7 +266,7 @@ tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskel
 tree-sitter-hcl = { git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0" }
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
-tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "3b129203f4b72d532f58e72c5310c0a7db3b8e6d" }
+tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
 tree-sitter-lua = "0.0.14"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
@@ -287,12 +291,13 @@ tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "
 unindent = "0.1.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
-wasmtime = "18.0.1"
+wasmtime = "16"
 which = "6.0.0"
 sys-locale = "0.3.1"
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "da7063ba18381fd7dd3c7fc8e1bc43b129818569" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1d8975319c2d5de1bf710e7e21db25b0eee4bc66" }
+wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fcda0d5259d0acf902aee6de7d2501f2bd6629" }
 
