@@ -110,12 +110,13 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                     // when not cancelled.
                     let cancelled = around && selection.start == selection.end;
                     if object == Object::Paragraph && !cancelled {
-                        if end_at_newline {
-                            move_selection_end_to_next_line(map, selection);
-                        }
-
+                        // EOF check should be done before including a trailing newline.
                         if ends_at_eof(map, selection) {
                             move_selection_start_to_previous_line(map, selection);
+                        }
+
+                        if end_at_newline {
+                            move_selection_end_to_next_line(map, selection);
                         }
                     }
                 });

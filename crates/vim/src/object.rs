@@ -1103,6 +1103,17 @@ mod test {
             ˇ
             ˇ
         "},
+        // Trailing normal paragraph
+        indoc! {"
+
+
+            The quick brown fox jumps
+            over the lazy dog.
+            ˇ
+            ˇ
+            ˇThe quick brown fox jumpsˇ
+            ˇover the lazy dog.ˇ
+        "},
         // "Empty" line paragraph with whitespace characters
         indoc! {"
             ˇThe quick brown fox jumps
@@ -1147,41 +1158,6 @@ mod test {
             cx.assert_binding_matches_all(["d", "a", "p"], paragraph_example)
                 .await;
         }
-    }
-
-    #[gpui::test]
-    async fn test_paragraph_object_with_trailing_normal_paragraph(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        // Trailing normal paragraph
-        const TRAILING_NORMAL_PARAGRAPH_EXAMPLE: &'static str = indoc! {"
-
-
-            The quick brown fox jumps
-            over the lazy dog.
-            ˇ
-            ˇ
-            ˇThe quick brown fox jumpsˇ
-            ˇover the lazy dog.ˇ
-        "};
-
-        for keystrokes in [["c", "i", "p"], ["c", "a", "p"]] {
-            cx.assert_binding_matches_all(keystrokes, TRAILING_NORMAL_PARAGRAPH_EXAMPLE)
-                .await;
-        }
-        // Nvim in the test suite seems to be returning strange landing position.
-        cx.assert_binding_matches_all_exempted(
-            ["d", "i", "p"],
-            TRAILING_NORMAL_PARAGRAPH_EXAMPLE,
-            ExemptionFeatures::IncorrectLandingPosition,
-        )
-        .await;
-        cx.assert_binding_matches_all_exempted(
-            ["d", "a", "p"],
-            TRAILING_NORMAL_PARAGRAPH_EXAMPLE,
-            ExemptionFeatures::IncorrectLandingPosition,
-        )
-        .await;
     }
 
     #[gpui::test]
