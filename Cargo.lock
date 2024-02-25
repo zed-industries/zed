@@ -2214,7 +2214,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
- "copilot",
+ "command_palette_hooks",
  "ctor",
  "editor",
  "env_logger",
@@ -2235,6 +2235,14 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "command_palette_hooks"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui",
 ]
 
 [[package]]
@@ -2296,6 +2304,7 @@ dependencies = [
  "async-tar",
  "clock",
  "collections",
+ "command_palette_hooks",
  "fs",
  "futures 0.3.28",
  "gpui",
@@ -11002,7 +11011,7 @@ dependencies = [
  "async-trait",
  "collections",
  "command_palette",
- "copilot",
+ "command_palette_hooks",
  "editor",
  "futures 0.3.28",
  "gpui",
