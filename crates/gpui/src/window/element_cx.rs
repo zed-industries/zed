@@ -666,17 +666,21 @@ impl<'a> ElementContext<'a> {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.next_frame.scene.insert(Shadow {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: shadow_bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                corner_radii: corner_radii.scale(scale_factor),
-                color: shadow.color,
-                blur_radius: shadow.blur_radius.scale(scale_factor),
-                pad: 0,
-            });
+            window.next_frame.scene.insert_shadow(
+                Shadow {
+                    view_id: view_id.into(),
+                    layer_id: 0,
+                    order: 0,
+                    bounds: shadow_bounds.scale(scale_factor),
+                    content_mask: content_mask.scale(scale_factor),
+                    corner_radii: corner_radii.scale(scale_factor),
+                    color: shadow.color,
+                    blur_radius: shadow.blur_radius.scale(scale_factor),
+                    pad: 0,
+                },
+                None,
+                None,
+            );
         }
     }
 
@@ -689,17 +693,21 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(Quad {
-            view_id: view_id.into(),
-            layer_id: 0,
-            order: 0,
-            bounds: quad.bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
-            background: quad.background,
-            border_color: quad.border_color,
-            corner_radii: quad.corner_radii.scale(scale_factor),
-            border_widths: quad.border_widths.scale(scale_factor),
-        });
+        window.next_frame.scene.insert_quad(
+            Quad {
+                view_id: view_id.into(),
+                layer_id: 0,
+                order: 0,
+                bounds: quad.bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                background: quad.background,
+                border_color: quad.border_color,
+                corner_radii: quad.corner_radii.scale(scale_factor),
+                border_widths: quad.border_widths.scale(scale_factor),
+            },
+            None,
+            None,
+        );
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
@@ -712,7 +720,10 @@ impl<'a> ElementContext<'a> {
         path.color = color.into();
         path.view_id = view_id.into();
         let window = &mut *self.window;
-        window.next_frame.scene.insert(path.scale(scale_factor));
+        window
+            .next_frame
+            .scene
+            .insert_path(path.scale(scale_factor), None, None);
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -736,16 +747,20 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(Underline {
-            view_id: view_id.into(),
-            layer_id: 0,
-            order: 0,
-            bounds: bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
-            color: style.color.unwrap_or_default(),
-            thickness: style.thickness.scale(scale_factor),
-            wavy: style.wavy,
-        });
+        window.next_frame.scene.insert_underline(
+            Underline {
+                view_id: view_id.into(),
+                layer_id: 0,
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                color: style.color.unwrap_or_default(),
+                thickness: style.thickness.scale(scale_factor),
+                wavy: style.wavy,
+            },
+            None,
+            None,
+        );
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.
@@ -765,16 +780,20 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(Underline {
-            view_id: view_id.into(),
-            layer_id: 0,
-            order: 0,
-            bounds: bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
-            thickness: style.thickness.scale(scale_factor),
-            color: style.color.unwrap_or_default(),
-            wavy: false,
-        });
+        window.next_frame.scene.insert_underline(
+            Underline {
+                view_id: view_id.into(),
+                layer_id: 0,
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                thickness: style.thickness.scale(scale_factor),
+                color: style.color.unwrap_or_default(),
+                wavy: false,
+            },
+            None,
+            None,
+        );
     }
 
     /// Paints a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
@@ -822,15 +841,19 @@ impl<'a> ElementContext<'a> {
             let content_mask = self.content_mask().scale(scale_factor);
             let view_id = self.parent_view_id();
             let window = &mut *self.window;
-            window.next_frame.scene.insert(MonochromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds,
-                content_mask,
-                color,
-                tile,
-            });
+            window.next_frame.scene.insert_monochrome_sprite(
+                MonochromeSprite {
+                    view_id: view_id.into(),
+                    layer_id: 0,
+                    order: 0,
+                    bounds,
+                    content_mask,
+                    color,
+                    tile,
+                },
+                None,
+                None,
+            );
         }
         Ok(())
     }
@@ -877,17 +900,21 @@ impl<'a> ElementContext<'a> {
             let view_id = self.parent_view_id();
             let window = &mut *self.window;
 
-            window.next_frame.scene.insert(PolychromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds,
-                corner_radii: Default::default(),
-                content_mask,
-                tile,
-                grayscale: false,
-                pad: 0,
-            });
+            window.next_frame.scene.insert_polychrome_sprite(
+                PolychromeSprite {
+                    view_id: view_id.into(),
+                    layer_id: 0,
+                    order: 0,
+                    bounds,
+                    corner_radii: Default::default(),
+                    content_mask,
+                    tile,
+                    grayscale: false,
+                    pad: 0,
+                },
+                None,
+                None,
+            );
         }
         Ok(())
     }
@@ -920,15 +947,19 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(MonochromeSprite {
-            view_id: view_id.into(),
-            layer_id: 0,
-            order: 0,
-            bounds,
-            content_mask,
-            color,
-            tile,
-        });
+        window.next_frame.scene.insert_monochrome_sprite(
+            MonochromeSprite {
+                view_id: view_id.into(),
+                layer_id: 0,
+                order: 0,
+                bounds,
+                content_mask,
+                color,
+                tile,
+            },
+            None,
+            None,
+        );
 
         Ok(())
     }
@@ -956,17 +987,21 @@ impl<'a> ElementContext<'a> {
         let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene.insert(PolychromeSprite {
-            view_id: view_id.into(),
-            layer_id: 0,
-            order: 0,
-            bounds,
-            content_mask,
-            corner_radii,
-            tile,
-            grayscale,
-            pad: 0,
-        });
+        window.next_frame.scene.insert_polychrome_sprite(
+            PolychromeSprite {
+                view_id: view_id.into(),
+                layer_id: 0,
+                order: 0,
+                bounds,
+                content_mask,
+                corner_radii,
+                tile,
+                grayscale,
+                pad: 0,
+            },
+            None,
+            None,
+        );
         Ok(())
     }
 
@@ -978,7 +1013,7 @@ impl<'a> ElementContext<'a> {
         let content_mask = self.content_mask().scale(scale_factor);
         let view_id = self.parent_view_id();
         let window = &mut *self.window;
-        window.next_frame.scene.insert(crate::Surface {
+        window.next_frame.scene.insert_surface(crate::Surface {
             view_id: view_id.into(),
             layer_id: 0,
             order: 0,

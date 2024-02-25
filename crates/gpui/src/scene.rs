@@ -1,8 +1,8 @@
 use crate::{
     point, AtlasTextureId, AtlasTile, Bounds, BoundsTree, ContentMask, Corners, Edges, EntityId,
-    Hsla, Pixels, Point, ScaledPixels,
+    Hsla, Pixels, Point, ScaledPixels, SharedString,
 };
-use collections::FxHashSet;
+use collections::{FxHashMap, FxHashSet, HashMap};
 use std::{fmt::Debug, iter::Peekable, slice};
 
 #[allow(non_camel_case_types, unused)]
@@ -37,14 +37,14 @@ impl From<ViewId> for EntityId {
 
 #[derive(Default)]
 pub(crate) struct Scene {
-    pub(crate) shadows: Vec<Shadow>,
-    pub(crate) quads: Vec<Quad>,
-    pub(crate) paths: Vec<Path<ScaledPixels>>,
-    pub(crate) underlines: Vec<Underline>,
-    pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
-    pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
+    pub(crate) shadows: PrimitiveSet<Shadow>,
+    pub(crate) quads: PrimitiveSet<Quad>,
+    pub(crate) paths: PrimitiveSet<Path<ScaledPixels>>,
+    pub(crate) underlines: PrimitiveSet<Underline>,
+    pub(crate) monochrome_sprites: PrimitiveSet<MonochromeSprite>,
+    pub(crate) polychrome_sprites: PrimitiveSet<PolychromeSprite>,
     pub(crate) surfaces: Vec<Surface>,
-    bounds_tree: BoundsTree<ScaledPixels>,
+    bounds_tree: BoundsTree<ScaledPixels, PrimitiveIndex>,
 }
 
 impl Scene {
@@ -60,79 +60,217 @@ impl Scene {
     }
 
     pub fn paths(&self) -> &[Path<ScaledPixels>] {
-        &self.paths
+        &self.paths.primitives
     }
 
     pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
         BatchIterator {
-            shadows: &self.shadows,
+            shadows: &self.shadows.primitives,
             shadows_start: 0,
-            shadows_iter: self.shadows.iter().peekable(),
-            quads: &self.quads,
+            shadows_iter: self.shadows.primitives.iter().peekable(),
+            quads: &self.quads.primitives,
             quads_start: 0,
-            quads_iter: self.quads.iter().peekable(),
-            paths: &self.paths,
+            quads_iter: self.quads.primitives.iter().peekable(),
+            paths: &self.paths.primitives,
             paths_start: 0,
-            paths_iter: self.paths.iter().peekable(),
-            underlines: &self.underlines,
+            paths_iter: self.paths.primitives.iter().peekable(),
+            underlines: &self.underlines.primitives,
             underlines_start: 0,
-            underlines_iter: self.underlines.iter().peekable(),
-            monochrome_sprites: &self.monochrome_sprites,
+            underlines_iter: self.underlines.primitives.iter().peekable(),
+            monochrome_sprites: &self.monochrome_sprites.primitives,
             monochrome_sprites_start: 0,
-            monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
-            polychrome_sprites: &self.polychrome_sprites,
+            monochrome_sprites_iter: self.monochrome_sprites.primitives.iter().peekable(),
+            polychrome_sprites: &self.polychrome_sprites.primitives,
             polychrome_sprites_start: 0,
-            polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
+            polychrome_sprites_iter: self.polychrome_sprites.primitives.iter().peekable(),
             surfaces: &self.surfaces,
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
 
-    pub(crate) fn insert(&mut self, primitive: impl Into<Primitive>) -> Option<u32> {
-        let primitive = primitive.into();
-        let clipped_bounds = primitive
-            .bounds()
-            .intersect(&primitive.content_mask().bounds);
+    pub(crate) fn insert_shadow(
+        &mut self,
+        shadow: Shadow,
+        hover: Option<Shadow>,
+        group_hover: Option<(SharedString, Option<Shadow>)>,
+    ) -> Option<u32> {
+        let clipped_bounds = shadow.bounds.intersect(&shadow.content_mask.bounds);
         if clipped_bounds.size.width <= ScaledPixels(0.)
             || clipped_bounds.size.height <= ScaledPixels(0.)
         {
             return None;
         }
 
-        let order = self.bounds_tree.insert(clipped_bounds);
-        match primitive {
-            Primitive::Shadow(mut shadow) => {
-                shadow.order = order;
-                self.shadows.push(shadow);
-            }
-            Primitive::Quad(mut quad) => {
-                quad.order = order;
-                self.quads.push(quad);
-            }
-            Primitive::Path(mut path) => {
-                path.order = order;
-                path.id = PathId(self.paths.len());
-                self.paths.push(path);
-            }
-            Primitive::Underline(mut underline) => {
-                underline.order = order;
-                self.underlines.push(underline);
-            }
-            Primitive::MonochromeSprite(mut sprite) => {
-                sprite.order = order;
-                self.monochrome_sprites.push(sprite);
-            }
-            Primitive::PolychromeSprite(mut sprite) => {
-                sprite.order = order;
-                self.polychrome_sprites.push(sprite);
-            }
-            Primitive::Surface(mut surface) => {
-                surface.order = order;
-                self.surfaces.push(surface);
-            }
+        let order = self.bounds_tree.insert(
+            clipped_bounds,
+            PrimitiveIndex {
+                kind: PrimitiveKind::Shadow,
+                index: self.shadows.primitives.len(),
+            },
+        );
+        self.shadows
+            .insert(Shadow { order, ..shadow }, hover, group_hover);
+        Some(order)
+    }
+
+    pub(crate) fn insert_quad(
+        &mut self,
+        quad: Quad,
+        hover: Option<Quad>,
+        group_hover: Option<(SharedString, Option<Quad>)>,
+    ) -> Option<u32> {
+        let clipped_bounds = quad.bounds.intersect(&quad.content_mask.bounds);
+        if clipped_bounds.size.width <= ScaledPixels(0.)
+            || clipped_bounds.size.height <= ScaledPixels(0.)
+        {
+            return None;
         }
 
+        let order = self.bounds_tree.insert(
+            clipped_bounds,
+            PrimitiveIndex {
+                kind: PrimitiveKind::Quad,
+                index: self.quads.primitives.len(),
+            },
+        );
+        self.quads
+            .insert(Quad { order, ..quad }, hover, group_hover);
+        Some(order)
+    }
+
+    pub(crate) fn insert_path(
+        &mut self,
+        path: Path<ScaledPixels>,
+        hover: Option<Path<ScaledPixels>>,
+        group_hover: Option<(SharedString, Option<Path<ScaledPixels>>)>,
+    ) -> Option<u32> {
+        let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+        if clipped_bounds.size.width <= ScaledPixels(0.)
+            || clipped_bounds.size.height <= ScaledPixels(0.)
+        {
+            return None;
+        }
+
+        let order = self.bounds_tree.insert(
+            clipped_bounds,
+            PrimitiveIndex {
+                kind: PrimitiveKind::Path,
+                index: self.paths.primitives.len(),
+            },
+        );
+        self.paths
+            .insert(Path { order, ..path }, hover, group_hover);
+        Some(order)
+    }
+
+    pub(crate) fn insert_underline(
+        &mut self,
+        underline: Underline,
+        hover: Option<Underline>,
+        group_hover: Option<(SharedString, Option<Underline>)>,
+    ) -> Option<u32> {
+        let clipped_bounds = underline.bounds.intersect(&underline.content_mask.bounds);
+        if clipped_bounds.size.width <= ScaledPixels(0.)
+            || clipped_bounds.size.height <= ScaledPixels(0.)
+        {
+            return None;
+        }
+
+        let order = self.bounds_tree.insert(
+            clipped_bounds,
+            PrimitiveIndex {
+                kind: PrimitiveKind::Underline,
+                index: self.underlines.primitives.len(),
+            },
+        );
+        self.underlines
+            .insert(Underline { order, ..underline }, hover, group_hover);
+        Some(order)
+    }
+
+    pub(crate) fn insert_monochrome_sprite(
+        &mut self,
+        monochrome_sprite: MonochromeSprite,
+        hover: Option<MonochromeSprite>,
+        group_hover: Option<(SharedString, Option<MonochromeSprite>)>,
+    ) -> Option<u32> {
+        let clipped_bounds = monochrome_sprite
+            .bounds
+            .intersect(&monochrome_sprite.content_mask.bounds);
+        if clipped_bounds.size.width <= ScaledPixels(0.)
+            || clipped_bounds.size.height <= ScaledPixels(0.)
+        {
+            return None;
+        }
+
+        let order = self.bounds_tree.insert(
+            clipped_bounds,
+            PrimitiveIndex {
+                kind: PrimitiveKind::MonochromeSprite,
+                index: self.monochrome_sprites.primitives.len(),
+            },
+        );
+        self.monochrome_sprites.insert(
+            MonochromeSprite {
+                order,
+                ..monochrome_sprite
+            },
+            hover,
+            group_hover,
+        );
+        Some(order)
+    }
+
+    pub(crate) fn insert_polychrome_sprite(
+        &mut self,
+        polychrome_sprite: PolychromeSprite,
+        hover: Option<PolychromeSprite>,
+        group_hover: Option<(SharedString, Option<PolychromeSprite>)>,
+    ) -> Option<u32> {
+        let clipped_bounds = polychrome_sprite
+            .bounds
+            .intersect(&polychrome_sprite.content_mask.bounds);
+        if clipped_bounds.size.width <= ScaledPixels(0.)
+            || clipped_bounds.size.height <= ScaledPixels(0.)
+        {
+            return None;
+        }
+
+        let order = self.bounds_tree.insert(
+            clipped_bounds,
+            PrimitiveIndex {
+                kind: PrimitiveKind::PolychromeSprite,
+                index: self.polychrome_sprites.primitives.len(),
+            },
+        );
+        self.polychrome_sprites.insert(
+            PolychromeSprite {
+                order,
+                ..polychrome_sprite
+            },
+            hover,
+            group_hover,
+        );
+        Some(order)
+    }
+
+    pub(crate) fn insert_surface(&mut self, surface: Surface) -> Option<u32> {
+        let clipped_bounds = surface.bounds.intersect(&surface.content_mask.bounds);
+        if clipped_bounds.size.width <= ScaledPixels(0.)
+            || clipped_bounds.size.height <= ScaledPixels(0.)
+        {
+            return None;
+        }
+
+        let order = self.bounds_tree.insert(
+            clipped_bounds,
+            PrimitiveIndex {
+                kind: PrimitiveKind::Surface,
+                index: self.surfaces.len(),
+            },
+        );
+        self.surfaces.push(Surface { order, ..surface });
         Some(order)
     }
 
@@ -189,17 +327,99 @@ impl Scene {
     }
 
     pub fn finish(&mut self) {
-        self.shadows.sort_unstable_by_key(|shadow| shadow.order);
-        self.quads.sort_unstable_by_key(|quad| quad.order);
-        self.paths.sort_unstable_by_key(|path| path.order);
+        self.shadows
+            .primitives
+            .sort_unstable_by_key(|shadow| shadow.order);
+        self.quads
+            .primitives
+            .sort_unstable_by_key(|quad| quad.order);
+        self.paths
+            .primitives
+            .sort_unstable_by_key(|path| path.order);
         self.underlines
+            .primitives
             .sort_unstable_by_key(|underline| underline.order);
         self.monochrome_sprites
+            .primitives
             .sort_unstable_by_key(|sprite| sprite.order);
         self.polychrome_sprites
+            .primitives
             .sort_unstable_by_key(|sprite| sprite.order);
         self.surfaces.sort_unstable_by_key(|surface| surface.order);
     }
+}
+
+pub(crate) struct PrimitiveSet<P> {
+    pub(crate) primitives: Vec<P>,
+    hovers: FxHashMap<usize, PrimitiveHover<P>>,
+}
+
+impl<P> PrimitiveSet<P> {
+    /// Returns the number of primitives in the set.
+    pub(crate) fn len(&self) -> usize {
+        self.primitives.len()
+    }
+
+    /// Inserts a primitive into the set and associates hover and group hover information with it.
+    ///
+    /// # Arguments
+    ///
+    /// * `primitive` - The primitive to insert.
+    /// * `hover` - An optional hover state for the primitive.
+    /// * `group_hover` - An optional group hover state for the primitive, with an associated shared string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::SharedString;
+    /// let mut primitive_set = PrimitiveSet::default();
+    /// let primitive = Quad::default();
+    /// let hover = Some(Quad::default());
+    /// let group_hover = Some((SharedString::from("group"), Some(Quad::default())));
+    ///
+    /// primitive_set.insert(primitive, hover, group_hover);
+    /// ```
+    fn insert(
+        &mut self,
+        primitive: P,
+        hover: Option<P>,
+        group_hover: Option<(SharedString, Option<P>)>,
+    ) {
+        let index = self.primitives.len();
+        self.primitives.push(primitive);
+        if hover.is_some() || group_hover.is_some() {
+            self.hovers
+                .insert(index, PrimitiveHover { hover, group_hover });
+        }
+    }
+
+    /// Clears all primitives and associated hover information from the set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let mut primitive_set = PrimitiveSet::default();
+    /// primitive_set.clear();
+    /// assert!(primitive_set.len() == 0);
+    /// ```
+    fn clear(&mut self) {
+        self.primitives.clear();
+        self.hovers.clear();
+    }
+}
+
+impl<P> Default for PrimitiveSet<P> {
+    fn default() -> Self {
+        Self {
+            primitives: Vec::new(),
+            hovers: HashMap::default(),
+        }
+    }
+}
+
+struct PrimitiveHover<P> {
+    hover: Option<P>,
+    group_hover: Option<(SharedString, Option<P>)>,
 }
 
 struct BatchIterator<'a> {
@@ -399,40 +619,10 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
-pub(crate) enum Primitive {
-    Shadow(Shadow),
-    Quad(Quad),
-    Path(Path<ScaledPixels>),
-    Underline(Underline),
-    MonochromeSprite(MonochromeSprite),
-    PolychromeSprite(PolychromeSprite),
-    Surface(Surface),
-}
-
-impl Primitive {
-    pub fn bounds(&self) -> &Bounds<ScaledPixels> {
-        match self {
-            Primitive::Shadow(shadow) => &shadow.bounds,
-            Primitive::Quad(quad) => &quad.bounds,
-            Primitive::Path(path) => &path.bounds,
-            Primitive::Underline(underline) => &underline.bounds,
-            Primitive::MonochromeSprite(sprite) => &sprite.bounds,
-            Primitive::PolychromeSprite(sprite) => &sprite.bounds,
-            Primitive::Surface(surface) => &surface.bounds,
-        }
-    }
-
-    pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
-        match self {
-            Primitive::Shadow(shadow) => &shadow.content_mask,
-            Primitive::Quad(quad) => &quad.content_mask,
-            Primitive::Path(path) => &path.content_mask,
-            Primitive::Underline(underline) => &underline.content_mask,
-            Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
-            Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
-            Primitive::Surface(surface) => &surface.content_mask,
-        }
-    }
+#[derive(Clone, Debug)]
+struct PrimitiveIndex {
+    kind: PrimitiveKind,
+    index: usize,
 }
 
 #[derive(Debug)]
@@ -478,12 +668,6 @@ impl PartialOrd for Quad {
     }
 }
 
-impl From<Quad> for Primitive {
-    fn from(quad: Quad) -> Self {
-        Primitive::Quad(quad)
-    }
-}
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct Underline {
@@ -506,12 +690,6 @@ impl Ord for Underline {
 impl PartialOrd for Underline {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl From<Underline> for Primitive {
-    fn from(underline: Underline) -> Self {
-        Primitive::Underline(underline)
     }
 }
 
@@ -541,12 +719,6 @@ impl PartialOrd for Shadow {
     }
 }
 
-impl From<Shadow> for Primitive {
-    fn from(shadow: Shadow) -> Self {
-        Primitive::Shadow(shadow)
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
@@ -571,12 +743,6 @@ impl Ord for MonochromeSprite {
 impl PartialOrd for MonochromeSprite {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl From<MonochromeSprite> for Primitive {
-    fn from(sprite: MonochromeSprite) -> Self {
-        Primitive::MonochromeSprite(sprite)
     }
 }
 
@@ -609,12 +775,6 @@ impl PartialOrd for PolychromeSprite {
     }
 }
 
-impl From<PolychromeSprite> for Primitive {
-    fn from(sprite: PolychromeSprite) -> Self {
-        Primitive::PolychromeSprite(sprite)
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Surface {
     pub view_id: ViewId,
@@ -635,12 +795,6 @@ impl Ord for Surface {
 impl PartialOrd for Surface {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl From<Surface> for Primitive {
-    fn from(surface: Surface) -> Self {
-        Primitive::Surface(surface)
     }
 }
 
@@ -789,12 +943,6 @@ impl Ord for Path<ScaledPixels> {
 impl PartialOrd for Path<ScaledPixels> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl From<Path<ScaledPixels>> for Primitive {
-    fn from(path: Path<ScaledPixels>) -> Self {
-        Primitive::Path(path)
     }
 }
 
