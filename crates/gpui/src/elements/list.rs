@@ -552,14 +552,15 @@ impl Element for List {
                     cx.request_measured_layout(
                         style,
                         move |known_dimensions, available_space, _cx| {
-                            let width = known_dimensions.width.unwrap_or(match available_space
-                                .width
-                            {
-                                AvailableSpace::Definite(x) => x,
-                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                    max_element_width
-                                }
-                            });
+                            let width =
+                                known_dimensions
+                                    .width
+                                    .unwrap_or(match available_space.width {
+                                        AvailableSpace::Definite(x) => x,
+                                        AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                            max_element_width
+                                        }
+                                    });
                             let height = match available_space.height {
                                 AvailableSpace::Definite(height) => total_height.min(height),
                                 AvailableSpace::MinContent | AvailableSpace::MaxContent => {
