@@ -1237,21 +1237,22 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if !WorkspaceSettings::get_global(cx).show_cursor_position {
-            return div();
-        }
-        div().when_some(self.position, |el, position| {
-            let mut text = format!(
-                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
-                position.row + 1,
-                position.column + 1
-            );
-            if self.selected_count > 0 {
-                write!(text, " ({} selected)", self.selected_count).unwrap();
-            }
-
-            el.child(Label::new(text).size(LabelSize::Small))
-        })
+        div().when(
+            WorkspaceSettings::get_global(cx).show_cursor_position,
+            |div| {
+                div.when_some(self.position, |el, position| {
+                    let mut text = format!(
+                        "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                        position.row + 1,
+                        position.column + 1
+                    );
+                    if self.selected_count > 0 {
+                        write!(text, " ({} selected)", self.selected_count).unwrap();
+                    }
+                    el.child(Label::new(text).size(LabelSize::Small))
+                })
+            },
+        )
     }
 }
 

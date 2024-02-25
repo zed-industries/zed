@@ -38,7 +38,6 @@ impl ActiveBufferLanguage {
 
 impl Render for ActiveBufferLanguage {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // Logic to hide in status bar
         div().when(
             WorkspaceSettings::get_global(cx).show_active_langauge,
             |div| {
