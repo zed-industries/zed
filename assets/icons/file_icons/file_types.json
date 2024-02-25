@@ -22,6 +22,7 @@
         "css": "css",
         "csv": "storage",
         "cts": "typescript",
+        "coffe":"coffeescript",
         "dat": "storage",
         "db": "storage",
         "dbf": "storage",
@@ -42,6 +43,7 @@
         "fmp": "storage",
         "fp7": "storage",
         "frm": "storage",
+        "fs": "fsharp",
         "gdb": "storage",
         "gif": "image",
         "gitattributes": "vcs",
@@ -95,6 +97,7 @@
         "mts": "typescript",
         "myd": "storage",
         "myi": "storage",
+        "nim": "nim",
         "odp": "document",
         "ods": "document",
         "odt": "document",
@@ -127,13 +130,17 @@
         "sqlite": "storage",
         "svelte": "template",
         "svg": "image",
+        "sql": "sql",
         "swift": "code",
+        "sc": "scala",
+        "scala": "scala",
         "tiff": "image",
         "toml": "toml",
         "ts": "typescript",
         "tsv": "storage",
         "tsx": "code",
         "txt": "document",
+        "tcl": "tcl",
         "vue": "vue",
         "wav": "audio",
         "webm": "video",
@@ -175,6 +182,9 @@
         "css": {
             "icon": "icons/file_icons/css.svg"
         },
+        "coffeescript": {
+            "icon": "icons/file_icons/coffeescript"
+        },
         "default": {
             "icon": "icons/file_icons/file.svg"
         },
@@ -199,6 +209,9 @@
         "expanded_folder": {
             "icon": "icons/file_icons/folder_open.svg"
         },
+        "fsharp": {
+            "icon": "icons/file_icons/fsharp.svg"
+        },
         "haskell": {
             "icon": "icons/file_icons/haskell.svg"
         },
@@ -222,6 +235,9 @@
         },
         "lua": {
             "icon": "icons/file_icons/lua.svg"
+        },
+        "nim": {
+            "icon": "icons/file_icons/nim.svg"
         },
         "ocaml": {
             "icon": "icons/file_icons/ocaml.svg"
@@ -256,6 +272,12 @@
         "storage": {
             "icon": "icons/file_icons/database.svg"
         },
+        "sql": {
+            "icon": "icons/file_icons/sql.svg"
+        },
+        "scala": {
+            "icon": "icons/file_icons/scala.svg"
+        },
         "template": {
             "icon": "icons/file_icons/html.svg"
         },
@@ -266,6 +288,9 @@
             "icon": "icons/file_icons/toml.svg"
         },
         "typescript": {
+            "icon": "icons/file_icons/typescript.svg"
+        },
+        "tcl": {
             "icon": "icons/file_icons/typescript.svg"
         },
         "vcs": {
