@@ -14,7 +14,7 @@ use wayland_client::{
     event_created_child,
     protocol::{
         wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager,
-        wl_data_offer, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
+        wl_data_offer, wl_data_source, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
         wl_shm_pool,
         wl_surface::{self, WlSurface},
     },
@@ -45,6 +45,7 @@ use crate::platform::linux::wayland::clipboard::{self, Clipboard};
 const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
 
 pub(crate) struct WaylandClientStateInner {
+    serial: u32,
     compositor: Option<wl_compositor::WlCompositor>,
     buffer: Option<wl_buffer::WlBuffer>,
     wl_seat: Option<wl_seat::WlSeat>,
@@ -88,6 +89,7 @@ pub(crate) struct WaylandClient {
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>, conn: Arc<Connection>) -> Self {
         let state = WaylandClientState(Rc::new(RefCell::new(WaylandClientStateInner {
+            serial: 0,
             compositor: None,
             buffer: None,
             wl_seat: None,
@@ -129,6 +131,18 @@ impl WaylandClient {
             event_queue: Mutex::new(event_queue),
             qh: Arc::new(qh),
         }
+    }
+
+    pub fn flush(&self) {
+        self.conn.flush().expect("failed to flush wayland client");
+    }
+
+    pub fn create_data_source(&self) -> wl_data_source::WlDataSource {
+        let state = self.state.0.borrow();
+        // todo!(linux): the unwrap() can be avoided after the event loop refactor
+        let manager = state.data_device_manager.as_ref().unwrap();
+        let source = manager.create_data_source(&self.qh, ());
+        source
     }
 }
 
@@ -225,9 +239,22 @@ impl Client for WaylandClient {
         Box::new(WaylandWindow(window_state))
     }
 
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        let source = self.create_data_source();
+        source.offer(clipboard::TEXT_MIME_TYPE.to_owned());
+
+        let mut state = &mut self.state.0.borrow_mut();
+
+        if let Some(ref device) = state.data_device {
+            device.set_selection(Some(&source), state.serial);
+        }
+
+        state.clipboard.write(source, item);
+    }
+
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.state.0.borrow();
-        state.clipboard.read(&self.conn).map(|string| ClipboardItem::new(string))
+        state.clipboard.read(&self).map(|string| ClipboardItem::new(string))
     }
 }
 
@@ -530,8 +557,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
             wl_keyboard::Event::Key {
                 key,
                 state: WEnum::Value(key_state),
+                serial,
                 ..
             } => {
+                state.serial = serial;
+
                 let focused_window = &state.keyboard_focused_window;
                 let Some(focused_window) = focused_window else {
                     return;
@@ -823,6 +853,27 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientState {
         }
     }
 }
+
+impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        data_offer: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        _: &(),
+        conn: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.0.borrow_mut();
+
+        match event {
+            wl_data_source::Event::Send { mime_type, fd } => {
+                state.clipboard.send_source(&mime_type, fd);
+            }
+            _ => {}
+        }
+    }
+}
+
 
 impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientState {
     fn event(

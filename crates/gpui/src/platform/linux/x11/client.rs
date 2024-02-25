@@ -272,6 +272,9 @@ impl Client for X11Client {
     }
 
     //todo!(linux)
+    fn write_to_clipboard(&self, item: ClipboardItem) {}
+
+    //todo!(linux)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         None
     }

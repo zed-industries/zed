@@ -1,25 +1,21 @@
-use std::sync::Arc;
 use std::io::Read;
-use std::os::fd::{AsRawFd, BorrowedFd};
-use std::cell::RefCell;
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 
 use anyhow::{Result, bail};
-use parking_lot::Mutex;
 use filedescriptor::{Pipe, FileDescriptor};
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
-use wayland_client::Connection;
+use wayland_client::protocol::wl_data_source::WlDataSource;
 
-const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
+use crate::ClipboardItem;
+use super::WaylandClient;
+
+pub const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 
 pub(crate) struct Clipboard {
     offer: Option<WlDataOffer>,
     has_text: bool,
-}
-
-pub(crate) struct ClipboardRead {
-    offer: WlDataOffer,
-    did_start: RefCell<bool>,
-    result: Arc<Mutex<Option<Result<String>>>>,
+    source: Option<WlDataSource>,
+    source_content: Option<String>,
 }
 
 impl Clipboard {
@@ -27,6 +23,8 @@ impl Clipboard {
         Self {
             offer: None,
             has_text: false,
+            source: None,
+            source_content: None,
         }
     }
 
@@ -39,16 +37,36 @@ impl Clipboard {
         self.has_text = self.has_text || mime == TEXT_MIME_TYPE;
     }
 
-    pub fn read(self: &Self, connection: &Connection) -> Option<String> {
+    pub fn send_source(self: &mut Self, mime_type: &str, fd: OwnedFd) {
+        if let Some(ref mut source_content) = self.source_content {
+            let result = unsafe {
+                libc::write(
+                    fd.as_raw_fd(),
+                    source_content.as_mut_ptr() as *mut _,
+                    source_content.len(),
+                )
+            };
+            if result == -1 {
+                panic!("could not write clipboard");
+            }
+        }
+    }
+
+    pub fn read(self: &Self, client: &WaylandClient) -> Option<String> {
         let Some(ref offer) = self.offer else { return None; };
         let read_pipe = setup_offer_read(offer.clone()).unwrap();
 
-        connection.flush().unwrap();
+        client.flush();
 
         match read_pipe_with_timeout(read_pipe) {
             Ok(result) => Some(result),
             Err(_) => None,
         }
+    }
+
+    pub fn write(self: &mut Self, source: WlDataSource, item: ClipboardItem) {
+        self.source = Some(source);
+        self.source_content = Some(item.text);
     }
 }
 

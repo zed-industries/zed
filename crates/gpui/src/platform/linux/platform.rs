@@ -382,8 +382,9 @@ impl Platform for LinuxPlatform {
         false
     }
 
-    //todo!(linux)
-    fn write_to_clipboard(&self, item: ClipboardItem) {}
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        self.client.write_to_clipboard(item)
+    }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.client.read_from_clipboard()
