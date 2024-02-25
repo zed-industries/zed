@@ -34,8 +34,7 @@ pub struct ExtensionsPage {
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
-    is_showing_installed_extensions: bool,
-    is_showing_not_installed_extensions: bool,
+    is_only_showing_installed_extensions: bool,
     extension_entries: Vec<Extension>,
     query_editor: View<Editor>,
     query_contains_error: bool,
@@ -56,8 +55,7 @@ impl ExtensionsPage {
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
                 is_fetching_extensions: false,
-                is_showing_installed_extensions: true,
-                is_showing_not_installed_extensions: true,
+                is_only_showing_installed_extensions: false,
                 extension_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
@@ -75,16 +73,12 @@ impl ExtensionsPage {
         self.extension_entries
             .iter()
             .filter(|extension| {
-                let status = extension_store.extension_status(&extension.id);
+                if self.is_only_showing_installed_extensions {
+                    let status = extension_store.extension_status(&extension.id);
 
-                match [
-                    self.is_showing_installed_extensions,
-                    self.is_showing_not_installed_extensions,
-                ] {
-                    [true, true] => true,
-                    [true, false] => matches!(status, ExtensionStatus::Installed(_)),
-                    [false, true] => matches!(status, ExtensionStatus::NotInstalled),
-                    [false, false] => false,
+                    matches!(status, ExtensionStatus::Installed(_))
+                } else {
+                    true
                 }
             })
             .cloned()
@@ -421,15 +415,19 @@ impl ExtensionsPage {
     }
 
     fn render_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let is_filtering = self.search_query(cx).is_some()
-            || self.is_showing_installed_extensions
-            || self.is_showing_not_installed_extensions;
+        let has_search = self.search_query(cx).is_some();
 
         let message = if self.is_fetching_extensions {
             "Loading extensions..."
+        } else if self.is_only_showing_installed_extensions {
+            if has_search {
+                "No installed extensions that match your search."
+            } else {
+                "No installed extensions."
+            }
         } else {
-            if is_filtering {
-                "No extensions that match your search criteria."
+            if has_search {
+                "No extensions that match your search."
             } else {
                 "No extensions."
             }
@@ -457,31 +455,15 @@ impl Render for ExtensionsPage {
                     .gap_2()
                     .child(h_flex().child(self.render_search(cx)))
                     .child(CheckboxWithLabel::new(
-                        "Installed",
-                        Label::new("Installed"),
-                        if self.is_showing_installed_extensions {
+                        "installed",
+                        Label::new("Only show installed"),
+                        if self.is_only_showing_installed_extensions {
                             Selection::Selected
                         } else {
                             Selection::Unselected
                         },
                         cx.listener(|this, selection, _cx| {
-                            this.is_showing_installed_extensions = match selection {
-                                Selection::Selected => true,
-                                Selection::Unselected => false,
-                                Selection::Indeterminate => return,
-                            }
-                        }),
-                    ))
-                    .child(CheckboxWithLabel::new(
-                        "not installed",
-                        Label::new("Not installed"),
-                        if self.is_showing_not_installed_extensions {
-                            Selection::Selected
-                        } else {
-                            Selection::Unselected
-                        },
-                        cx.listener(|this, selection, _cx| {
-                            this.is_showing_not_installed_extensions = match selection {
+                            this.is_only_showing_installed_extensions = match selection {
                                 Selection::Selected => true,
                                 Selection::Unselected => false,
                                 Selection::Indeterminate => return,
