@@ -225,12 +225,9 @@ impl Client for WaylandClient {
         Box::new(WaylandWindow(window_state))
     }
 
-    // todo!(linux)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        // XXX: this will panic, already borrowing in keydown handler
         let state = self.state.0.borrow();
-        let result = state.clipboard.read_sync();
-        result.map(|string| ClipboardItem::new(string))
+        state.clipboard.read(&self.conn).map(|string| ClipboardItem::new(string))
     }
 }
 
@@ -539,6 +536,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let Some(focused_window) = focused_window else {
                     return;
                 };
+                let focused_window = focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
@@ -551,8 +549,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             is_held: false, // todo!(linux)
                         });
 
-                        focused_window.handle_input(input.clone());
-
                         if !keysym.is_modifier_key() {
                             state.repeat.current_id += 1;
                             state.repeat.current_keysym = Some(keysym);
@@ -562,6 +558,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             let id = state.repeat.current_id;
                             let keysym = state.repeat.current_keysym;
                             let state_container = state_container.clone();
+                            let input = input.clone();
 
                             state
                                 .platform_inner
@@ -591,15 +588,23 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                 })
                                 .detach();
                         }
+
+                        drop(state);
+
+                        focused_window.handle_input(input);
                     }
                     wl_keyboard::KeyState::Released => {
-                        focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
+                        let input = PlatformInput::KeyUp(KeyUpEvent {
                             keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
-                        }));
+                        });
 
                         if !keysym.is_modifier_key() {
                             state.repeat.current_keysym = None;
                         }
+
+                        drop(state);
+
+                        focused_window.handle_input(input);
                     }
                     _ => {}
                 }
@@ -787,21 +792,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientState {
         match event {
             wl_data_device::Event::Selection { id } => {
                 if let Some(offer) = id {
-
                     state.clipboard.receive_offer(offer.clone());
-
-                    // XXX: Just read the offer right away, for testing purposes
-                    let read_pipe = clipboard::setup_offer_read(offer).unwrap();
-                    std::thread::spawn(move || {
-                        match clipboard::read_pipe_with_timeout(read_pipe) {
-                            Ok(result) => {
-                                println!("CLIPBOARD: {:?}", result);
-                            }
-                            Err(e) => {
-                                // todo!(linux)
-                            }
-                        };
-                    });
                 }
             }
             _ => {}

@@ -1,15 +1,13 @@
 use std::sync::Arc;
 use std::io::Read;
 use std::os::fd::{AsRawFd, BorrowedFd};
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 use std::cell::RefCell;
 
 use anyhow::{Result, bail};
 use parking_lot::Mutex;
 use filedescriptor::{Pipe, FileDescriptor};
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
+use wayland_client::Connection;
 
 const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 
@@ -41,14 +39,11 @@ impl Clipboard {
         self.has_text = self.has_text || mime == TEXT_MIME_TYPE;
     }
 
-    pub fn read(self: &Self) -> Result<ClipboardRead> {
-        let Some(ref offer) = self.offer else { bail!("no clipboard data available"); };
-        Ok(ClipboardRead::new(offer.clone()))
-    }
-
-    pub fn read_sync(self: &Self) -> Option<String> {
+    pub fn read(self: &Self, connection: &Connection) -> Option<String> {
         let Some(ref offer) = self.offer else { return None; };
         let read_pipe = setup_offer_read(offer.clone()).unwrap();
+
+        connection.flush().unwrap();
 
         match read_pipe_with_timeout(read_pipe) {
             Ok(result) => Some(result),
@@ -57,64 +52,17 @@ impl Clipboard {
     }
 }
 
-impl ClipboardRead {
-    pub fn new(offer: WlDataOffer) -> Self {
-        Self {
-            offer,
-            did_start: RefCell::new(false),
-            result: Arc::new(Mutex::new(None))
-        }
-    }
-}
-
-impl Future for ClipboardRead {
-    type Output = Result<String, &'static str>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut did_start = self.did_start.borrow_mut();
-        if !*did_start {
-            *did_start = true;
-
-            let read_pipe = setup_offer_read(self.offer.clone()).unwrap();
-            let result_cell = self.result.clone();
-            let waker = cx.waker().clone();
-
-            std::thread::spawn(move || {
-                match read_pipe_with_timeout(read_pipe) {
-                    Ok(result) => {
-                        let mut result_cell = result_cell.lock();
-                        *result_cell = Some(Ok(result));
-                    }
-                    Err(e) => {
-                        log::error!("while reading clipboard: {}", e);
-                        let mut result_cell = result_cell.lock();
-                        *result_cell = Some(Err(e));
-                    }
-                };
-                waker.wake();
-            });
-        }
-
-        match &mut *self.result.lock() {
-            None => Poll::Pending,
-            Some(result) => match result {
-                Ok(result) => Poll::Ready(Ok(result.clone())),
-                Err(e) => Poll::Ready(Err("failed to read clipboard")),
-            },
-        }
-    }
-}
-
-pub(crate) fn setup_offer_read(offer: wl_data_offer::WlDataOffer) -> anyhow::Result<FileDescriptor> {
+fn setup_offer_read(offer: wl_data_offer::WlDataOffer) -> anyhow::Result<FileDescriptor> {
     let pipe = Pipe::new().map_err(anyhow::Error::msg)?;
     offer.receive(TEXT_MIME_TYPE.to_string(), unsafe { BorrowedFd::borrow_raw(pipe.write.as_raw_fd()) });
     Ok(pipe.read)
 }
 
-pub(crate) fn read_pipe_with_timeout(mut file: FileDescriptor) -> Result<String> {
+fn read_pipe_with_timeout(mut file: FileDescriptor) -> Result<String> {
     let mut result = Vec::new();
 
     file.set_non_blocking(true)?;
+
     let mut pfd = libc::pollfd {
         fd: file.as_raw_fd(),
         events: libc::POLLIN,
@@ -124,7 +72,7 @@ pub(crate) fn read_pipe_with_timeout(mut file: FileDescriptor) -> Result<String>
     let mut buf = [0u8; 8192];
 
     loop {
-        if unsafe { libc::poll(&mut pfd, 1, 3000) == 1 } {
+        if unsafe { libc::poll(&mut pfd, 1, 1000) == 1 } {
             match file.read(&mut buf) {
                 Ok(size) if size == 0 => {
                     break;
