@@ -574,7 +574,7 @@ These values take in the same options as the root-level settings with the same n
 
 - Description: The debounce delay before re-querying the language server for completion documentation when not included in original completion list.
 - Setting: `completion_documentation_secondary_query_debounce`
-- Default: `0` ms
+- Default: `300` ms
 
 **Options**
 
