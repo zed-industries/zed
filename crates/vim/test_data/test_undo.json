@@ -1,7 +1,6 @@
-{"Put":{"state":"The quick brown ˇfox"}}
-{"Key":"v"}
-{"Key":"e"}
+{"Put":{"state":"ˇThe quick\nbrown fox\njumps over"}}
+{"Key":"shift-v"}
 {"Key":"d"}
-{"Get":{"state":"The quick brownˇ ","mode":"Normal"}}
+{"Get":{"state":"ˇbrown fox\njumps over","mode":"Normal"}}
 {"Key":"u"}
-{"Get":{"state":"The quick brown ˇfox","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick\nbrown fox\njumps over","mode":"Normal"}}

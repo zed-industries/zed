@@ -392,7 +392,7 @@ mod test {
 
     use crate::{
         state::Mode::{self},
-        test::{NeovimBackedTestContext, VimTestContext},
+        test::NeovimBackedTestContext,
     };
 
     #[gpui::test]
@@ -924,12 +924,25 @@ mod test {
 
     #[gpui::test]
     async fn test_undo(cx: &mut TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_state("The quick brown ˇfox", Mode::Normal);
-        cx.simulate_keystrokes(["v", "e", "d"]);
-        cx.assert_editor_state("The quick brownˇ ");
-        cx.simulate_keystrokes(["u"]);
-        cx.assert_editor_state("The quick brownˇ fox");
+        cx.set_shared_state(indoc! {"
+                ˇThe quick
+                brown fox
+                jumps over"})
+            .await;
+
+        cx.simulate_shared_keystrokes(["shift-v", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+                    ˇbrown fox
+                    jumps over"})
+            .await;
+
+        cx.simulate_shared_keystrokes(["u"]).await;
+        cx.assert_shared_state(indoc! {"
+                ˇThe quick
+                brown fox
+                jumps over"})
+            .await;
     }
 }
