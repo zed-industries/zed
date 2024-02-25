@@ -6794,28 +6794,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "plugin"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "plugin_macros",
- "serde",
- "serde_derive",
-]
-
-[[package]]
-name = "plugin_macros"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "proc-macro2",
- "quote",
- "serde",
- "serde_derive",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "png"
 version = "0.16.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

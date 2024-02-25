@@ -50,8 +50,6 @@ members = [
     "crates/notifications",
     "crates/outline",
     "crates/picker",
-    "crates/plugin",
-    "crates/plugin_macros",
     "crates/prettier",
     "crates/project",
     "crates/project_panel",
