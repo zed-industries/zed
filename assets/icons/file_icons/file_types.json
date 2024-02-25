@@ -125,6 +125,7 @@
     "scm": "code",
     "sdf": "storage",
     "sh": "terminal",
+    "smithy": "smithy",
     "sqlite": "storage",
     "svelte": "template",
     "svg": "image",
@@ -253,6 +254,9 @@
     },
     "settings": {
       "icon": "icons/file_icons/settings.svg"
+    },
+    "smithy": {
+        "icon": "icons/file_icons/smithy.svg"
     },
     "storage": {
       "icon": "icons/file_icons/database.svg"
