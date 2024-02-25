@@ -389,7 +389,9 @@ impl Platform for LinuxPlatform {
         let username = username.to_string();
         let password = password.to_vec();
         self.background_executor().spawn(async move {
-            oo7::Keyring::new().await?.create_item(&url, &vec![("url", &url), ("username", &username)], password, true).await?;
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+            keyring.create_item(&url, &vec![("url", &url), ("username", &username)], password, true).await?;
             Ok(())
         })
     }
@@ -397,7 +399,10 @@ impl Platform for LinuxPlatform {
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
-            let items = oo7::Keyring::new().await?.search_items(&vec![("url", &url)]).await?;
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+
+            let items = keyring.search_items(&vec![("url", &url)]).await?;
 
             if let Some(item) = items.first() {
                 let attributes = item.attributes().await?;
@@ -414,7 +419,10 @@ impl Platform for LinuxPlatform {
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
-            let items = oo7::Keyring::new().await?.search_items(&vec![("url", &url)]).await?;
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+
+            let items = keyring.search_items(&vec![("url", &url)]).await?;
 
             if let Some(item) = items.first() {
                 item.delete().await?;
