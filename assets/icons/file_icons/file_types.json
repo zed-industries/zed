@@ -28,7 +28,6 @@
         "dll": "storage",
         "doc": "document",
         "Dockerfile": "docker",
-        "dockerignore": "docker",
         ".dockerignore": "docker",
         "docker-compose": "docker",
         "docx": "document",
