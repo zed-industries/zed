@@ -1,7 +1,8 @@
 use copilot::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
     div, svg, AppContext, ClipboardItem, DismissEvent, Element, EventEmitter, FocusHandle,
-    FocusableView, IntoElement, Model, ParentElement, Render, Styled, Subscription, ViewContext,
+    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, Styled,
+    Subscription, ViewContext,
 };
 use ui::{prelude::*, Button, IconName, Label};
 use workspace::ModalView;
@@ -95,13 +96,13 @@ impl CopilotCodeVerification {
             .items_center()
             .child(Headline::new("Use GitHub Copilot in Zed.").size(HeadlineSize::Large))
             .child(
-                Button::new("copilot-enable-cancel-button", "Cancel")
-                    .full_width()
-                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
-            )
-            .child(
                 Label::new("Using Copilot requires an active subscription on GitHub.")
                     .color(Color::Muted),
+            )
+            .child(
+                Button::new("copilot-cancel-button", "Cancel")
+                    .full_width()
+                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
             )
             .child(Self::render_device_code(data, cx))
             .child(
@@ -112,10 +113,9 @@ impl CopilotCodeVerification {
                 Button::new("connect-button", connect_button_label)
                     .on_click({
                         let verification_uri = data.verification_uri.clone();
-                        let connect_clicked = connect_clicked.clone(); // Clone connect_clicked
                         cx.listener(move |this, _, cx| {
                             cx.open_url(&verification_uri);
-                            this.connect_clicked = true; // Use this instead of connect_clicked
+                            this.connect_clicked = true;
                         })
                     })
                     .full_width()
@@ -127,7 +127,6 @@ impl CopilotCodeVerification {
                     .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
             )
     }
-
     fn render_enabled_modal(cx: &mut ViewContext<Self>) -> impl Element {
         v_flex()
             .gap_2()
@@ -145,6 +144,7 @@ impl CopilotCodeVerification {
     fn render_unauthorized_modal(cx: &mut ViewContext<Self>) -> impl Element {
         v_flex()
             .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
+
             .child(Label::new(
                 "You can enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.",
             ).color(Color::Warning))
@@ -194,3 +194,15 @@ impl Render for CopilotCodeVerification {
             .w_96()
             .items_center()
             .p_4()
+            .gap_2()
+            .child(
+                svg()
+                    .w_32()
+                    .h_16()
+                    .flex_none()
+                    .path(IconName::ZedXCopilot.path())
+                    .text_color(cx.theme().colors().icon),
+            )
+            .child(prompt)
+    }
+}
