@@ -99,6 +99,11 @@ impl CopilotCodeVerification {
                 Label::new("Using Copilot requires an active subscription on GitHub.")
                     .color(Color::Muted),
             )
+            .child(
+                Button::new("copilot-cancel-button", "Cancel")
+                    .full_width()
+                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
+            )
             .child(Self::render_device_code(data, cx))
             .child(
                 Label::new("Paste this code into GitHub after clicking the button below.")
