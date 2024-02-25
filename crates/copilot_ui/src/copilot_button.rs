@@ -38,16 +38,10 @@ pub struct CopilotButton {
 
 impl Render for CopilotButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if !cx
-            .global::<SettingsStore>()
-            .get::<AllLanguageSettings>(None)
-            .copilot
-            .button
-        {
+        let all_language_settings = all_language_settings(None, cx);
+        if !all_language_settings.copilot.button {
             return div();
         }
-
-        let all_language_settings = all_language_settings(None, cx);
         if !all_language_settings.copilot.feature_enabled {
             return div();
         }
