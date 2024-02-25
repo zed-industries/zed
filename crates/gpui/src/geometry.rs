@@ -2639,6 +2639,12 @@ pub trait Half {
     fn half(&self) -> Self;
 }
 
+impl Half for i32 {
+    fn half(&self) -> Self {
+        self / 2
+    }
+}
+
 impl Half for f32 {
     fn half(&self) -> Self {
         self / 2.

@@ -45,6 +45,7 @@ pub(crate) struct Scene {
     pub(crate) polychrome_sprites: PrimitiveSet<PolychromeSprite>,
     pub(crate) surfaces: Vec<Surface>,
     bounds_tree: BoundsTree<ScaledPixels, PrimitiveIndex>,
+    hovered_bounds: Vec<(Bounds<ScaledPixels>, PrimitiveIndex)>,
 }
 
 impl Scene {
@@ -326,7 +327,14 @@ impl Scene {
         // }
     }
 
-    pub fn finish(&mut self) {
+    pub fn finish(&mut self, mouse_position: Point<ScaledPixels>) {
+        self.hovered_bounds.clear();
+        self.bounds_tree
+            .find_containing(&mouse_position, &mut self.hovered_bounds);
+
+        todo!("replace hovered primitives");
+        todo!("replace group-hovered primitives. i think we'll need to index group membership to do so.");
+
         self.shadows
             .primitives
             .sort_unstable_by_key(|shadow| shadow.order);

@@ -1043,9 +1043,10 @@ impl<'a> WindowContext<'a> {
         self.window.layout_engine.as_mut().unwrap().clear();
         self.text_system()
             .finish_frame(&self.window.next_frame.reused_views);
+        let mouse_position = self.window.mouse_position.scale(self.window.scale_factor);
         self.window
             .next_frame
-            .finish(&mut self.window.rendered_frame);
+            .finish(&mut self.window.rendered_frame, mouse_position);
         ELEMENT_ARENA.with_borrow_mut(|element_arena| {
             let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
             if percentage >= 80. {

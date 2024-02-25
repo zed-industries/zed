@@ -1,4 +1,4 @@
-use crate::{Bounds, Half};
+use crate::{Bounds, Half, Point};
 use std::{
     cmp,
     fmt::Debug,
@@ -43,7 +43,7 @@ where
             right,
             bounds: node_bounds,
             ..
-        } = self.node_mut(index)
+        } = &mut self.nodes[index]
         {
             let left = *left;
             let right = *right;
@@ -54,8 +54,12 @@ where
             // the surface area the least. This attempts to keep the tree balanced
             // in terms of surface area. If there is an intersection with the other child,
             // add its keys to the intersections vector.
-            let left_cost = new_bounds.union(self.node(left).bounds()).half_perimeter();
-            let right_cost = new_bounds.union(self.node(right).bounds()).half_perimeter();
+            let left_cost = new_bounds
+                .union(&self.nodes[left].bounds())
+                .half_perimeter();
+            let right_cost = new_bounds
+                .union(&self.nodes[right].bounds())
+                .half_perimeter();
             if left_cost < right_cost {
                 max_intersecting_ordering =
                     self.find_max_ordering(right, &new_bounds, max_intersecting_ordering);
@@ -76,7 +80,7 @@ where
             bounds: sibling_bounds,
             order: sibling_ordering,
             ..
-        } = self.node(index)
+        } = &self.nodes[index]
         else {
             unreachable!();
         };
@@ -90,7 +94,7 @@ where
 
         // If there was an old parent, we need to update its children indices.
         if let Some(old_parent) = self.stack.last().copied() {
-            let Node::Internal { left, right, .. } = self.node_mut(old_parent) else {
+            let Node::Internal { left, right, .. } = &mut self.nodes[old_parent] else {
                 unreachable!();
             };
 
@@ -114,8 +118,42 @@ where
         ordering
     }
 
+    /// Finds all nodes whose bounds contain the given point and pushes their (bounds, payload) pairs onto the result vector.
+    pub(crate) fn find_containing(&mut self, point: &Point<U>, result: &mut Vec<(Bounds<U>, T)>) {
+        if let Some(mut index) = self.root {
+            self.stack.clear();
+            self.stack.push(index);
+
+            while let Some(current_index) = self.stack.pop() {
+                match &self.nodes[current_index] {
+                    Node::Leaf {
+                        bounds, payload, ..
+                    } => {
+                        if bounds.contains(point) {
+                            result.push((bounds.clone(), payload.clone()));
+                        }
+                    }
+                    Node::Internal {
+                        left,
+                        right,
+                        bounds,
+                        ..
+                    } => {
+                        if bounds.contains(point) {
+                            self.stack.push(*left);
+                            self.stack.push(*right);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn find_max_ordering(&self, index: usize, bounds: &Bounds<U>, mut max_ordering: u32) -> u32 {
-        match self.node(index) {
+        match {
+            let this = &self;
+            &this.nodes[index]
+        } {
             Node::Leaf {
                 bounds: node_bounds,
                 order: ordering,
@@ -133,8 +171,8 @@ where
                 ..
             } => {
                 if bounds.intersects(node_bounds) && max_ordering < *node_max_ordering {
-                    let left_max_ordering = self.node(*left).max_ordering();
-                    let right_max_ordering = self.node(*right).max_ordering();
+                    let left_max_ordering = self.nodes[*left].max_ordering();
+                    let right_max_ordering = self.nodes[*right].max_ordering();
                     if left_max_ordering > right_max_ordering {
                         max_ordering = self.find_max_ordering(*left, bounds, max_ordering);
                         max_ordering = self.find_max_ordering(*right, bounds, max_ordering);
@@ -158,8 +196,8 @@ where
     }
 
     fn push_internal(&mut self, left: usize, right: usize) -> usize {
-        let left_node = self.node(left);
-        let right_node = self.node(right);
+        let left_node = &self.nodes[left];
+        let right_node = &self.nodes[right];
         let new_bounds = left_node.bounds().union(right_node.bounds());
         let max_ordering = cmp::max(left_node.max_ordering(), right_node.max_ordering());
         self.nodes.push(Node::Internal {
@@ -169,16 +207,6 @@ where
             max_ordering,
         });
         self.nodes.len() - 1
-    }
-
-    #[inline(always)]
-    fn node(&self, index: usize) -> &Node<U, T> {
-        &self.nodes[index]
-    }
-
-    #[inline(always)]
-    fn node_mut(&mut self, index: usize) -> &mut Node<U, T> {
-        &mut self.nodes[index]
     }
 }
 
@@ -234,5 +262,70 @@ where
             } => *ordering,
             Node::Internal { max_ordering, .. } => *max_ordering,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Bounds, Point, Size};
+
+    #[test]
+    fn test_insert_and_find_containing() {
+        let mut tree = BoundsTree::<f32, String>::default();
+        let bounds1 = Bounds {
+            origin: Point { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+        };
+        let bounds2 = Bounds {
+            origin: Point { x: 5.0, y: 5.0 },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+        };
+        let bounds3 = Bounds {
+            origin: Point { x: 10.0, y: 10.0 },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+        };
+
+        // Insert bounds into the tree
+        tree.insert(bounds1.clone(), "Payload 1".to_string());
+        tree.insert(bounds2.clone(), "Payload 2".to_string());
+        tree.insert(bounds3.clone(), "Payload 3".to_string());
+
+        // Points for testing
+        let point_inside_bounds1 = Point { x: 1.0, y: 1.0 };
+        let point_inside_bounds1_and_2 = Point { x: 6.0, y: 6.0 };
+        let point_inside_bounds2_and_3 = Point { x: 12.0, y: 12.0 };
+        let point_outside_all_bounds = Point { x: 21.0, y: 21.0 };
+
+        // Test find_containing for different points
+        let mut result = Vec::new();
+        tree.find_containing(&point_inside_bounds1, &mut result);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (bounds1.clone(), "Payload 1".to_string()));
+
+        result.clear();
+        tree.find_containing(&point_inside_bounds1_and_2, &mut result);
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&(bounds1.clone(), "Payload 1".to_string())));
+        assert!(result.contains(&(bounds2.clone(), "Payload 2".to_string())));
+
+        result.clear();
+        tree.find_containing(&point_inside_bounds2_and_3, &mut result);
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&(bounds2.clone(), "Payload 2".to_string())));
+        assert!(result.contains(&(bounds3.clone(), "Payload 3".to_string())));
+
+        result.clear();
+        tree.find_containing(&point_outside_all_bounds, &mut result);
+        assert_eq!(result.len(), 0);
     }
 }

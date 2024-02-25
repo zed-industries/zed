@@ -34,9 +34,9 @@ use crate::{
     EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
     InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
     Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
-    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    RenderImageParams, RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StackingContext, StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline,
+    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -124,7 +124,7 @@ impl Frame {
             .unwrap_or_default()
     }
 
-    pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
+    pub(crate) fn finish(&mut self, prev_frame: &mut Self, mouse_position: Point<ScaledPixels>) {
         // Reuse mouse listeners that didn't change since the last frame.
         for (type_id, listeners) in &mut prev_frame.mouse_listeners {
             let next_listeners = self.mouse_listeners.entry(*type_id).or_default();
@@ -157,7 +157,7 @@ impl Frame {
         // Reuse geometry that didn't change since the last frame.
         self.scene
             .reuse_views(&self.reused_views, &mut prev_frame.scene);
-        self.scene.finish();
+        self.scene.finish(mouse_position);
     }
 }
 
