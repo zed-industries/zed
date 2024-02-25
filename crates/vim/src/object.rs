@@ -1,5 +1,9 @@
 use std::ops::Range;
 
+use crate::{
+    motion::right, normal::normal_object, state::Mode, utils::coerce_punctuation,
+    visual::visual_object, Vim,
+};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
@@ -10,11 +14,6 @@ use language::{char_kind, BufferSnapshot, CharKind, Selection};
 use regex::Regex;
 use serde::Deserialize;
 use workspace::Workspace;
-
-use crate::{
-    motion::right, normal::normal_object, state::Mode, utils::coerce_punctuation,
-    visual::visual_object, Vim,
-};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Object {
@@ -30,12 +29,6 @@ pub enum Object {
     AngleBrackets,
     Argument,
     Tag,
-}
-
-struct HtmlTag {
-    name: String,
-    start: DisplayPoint,
-    end: DisplayPoint,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -117,8 +110,8 @@ impl Object {
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
-            | Object::Tag
             | Object::Parentheses
+            | Object::Tag
             | Object::AngleBrackets
             | Object::CurlyBrackets
             | Object::SquareBrackets
@@ -135,6 +128,7 @@ impl Object {
             | Object::VerticalBars
             | Object::Parentheses
             | Object::SquareBrackets
+            | Object::Tag
             | Object::CurlyBrackets
             | Object::AngleBrackets => true,
         }
@@ -147,10 +141,10 @@ impl Object {
             Object::Sentence
             | Object::Quotes
             | Object::BackQuotes
-            | Object::Tag
             | Object::DoubleQuotes
             | Object::VerticalBars
             | Object::Parentheses
+            | Object::Tag
             | Object::SquareBrackets
             | Object::CurlyBrackets
             | Object::AngleBrackets
@@ -172,7 +166,6 @@ impl Object {
                     in_word(map, relative_to, ignore_punctuation)
                 }
             }
-            Object::Tag => surrounding_html_tag(map, relative_to, around),
             Object::Sentence => sentence(map, relative_to, around),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
@@ -189,6 +182,7 @@ impl Object {
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
             }
+            Object::Tag => surrounding_html_tag(map, relative_to, around),
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -254,62 +248,60 @@ fn surrounding_html_tag(
     relative_to: DisplayPoint,
     surround: bool,
 ) -> Option<Range<DisplayPoint>> {
-    // https://regexr.com/3t585
-    let re = Regex::new(r"<(/)?([^<>\s/]+)(?:[^<>]*?)(/)?>").unwrap();
-    let mut open_tag_stack: Vec<HtmlTag> = Vec::new();
-    let mut final_stack: Vec<HtmlTag> = Vec::new();
-    for cap in re.captures_iter(map.text().as_str()) {
-        // If it's a self-closing tag, skip
-        if let Some(_) = cap.get(3) {
-            continue;
+    /// Checks if a pair of HTML tags is valid. A valid pair should be an opening tag and a corresponding closing tag.
+    fn is_valid_html_tag_pair(opening: &str, closing: &str) -> bool {
+        let re_opening = Regex::new(r"^<(\w+)[^>]*>$").unwrap();
+        let re_closing = Regex::new(r"^</(\w+)[^>]*>$").unwrap();
+        if let Some(opening_captures) = re_opening.captures(opening) {
+            if let Some(closing_captures) = re_closing.captures(closing) {
+                let opening_tag = opening_captures.get(1).map_or("", |m| m.as_str());
+                let closing_tag = closing_captures.get(1).map_or("", |m| m.as_str());
+                return opening_tag == closing_tag;
+            }
         }
-        // If not have tag name ,skip
-        let tag_name: String = if let Some(tag_name) = cap.get(2) {
-            tag_name.as_str().to_string()
-        } else {
-            continue;
-        };
+        false
+    }
 
-        let is_opentag: bool = !cap.get(1).is_some();
-        if let Some(html_tag) = cap.get(0) {
-            let start = map
-                .buffer_snapshot
-                .clip_offset(html_tag.start(), Bias::Right);
-            let end = map.buffer_snapshot.clip_offset(html_tag.end(), Bias::Left);
-            let start_position = map.buffer_snapshot.offset_to_point(start);
-            let end_position = map.buffer_snapshot.offset_to_point(end);
-            let tag = HtmlTag {
-                name: tag_name,
-                start: start_position.to_display_point(map),
-                end: end_position.to_display_point(map),
-            };
+    let snapshot = &map.buffer_snapshot;
+    let offset = relative_to.to_offset(map, Bias::Left);
+    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let buffer = excerpt.buffer();
 
-            if is_opentag {
-                open_tag_stack.push(tag);
-            } else {
-                for i in (0..open_tag_stack.len()).rev() {
-                    let before_tag: &HtmlTag = &open_tag_stack[i];
-                    if before_tag.name == tag.name {
-                        let match_tag = HtmlTag {
-                            name: before_tag.name.clone(),
-                            start: if surround {
-                                before_tag.start
-                            } else {
-                                before_tag.end
-                            },
-                            end: if surround { tag.end } else { tag.start },
-                        };
-                        final_stack.push(match_tag);
-                        open_tag_stack.remove(i);
+    // Find the most closest to current offset
+    let mut cursor = buffer.syntax_layer_at(offset)?.node().walk();
+    let mut last_child_node = cursor.node();
+    while cursor.goto_first_child_for_byte(offset).is_some() {
+        last_child_node = cursor.node();
+    }
+
+    let mut last_child_node = Some(last_child_node);
+    while let Some(cur_node) = last_child_node {
+        if cur_node.child_count() >= 2 {
+            let first_child = cur_node.child(0);
+            let last_child = cur_node.child(cur_node.child_count() - 1);
+            if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
+                let open_tag = buffer
+                    .text_for_range(first_child.byte_range())
+                    .collect::<String>();
+                let close_tag = buffer
+                    .text_for_range(last_child.byte_range())
+                    .collect::<String>();
+                if is_valid_html_tag_pair(&open_tag, &close_tag) {
+                    let range = if surround {
+                        first_child.byte_range().start..last_child.byte_range().end
+                    } else {
+                        first_child.byte_range().end..last_child.byte_range().start
+                    };
+                    if excerpt.contains_buffer_range(range.clone()) {
+                        let result = excerpt.map_range_from_buffer(range);
+                        return Some(
+                            result.start.to_display_point(map)..result.end.to_display_point(map),
+                        );
                     }
                 }
             }
         }
-        for tag in &final_stack {
-            if tag.start < relative_to && tag.end > relative_to {
-                return Some(tag.start..tag.end);
-            }
-        }
+        last_child_node = cur_node.parent();
     }
     None
 }
