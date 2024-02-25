@@ -328,7 +328,7 @@
           "before": true
         }
       ],
-      "u": "editor::Undo",
+      "u": "vim::Undo",
       "ctrl-r": "editor::Redo",
       "/": "vim::Search",
       "?": [

@@ -51,6 +51,7 @@ actions!(
         ConvertToUpperCase,
         ConvertToLowerCase,
         JoinLines,
+        Undo,
     ]
 );
 
@@ -65,6 +66,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(convert_to_upper_case);
     workspace.register_action(convert_to_lower_case);
     workspace.register_action(yank_line);
+    workspace.register_action(undo);
 
     workspace.register_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
@@ -327,6 +329,15 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
     })
 }
 
+fn undo(_: &mut Workspace, _: &Undo, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| buffer.undo(cx));
+        });
+        vim.switch_mode(Mode::Normal, false, cx);
+    })
+}
+
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
@@ -382,7 +393,7 @@ mod test {
 
     use crate::{
         state::Mode::{self},
-        test::NeovimBackedTestContext,
+        test::{NeovimBackedTestContext, VimTestContext},
     };
 
     #[gpui::test]
@@ -910,5 +921,16 @@ mod test {
         cx.assert_all("ˇconsole.logˇ(ˇ'var', ˇ[ˇ1, ˇ2, 3ˇ]ˇ)ˇ;")
             .await;
         cx.assert_all("let result = curried_funˇ(ˇ)ˇ(ˇ)ˇ;").await;
+    }
+
+    #[gpui::test]
+    async fn test_undo(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("The quick brown ˇfox", Mode::Normal);
+        cx.simulate_keystrokes(["v", "e", "d"]);
+        cx.assert_editor_state("The quick brownˇ ");
+        cx.simulate_keystrokes(["u"]);
+        cx.assert_editor_state("The quick brownˇ fox");
     }
 }
