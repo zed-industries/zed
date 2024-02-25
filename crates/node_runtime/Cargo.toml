@@ -12,7 +12,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true
-async-tar = "0.4.2"
+async-tar.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 log.workspace = true

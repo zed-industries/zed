@@ -65,6 +65,7 @@ journal.workspace = true
 language.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
+languages.workspace = true
 lazy_static.workspace = true
 libc = "0.2"
 log.workspace = true
@@ -90,8 +91,6 @@ release_channel.workspace = true
 rope.workspace = true
 rpc.workspace = true
 rsa = "0.4"
-task.workspace = true
-tasks_ui.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 search.workspace = true
@@ -100,11 +99,13 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-shellexpand = "2.1.0"
+shellexpand.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
+task.workspace = true
+tasks_ui.workspace = true
 tempfile.workspace = true
 terminal_view.workspace = true
 text.workspace = true
@@ -121,8 +122,6 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-languages = { version = "0.1.0", path = "../languages" }
-
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
