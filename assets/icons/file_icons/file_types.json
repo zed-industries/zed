@@ -1,282 +1,282 @@
 {
-    "suffixes": {
-        "astro": "astro",
-        "Emakefile": "erlang",
-        "aac": "audio",
-        "accdb": "storage",
-        "app.src": "erlang",
-        "avi": "video",
-        "avif": "image",
-        "bak": "backup",
-        "bash": "terminal",
-        "bash_aliases": "terminal",
-        "bash_logout": "terminal",
-        "bash_profile": "terminal",
-        "bashrc": "terminal",
-        "bmp": "image",
-        "c": "code",
-        "cc": "code",
-        "cjs": "code",
-        "conf": "settings",
-        "cpp": "code",
-        "css": "css",
-        "csv": "storage",
-        "cts": "typescript",
-        "dat": "storage",
-        "db": "storage",
-        "dbf": "storage",
-        "dll": "storage",
-        "doc": "document",
-        "docx": "document",
-        "eex": "elixir",
-        "elm": "elm",
-        "erl": "erlang",
-        "escript": "erlang",
-        "eslintrc": "eslint",
-        "eslintrc.js": "eslint",
-        "eslintrc.json": "eslint",
-        "ex": "elixir",
-        "exs": "elixir",
-        "fish": "terminal",
-        "flac": "audio",
-        "fmp": "storage",
-        "fp7": "storage",
-        "frm": "storage",
-        "gdb": "storage",
-        "gif": "image",
-        "gitattributes": "vcs",
-        "gitignore": "vcs",
-        "gitkeep": "vcs",
-        "gitmodules": "vcs",
-        "go": "go",
-        "graphql": "graphql",
-        "h": "code",
-        "handlebars": "code",
-        "hbs": "template",
-        "heex": "elixir",
-        "heif": "image",
-        "heic": "image",
-        "hrl": "erlang",
-        "hs": "haskell",
-        "htm": "template",
-        "html": "template",
-        "ib": "storage",
-        "ico": "image",
-        "ini": "settings",
-        "j2k": "image",
-        "java": "code",
-        "jfif": "image",
-        "jp2": "image",
-        "jpeg": "image",
-        "jpg": "image",
-        "js": "code",
-        "json": "storage",
-        "jsonc": "storage",
-        "jxl": "image",
-        "ldf": "storage",
-        "lock": "lock",
-        "lockb": "bun",
-        "log": "log",
-        "lua": "lua",
-        "m4a": "audio",
-        "m4v": "video",
-        "md": "document",
-        "mdb": "storage",
-        "mdf": "storage",
-        "mdx": "document",
-        "mkv": "video",
-        "mjs": "code",
-        "mka": "audio",
-        "ml": "ocaml",
-        "mli": "ocaml",
-        "mov": "video",
-        "mp3": "audio",
-        "mp4": "video",
-        "mts": "typescript",
-        "myd": "storage",
-        "myi": "storage",
-        "nu": "terminal",
-        "odp": "document",
-        "ods": "document",
-        "odt": "document",
-        "ogg": "audio",
-        "opus": "audio",
-        "pdb": "storage",
-        "pdf": "document",
-        "php": "php",
-        "png": "image",
-        "ppt": "document",
-        "pptx": "document",
-        "prettierignore": "prettier",
-        "prettierrc": "prettier",
-        "prisma": "prisma",
-        "profile": "terminal",
-        "ps1": "terminal",
-        "psd": "image",
-        "py": "python",
-        "qoi": "image",
-        "rb": "ruby",
-        "rebar.config": "erlang",
-        "rkt": "code",
-        "rs": "rust",
-        "r": "r",
-        "rtf": "document",
-        "sav": "storage",
-        "scm": "code",
-        "sdf": "storage",
-        "sh": "terminal",
-        "sqlite": "storage",
-        "svelte": "template",
-        "svg": "image",
-        "swift": "code",
-        "tiff": "image",
-        "toml": "toml",
-        "ts": "typescript",
-        "tsv": "storage",
-        "tsx": "code",
-        "txt": "document",
-        "vue": "vue",
-        "wav": "audio",
-        "webm": "video",
-        "webp": "image",
-        "wma": "audio",
-        "wmv": "video",
-        "wv": "audio",
-        "xls": "document",
-        "xlsx": "document",
-        "xml": "template",
-        "xrl": "erlang",
-        "yaml": "settings",
-        "yml": "settings",
-        "yrl": "erlang",
-        "zlogin": "terminal",
-        "zsh": "terminal",
-        "zsh_aliases": "terminal",
-        "zsh_histfile": "terminal",
-        "zsh_profile": "terminal",
-        "zshenv": "terminal",
-        "zshrc": "terminal"
+  "suffixes": {
+    "astro": "astro",
+    "Emakefile": "erlang",
+    "aac": "audio",
+    "accdb": "storage",
+    "app.src": "erlang",
+    "avi": "video",
+    "avif": "image",
+    "bak": "backup",
+    "bash": "terminal",
+    "bash_aliases": "terminal",
+    "bash_logout": "terminal",
+    "bash_profile": "terminal",
+    "bashrc": "terminal",
+    "bmp": "image",
+    "c": "code",
+    "cc": "code",
+    "cjs": "code",
+    "conf": "settings",
+    "cpp": "code",
+    "css": "css",
+    "csv": "storage",
+    "cts": "typescript",
+    "dat": "storage",
+    "db": "storage",
+    "dbf": "storage",
+    "dll": "storage",
+    "doc": "document",
+    "docx": "document",
+    "eex": "elixir",
+    "elm": "elm",
+    "erl": "erlang",
+    "escript": "erlang",
+    "eslintrc": "eslint",
+    "eslintrc.js": "eslint",
+    "eslintrc.json": "eslint",
+    "ex": "elixir",
+    "exs": "elixir",
+    "fish": "terminal",
+    "flac": "audio",
+    "fmp": "storage",
+    "fp7": "storage",
+    "frm": "storage",
+    "gdb": "storage",
+    "gif": "image",
+    "gitattributes": "vcs",
+    "gitignore": "vcs",
+    "gitkeep": "vcs",
+    "gitmodules": "vcs",
+    "go": "go",
+    "graphql": "graphql",
+    "h": "code",
+    "handlebars": "code",
+    "hbs": "template",
+    "heex": "elixir",
+    "heif": "image",
+    "heic": "image",
+    "hrl": "erlang",
+    "hs": "haskell",
+    "htm": "template",
+    "html": "template",
+    "ib": "storage",
+    "ico": "image",
+    "ini": "settings",
+    "j2k": "image",
+    "java": "code",
+    "jfif": "image",
+    "jp2": "image",
+    "jpeg": "image",
+    "jpg": "image",
+    "js": "code",
+    "json": "storage",
+    "jsonc": "storage",
+    "jxl": "image",
+    "ldf": "storage",
+    "lock": "lock",
+    "lockb": "bun",
+    "log": "log",
+    "lua": "lua",
+    "m4a": "audio",
+    "m4v": "video",
+    "md": "document",
+    "mdb": "storage",
+    "mdf": "storage",
+    "mdx": "document",
+    "mkv": "video",
+    "mjs": "code",
+    "mka": "audio",
+    "ml": "ocaml",
+    "mli": "ocaml",
+    "mov": "video",
+    "mp3": "audio",
+    "mp4": "video",
+    "mts": "typescript",
+    "myd": "storage",
+    "myi": "storage",
+    "nu": "terminal",
+    "odp": "document",
+    "ods": "document",
+    "odt": "document",
+    "ogg": "audio",
+    "opus": "audio",
+    "pdb": "storage",
+    "pdf": "document",
+    "php": "php",
+    "png": "image",
+    "ppt": "document",
+    "pptx": "document",
+    "prettierignore": "prettier",
+    "prettierrc": "prettier",
+    "prisma": "prisma",
+    "profile": "terminal",
+    "ps1": "terminal",
+    "psd": "image",
+    "py": "python",
+    "qoi": "image",
+    "rb": "ruby",
+    "rebar.config": "erlang",
+    "rkt": "code",
+    "rs": "rust",
+    "r": "r",
+    "rtf": "document",
+    "sav": "storage",
+    "scm": "code",
+    "sdf": "storage",
+    "sh": "terminal",
+    "sqlite": "storage",
+    "svelte": "template",
+    "svg": "image",
+    "swift": "code",
+    "tiff": "image",
+    "toml": "toml",
+    "ts": "typescript",
+    "tsv": "storage",
+    "tsx": "code",
+    "txt": "document",
+    "vue": "vue",
+    "wav": "audio",
+    "webm": "video",
+    "webp": "image",
+    "wma": "audio",
+    "wmv": "video",
+    "wv": "audio",
+    "xls": "document",
+    "xlsx": "document",
+    "xml": "template",
+    "xrl": "erlang",
+    "yaml": "settings",
+    "yml": "settings",
+    "yrl": "erlang",
+    "zlogin": "terminal",
+    "zsh": "terminal",
+    "zsh_aliases": "terminal",
+    "zsh_histfile": "terminal",
+    "zsh_profile": "terminal",
+    "zshenv": "terminal",
+    "zshrc": "terminal"
+  },
+  "types": {
+    "astro": {
+      "icon": "icons/file_icons/astro.svg"
     },
-    "types": {
-        "astro": {
-            "icon": "icons/file_icons/astro.svg"
-        },
-        "audio": {
-            "icon": "icons/file_icons/audio.svg"
-        },
-        "code": {
-            "icon": "icons/file_icons/code.svg"
-        },
-        "collapsed_chevron": {
-            "icon": "icons/file_icons/chevron_right.svg"
-        },
-        "collapsed_folder": {
-            "icon": "icons/file_icons/folder.svg"
-        },
-        "css": {
-            "icon": "icons/file_icons/css.svg"
-        },
-        "default": {
-            "icon": "icons/file_icons/file.svg"
-        },
-        "document": {
-            "icon": "icons/file_icons/book.svg"
-        },
-        "elixir": {
-            "icon": "icons/file_icons/elixir.svg"
-        },
-        "elm": {
-            "icon": "icons/file_icons/elm.svg"
-        },
-        "erlang": {
-            "icon": "icons/file_icons/erlang.svg"
-        },
-        "eslint": {
-            "icon": "icons/file_icons/eslint.svg"
-        },
-        "expanded_chevron": {
-            "icon": "icons/file_icons/chevron_down.svg"
-        },
-        "expanded_folder": {
-            "icon": "icons/file_icons/folder_open.svg"
-        },
-        "haskell": {
-            "icon": "icons/file_icons/haskell.svg"
-        },
-        "go": {
-            "icon": "icons/file_icons/go.svg"
-        },
-        "graphql": {
-            "icon": "icons/file_icons/graphql.svg"
-        },
-        "image": {
-            "icon": "icons/file_icons/image.svg"
-        },
-        "lock": {
-            "icon": "icons/file_icons/lock.svg"
-        },
-        "bun": {
-            "icon": "icons/file_icons/bun.svg"
-        },
-        "log": {
-            "icon": "icons/file_icons/info.svg"
-        },
-        "lua": {
-            "icon": "icons/file_icons/lua.svg"
-        },
-        "ocaml": {
-            "icon": "icons/file_icons/ocaml.svg"
-        },
-        "phoenix": {
-            "icon": "icons/file_icons/phoenix.svg"
-        },
-        "php": {
-            "icon": "icons/file_icons/php.svg"
-        },
-        "prettier": {
-            "icon": "icons/file_icons/prettier.svg"
-        },
-        "prisma": {
-            "icon": "icons/file_icons/prisma.svg"
-        },
-        "python": {
-            "icon": "icons/file_icons/python.svg"
-        },
-        "ruby": {
-            "icon": "icons/file_icons/ruby.svg"
-        },
-        "rust": {
-            "icon": "icons/file_icons/rust.svg"
-        },
-        "r": {
-            "icon": "icons/file_icons/r.svg"
-        },
-        "settings": {
-            "icon": "icons/file_icons/settings.svg"
-        },
-        "storage": {
-            "icon": "icons/file_icons/database.svg"
-        },
-        "template": {
-            "icon": "icons/file_icons/html.svg"
-        },
-        "terminal": {
-            "icon": "icons/file_icons/terminal.svg"
-        },
-        "toml": {
-            "icon": "icons/file_icons/toml.svg"
-        },
-        "typescript": {
-            "icon": "icons/file_icons/typescript.svg"
-        },
-        "vcs": {
-            "icon": "icons/file_icons/git.svg"
-        },
-        "video": {
-            "icon": "icons/file_icons/video.svg"
-        },
-        "vue": {
-            "icon": "icons/file_icons/vue.svg"
-        }
+    "audio": {
+      "icon": "icons/file_icons/audio.svg"
+    },
+    "code": {
+      "icon": "icons/file_icons/code.svg"
+    },
+    "collapsed_chevron": {
+      "icon": "icons/file_icons/chevron_right.svg"
+    },
+    "collapsed_folder": {
+      "icon": "icons/file_icons/folder.svg"
+    },
+    "css": {
+      "icon": "icons/file_icons/css.svg"
+    },
+    "default": {
+      "icon": "icons/file_icons/file.svg"
+    },
+    "document": {
+      "icon": "icons/file_icons/book.svg"
+    },
+    "elixir": {
+      "icon": "icons/file_icons/elixir.svg"
+    },
+    "elm": {
+      "icon": "icons/file_icons/elm.svg"
+    },
+    "erlang": {
+      "icon": "icons/file_icons/erlang.svg"
+    },
+    "eslint": {
+      "icon": "icons/file_icons/eslint.svg"
+    },
+    "expanded_chevron": {
+      "icon": "icons/file_icons/chevron_down.svg"
+    },
+    "expanded_folder": {
+      "icon": "icons/file_icons/folder_open.svg"
+    },
+    "haskell": {
+      "icon": "icons/file_icons/haskell.svg"
+    },
+    "go": {
+      "icon": "icons/file_icons/go.svg"
+    },
+    "graphql": {
+      "icon": "icons/file_icons/graphql.svg"
+    },
+    "image": {
+      "icon": "icons/file_icons/image.svg"
+    },
+    "lock": {
+      "icon": "icons/file_icons/lock.svg"
+    },
+    "bun": {
+      "icon": "icons/file_icons/bun.svg"
+    },
+    "log": {
+      "icon": "icons/file_icons/info.svg"
+    },
+    "lua": {
+      "icon": "icons/file_icons/lua.svg"
+    },
+    "ocaml": {
+      "icon": "icons/file_icons/ocaml.svg"
+    },
+    "phoenix": {
+      "icon": "icons/file_icons/phoenix.svg"
+    },
+    "php": {
+      "icon": "icons/file_icons/php.svg"
+    },
+    "prettier": {
+      "icon": "icons/file_icons/prettier.svg"
+    },
+    "prisma": {
+      "icon": "icons/file_icons/prisma.svg"
+    },
+    "python": {
+      "icon": "icons/file_icons/python.svg"
+    },
+    "ruby": {
+      "icon": "icons/file_icons/ruby.svg"
+    },
+    "rust": {
+      "icon": "icons/file_icons/rust.svg"
+    },
+    "r": {
+      "icon": "icons/file_icons/r.svg"
+    },
+    "settings": {
+      "icon": "icons/file_icons/settings.svg"
+    },
+    "storage": {
+      "icon": "icons/file_icons/database.svg"
+    },
+    "template": {
+      "icon": "icons/file_icons/html.svg"
+    },
+    "terminal": {
+      "icon": "icons/file_icons/terminal.svg"
+    },
+    "toml": {
+      "icon": "icons/file_icons/toml.svg"
+    },
+    "typescript": {
+      "icon": "icons/file_icons/typescript.svg"
+    },
+    "vcs": {
+      "icon": "icons/file_icons/git.svg"
+    },
+    "video": {
+      "icon": "icons/file_icons/video.svg"
+    },
+    "vue": {
+      "icon": "icons/file_icons/vue.svg"
     }
+  }
 }
