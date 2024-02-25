@@ -100,9 +100,11 @@ metal = "0.25"
 objc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-flume = "0.11"
-open = "5.0.1"
 ashpd = "0.7.0"
+open = "5.0.1"
+libc = "0.2.153"
+filedescriptor = "0.8.2"
+flume = "0.11"
 # todo!(linux) - Technically do not use `randr`, but it doesn't compile otherwise
 xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr", "xkb"] }
 wayland-client= { version = "0.31.2" }

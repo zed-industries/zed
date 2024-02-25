@@ -11,7 +11,7 @@ use crate::platform::{
     LinuxPlatformInner, PlatformWindow, X11Display, X11Window, X11WindowState, XcbAtoms,
 };
 use crate::{
-    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
+    AnyWindowHandle, Bounds, DisplayId, ClipboardItem, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
     TouchPhase, WindowOptions,
 };
 
@@ -269,5 +269,10 @@ impl Client for X11Client {
             .windows
             .insert(x_window, Rc::clone(&window_ptr));
         Box::new(X11Window(window_ptr))
+    }
+
+    //todo!(linux)
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        None
     }
 }

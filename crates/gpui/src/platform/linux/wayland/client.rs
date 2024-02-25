@@ -11,9 +11,11 @@ use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
 use wayland_client::{
     delegate_noop,
+    event_created_child,
     protocol::{
-        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat,
-        wl_shm, wl_shm_pool,
+        wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager,
+        wl_data_offer, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
+        wl_shm_pool,
         wl_surface::{self, WlSurface},
     },
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
@@ -30,28 +32,32 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use crate::platform::linux::client::Client;
-use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
+use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow, WaylandWindowState};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
+    AnyWindowHandle, DisplayId, ClipboardItem, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
     ScrollWheelEvent, TouchPhase, WindowOptions,
 };
+use crate::platform::linux::wayland::clipboard::{self, Clipboard};
 
 const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
 
 pub(crate) struct WaylandClientStateInner {
     compositor: Option<wl_compositor::WlCompositor>,
     buffer: Option<wl_buffer::WlBuffer>,
+    wl_seat: Option<wl_seat::WlSeat>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     viewporter: Option<wp_viewporter::WpViewporter>,
-    fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
+    data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
+    data_device: Option<wl_data_device::WlDataDevice>,
+    fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
     platform_inner: Rc<LinuxPlatformInner>,
-    wl_seat: Option<wl_seat::WlSeat>,
     keymap_state: Option<xkb::State>,
+    clipboard: Clipboard,
     repeat: KeyRepeat,
     modifiers: Modifiers,
     scroll_direction: f64,
@@ -84,14 +90,17 @@ impl WaylandClient {
         let state = WaylandClientState(Rc::new(RefCell::new(WaylandClientStateInner {
             compositor: None,
             buffer: None,
+            wl_seat: None,
             wm_base: None,
             viewporter: None,
-            fractional_scale_manager: None,
             decoration_manager: None,
+            data_device_manager: None,
+            data_device: None,
+            fractional_scale_manager: None,
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
-            wl_seat: None,
             keymap_state: None,
+            clipboard: Clipboard::new(),
             repeat: KeyRepeat {
                 rate: 16,
                 delay: 500,
@@ -215,6 +224,14 @@ impl Client for WaylandClient {
         state.windows.push((xdg_surface, Rc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
     }
+
+    // todo!(linux)
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        // XXX: this will panic, already borrowing in keydown handler
+        let state = self.state.0.borrow();
+        let result = state.clipboard.read_sync();
+        result.map(|string| ClipboardItem::new(string))
+    }
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
@@ -245,6 +262,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
                     let seat = registry.bind::<wl_seat::WlSeat, _, _>(name, 1, qh, ());
                     state.wl_seat = Some(seat);
                 }
+                "wl_data_device_manager" => {
+                    let manager = registry
+                        .bind::<wl_data_device_manager::WlDataDeviceManager, _, _>(name, 1, qh, ());
+                    state.data_device_manager = Some(manager);
+                }
                 "wp_fractional_scale_manager_v1" => {
                     let manager = registry
                         .bind::<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, _, _>(
@@ -273,6 +295,16 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
                 }
                 _ => {}
             };
+
+            if state.data_device.is_none()
+                && state.wl_seat.is_some()
+                && state.data_device_manager.is_some()
+            {
+                let seat = state.wl_seat.as_ref().unwrap().clone();
+                let manager = state.data_device_manager.as_ref().unwrap();
+                let device = manager.get_data_device(&seat, qh, ());
+                state.data_device = Some(device);
+            }
         }
     }
 }
@@ -282,6 +314,7 @@ delegate_noop!(WaylandClientState: ignore wl_surface::WlSurface);
 delegate_noop!(WaylandClientState: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
+delegate_noop!(WaylandClientState: ignore wl_data_device_manager::WlDataDeviceManager);
 delegate_noop!(WaylandClientState: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientState: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientState: ignore wp_viewporter::WpViewporter);
@@ -734,6 +767,66 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 }
                 state.mouse_focused_window = None;
                 state.mouse_location = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        data_device: &wl_data_device::WlDataDevice,
+        event: wl_data_device::Event,
+        _: &(),
+        conn: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.0.borrow_mut();
+
+        match event {
+            wl_data_device::Event::Selection { id } => {
+                if let Some(offer) = id {
+
+                    state.clipboard.receive_offer(offer.clone());
+
+                    // XXX: Just read the offer right away, for testing purposes
+                    let read_pipe = clipboard::setup_offer_read(offer).unwrap();
+                    std::thread::spawn(move || {
+                        match clipboard::read_pipe_with_timeout(read_pipe) {
+                            Ok(result) => {
+                                println!("CLIPBOARD: {:?}", result);
+                            }
+                            Err(e) => {
+                                // todo!(linux)
+                            }
+                        };
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    event_created_child!(WaylandClientState, wl_data_device::WlDataDevice, [
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ())
+    ]);
+}
+
+impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        data_offer: &wl_data_offer::WlDataOffer,
+        event: wl_data_offer::Event,
+        _: &(),
+        conn: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.0.borrow_mut();
+
+        match event {
+            wl_data_offer::Event::Offer { mime_type } => {
+                state.clipboard.receive_mime_type(&mime_type);
             }
             _ => {}
         }

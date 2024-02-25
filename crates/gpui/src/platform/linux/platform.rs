@@ -385,9 +385,8 @@ impl Platform for LinuxPlatform {
     //todo!(linux)
     fn write_to_clipboard(&self, item: ClipboardItem) {}
 
-    //todo!(linux)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        None
+        self.client.read_from_clipboard()
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
