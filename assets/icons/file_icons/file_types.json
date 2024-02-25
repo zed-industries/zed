@@ -95,6 +95,7 @@
         "mts": "typescript",
         "myd": "storage",
         "myi": "storage",
+        "nu": "terminal",
         "odp": "document",
         "ods": "document",
         "odt": "document",
