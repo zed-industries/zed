@@ -13,7 +13,7 @@ doctest = false
 test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
 db.workspace = true
