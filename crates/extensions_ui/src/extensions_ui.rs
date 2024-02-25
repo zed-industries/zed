@@ -11,7 +11,7 @@ use settings::Settings;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, Tooltip};
+use ui::{prelude::*, ToggleButton, Tooltip};
 
 use workspace::{
     item::{Item, ItemEvent},
@@ -30,11 +30,18 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum ExtensionFilter {
+    All,
+    Installed,
+    NotInstalled,
+}
+
 pub struct ExtensionsPage {
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
-    is_only_showing_installed_extensions: bool,
+    filter: ExtensionFilter,
     extension_entries: Vec<Extension>,
     query_editor: View<Editor>,
     query_contains_error: bool,
@@ -55,7 +62,7 @@ impl ExtensionsPage {
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
                 is_fetching_extensions: false,
-                is_only_showing_installed_extensions: false,
+                filter: ExtensionFilter::All,
                 extension_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
@@ -72,13 +79,17 @@ impl ExtensionsPage {
 
         self.extension_entries
             .iter()
-            .filter(|extension| {
-                if self.is_only_showing_installed_extensions {
+            .filter(|extension| match self.filter {
+                ExtensionFilter::All => true,
+                ExtensionFilter::Installed => {
                     let status = extension_store.extension_status(&extension.id);
 
                     matches!(status, ExtensionStatus::Installed(_))
-                } else {
-                    true
+                }
+                ExtensionFilter::NotInstalled => {
+                    let status = extension_store.extension_status(&extension.id);
+
+                    matches!(status, ExtensionStatus::NotInstalled)
                 }
             })
             .cloned()
@@ -419,17 +430,29 @@ impl ExtensionsPage {
 
         let message = if self.is_fetching_extensions {
             "Loading extensions..."
-        } else if self.is_only_showing_installed_extensions {
-            if has_search {
-                "No installed extensions that match your search."
-            } else {
-                "No installed extensions."
-            }
         } else {
-            if has_search {
-                "No extensions that match your search."
-            } else {
-                "No extensions."
+            match self.filter {
+                ExtensionFilter::All => {
+                    if has_search {
+                        "No extensions that match your search."
+                    } else {
+                        "No extensions."
+                    }
+                }
+                ExtensionFilter::Installed => {
+                    if has_search {
+                        "No installed extensions that match your search."
+                    } else {
+                        "No installed extensions."
+                    }
+                }
+                ExtensionFilter::NotInstalled => {
+                    if has_search {
+                        "No not installed extensions that match your search."
+                    } else {
+                        "No not installed extensions."
+                    }
+                }
             }
         };
 
@@ -454,22 +477,46 @@ impl Render for ExtensionsPage {
                     .w_full()
                     .gap_2()
                     .child(h_flex().child(self.render_search(cx)))
-                    .child(CheckboxWithLabel::new(
-                        "installed",
-                        Label::new("Only show installed"),
-                        if self.is_only_showing_installed_extensions {
-                            Selection::Selected
-                        } else {
-                            Selection::Unselected
-                        },
-                        cx.listener(|this, selection, _cx| {
-                            this.is_only_showing_installed_extensions = match selection {
-                                Selection::Selected => true,
-                                Selection::Unselected => false,
-                                Selection::Indeterminate => return,
-                            }
-                        }),
-                    )),
+                    .child(
+                        h_flex()
+                            .child(
+                                ToggleButton::new("filter-all", "All")
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
+                                    .selected(self.filter == ExtensionFilter::All)
+                                    .on_click(cx.listener(|this, _event, _cx| {
+                                        this.filter = ExtensionFilter::All;
+                                    }))
+                                    .tooltip(move |cx| Tooltip::text("Show all extensions", cx))
+                                    .first(),
+                            )
+                            .child(
+                                ToggleButton::new("filter-installed", "Installed")
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
+                                    .selected(self.filter == ExtensionFilter::Installed)
+                                    .on_click(cx.listener(|this, _event, _cx| {
+                                        this.filter = ExtensionFilter::Installed;
+                                    }))
+                                    .tooltip(move |cx| {
+                                        Tooltip::text("Show installed extensions", cx)
+                                    })
+                                    .middle(),
+                            )
+                            .child(
+                                ToggleButton::new("filter-not-installed", "Not Installed")
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
+                                    .selected(self.filter == ExtensionFilter::NotInstalled)
+                                    .on_click(cx.listener(|this, _event, _cx| {
+                                        this.filter = ExtensionFilter::NotInstalled;
+                                    }))
+                                    .tooltip(move |cx| {
+                                        Tooltip::text("Show not installed extensions", cx)
+                                    })
+                                    .last(),
+                            ),
+                    ),
             )
             .child(v_flex().size_full().overflow_y_hidden().map(|this| {
                 let entries = self.filtered_extension_entries(cx);
