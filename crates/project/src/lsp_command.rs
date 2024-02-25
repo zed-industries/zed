@@ -1563,7 +1563,7 @@ impl LspCommand for GetCompletions {
                                 lsp_completion.label.push_str("...");
                             }
 
-                            //Python justifies its lsp text strangely so this workaround is required. I'm not a huge fan either.
+                            // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
                             if language.name().to_string().as_str() == "Python" {
                                 lsp_completion.label.push_str("               ");
                             }

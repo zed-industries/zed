@@ -211,7 +211,7 @@ pub async fn prepare_completion_documentation(
     language: Option<Arc<Language>>,
     completion_length: usize,
 ) -> Documentation {
-    //Python justifies its lsp text strangely so this workaround is required. I'm not a huge fan either.
+    // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
     let max_name_len: usize = 10
         .max(57 - (0.max(completion_length as i32 - 15)))
         .try_into()
