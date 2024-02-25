@@ -161,7 +161,6 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                     workspace::ToggleGraphicsProfiler,
                 ),
                 MenuItem::separator(),
-                MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
                     crate::OpenBrowser {
