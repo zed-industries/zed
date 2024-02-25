@@ -23,7 +23,14 @@ use project::{
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, ffi::OsStr, ops::Range, path::Path, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashSet,
+    ffi::OsStr,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
@@ -45,8 +52,7 @@ pub struct ProjectPanel {
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
-    collapsed_dir_paths: HashMap<ProjectEntryId, String>,
-    excluded_collapsed_dir_paths: HashMap<ProjectEntryId, String>,
+    unfolded_dir_ids: HashSet<ProjectEntryId>,
     selection: Option<Selection>,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
@@ -122,8 +128,8 @@ actions!(
         Open,
         ToggleFocus,
         NewSearchInDirectory,
-        UnfoldTheChildren,
-        FoldTheChildren,
+        UnfoldDirectory,
+        FoldDirectory,
     ]
 );
 
@@ -235,8 +241,7 @@ impl ProjectPanel {
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
                 expanded_dir_ids: Default::default(),
-                collapsed_dir_paths: Default::default(),
-                excluded_collapsed_dir_paths: Default::default(),
+                unfolded_dir_ids: Default::default(),
                 selection: None,
                 edit_state: None,
                 context_menu: None,
@@ -398,7 +403,7 @@ impl ProjectPanel {
             let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_collapse_dirs;
             let is_root = Some(entry) == worktree.root_entry();
             let is_dir = entry.is_dir();
-            let is_collapsed = self.collapsed_dir_paths.contains_key(&entry_id);
+            let is_folded = !self.unfolded_dir_ids.contains(&entry_id);
             let can_be_collapsed = is_dir && auto_collapse_dirs;
             let worktree_id = worktree.id();
             let is_local = project.is_local();
@@ -450,11 +455,11 @@ impl ProjectPanel {
                             menu.action("Open in Terminal", Box::new(OpenInTerminal))
                                 .action("Search Inside", Box::new(NewSearchInDirectory))
                         })
-                        .when(is_collapsed && can_be_collapsed, |menu| {
-                            menu.action("Unfold the Children", Box::new(UnfoldTheChildren))
+                        .when(is_folded && can_be_collapsed, |menu| {
+                            menu.action("Unfold the Children", Box::new(UnfoldDirectory))
                         })
-                        .when(!is_collapsed && can_be_collapsed, |menu| {
-                            menu.action("Fold the Children", Box::new(FoldTheChildren))
+                        .when(!is_folded && can_be_collapsed, |menu| {
+                            menu.action("Fold the Children", Box::new(FoldDirectory))
                         })
                         .separator()
                         .action("Rename", Box::new(Rename))
@@ -832,63 +837,63 @@ impl ProjectPanel {
         });
     }
 
-    fn unfold_children(&mut self, _: &UnfoldTheChildren, cx: &mut ViewContext<Self>) {
-        if let Some((_, entry)) = self.selected_entry(cx) {
-            self.excluded_collapsed_dir_paths.insert(
-                entry.id,
-                entry.path.to_str().unwrap_or_default().to_string(),
-            );
+    fn unfold_children(&mut self, _: &UnfoldDirectory, cx: &mut ViewContext<Self>) {
+        // if let Some((_, entry)) = self.selected_entry(cx) {
+        //     self.excluded_collapsed_dir_paths.insert(
+        //         entry.id,
+        //         entry.path.to_str().unwrap_or_default().to_string(),
+        //     );
 
-            let entry_path = entry.path.clone();
-            let mut to_remove = vec![];
-            for (id, path) in &self.collapsed_dir_paths {
-                if path.contains(&entry_path.to_str().unwrap_or_default().to_string())
-                    || path.contains(
-                        &entry_path
-                            .to_str()
-                            .unwrap_or_default()
-                            .to_string()
-                            .split('/')
-                            .last()
-                            .unwrap_or_default()
-                            .to_string(),
-                    )
-                {
-                    to_remove.push(*id);
-                }
-            }
-            for id in to_remove {
-                self.collapsed_dir_paths.remove(&id);
-            }
+        //     let entry_path = entry.path.clone();
+        //     let mut to_remove = vec![];
+        //     for (id, path) in &self.collapsed_dir_paths {
+        //         if path.contains(&entry_path.to_str().unwrap_or_default().to_string())
+        //             || path.contains(
+        //                 &entry_path
+        //                     .to_str()
+        //                     .unwrap_or_default()
+        //                     .to_string()
+        //                     .split('/')
+        //                     .last()
+        //                     .unwrap_or_default()
+        //                     .to_string(),
+        //             )
+        //         {
+        //             to_remove.push(*id);
+        //         }
+        //     }
+        //     for id in to_remove {
+        //         self.collapsed_dir_paths.remove(&id);
+        //     }
 
-            self.update_visible_entries(None, cx);
-            cx.notify();
-        }
+        //     self.update_visible_entries(None, cx);
+        //     cx.notify();
+        // }
     }
 
-    fn fold_children(&mut self, _: &FoldTheChildren, cx: &mut ViewContext<Self>) {
-        if let Some((_, entry)) = self.selected_entry(cx) {
-            self.excluded_collapsed_dir_paths.remove(&entry.id);
+    fn fold_children(&mut self, _: &FoldDirectory, cx: &mut ViewContext<Self>) {
+        // if let Some((_, entry)) = self.selected_entry(cx) {
+        //     self.excluded_collapsed_dir_paths.remove(&entry.id);
 
-            let entry_path = entry.path.clone();
-            let mut to_remove = vec![];
-            for (id, path) in &self.excluded_collapsed_dir_paths {
-                if entry_path
-                    .to_str()
-                    .unwrap_or_default()
-                    .to_string()
-                    .contains(path)
-                {
-                    to_remove.push(*id);
-                }
-            }
-            for id in to_remove {
-                self.excluded_collapsed_dir_paths.remove(&id);
-            }
+        //     let entry_path = entry.path.clone();
+        //     let mut to_remove = vec![];
+        //     for (id, path) in &self.excluded_collapsed_dir_paths {
+        //         if entry_path
+        //             .to_str()
+        //             .unwrap_or_default()
+        //             .to_string()
+        //             .contains(path)
+        //         {
+        //             to_remove.push(*id);
+        //         }
+        //     }
+        //     for id in to_remove {
+        //         self.excluded_collapsed_dir_paths.remove(&id);
+        //     }
 
-            self.update_visible_entries(None, cx);
-            cx.notify();
-        }
+        //     self.update_visible_entries(None, cx);
+        //     cx.notify();
+        // }
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -1214,46 +1219,19 @@ impl ProjectPanel {
                 }
             }
 
-            let root_name = OsStr::new(snapshot.root_name());
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true);
-            let mut collapsed_paths: Vec<String> = Vec::new();
             while let Some(entry) = entry_iter.entry() {
-                if auto_collapse_dirs
-                    && entry.kind.is_dir()
-                    && !self.excluded_collapsed_dir_paths.contains_key(&entry.id)
-                    && !self
-                        .excluded_collapsed_dir_paths
-                        .values()
-                        .any(|path| entry.path.to_str().unwrap().to_string().contains(path))
-                {
-                    let mut filename =
-                        ProjectPanel::get_collapsed_dir_path(snapshot.clone(), entry);
-                    if filename.is_empty() {
-                        filename = root_name.to_str().unwrap().to_string();
-                    }
+                if auto_collapse_dirs && entry.kind.is_dir() {
+                    let is_omited = ProjectPanel::should_omit_entry(snapshot.clone(), entry);
 
-                    if collapsed_paths.iter().any(|path| path.contains(&filename)) {
+                    if is_omited {
                         entry_iter.advance();
                         continue;
-                    } else {
-                        if filename
-                            != entry
-                                .path
-                                .file_name()
-                                .unwrap_or(root_name)
-                                .to_str()
-                                .unwrap()
-                        {
-                            self.collapsed_dir_paths.insert(entry.id, filename.clone());
-                        }
-                        collapsed_paths.push(filename.clone());
-                        visible_worktree_entries.push(entry.clone());
                     }
-                } else {
-                    self.collapsed_dir_paths.remove(&entry.id);
-                    visible_worktree_entries.push(entry.clone());
                 }
+                self.unfolded_dir_ids.insert(entry.id);
+                visible_worktree_entries.push(entry.clone());
 
                 if Some(entry.id) == new_entry_parent_id {
                     visible_worktree_entries.push(Entry {
@@ -1316,37 +1294,19 @@ impl ProjectPanel {
         }
     }
 
-    fn get_collapsed_dir_path(snapshot: Snapshot, entry: &Entry) -> String {
-        let entry_filename = entry
-            .path
-            .file_name()
-            .unwrap_or(OsStr::new(""))
-            .to_str()
-            .unwrap_or_default();
-
-        if entry.kind.is_dir() && !entry_filename.is_empty() {
-            let children: Vec<_> = snapshot
-                .entries(true)
-                .into_iter()
-                .filter(|e| e.path.parent() == Some(&*entry.path))
-                .collect();
-
-            if children.len() == 1 && children[0].kind.is_dir() {
-                let sub_entry = &children[0];
-                let snapshot_clone = snapshot.clone();
-                return snapshot_clone
-                    .entry_for_path(sub_entry.path.clone())
-                    .map_or(entry_filename.to_string(), |sub_entry: &Entry| {
-                        format!(
-                            "{}/{}",
-                            entry_filename,
-                            ProjectPanel::get_collapsed_dir_path(snapshot, sub_entry)
-                        )
-                    });
+    fn should_omit_entry(snapshot: Snapshot, entry: &Entry) -> bool {
+        let mut children_iter = snapshot.entries(true).into_iter().filter(|e| {
+            if let Some(parent) = e.path.parent() {
+                parent == &*entry.path
+            } else {
+                false
             }
-        }
+        });
 
-        return entry_filename.to_string();
+        match children_iter.next() {
+            Some(child) => children_iter.next().is_none() && child.kind.is_dir(),
+            None => false,
+        }
     }
 
     fn expand_entry(
@@ -1438,29 +1398,23 @@ impl ProjectPanel {
                         }
                     };
 
-                    let filename = if let Some(file_name) = self.collapsed_dir_paths.get(&entry.id)
-                    {
-                        file_name.clone()
-                    } else {
-                        entry
+                    let entry_path_components_count = entry.path.components().count();
+                    let (depth, difference) = ProjectPanel::calculate_depth_and_difference(entry, visible_worktree_entries);
+
+                    let filename = match difference {
+                        diff if diff > 1 => entry
+                            .path
+                            .iter()
+                            .skip(entry_path_components_count - diff)
+                            .collect::<PathBuf>()
+                            .to_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                        _ => entry
                             .path
                             .file_name()
-                            .unwrap_or(root_name)
-                            .to_string_lossy()
-                            .to_string()
-                    };
-
-                    let depth = if let Some(parent_dir) = entry.path.parent() {
-                        let mut adjusted_depth = entry.path.components().count();
-                        for collapsed_name in self.collapsed_dir_paths.values() {
-                            if parent_dir.to_string_lossy().contains(collapsed_name) {
-                                let count = collapsed_name.chars().filter(|&c| c == '/').count();
-                                adjusted_depth -= count;
-                            }
-                        }
-                        adjusted_depth
-                    } else {
-                        0
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
                     };
 
                     let mut details = EntryDetails {
@@ -1509,6 +1463,36 @@ impl ProjectPanel {
             }
             ix = end_ix;
         }
+    }
+
+    fn calculate_depth_and_difference(
+        entry: &Entry,
+        visible_worktree_entries: &Vec<Entry>,
+    ) -> (usize, usize) {
+        let entry_path_components_count = entry.path.components().count();
+        let (depth, difference) = entry
+            .path
+            .ancestors()
+            .skip(1) // Skip the entry itself
+            .find_map(|ancestor| {
+                visible_worktree_entries
+                    .iter()
+                    .find(|&e| *e.path == *ancestor)
+                    .map(|parent_entry| {
+                        let parent_path_components_count = parent_entry.path.components().count();
+                        let difference = entry_path_components_count - parent_path_components_count;
+                        let depth = parent_entry.path.ancestors().skip(1).filter(|ancestor| {
+                            visible_worktree_entries
+                                .iter()
+                                .any(|e| *e.path == **ancestor)
+                        })
+                        .count();
+                        (depth + 1, difference)
+                    })
+            })
+            .unwrap_or((0, 0)); 
+    
+        (depth, difference)
     }
 
     fn render_entry(
