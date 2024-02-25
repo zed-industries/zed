@@ -383,15 +383,17 @@ impl FileFinderDelegate {
     }
 
     fn subscribe_to_updates(project: &Model<Project>, cx: &mut ViewContext<FileFinder>) {
-        let worktrees = project.update(cx, |project, _| Vec::from_iter(project.worktrees()));
-        for worktree in worktrees {
-            cx.observe(&worktree, |file_finder, _, cx| {
-                file_finder
+        cx.subscribe(project, |file_finder, _, event, cx| {
+            match event {
+                project::Event::WorktreeUpdatedEntries(_, _)
+                | project::Event::WorktreeAdded
+                | project::Event::WorktreeRemoved(_) => file_finder
                     .picker
-                    .update(cx, |picker, cx| picker.refresh(cx))
-            })
-            .detach();
-        }
+                    .update(cx, |picker, cx| picker.refresh(cx)),
+                _ => {}
+            };
+        })
+        .detach();
     }
 
     fn spawn_search(
