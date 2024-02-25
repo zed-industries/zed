@@ -1,7 +1,9 @@
 use crate::{
     wasm_host::{wit, WasmState},
-    ExtensionStore, LanguageManifestEntry, Manifest, ManifestEntry, ThemeManifestEntry,
+    ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionManifest,
+    ExtensionStore, GrammarManifestEntry,
 };
+use collections::BTreeMap;
 use fs::FakeFs;
 use futures::FutureExt;
 use gpui::{Context, TestAppContext};
@@ -76,7 +78,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     "extension.json": r#"{
                         "id": "zed-ruby",
                         "name": "Zed Ruby",
-                        "version": "1.0.0"
+                        "version": "1.0.0",
+                        "grammars": {
+                            "ruby": {"repository": "", "commit": ""},
+                            "embedded_template": {"repository": "", "commit": ""},
+                        }
                     }"#,
                     "grammars": {
                         "ruby.wasm": "",
@@ -106,27 +112,47 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     )
     .await;
 
-    let mut expected_manifest = Manifest {
+    let mut expected_index = ExtensionIndex {
         extensions: [
-            ("zed-ruby".into(), "1.0.0".into()),
-            ("zed-monokai".into(), "2.0.0".into()),
-        ]
-        .into_iter()
-        .collect(),
-        grammars: [
             (
-                "embedded_template".into(),
-                ManifestEntry {
-                    extension: "zed-ruby".into(),
-                    path: "grammars/embedded_template.wasm".into(),
-                },
+                "zed-ruby".into(),
+                ExtensionManifest {
+                    id: "zed-ruby".into(),
+                    name: "Ruby".into(),
+                    version: "1.0.0".into(),
+                    description: None,
+                    authors: Vec::new(),
+                    repository: None,
+                    themes: Vec::new(),
+                    languages: vec!["languages/ruby".into(), "languages/erb".into()],
+                    grammars: [
+                        ("ruby".into(), GrammarManifestEntry::default()),
+                        ("erb".into(), GrammarManifestEntry::default()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    language_servers: BTreeMap::default(),
+                }
+                .into(),
             ),
             (
-                "ruby".into(),
-                ManifestEntry {
-                    extension: "zed-ruby".into(),
-                    path: "grammars/ruby.wasm".into(),
-                },
+                "zed-monokai".into(),
+                ExtensionManifest {
+                    id: "zed-monokai".into(),
+                    name: "Zed Monokai".into(),
+                    version: "2.0.0".into(),
+                    description: None,
+                    authors: vec![],
+                    repository: None,
+                    themes: vec![
+                        "themes/monokai.json".into(),
+                        "themes/monokai-pro.json".into(),
+                    ],
+                    languages: Vec::new(),
+                    grammars: BTreeMap::default(),
+                    language_servers: BTreeMap::default(),
+                }
+                .into(),
             ),
         ]
         .into_iter()
@@ -134,7 +160,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         languages: [
             (
                 "ERB".into(),
-                LanguageManifestEntry {
+                ExtensionIndexLanguageEntry {
                     extension: "zed-ruby".into(),
                     path: "languages/erb".into(),
                     grammar: Some("embedded_template".into()),
@@ -146,7 +172,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ),
             (
                 "Ruby".into(),
-                LanguageManifestEntry {
+                ExtensionIndexLanguageEntry {
                     extension: "zed-ruby".into(),
                     path: "languages/ruby".into(),
                     grammar: Some("ruby".into()),
@@ -162,28 +188,28 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         themes: [
             (
                 "Monokai Dark".into(),
-                ThemeManifestEntry {
+                ExtensionIndexEntry {
                     extension: "zed-monokai".into(),
                     path: "themes/monokai.json".into(),
                 },
             ),
             (
                 "Monokai Light".into(),
-                ThemeManifestEntry {
+                ExtensionIndexEntry {
                     extension: "zed-monokai".into(),
                     path: "themes/monokai.json".into(),
                 },
             ),
             (
                 "Monokai Pro Dark".into(),
-                ThemeManifestEntry {
+                ExtensionIndexEntry {
                     extension: "zed-monokai".into(),
                     path: "themes/monokai-pro.json".into(),
                 },
             ),
             (
                 "Monokai Pro Light".into(),
-                ThemeManifestEntry {
+                ExtensionIndexEntry {
                     extension: "zed-monokai".into(),
                     path: "themes/monokai-pro.json".into(),
                 },
@@ -191,7 +217,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ]
         .into_iter()
         .collect(),
-        language_servers: Default::default(),
     };
 
     let language_registry = Arc::new(LanguageRegistry::test());
@@ -212,10 +237,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {
-        let manifest = store.manifest.read();
-        assert_eq!(manifest.grammars, expected_manifest.grammars);
-        assert_eq!(manifest.languages, expected_manifest.languages);
-        assert_eq!(manifest.themes, expected_manifest.themes);
+        let index = store.extension_index.read();
+        assert_eq!(index.extensions, expected_index.extensions);
+        assert_eq!(index.languages, expected_index.languages);
+        assert_eq!(index.themes, expected_index.themes);
 
         assert_eq!(
             language_registry.language_names(),
@@ -258,9 +283,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     )
     .await;
 
-    expected_manifest.themes.insert(
+    expected_index.themes.insert(
         "Gruvbox".into(),
-        ThemeManifestEntry {
+        ExtensionIndexEntry {
             extension: "zed-gruvbox".into(),
             path: "themes/gruvbox.json".into(),
         },
@@ -270,10 +295,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {
-        let manifest = store.manifest.read();
-        assert_eq!(manifest.grammars, expected_manifest.grammars);
-        assert_eq!(manifest.languages, expected_manifest.languages);
-        assert_eq!(manifest.themes, expected_manifest.themes);
+        let index = store.extension_index.read();
+        assert_eq!(index.extensions, expected_index.extensions);
+        assert_eq!(index.languages, expected_index.languages);
+        assert_eq!(index.themes, expected_index.themes);
 
         assert_eq!(
             theme_registry.list_names(false),
@@ -307,10 +332,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {
-        let manifest = store.manifest.read();
-        assert_eq!(manifest.grammars, expected_manifest.grammars);
-        assert_eq!(manifest.languages, expected_manifest.languages);
-        assert_eq!(manifest.themes, expected_manifest.themes);
+        let manifest = store.extension_index.read();
+        assert_eq!(manifest.extensions, expected_index.extensions);
+        assert_eq!(manifest.languages, expected_index.languages);
+        assert_eq!(manifest.themes, expected_index.themes);
 
         assert_eq!(
             language_registry.language_names(),
@@ -343,17 +368,13 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 
     cx.executor().run_until_parked();
-    expected_manifest.extensions.remove("zed-ruby");
-    expected_manifest.languages.remove("Ruby");
-    expected_manifest.languages.remove("ERB");
-    expected_manifest.grammars.remove("ruby");
-    expected_manifest.grammars.remove("embedded_template");
+    expected_index.extensions.remove("zed-ruby");
+    expected_index.languages.remove("Ruby");
+    expected_index.languages.remove("ERB");
 
     store.read_with(cx, |store, _| {
-        let manifest = store.manifest.read();
-        assert_eq!(manifest.grammars, expected_manifest.grammars);
-        assert_eq!(manifest.languages, expected_manifest.languages);
-        assert_eq!(manifest.themes, expected_manifest.themes);
+        let index = store.extension_index.read();
+        assert_eq!(*index, expected_index);
 
         assert_eq!(language_registry.language_names(), ["Plain Text"]);
         assert_eq!(language_registry.grammar_names(), []);
@@ -450,12 +471,20 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
     });
 
     let command = extension
+        .1
         .call(
             |extension: &mut wit::Extension, store: &mut Store<WasmState>| {
                 async move {
                     let resource = store.data_mut().table().push(worktree).unwrap();
                     let command = extension
-                        .call_get_language_server_command(store, resource)
+                        .call_get_language_server_command(
+                            store,
+                            &wit::LanguageServerConfig {
+                                name: todo!(),
+                                language_name: "".into(),
+                            },
+                            resource,
+                        )
                         .await;
                     command
                 }

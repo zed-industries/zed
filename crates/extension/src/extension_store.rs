@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     ffi::OsStr,
-    path::{Path, PathBuf},
+    path::{self, Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -33,18 +33,46 @@ use wasm_host::{WasmExtension, WasmHost};
 
 #[derive(Deserialize)]
 pub struct ExtensionsApiResponse {
-    pub data: Vec<Extension>,
+    pub data: Vec<ExtensionApiResponse>,
 }
 
 #[derive(Clone, Deserialize)]
-pub struct Extension {
+pub struct ExtensionApiResponse {
     pub id: Arc<str>,
-    pub version: Arc<str>,
     pub name: String,
+    pub version: Arc<str>,
     pub description: Option<String>,
     pub authors: Vec<String>,
     pub repository: String,
     pub download_count: usize,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct ExtensionManifest {
+    pub id: Arc<str>,
+    pub name: String,
+    pub version: Arc<str>,
+    pub description: Option<String>,
+    pub authors: Vec<String>,
+    pub repository: Option<String>,
+
+    pub themes: Vec<PathBuf>,
+    pub languages: Vec<PathBuf>,
+    pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
+    pub language_servers: BTreeMap<Arc<str>, LanguageServerManifestEntry>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct GrammarManifestEntry {
+    repository: String,
+    #[serde(alias = "commit")]
+    rev: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageServerManifestEntry {
+    name: String,
+    language: String,
 }
 
 #[derive(Clone)]
@@ -71,7 +99,7 @@ impl ExtensionStatus {
 }
 
 pub struct ExtensionStore {
-    manifest: Arc<RwLock<Manifest>>,
+    extension_index: Arc<RwLock<ExtensionIndex>>,
     fs: Arc<dyn Fs>,
     http_client: Arc<HttpClientWithUrl>,
     extensions_dir: PathBuf,
@@ -80,9 +108,9 @@ pub struct ExtensionStore {
     manifest_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
-    extension_changes: ExtensionChanges,
+    modified_extensions: HashSet<Arc<str>>,
     wasm_host: Arc<WasmHost>,
-    wasm_extensions: Vec<WasmExtension>,
+    wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     reload_task: Option<Task<Option<()>>>,
     needs_reload: bool,
     _watch_extensions_dir: [Task<()>; 2],
@@ -92,40 +120,25 @@ struct GlobalExtensionStore(Model<ExtensionStore>);
 
 impl Global for GlobalExtensionStore {}
 
-#[derive(Debug, Deserialize, Serialize, Default)]
-pub struct Manifest {
-    pub extensions: BTreeMap<Arc<str>, Arc<str>>,
-    pub grammars: BTreeMap<Arc<str>, ManifestEntry>,
-    pub language_servers: BTreeMap<Arc<str>, ManifestEntry>,
-    pub languages: BTreeMap<Arc<str>, LanguageManifestEntry>,
-    pub themes: BTreeMap<Arc<str>, ThemeManifestEntry>,
+#[derive(Debug, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct ExtensionIndex {
+    pub extensions: BTreeMap<Arc<str>, Arc<ExtensionManifest>>,
+    pub themes: BTreeMap<Arc<str>, ExtensionIndexEntry>,
+    pub languages: BTreeMap<Arc<str>, ExtensionIndexLanguageEntry>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Deserialize, Serialize)]
-pub struct ManifestEntry {
-    extension: String,
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
+pub struct ExtensionIndexEntry {
+    extension: Arc<str>,
     path: PathBuf,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
-pub struct LanguageManifestEntry {
-    extension: String,
+pub struct ExtensionIndexLanguageEntry {
+    extension: Arc<str>,
     path: PathBuf,
     matcher: LanguageMatcher,
     grammar: Option<Arc<str>>,
-}
-
-#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
-pub struct ThemeManifestEntry {
-    extension: String,
-    path: PathBuf,
-}
-
-#[derive(Default)]
-struct ExtensionChanges {
-    languages: HashSet<Arc<str>>,
-    grammars: HashSet<Arc<str>>,
-    themes: HashSet<Arc<str>>,
 }
 
 actions!(zed, [ReloadExtensions]);
@@ -133,7 +146,6 @@ actions!(zed, [ReloadExtensions]);
 pub fn init(
     fs: Arc<fs::RealFs>,
     http_client: Arc<HttpClientWithUrl>,
-    // http_client: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
@@ -174,7 +186,7 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut this = Self {
-            manifest: Default::default(),
+            extension_index: Default::default(),
             extensions_dir: extensions_dir.join("installed"),
             manifest_path: extensions_dir.join("manifest.json"),
             extensions_being_installed: Default::default(),
@@ -183,7 +195,7 @@ impl ExtensionStore {
             wasm_host: WasmHost::new(fs.clone(), http_client.clone(), node_runtime),
             wasm_extensions: Vec::new(),
             needs_reload: false,
-            extension_changes: ExtensionChanges::default(),
+            modified_extensions: Default::default(),
             fs,
             http_client,
             language_registry,
@@ -235,11 +247,16 @@ impl ExtensionStore {
             return ExtensionStatus::Removing;
         }
 
-        let installed_version = self.manifest.read().extensions.get(extension_id).cloned();
+        let installed_version = self
+            .extension_index
+            .read()
+            .extensions
+            .get(extension_id)
+            .map(|manifest| manifest.version.clone());
         let is_installing = self.extensions_being_installed.contains(extension_id);
         match (installed_version, is_installing) {
             (Some(_), true) => ExtensionStatus::Upgrading,
-            (Some(version), false) => ExtensionStatus::Installed(version.clone()),
+            (Some(version), false) => ExtensionStatus::Installed(version),
             (None, true) => ExtensionStatus::Installing,
             (None, false) => ExtensionStatus::NotInstalled,
         }
@@ -249,7 +266,7 @@ impl ExtensionStore {
         &self,
         search: Option<&str>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Extension>>> {
+    ) -> Task<Result<Vec<ExtensionApiResponse>>> {
         let url = self.http_client.build_zed_api_url(&format!(
             "/extensions{query}",
             query = search
@@ -351,7 +368,7 @@ impl ExtensionStore {
     /// added to the manifest, or whose files have changed on disk.
     fn manifest_updated(
         &mut self,
-        manifest: Manifest,
+        new_index: ExtensionIndex,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         fn diff<'a, T, I1, I2>(
@@ -397,29 +414,49 @@ impl ExtensionStore {
             }
         }
 
-        let old_manifest = self.manifest.read();
-        let (languages_to_remove, languages_to_add) = diff(
-            old_manifest.languages.iter(),
-            manifest.languages.iter(),
-            &self.extension_changes.languages,
+        let old_index = self.extension_index.read();
+        let (extensions_to_unload, extensions_to_load) = diff(
+            old_index.extensions.iter(),
+            new_index.extensions.iter(),
+            &self.modified_extensions,
         );
-        let (grammars_to_remove, grammars_to_add) = diff(
-            old_manifest.grammars.iter(),
-            manifest.grammars.iter(),
-            &self.extension_changes.grammars,
-        );
-        let (_language_servers_to_remove, language_servers_to_add) = diff(
-            old_manifest.language_servers.iter(),
-            manifest.language_servers.iter(),
-            &Default::default(),
-        );
-        let (themes_to_remove, themes_to_add) = diff(
-            old_manifest.themes.iter(),
-            manifest.themes.iter(),
-            &self.extension_changes.themes,
-        );
-        self.extension_changes.clear();
-        drop(old_manifest);
+        self.modified_extensions.clear();
+
+        let themes_to_remove = old_index
+            .themes
+            .iter()
+            .filter_map(|(name, entry)| {
+                if extensions_to_unload.contains(&entry.extension) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let languages_to_remove = old_index
+            .languages
+            .iter()
+            .filter_map(|(name, entry)| {
+                if extensions_to_unload.contains(&entry.extension) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let empty = Default::default();
+        let grammars_to_remove = extensions_to_unload
+            .iter()
+            .flat_map(|extension_id| {
+                old_index
+                    .extensions
+                    .get(extension_id)
+                    .map_or(&empty, |extension| &extension.grammars)
+                    .keys()
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+        drop(old_index);
 
         let themes_to_remove = &themes_to_remove
             .into_iter()
@@ -429,22 +466,42 @@ impl ExtensionStore {
         self.language_registry
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
-        self.language_registry
-            .register_wasm_grammars(grammars_to_add.iter().map(|grammar_name| {
-                let grammar = manifest.grammars.get(grammar_name).unwrap();
+        let languages_to_add = new_index
+            .languages
+            .iter()
+            .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
+            .collect::<Vec<_>>();
+        let mut grammars_to_add = Vec::new();
+        let mut themes_to_add = Vec::new();
+        for extension_id in &extensions_to_load {
+            let Some(extension) = new_index.extensions.get(extension_id) else {
+                continue;
+            };
+
+            grammars_to_add.extend(extension.grammars.keys().map(|grammar_name| {
                 let mut grammar_path = self.extensions_dir.clone();
-                grammar_path.extend([grammar.extension.as_ref(), grammar.path.as_path()]);
+                grammar_path.extend([extension_id.as_ref(), "grammars"]);
+                grammar_path.push(grammar_name.as_ref());
+                grammar_path.set_extension("wasm");
                 (grammar_name.clone(), grammar_path)
             }));
+            themes_to_add.extend(extension.themes.iter().map(|theme_path| {
+                let mut path = self.extensions_dir.clone();
+                path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
+                path
+            }));
+        }
 
-        for language_name in &languages_to_add {
-            if language_name.as_ref() == "Swift" {
-                continue;
-            }
+        // let languages_to_add = extensions_to_load.iter().flat_map(|extension_id|)
+        self.language_registry
+            .register_wasm_grammars(grammars_to_add);
 
-            let language = manifest.languages.get(language_name.as_ref()).unwrap();
+        for (language_name, language) in languages_to_add {
             let mut language_path = self.extensions_dir.clone();
-            language_path.extend([language.extension.as_ref(), language.path.as_path()]);
+            language_path.extend([
+                Path::new(language.extension.as_ref()),
+                language.path.as_path(),
+            ]);
             self.language_registry.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
@@ -463,28 +520,20 @@ impl ExtensionStore {
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.extensions_dir.clone();
         let theme_registry = self.theme_registry.clone();
-        let themes = themes_to_add
+        let extension_manifests = extensions_to_load
             .iter()
-            .filter_map(|name| manifest.themes.get(name).cloned())
-            .collect::<Vec<_>>();
-        let language_servers = language_servers_to_add
-            .iter()
-            .filter_map(|name| manifest.language_servers.get(name).cloned())
+            .filter_map(|name| new_index.extensions.get(name).cloned())
             .collect::<Vec<_>>();
 
-        *self.manifest.write() = manifest;
+        *self.extension_index.write() = new_index;
         cx.notify();
 
         cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .spawn({
-                    let root_dir = root_dir.clone();
                     let fs = fs.clone();
                     async move {
-                        for theme in &themes {
-                            let mut theme_path = root_dir.clone();
-                            theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
-
+                        for theme_path in &themes_to_add {
                             theme_registry
                                 .load_user_theme(&theme_path, fs.clone())
                                 .await
@@ -495,26 +544,21 @@ impl ExtensionStore {
                 .await;
 
             let mut wasm_extensions = Vec::new();
-            for language_server in language_servers {
+            for extension_manifest in extension_manifests {
                 let mut path = root_dir.clone();
-                path.extend([
-                    language_server.extension.as_ref(),
-                    language_server.path.as_path(),
-                ]);
-                let mut wasm_file = fs
-                    .open_sync(&path.join("language_server.wasm"))
-                    .await
-                    .expect("failed to open wasm file");
+                path.extend([extension_manifest.id.as_ref(), "extension.wasm"]);
+                let mut wasm_file = fs.open_sync(&path).await.expect("failed to open wasm file");
                 let mut wasm_bytes = Vec::new();
                 wasm_file
                     .read_to_end(&mut wasm_bytes)
                     .expect("failed to read wasm");
-                wasm_extensions.push(
+                wasm_extensions.push((
+                    extension_manifest,
                     wasm_host
                         .load_extension(wasm_bytes, cx.background_executor().clone())
                         .await
                         .expect("failed to load wasm extension"),
-                );
+                ));
             }
 
             this.update(&mut cx, |this, cx| {
@@ -527,66 +571,36 @@ impl ExtensionStore {
     }
 
     fn watch_extensions_dir(&self, cx: &mut ModelContext<Self>) -> [Task<()>; 2] {
-        let manifest = self.manifest.clone();
         let fs = self.fs.clone();
         let extensions_dir = self.extensions_dir.clone();
-
-        let (changes_tx, mut changes_rx) = unbounded();
+        let (changed_extensions_tx, mut changed_extensions_rx) = unbounded();
 
         let events_task = cx.background_executor().spawn(async move {
             let mut events = fs.watch(&extensions_dir, Duration::from_millis(250)).await;
             while let Some(events) = events.next().await {
-                let mut changed_grammars = HashSet::default();
-                let mut changed_languages = HashSet::default();
-                let mut changed_themes = HashSet::default();
+                for event in events {
+                    let Ok(event_path) = event.path.strip_prefix(&extensions_dir) else {
+                        continue;
+                    };
 
-                {
-                    let manifest = manifest.read();
-                    for event in events {
-                        for (grammar_name, grammar) in &manifest.grammars {
-                            let mut grammar_path = extensions_dir.clone();
-                            grammar_path
-                                .extend([grammar.extension.as_ref(), grammar.path.as_path()]);
-                            if event.path.starts_with(&grammar_path) || event.path == grammar_path {
-                                changed_grammars.insert(grammar_name.clone());
-                            }
-                        }
-
-                        for (language_name, language) in &manifest.languages {
-                            let mut language_path = extensions_dir.clone();
-                            language_path
-                                .extend([language.extension.as_ref(), language.path.as_path()]);
-                            if event.path.starts_with(&language_path) || event.path == language_path
-                            {
-                                changed_languages.insert(language_name.clone());
-                            }
-                        }
-
-                        for (theme_name, theme) in &manifest.themes {
-                            let mut theme_path = extensions_dir.clone();
-                            theme_path.extend([theme.extension.as_ref(), theme.path.as_path()]);
-                            if event.path.starts_with(&theme_path) || event.path == theme_path {
-                                changed_themes.insert(theme_name.clone());
-                            }
+                    if let Some(path::Component::Normal(extension_dir_name)) =
+                        event_path.components().next()
+                    {
+                        if let Some(extension_id) = extension_dir_name.to_str() {
+                            changed_extensions_tx
+                                .unbounded_send(Arc::from(extension_id))
+                                .ok();
                         }
                     }
                 }
-
-                changes_tx
-                    .unbounded_send(ExtensionChanges {
-                        languages: changed_languages,
-                        grammars: changed_grammars,
-                        themes: changed_themes,
-                    })
-                    .ok();
             }
         });
 
         let reload_task = cx.spawn(|this, mut cx| async move {
-            while let Some(changes) = changes_rx.next().await {
+            while let Some(changed_extension_id) = changed_extensions_rx.next().await {
                 if this
                     .update(&mut cx, |this, cx| {
-                        this.extension_changes.merge(changes);
+                        this.modified_extensions.insert(changed_extension_id);
                         this.reload(cx);
                     })
                     .is_err()
@@ -614,7 +628,7 @@ impl ExtensionStore {
                 let manifest = cx
                     .background_executor()
                     .spawn(async move {
-                        let mut manifest = Manifest::default();
+                        let mut manifest = ExtensionIndex::default();
 
                         fs.create_dir(&extensions_dir).await.log_err();
 
@@ -624,7 +638,7 @@ impl ExtensionStore {
                                 let Ok(extension_dir) = extension_dir else {
                                     continue;
                                 };
-                                Self::add_extension_to_manifest(
+                                Self::add_extension_to_index(
                                     fs.clone(),
                                     extension_dir,
                                     &mut manifest,
@@ -666,52 +680,23 @@ impl ExtensionStore {
         }));
     }
 
-    async fn add_extension_to_manifest(
+    async fn add_extension_to_index(
         fs: Arc<dyn Fs>,
         extension_dir: PathBuf,
-        manifest: &mut Manifest,
+        index: &mut ExtensionIndex,
     ) -> Result<()> {
         let extension_name = extension_dir
             .file_name()
             .and_then(OsStr::to_str)
             .ok_or_else(|| anyhow!("invalid extension name"))?;
 
-        #[derive(Deserialize)]
-        struct ExtensionJson {
-            pub version: String,
-        }
-
-        let extension_json_path = extension_dir.join("extension.json");
-        let extension_json = fs
-            .load(&extension_json_path)
+        let extension_manifest_path = extension_dir.join("extension.json");
+        let extension_manifest = fs
+            .load(&extension_manifest_path)
             .await
             .context("failed to load extension.json")?;
-        let extension_json: ExtensionJson =
-            serde_json::from_str(&extension_json).context("invalid extension.json")?;
-
-        manifest
-            .extensions
-            .insert(extension_name.into(), extension_json.version.into());
-
-        if let Ok(mut grammar_paths) = fs.read_dir(&extension_dir.join("grammars")).await {
-            while let Some(grammar_path) = grammar_paths.next().await {
-                let grammar_path = grammar_path?;
-                let Ok(relative_path) = grammar_path.strip_prefix(&extension_dir) else {
-                    continue;
-                };
-                let Some(grammar_name) = grammar_path.file_stem().and_then(OsStr::to_str) else {
-                    continue;
-                };
-
-                manifest.grammars.insert(
-                    grammar_name.into(),
-                    ManifestEntry {
-                        extension: extension_name.into(),
-                        path: relative_path.into(),
-                    },
-                );
-            }
-        }
+        let mut extension_manifest: ExtensionManifest =
+            serde_json::from_str(&extension_manifest).context("invalid extension.json")?;
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
             while let Some(language_path) = language_paths.next().await {
@@ -728,11 +713,16 @@ impl ExtensionStore {
                 let config = fs.load(&language_path.join("config.toml")).await?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
-                manifest.languages.insert(
+                let relative_path = relative_path.to_path_buf();
+                if extension_manifest.languages.contains(&relative_path) {
+                    extension_manifest.languages.push(relative_path.clone());
+                }
+
+                index.languages.insert(
                     config.name.clone(),
-                    LanguageManifestEntry {
+                    ExtensionIndexLanguageEntry {
                         extension: extension_name.into(),
-                        path: relative_path.into(),
+                        path: relative_path,
                         matcher: config.matcher,
                         grammar: config.grammar,
                     },
@@ -754,53 +744,28 @@ impl ExtensionStore {
                     continue;
                 };
 
-                for theme in theme_family.themes {
-                    let location = ThemeManifestEntry {
-                        extension: extension_name.into(),
-                        path: relative_path.into(),
-                    };
+                let relative_path = relative_path.to_path_buf();
+                if extension_manifest.themes.contains(&relative_path) {
+                    extension_manifest.themes.push(relative_path.clone());
+                }
 
-                    manifest.themes.insert(theme.name.into(), location);
+                for theme in theme_family.themes {
+                    index.themes.insert(
+                        theme.name.into(),
+                        ExtensionIndexEntry {
+                            extension: extension_name.into(),
+                            path: relative_path.clone(),
+                        },
+                    );
                 }
             }
         }
 
-        if let Ok(mut language_server_paths) =
-            fs.read_dir(&extension_dir.join("language_servers")).await
-        {
-            while let Some(language_server_path) = language_server_paths.next().await {
-                let path = language_server_path?;
-                let Ok(relative_path) = path.strip_prefix(&extension_dir) else {
-                    continue;
-                };
-                let Some(server_name) = relative_path.file_stem().and_then(OsStr::to_str) else {
-                    continue;
-                };
-                manifest.language_servers.insert(
-                    server_name.into(),
-                    ManifestEntry {
-                        extension: extension_name.into(),
-                        path: relative_path.into(),
-                    },
-                );
-            }
-        }
+        index
+            .extensions
+            .insert(extension_name.into(), Arc::new(extension_manifest));
 
         Ok(())
-    }
-}
-
-impl ExtensionChanges {
-    fn clear(&mut self) {
-        self.grammars.clear();
-        self.languages.clear();
-        self.themes.clear();
-    }
-
-    fn merge(&mut self, other: Self) {
-        self.grammars.extend(other.grammars);
-        self.languages.extend(other.languages);
-        self.themes.extend(other.themes);
     }
 }
 

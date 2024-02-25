@@ -1,0 +1,21 @@
+name = "language-server-example"
+version = "0.0.1"
+description = "an example"
+authors = ["some person"]
+
+# languages = [
+#   "languages/ruby",
+#   "languages/erb",
+# ]
+
+# themes = [
+#   "themes/one.json"
+# ]
+
+[language-servers.deno-lsp]
+name = "Deno LSP"
+language = "TypeScript"
+
+[grammars.typescript]
+repository = "https://github.com/tree-sitter/tree-sitter-typescript"
+commit = "198e2ea43d1c4ddd76ee883f4eae15f4201cd241"

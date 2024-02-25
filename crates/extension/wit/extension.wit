@@ -29,5 +29,10 @@ world extension {
         read-text-file: func(path: string) -> result<string, string>;
     }
 
-    export get-language-server-command: func(worktree: borrow<worktree>) -> result<command, string>;
+    record language-server-config {
+        name: string,
+        language-name: string,
+    }
+
+    export get-language-server-command: func(config: language-server-config, worktree: borrow<worktree>) -> result<command, string>;
 }
