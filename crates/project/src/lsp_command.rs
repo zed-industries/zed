@@ -1542,7 +1542,6 @@ impl LspCommand for GetCompletions {
                                 .unwrap_or(&lsp_completion.label)
                                 .clone();
                             (range, text)
-                            // (range, text)
                         }
 
                         Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
