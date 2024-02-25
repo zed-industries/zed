@@ -50,7 +50,7 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf, ServerStatus,
+    MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -3209,30 +3209,24 @@ impl Project {
                 move |params, mut cx| {
                     let this = this.clone();
                     let name = name.to_string();
-                    match params.health.as_str() {
-                        "ok" => {
-                            log::info!("Health: {}", params.health);
-                        }
-                        "warning" => {
-                            log::warn!(
-                                "Health: {}.\nMessage: {}",
-                                params.health,
-                                params.message.unwrap_or_default()
-                            );
-                        }
-                        "error" => {
+                    match params.health {
+                        ServerHealthStatus::Ok => log::info!("Health: Ok"),
+                        ServerHealthStatus::Warning => log::warn!(
+                            "Health: Warning.\nMessage: {}",
+                            params.message.unwrap_or_default()
+                        ),
+                        ServerHealthStatus::Error => {
                             log::error!(
-                                "Health: {}.\nMessage: {}",
-                                params.health,
+                                "Health: Error.\nMessage: {}",
                                 params.message.clone().unwrap_or_default()
                             );
                             let (tx, _rx) = smol::channel::bounded(1);
                             let request = LanguageServerPromptRequest {
-                                level: match params.health.as_str() {
-                                    "error" => PromptLevel::Critical,
-                                    "warning" => PromptLevel::Warning,
-                                    "ok" => PromptLevel::Info,
-                                    _ => PromptLevel::Info,
+                                level: match params.health {
+                                    ServerHealthStatus::Error => PromptLevel::Critical,
+                                    ServerHealthStatus::Warning => PromptLevel::Warning,
+                                    ServerHealthStatus::Ok => PromptLevel::Info,
+                                    ServerHealthStatus::Other(_) => PromptLevel::Info,
                                 },
                                 message: params.message.unwrap_or_default(),
                                 actions: Vec::new(),
@@ -3246,9 +3240,7 @@ impl Project {
                                 })
                                 .ok();
                         }
-                        _ => {
-                            log::info!("Uncaught health status");
-                        } // this shouldn't occur as health is only 1 of the 3 statuses.
+                        ServerHealthStatus::Other(status) => log::info!("Health: {}", status),
                     }
                 }
             })
