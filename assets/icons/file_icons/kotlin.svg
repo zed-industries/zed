@@ -1,5 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?>
-<svg fill="#000000" width="800px" height="800px" viewBox="0 0 32 32" version="1.1" xmlns="http://www.w3.org/2000/svg">
-<title>kotlin</title>
-<path d="M30.996 30.996h-29.992v-29.992h29.992l-14.996 14.996 14.996 14.996z"></path>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="14px" height="14px" viewBox="0 0 14 14" version="1.1">
+<g id="surface1">
+<path style=" stroke:none;fill-rule:nonzero;fill:rgb(0%,0%,0%);fill-opacity:1;" d="M 13.5625 13.5625 L 0.4375 13.5625 L 0.4375 0.4375 L 13.5625 0.4375 L 7 7 Z M 13.5625 13.5625 "/>
+</g>
 </svg>
