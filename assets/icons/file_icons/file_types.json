@@ -183,7 +183,7 @@
             "icon": "icons/file_icons/book.svg"
         },
         "docker": {
-            "icon": "icons/file_icons/docker2.svg"
+            "icon": "icons/file_icons/docker.svg"
         },
         "elixir": {
             "icon": "icons/file_icons/elixir.svg"
