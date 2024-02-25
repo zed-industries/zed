@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 
 use anyhow::{bail, Result};
@@ -39,16 +39,8 @@ impl Clipboard {
 
     pub fn send_source(&mut self, mime_type: &str, fd: OwnedFd) {
         if let Some(ref mut source_content) = self.source_content {
-            let result = unsafe {
-                libc::write(
-                    fd.as_raw_fd(),
-                    source_content.as_mut_ptr() as *mut _,
-                    source_content.len(),
-                )
-            };
-            if result == -1 {
-                panic!("could not write clipboard");
-            }
+            let mut file = FileDescriptor::new(fd);
+            let _ = file.write(source_content.as_bytes());
         }
     }
 
