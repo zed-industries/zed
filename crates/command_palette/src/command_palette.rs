@@ -58,6 +58,7 @@ impl CommandPalette {
         let commands = cx
             .available_actions()
             .into_iter()
+            .filter(|action| action.name() != "command_palette::Toggle")
             .filter_map(|action| {
                 let name = action.name();
                 let namespace = name.split("::").next().unwrap_or("malformed action name");
@@ -218,6 +219,7 @@ impl CommandPaletteDelegate {
                 },
             )
         }
+
         self.commands = commands;
         self.matches = matches;
         if self.matches.is_empty() {
@@ -232,7 +234,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
-        "Execute a command...".into()
+        "Start typing a command...".into()
     }
 
     fn match_count(&self) -> usize {
