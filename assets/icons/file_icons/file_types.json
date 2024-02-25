@@ -27,6 +27,10 @@
         "dbf": "storage",
         "dll": "storage",
         "doc": "document",
+        "Dockerfile": "docker",
+        "dockerignore": "docker",
+        ".dockerignore": "docker",
+        "docker-compose": "docker",
         "docx": "document",
         "eex": "elixir",
         "elm": "elm",
@@ -180,6 +184,9 @@
         },
         "document": {
             "icon": "icons/file_icons/book.svg"
+        },
+        "docker": {
+            "icon": "icons/file_icons/docker.svg"
         },
         "elixir": {
             "icon": "icons/file_icons/elixir.svg"
