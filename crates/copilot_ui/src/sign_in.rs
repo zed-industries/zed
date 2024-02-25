@@ -94,7 +94,11 @@ impl CopilotCodeVerification {
             .flex_1()
             .gap_2()
             .items_center()
-            .child(Headline::new("Use GitHub Copilot in Zed.").size(HeadlineSize::Large))
+            .child(Headline::new("Use GitHub Copilot in Zed.").size(HeadlineSize::Large)
+                    Button::new("copilot-enable-cancel-button", "Cancel")
+                        .full_width()
+                        .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent)))
+            )
             .child(
                 Label::new("Using Copilot requires an active subscription on GitHub.")
                     .color(Color::Muted),
