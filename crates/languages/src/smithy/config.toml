@@ -1,0 +1,10 @@
+name = "Smithy"
+grammar = "smithy"
+path_suffixes = ["smithy"]
+line_comments = ["// "]
+autoclose_before = ";:.,=}])>` \n\t\""
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]

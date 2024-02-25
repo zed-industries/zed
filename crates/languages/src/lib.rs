@@ -34,6 +34,7 @@ mod purescript;
 mod python;
 mod ruby;
 mod rust;
+mod smithy;
 mod svelte;
 mod tailwind;
 mod toml;
@@ -110,6 +111,7 @@ pub fn init(
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
+        ("smithy", tree_sitter_smithy::language()),
         ("svelte", tree_sitter_svelte::language()),
         ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
@@ -207,6 +209,7 @@ pub fn init(
             node_runtime.clone(),
         ))],
     );
+    language("smithy", vec![Arc::new(smithy::SmithyLspAdapter)]);
     language("rust", vec![Arc::new(rust::RustLspAdapter)]);
     language("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {

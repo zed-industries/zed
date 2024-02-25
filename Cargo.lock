@@ -5109,6 +5109,7 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",
+ "tree-sitter-smithy",
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
@@ -10589,6 +10590,15 @@ dependencies = [
 name = "tree-sitter-scheme"
 version = "0.2.0"
 source = "git+https://github.com/6cdh/tree-sitter-scheme?rev=af0fd1fa452cb2562dc7b5c8a8c55551c39273b9#af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-smithy"
+version = "1.0.0"
+source = "git+https://github.com/indoorvivants/tree-sitter-smithy?rev=8327eb84d55639ffbe08c9dc82da7fff72a1ad07#8327eb84d55639ffbe08c9dc82da7fff72a1ad07"
 dependencies = [
  "cc",
  "tree-sitter",
