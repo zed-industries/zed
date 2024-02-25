@@ -59,7 +59,10 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cell::RefCell,
-    cmp, env,
+    cmp,
+    collections::hash_map::DefaultHasher,
+    env,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     rc::Rc,
     sync::{atomic::AtomicUsize, Arc, Weak},
@@ -397,8 +400,9 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test());
+        let clock = Arc::new(clock::FakeSystemClock::default());
         let http_client = util::http::FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone(), cx);
+        let client = Client::new(clock, http_client.clone(), cx);
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -578,24 +582,13 @@ impl Workspace {
                 }),
 
                 project::Event::LanguageServerPrompt(request) => {
-                    let request = request.clone();
+                    let mut hasher = DefaultHasher::new();
+                    request.message.as_str().hash(&mut hasher);
+                    let id = hasher.finish();
 
-                    cx.spawn(|_, mut cx| async move {
-                        let messages = request
-                            .actions
-                            .iter()
-                            .map(|action| action.title.as_str())
-                            .collect::<Vec<_>>();
-                        let index = cx
-                            .update(|cx| {
-                                cx.prompt(request.level, "", Some(&request.message), &messages)
-                            })?
-                            .await?;
-                        request.respond(index).await;
-
-                        Result::<(), anyhow::Error>::Ok(())
-                    })
-                    .detach()
+                    this.show_notification(id as usize, cx, |cx| {
+                        cx.new_view(|_| notifications::LanguageServerPrompt::new(request.clone()))
+                    });
                 }
 
                 _ => {}
@@ -1386,7 +1379,9 @@ impl Workspace {
             };
 
             if let Some(task) = this
-                .update(&mut cx, |this, cx| this.open_workspace_for_paths(paths, cx))
+                .update(&mut cx, |this, cx| {
+                    this.open_workspace_for_paths(false, paths, cx)
+                })
                 .log_err()
             {
                 task.await.log_err();
@@ -1397,6 +1392,7 @@ impl Workspace {
 
     pub fn open_workspace_for_paths(
         &mut self,
+        replace_current_window: bool,
         paths: Vec<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -1404,7 +1400,10 @@ impl Workspace {
         let is_remote = self.project.read(cx).is_remote();
         let has_worktree = self.project.read(cx).worktrees().next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-        let window_to_replace = if is_remote || has_worktree || has_dirty_items {
+
+        let window_to_replace = if replace_current_window {
+            window
+        } else if is_remote || has_worktree || has_dirty_items {
             None
         } else {
             window
@@ -2759,7 +2758,7 @@ impl Workspace {
                     .z_index(100)
                     .right_3()
                     .bottom_3()
-                    .w_96()
+                    .w_112()
                     .h_full()
                     .flex()
                     .flex_col()

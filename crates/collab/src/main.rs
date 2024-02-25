@@ -1,17 +1,21 @@
 use anyhow::anyhow;
-use axum::{routing::get, Extension, Router};
+use axum::{extract::MatchedPath, routing::get, Extension, Router};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
     Config, MigrateConfig, Result,
 };
 use db::Database;
+use hyper::Request;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
     path::Path,
     sync::Arc,
 };
+#[cfg(unix)]
 use tokio::signal::unix::SignalKind;
+use tower_http::trace::{self, TraceLayer};
+use tracing::Level;
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
@@ -28,7 +32,8 @@ async fn main() -> Result<()> {
         );
     }
 
-    match args().skip(1).next().as_deref() {
+    let mut args = args().skip(1);
+    match args.next().as_deref() {
         Some("version") => {
             println!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"));
         }
@@ -36,6 +41,17 @@ async fn main() -> Result<()> {
             run_migrations().await?;
         }
         Some("serve") => {
+            let (is_api, is_collab) = if let Some(next) = args.next() {
+                (next == "api", next == "collab")
+            } else {
+                (true, true)
+            };
+            if !is_api && !is_collab {
+                Err(anyhow!(
+                    "usage: collab <version | migrate | serve [api|collab]>"
+                ))?;
+            }
+
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
 
@@ -46,24 +62,55 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let epoch = state
-                .db
-                .create_server(&state.config.zed_environment)
-                .await?;
-            let rpc_server = collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
-            rpc_server.start().await?;
+            let rpc_server = if is_collab {
+                let epoch = state
+                    .db
+                    .create_server(&state.config.zed_environment)
+                    .await?;
+                let rpc_server =
+                    collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
+                rpc_server.start().await?;
 
-            fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
+                Some(rpc_server)
+            } else {
+                None
+            };
 
-            let app = collab::api::routes(rpc_server.clone(), state.clone())
-                .merge(collab::rpc::routes(rpc_server.clone()))
+            if is_api {
+                fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
+            }
+
+            let mut app = collab::api::routes(rpc_server.clone(), state.clone());
+            if let Some(rpc_server) = rpc_server.clone() {
+                app = app.merge(collab::rpc::routes(rpc_server))
+            }
+            app = app
                 .merge(
                     Router::new()
                         .route("/", get(handle_root))
                         .route("/healthz", get(handle_liveness_probe))
+                        .merge(collab::api::extensions::router())
+                        .merge(collab::api::events::router())
                         .layer(Extension(state.clone())),
+                )
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(|request: &Request<_>| {
+                            let matched_path = request
+                                .extensions()
+                                .get::<MatchedPath>()
+                                .map(MatchedPath::as_str);
+
+                            tracing::info_span!(
+                                "http_request",
+                                method = ?request.method(),
+                                matched_path,
+                            )
+                        })
+                        .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
                 );
 
+            #[cfg(unix)]
             axum::Server::from_tcp(listener)?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
@@ -76,12 +123,21 @@ async fn main() -> Result<()> {
                     futures::pin_mut!(sigterm, sigint);
                     futures::future::select(sigterm, sigint).await;
                     tracing::info!("Received interrupt signal");
-                    rpc_server.teardown();
+
+                    if let Some(rpc_server) = rpc_server {
+                        rpc_server.teardown();
+                    }
                 })
                 .await?;
+
+            // todo!("windows")
+            #[cfg(windows)]
+            unimplemented!();
         }
         _ => {
-            Err(anyhow!("usage: collab <version | migrate | serve>"))?;
+            Err(anyhow!(
+                "usage: collab <version | migrate | serve [api|collab]>"
+            ))?;
         }
     }
     Ok(())

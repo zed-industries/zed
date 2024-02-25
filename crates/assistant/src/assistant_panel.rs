@@ -15,7 +15,6 @@ use ai::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use client::telemetry::AssistantKind;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
@@ -52,6 +51,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{
     prelude::*,
@@ -122,16 +122,13 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let (api_url, model_name) = cx
-                .update(|cx| {
-                    let settings = AssistantSettings::get_global(cx);
-                    (
-                        settings.openai_api_url.clone(),
-                        settings.default_open_ai_model.full_name().to_string(),
-                    )
-                })
-                .log_err()
-                .unwrap();
+            let (api_url, model_name) = cx.update(|cx| {
+                let settings = AssistantSettings::get_global(cx);
+                (
+                    settings.openai_api_url.clone(),
+                    settings.default_open_ai_model.full_name().to_string(),
+                )
+            })?;
             let completion_provider = OpenAiCompletionProvider::new(
                 api_url,
                 model_name,
@@ -365,7 +362,7 @@ impl AssistantPanel {
                         move |cx: &mut BlockContext| {
                             measurements.set(BlockMeasurements {
                                 anchor_x: cx.anchor_x,
-                                gutter_width: cx.gutter_width,
+                                gutter_width: cx.gutter_dimensions.width,
                             });
                             inline_assistant.clone().into_any_element()
                         }

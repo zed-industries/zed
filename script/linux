@@ -10,7 +10,6 @@ if [[ -n $apt ]]; then
   deps=(
     libasound2-dev
     libfontconfig-dev
-    vulkan-validationlayers*
     libwayland-dev
     libxkbcommon-x11-dev
     openssl
@@ -26,7 +25,6 @@ if [[ -n $dnf ]]; then
   deps=(
     alsa-lib-devel
     fontconfig-devel
-    vulkan-validation-layers
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
@@ -42,7 +40,6 @@ if [[ -n $zyp ]]; then
   deps=(
     alsa-devel
     fontconfig-devel
-    vulkan-validationlayers
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
@@ -58,7 +55,6 @@ if [[ -n $pacman ]]; then
   deps=(
     alsa-lib
     fontconfig
-    vulkan-validation-layers
     wayland
     libxkbcommon-x11
     openssl

@@ -10,10 +10,11 @@ path = "src/client.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
+test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+clock.workspace = true
 collections.workspace = true
 db.workspace = true
 gpui.workspace = true
@@ -40,9 +41,10 @@ schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
+sha2.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
+telemetry_events.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 time.workspace = true
@@ -51,6 +53,7 @@ uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }

@@ -181,36 +181,48 @@ impl ExtensionsPage {
         };
 
         let install_or_uninstall_button = match status {
-            ExtensionStatus::NotInstalled | ExtensionStatus::Installing => {
-                Button::new(SharedString::from(extension.id.clone()), "Install")
-                    .on_click(cx.listener({
-                        let extension_id = extension.id.clone();
-                        let version = extension.version.clone();
-                        move |this, _, cx| {
-                            this.telemetry
-                                .report_app_event("extensions: install extension".to_string());
-                            this.install_extension(extension_id.clone(), version.clone(), cx);
-                        }
-                    }))
-                    .disabled(matches!(status, ExtensionStatus::Installing))
-            }
+            ExtensionStatus::NotInstalled | ExtensionStatus::Installing => Button::new(
+                SharedString::from(extension.id.clone()),
+                if status.is_installing() {
+                    "Installing..."
+                } else {
+                    "Install"
+                },
+            )
+            .on_click(cx.listener({
+                let extension_id = extension.id.clone();
+                let version = extension.version.clone();
+                move |this, _, cx| {
+                    this.telemetry
+                        .report_app_event("extensions: install extension".to_string());
+                    this.install_extension(extension_id.clone(), version.clone(), cx);
+                }
+            }))
+            .disabled(status.is_installing()),
             ExtensionStatus::Installed(_)
             | ExtensionStatus::Upgrading
-            | ExtensionStatus::Removing => {
-                Button::new(SharedString::from(extension.id.clone()), "Uninstall")
-                    .on_click(cx.listener({
-                        let extension_id = extension.id.clone();
-                        move |this, _, cx| {
-                            this.telemetry
-                                .report_app_event("extensions: uninstall extension".to_string());
-                            this.uninstall_extension(extension_id.clone(), cx);
-                        }
-                    }))
-                    .disabled(matches!(
-                        status,
-                        ExtensionStatus::Upgrading | ExtensionStatus::Removing
-                    ))
-            }
+            | ExtensionStatus::Removing => Button::new(
+                SharedString::from(extension.id.clone()),
+                if status.is_upgrading() {
+                    "Upgrading..."
+                } else if status.is_removing() {
+                    "Removing..."
+                } else {
+                    "Uninstall"
+                },
+            )
+            .on_click(cx.listener({
+                let extension_id = extension.id.clone();
+                move |this, _, cx| {
+                    this.telemetry
+                        .report_app_event("extensions: uninstall extension".to_string());
+                    this.uninstall_extension(extension_id.clone(), cx);
+                }
+            }))
+            .disabled(matches!(
+                status,
+                ExtensionStatus::Upgrading | ExtensionStatus::Removing
+            )),
         }
         .color(Color::Accent);
 

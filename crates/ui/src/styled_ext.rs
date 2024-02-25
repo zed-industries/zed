@@ -35,6 +35,17 @@ pub trait StyledExt: Styled + Sized {
         self.text_size(size.rems())
     }
 
+    /// The large size for UI text.
+    ///
+    /// `1rem` or `16px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
+    ///
+    /// Use `text_ui` for regular-sized text.
+    fn text_ui_lg(self) -> Self {
+        self.text_size(UiTextSize::Large.rems())
+    }
+
     /// The default size for UI text.
     ///
     /// `0.825rem` or `14px` at the default scale of `1rem` = `16px`.

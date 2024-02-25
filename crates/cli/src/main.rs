@@ -156,6 +156,39 @@ mod linux {
     }
 }
 
+// todo!("windows")
+#[cfg(target_os = "windows")]
+mod windows {
+    use std::path::Path;
+
+    use cli::{CliRequest, CliResponse};
+    use ipc_channel::ipc::{IpcReceiver, IpcSender};
+
+    use crate::{Bundle, InfoPlist};
+
+    impl Bundle {
+        pub fn detect(_args_bundle_path: Option<&Path>) -> anyhow::Result<Self> {
+            unimplemented!()
+        }
+
+        pub fn plist(&self) -> &InfoPlist {
+            unimplemented!()
+        }
+
+        pub fn path(&self) -> &Path {
+            unimplemented!()
+        }
+
+        pub fn launch(&self) -> anyhow::Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
+            unimplemented!()
+        }
+
+        pub fn zed_version_string(&self) -> String {
+            unimplemented!()
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod mac_os {
     use anyhow::Context;

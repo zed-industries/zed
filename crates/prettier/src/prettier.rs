@@ -192,6 +192,7 @@ impl Prettier {
             LanguageServerBinary {
                 path: node_path,
                 arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
+                env: None,
             },
             Path::new("/"),
             None,

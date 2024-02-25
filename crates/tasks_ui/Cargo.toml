@@ -8,7 +8,6 @@ license = "GPL-3.0-or-later"
 [dependencies]
 anyhow.workspace = true
 db.workspace = true
-editor.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
