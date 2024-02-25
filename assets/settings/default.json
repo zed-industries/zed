@@ -178,9 +178,9 @@
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
-    /// Whether to collapse directories automatically
+    /// Whether to fold directories automatically
     /// when directory has only one directory inside.
-    "auto_collapse_dirs": true
+    "auto_fold_dirs": true
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.

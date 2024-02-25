@@ -20,7 +20,7 @@ pub struct ProjectPanelSettings {
     pub git_status: bool,
     pub indent_size: f32,
     pub auto_reveal_entries: bool,
-    pub auto_collapse_dirs: bool,
+    pub auto_fold_dirs: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -55,11 +55,11 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub auto_reveal_entries: Option<bool>,
-    /// Whether to collapse directories automatically
+    /// Whether to fold directories automatically
     /// when directory has only one directory inside.
     ///
     /// Default: true
-    pub auto_collapse_dirs: Option<bool>,
+    pub auto_fold_dirs: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {
