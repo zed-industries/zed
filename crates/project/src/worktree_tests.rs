@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::Client;
+use clock::FakeSystemClock;
 use fs::{repository::GitFileStatus, FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
 use gpui::{ModelContext, Task, TestAppContext};
@@ -1263,7 +1264,13 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
 async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let client_fake = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+    let client_fake = cx.update(|cx| {
+        Client::new(
+            Arc::new(FakeSystemClock::default()),
+            FakeHttpClient::with_404_response(),
+            cx,
+        )
+    });
 
     let fs_fake = FakeFs::new(cx.background_executor.clone());
     fs_fake
@@ -1304,7 +1311,13 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         assert!(tree.entry_for_path("a/b/").unwrap().is_dir());
     });
 
-    let client_real = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+    let client_real = cx.update(|cx| {
+        Client::new(
+            Arc::new(FakeSystemClock::default()),
+            FakeHttpClient::with_404_response(),
+            cx,
+        )
+    });
 
     let fs_real = Arc::new(RealFs);
     let temp_root = temp_tree(json!({
@@ -2396,8 +2409,9 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
 }
 
 fn build_client(cx: &mut TestAppContext) -> Arc<Client> {
+    let clock = Arc::new(FakeSystemClock::default());
     let http_client = FakeHttpClient::with_404_response();
-    cx.update(|cx| Client::new(http_client, cx))
+    cx.update(|cx| Client::new(clock, http_client, cx))
 }
 
 #[track_caller]

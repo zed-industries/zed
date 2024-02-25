@@ -138,7 +138,7 @@ impl Editor {
                     cx.focus(&self.focus_handle);
                 }
 
-                self.navigate_to_hover_links(hovered_link_state.links, modifiers.alt, cx);
+                self.navigate_to_hover_links(None, hovered_link_state.links, modifiers.alt, cx);
                 return;
             }
         }
@@ -569,7 +569,7 @@ pub fn show_link_definition(
     editor.hovered_link_state = Some(hovered_link_state);
 }
 
-fn find_url(
+pub(crate) fn find_url(
     buffer: &Model<language::Buffer>,
     position: text::Anchor,
     mut cx: AsyncWindowContext,

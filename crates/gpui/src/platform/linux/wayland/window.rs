@@ -11,6 +11,7 @@ use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
 };
 use wayland_client::{protocol::wl_surface, Proxy};
+use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
 use crate::platform::blade::BladeRenderer;
@@ -38,7 +39,9 @@ pub(crate) struct Callbacks {
 struct WaylandWindowInner {
     renderer: BladeRenderer,
     bounds: Bounds<i32>,
+    scale: f32,
     input_handler: Option<PlatformInputHandler>,
+    decoration_state: WaylandDecorationState,
 }
 
 struct RawWindow {
@@ -69,8 +72,8 @@ impl WaylandWindowInner {
         bounds: Bounds<i32>,
     ) -> Self {
         let raw = RawWindow {
-            window: wl_surf.id().as_ptr() as *mut _,
-            display: conn.backend().display_ptr() as *mut _,
+            window: wl_surf.id().as_ptr().cast::<c_void>(),
+            display: conn.backend().display_ptr().cast::<c_void>(),
         };
         let gpu = Arc::new(
             unsafe {
@@ -92,7 +95,11 @@ impl WaylandWindowInner {
         Self {
             renderer: BladeRenderer::new(gpu, extent),
             bounds,
+            scale: 1.0,
             input_handler: None,
+
+            // On wayland, decorations are by default provided by the client
+            decoration_state: WaylandDecorationState::Client,
         }
     }
 }
@@ -103,12 +110,14 @@ pub(crate) struct WaylandWindowState {
     pub(crate) callbacks: Mutex<Callbacks>,
     pub(crate) surface: Arc<wl_surface::WlSurface>,
     pub(crate) toplevel: Arc<xdg_toplevel::XdgToplevel>,
+    viewport: Option<wp_viewport::WpViewport>,
 }
 
 impl WaylandWindowState {
     pub(crate) fn new(
         conn: &Arc<wayland_client::Connection>,
         wl_surf: Arc<wl_surface::WlSurface>,
+        viewport: Option<wp_viewport::WpViewport>,
         toplevel: Arc<xdg_toplevel::XdgToplevel>,
         options: WindowOptions,
     ) -> Self {
@@ -135,6 +144,7 @@ impl WaylandWindowState {
             inner: Mutex::new(WaylandWindowInner::new(&Arc::clone(conn), &wl_surf, bounds)),
             callbacks: Mutex::new(Callbacks::default()),
             toplevel,
+            viewport,
         }
     }
 
@@ -147,28 +157,52 @@ impl WaylandWindowState {
         }
     }
 
-    pub fn resize(&self, width: i32, height: i32) {
-        {
-            let mut inner = self.inner.lock();
-            inner.bounds.size.width = width;
-            inner.bounds.size.height = height;
-            inner
-                .renderer
-                .update_drawable_size(size(width as f64, height as f64));
-        }
-        let mut callbacks = self.callbacks.lock();
-        if let Some(ref mut fun) = callbacks.resize {
+    pub fn set_size_and_scale(&self, width: i32, height: i32, scale: f32) {
+        self.inner.lock().scale = scale;
+        self.inner.lock().bounds.size.width = width;
+        self.inner.lock().bounds.size.height = height;
+        self.inner.lock().renderer.update_drawable_size(size(
+            width as f64 * scale as f64,
+            height as f64 * scale as f64,
+        ));
+
+        if let Some(ref mut fun) = self.callbacks.lock().resize {
             fun(
                 Size {
                     width: px(width as f32),
                     height: px(height as f32),
                 },
-                1.0,
+                scale,
             );
         }
-        if let Some(ref mut fun) = callbacks.moved {
-            fun()
+
+        if let Some(viewport) = &self.viewport {
+            viewport.set_destination(width, height);
         }
+    }
+
+    pub fn resize(&self, width: i32, height: i32) {
+        let scale = self.inner.lock().scale;
+        self.set_size_and_scale(width, height, scale);
+    }
+
+    pub fn rescale(&self, scale: f32) {
+        let bounds = self.inner.lock().bounds;
+        self.set_size_and_scale(bounds.size.width, bounds.size.height, scale)
+    }
+
+    /// Notifies the window of the state of the decorations.
+    ///
+    /// # Note
+    ///
+    /// This API is indirectly called by the wayland compositor and
+    /// not meant to be called by a user who wishes to change the state
+    /// of the decorations. This is because the state of the decorations
+    /// is managed by the compositor and not the client.
+    pub fn set_decoration_state(&self, state: WaylandDecorationState) {
+        self.inner.lock().decoration_state = state;
+        log::trace!("Window decorations are now handled by {:?}", state);
+        // todo!(linux) - Handle this properly
     }
 
     pub fn close(&self) {
@@ -188,8 +222,16 @@ impl WaylandWindowState {
         if let PlatformInput::KeyDown(event) = input {
             let mut inner = self.inner.lock();
             if let Some(ref mut input_handler) = inner.input_handler {
-                input_handler.replace_text_in_range(None, &event.keystroke.key);
+                if let Some(ime_key) = &event.keystroke.ime_key {
+                    input_handler.replace_text_in_range(None, ime_key);
+                }
             }
+        }
+    }
+
+    pub fn set_focused(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.lock().active_status_change {
+            fun(focus);
         }
     }
 }
@@ -215,7 +257,6 @@ impl PlatformWindow for WaylandWindow {
         WindowBounds::Maximized
     }
 
-    // todo!(linux)
     fn content_size(&self) -> Size<Pixels> {
         let inner = self.0.inner.lock();
         Size {
@@ -224,9 +265,8 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    // todo!(linux)
     fn scale_factor(&self) -> f32 {
-        1f32
+        self.0.inner.lock().scale
     }
 
     //todo!(linux)
@@ -263,7 +303,6 @@ impl PlatformWindow for WaylandWindow {
         self.0.inner.lock().input_handler = Some(input_handler);
     }
 
-    //todo!(linux)
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.0.inner.lock().input_handler.take()
     }
@@ -316,7 +355,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        //todo!(linux)
+        self.0.callbacks.lock().active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
@@ -361,4 +400,13 @@ impl PlatformWindow for WaylandWindow {
     fn set_graphics_profiler_enabled(&self, enabled: bool) {
         //todo!(linux)
     }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum WaylandDecorationState {
+    /// Decorations are to be provided by the client
+    Client,
+
+    /// Decorations are provided by the server
+    Server,
 }

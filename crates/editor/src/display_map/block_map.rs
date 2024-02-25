@@ -2,10 +2,11 @@ use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     Highlights,
 };
-use crate::{Anchor, Editor, EditorStyle, ExcerptId, ExcerptRange, ToPoint as _};
+use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, ElementContext, Pixels, View};
+use gpui::{AnyElement, ElementContext, Pixels};
 use language::{BufferSnapshot, Chunk, Patch, Point};
+use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
@@ -85,11 +86,9 @@ pub enum BlockStyle {
 
 pub struct BlockContext<'a, 'b> {
     pub context: &'b mut ElementContext<'a>,
-    pub view: View<Editor>,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
-    pub gutter_width: Pixels,
-    pub gutter_padding: Pixels,
+    pub gutter_dimensions: &'b GutterDimensions,
     pub em_width: Pixels,
     pub line_height: Pixels,
     pub block_id: usize,

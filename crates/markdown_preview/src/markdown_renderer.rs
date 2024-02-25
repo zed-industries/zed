@@ -8,7 +8,10 @@ use gpui::{
     HighlightStyle, Hsla, InteractiveText, IntoElement, ParentElement, SharedString, Styled,
     StyledText, TextStyle, WeakView, WindowContext,
 };
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::{Mul, Range},
+    sync::Arc,
+};
 use theme::{ActiveTheme, SyntaxTheme};
 use ui::{h_flex, v_flex, Label};
 use workspace::Workspace;
@@ -115,7 +118,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         _ => cx.text_color,
     };
 
-    let line_height = DefiniteLength::from(rems(1.25));
+    let line_height = DefiniteLength::from(size.mul(1.25));
 
     div()
         .line_height(line_height)
@@ -124,6 +127,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .pt(rems(0.15))
         .pb_1()
         .child(render_markdown_text(&parsed.contents, cx))
+        .whitespace_normal()
         .into_any()
 }
 
@@ -150,7 +154,7 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
         let item = h_flex()
             .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
             .items_start()
-            .children(vec![bullet, div().children(contents).pr_2().w_full()]);
+            .children(vec![bullet, div().children(contents).pr_4().w_full()]);
 
         items.push(item);
     }

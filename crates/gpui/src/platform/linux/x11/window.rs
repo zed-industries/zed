@@ -2,9 +2,9 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Pixels, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, Size, WindowAppearance,
-    WindowBounds, WindowOptions, X11Display,
+    platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
+    Scene, Size, WindowAppearance, WindowBounds, WindowOptions, X11Display,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -27,7 +27,7 @@ use std::{
 #[derive(Default)]
 struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
-    input: Option<Box<dyn FnMut(crate::PlatformInput) -> bool>>,
+    input: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     fullscreen: Option<Box<dyn FnMut(bool)>>,
@@ -155,6 +155,9 @@ impl X11WindowState {
             x::Cw::EventMask(
                 x::EventMask::EXPOSURE
                     | x::EventMask::STRUCTURE_NOTIFY
+                    | x::EventMask::ENTER_WINDOW
+                    | x::EventMask::LEAVE_WINDOW
+                    | x::EventMask::FOCUS_CHANGE
                     | x::EventMask::KEY_PRESS
                     | x::EventMask::KEY_RELEASE
                     | x::EventMask::BUTTON_PRESS
@@ -205,25 +208,21 @@ impl X11WindowState {
                 });
             }
         }
-        xcb_connection
-            .send_and_check_request(&x::ChangeProperty {
-                mode: x::PropMode::Replace,
-                window: x_window,
-                property: atoms.wm_protocols,
-                r#type: x::ATOM_ATOM,
-                data: &[atoms.wm_del_window],
-            })
-            .unwrap();
+        xcb_connection.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window: x_window,
+            property: atoms.wm_protocols,
+            r#type: x::ATOM_ATOM,
+            data: &[atoms.wm_del_window],
+        });
 
         let fake_id = xcb_connection.generate_id();
-        xcb_connection
-            .send_and_check_request(&xcb::present::SelectInput {
-                eid: fake_id,
-                window: x_window,
-                //Note: also consider `IDLE_NOTIFY`
-                event_mask: xcb::present::EventMask::COMPLETE_NOTIFY,
-            })
-            .unwrap();
+        xcb_connection.send_request(&xcb::present::SelectInput {
+            eid: fake_id,
+            window: x_window,
+            //Note: also consider `IDLE_NOTIFY`
+            event_mask: xcb::present::EventMask::COMPLETE_NOTIFY,
+        });
 
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
@@ -241,7 +240,7 @@ impl X11WindowState {
                 gpu::Context::init_windowed(
                     &raw,
                     gpu::ContextDesc {
-                        validation: cfg!(debug_assertions),
+                        validation: false,
                         capture: false,
                     },
                 )
@@ -321,15 +320,13 @@ impl X11WindowState {
     }
 
     pub fn request_refresh(&self) {
-        self.xcb_connection
-            .send_and_check_request(&xcb::present::NotifyMsc {
-                window: self.x_window,
-                serial: 0,
-                target_msc: 0,
-                divisor: 1,
-                remainder: 0,
-            })
-            .unwrap();
+        self.xcb_connection.send_request(&xcb::present::NotifyMsc {
+            window: self.x_window,
+            serial: 0,
+            target_msc: 0,
+            divisor: 1,
+            remainder: 0,
+        });
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
@@ -341,8 +338,16 @@ impl X11WindowState {
         if let PlatformInput::KeyDown(event) = input {
             let mut inner = self.inner.lock();
             if let Some(ref mut input_handler) = inner.input_handler {
-                input_handler.replace_text_in_range(None, &event.keystroke.key);
+                if let Some(ime_key) = &event.keystroke.ime_key {
+                    input_handler.replace_text_in_range(None, ime_key);
+                }
             }
+        }
+    }
+
+    pub fn set_focused(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.lock().active_status_change {
+            fun(focus);
         }
     }
 }
@@ -374,14 +379,20 @@ impl PlatformWindow for X11Window {
         Rc::clone(&self.0.display)
     }
 
-    //todo!(linux)
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::default()
+        let cookie = self.0.xcb_connection.send_request(&x::QueryPointer {
+            window: self.0.x_window,
+        });
+        let reply: x::QueryPointerReply = self.0.xcb_connection.wait_for_reply(cookie).unwrap();
+        Point::new(
+            (reply.root_x() as u32).into(),
+            (reply.root_y() as u32).into(),
+        )
     }
 
     //todo!(linux)
-    fn modifiers(&self) -> crate::Modifiers {
-        crate::Modifiers::default()
+    fn modifiers(&self) -> Modifiers {
+        Modifiers::default()
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -399,7 +410,7 @@ impl PlatformWindow for X11Window {
     //todo!(linux)
     fn prompt(
         &self,
-        _level: crate::PromptLevel,
+        _level: PromptLevel,
         _msg: &str,
         _detail: Option<&str>,
         _answers: &[&str],
@@ -456,7 +467,7 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.lock().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
         self.0.callbacks.lock().input = Some(callback);
     }
 
@@ -489,16 +500,16 @@ impl PlatformWindow for X11Window {
     }
 
     //todo!(linux)
-    fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
+    fn is_topmost_for_position(&self, _position: Point<Pixels>) -> bool {
         unimplemented!()
     }
 
-    fn draw(&self, scene: &crate::Scene) {
+    fn draw(&self, scene: &Scene) {
         let mut inner = self.0.inner.lock();
         inner.renderer.draw(scene);
     }
 
-    fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
+    fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
         let inner = self.0.inner.lock();
         inner.renderer.sprite_atlas().clone()
     }

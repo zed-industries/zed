@@ -2,7 +2,7 @@ use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task,
-    View, ViewContext, WeakView,
+    View, ViewContext, WeakView, WindowContext,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -25,7 +25,7 @@ pub fn init(cx: &mut AppContext) {
                 let handle = cx.view().downgrade();
                 workspace.toggle_modal(cx, move |cx| {
                     let delegate = ProjectSymbolsDelegate::new(handle, project);
-                    Picker::new(delegate, cx).width(rems(34.))
+                    Picker::uniform_list(delegate, cx).width(rems(34.))
                 })
             });
         },
@@ -106,7 +106,7 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search project symbols...".into()
     }
 
@@ -344,7 +344,7 @@ mod tests {
 
         // Create the project symbols view.
         let symbols = cx.new_view(|cx| {
-            Picker::new(
+            Picker::uniform_list(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
                 cx,
             )

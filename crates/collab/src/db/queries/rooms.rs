@@ -169,7 +169,7 @@ impl Database {
 
             let called_user_role = match caller.role.unwrap_or(ChannelRole::Member) {
                 ChannelRole::Admin | ChannelRole::Member => ChannelRole::Member,
-                ChannelRole::Guest => ChannelRole::Guest,
+                ChannelRole::Guest | ChannelRole::Talker => ChannelRole::Guest,
                 ChannelRole::Banned => return Err(anyhow!("banned users cannot invite").into()),
             };
 

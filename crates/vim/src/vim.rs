@@ -27,7 +27,9 @@ use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
+use schemars::JsonSchema;
 use serde::Deserialize;
+use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
@@ -70,6 +72,7 @@ impl_actions!(vim, [SwitchMode, PushOperator, Number]);
 pub fn init(cx: &mut AppContext) {
     cx.set_global(Vim::default());
     VimModeSetting::register(cx);
+    VimSettings::register(cx);
 
     editor_events::init(cx);
 
@@ -261,12 +264,12 @@ impl Vim {
     }
 
     fn update_active_editor<S>(
-        &self,
+        &mut self,
         cx: &mut WindowContext,
-        update: impl FnOnce(&mut Editor, &mut ViewContext<Editor>) -> S,
+        update: impl FnOnce(&mut Vim, &mut Editor, &mut ViewContext<Editor>) -> S,
     ) -> Option<S> {
         let editor = self.active_editor.clone()?.upgrade()?;
-        Some(editor.update(cx, update))
+        Some(editor.update(cx, |editor, cx| update(self, editor, cx)))
     }
 
     /// When doing an action that modifies the buffer, we start recording so that `.`
@@ -365,7 +368,7 @@ impl Vim {
         }
 
         // Adjust selections
-        self.update_active_editor(cx, |editor, cx| {
+        self.update_active_editor(cx, |_, editor, cx| {
             if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
             {
                 visual_block_motion(true, editor, cx, |_, point, goal| Some((point, goal)))
@@ -565,10 +568,9 @@ impl Vim {
         ret
     }
 
-    fn sync_vim_settings(&self, cx: &mut WindowContext) {
-        let state = self.state();
-
-        self.update_active_editor(cx, |editor, cx| {
+    fn sync_vim_settings(&mut self, cx: &mut WindowContext) {
+        self.update_active_editor(cx, |vim, editor, cx| {
+            let state = vim.state();
             editor.set_cursor_shape(state.cursor_shape(), cx);
             editor.set_clip_at_line_ends(state.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
@@ -609,6 +611,42 @@ impl Settings for VimModeSetting {
         Ok(Self(user_values.iter().rev().find_map(|v| **v).unwrap_or(
             default_value.ok_or_else(Self::missing_default)?,
         )))
+    }
+}
+
+/// Controls the soft-wrapping behavior in the editor.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UseSystemClipboard {
+    Never,
+    Always,
+    OnYank,
+}
+
+#[derive(Deserialize)]
+struct VimSettings {
+    // all vim uses vim clipboard
+    // vim always uses system cliupbaord
+    // some magic where yy is system and dd is not.
+    pub use_system_clipboard: UseSystemClipboard,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+struct VimSettingsContent {
+    pub use_system_clipboard: Option<UseSystemClipboard>,
+}
+
+impl Settings for VimSettings {
+    const KEY: Option<&'static str> = Some("vim");
+
+    type FileContent = VimSettingsContent;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &mut AppContext,
+    ) -> Result<Self> {
+        Self::load_via_json_merge(default_value, user_values)
     }
 }
 

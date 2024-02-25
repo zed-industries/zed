@@ -4,7 +4,7 @@ ignore-hidden = false
 extend-exclude = [
     ".git/",
     # glsl isn't recognized by this tool
-    "crates/zed/src/languages/glsl/",
+    "crates/languages/src/glsl/",
     # File suffixes aren't typos
     "assets/icons/file_icons/file_types.json",
     # Not our typos
@@ -14,6 +14,8 @@ extend-exclude = [
     # Editor and file finder rely on partial typing and custom in-string syntax
     "crates/file_finder/src/file_finder_tests.rs",
     "crates/editor/src/editor_tests.rs",
+    # Clojure uses .edn filename extension, which is not a misspelling of "end"
+    "crates/languages/src/clojure/config.toml",
 ]
 
 [default]
@@ -22,5 +24,8 @@ extend-ignore-re = [
     ":ba\\|z",
     # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
     "COLUMN enviroment",
+    # Typo in ClickHouse column name.
+    # crates/collab/src/api/events.rs
+    "rename = \"sesssion_id\""
 ]
 check-filename = true

@@ -428,6 +428,8 @@ impl Copilot {
                 let binary = LanguageServerBinary {
                     path: node_path,
                     arguments,
+                    // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
+                    env: None,
                 };
 
                 let server = LanguageServer::new(
@@ -512,7 +514,7 @@ impl Copilot {
                                     .await?;
                                 match sign_in {
                                     request::SignInInitiateResult::AlreadySignedIn { user } => {
-                                        Ok(request::SignInStatus::Ok { user })
+                                        Ok(request::SignInStatus::Ok { user: Some(user) })
                                     }
                                     request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
                                         this.update(&mut cx, |this, cx| {
@@ -920,7 +922,7 @@ impl Copilot {
 
         if let Ok(server) = self.server.as_running() {
             match lsp_status {
-                request::SignInStatus::Ok { .. }
+                request::SignInStatus::Ok { user: Some(_) }
                 | request::SignInStatus::MaybeOk { .. }
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
@@ -936,7 +938,7 @@ impl Copilot {
                         self.unregister_buffer(&buffer);
                     }
                 }
-                request::SignInStatus::NotSignedIn => {
+                request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
                     server.sign_in_status = SignInStatus::SignedOut;
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);

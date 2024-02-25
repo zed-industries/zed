@@ -22,7 +22,7 @@ impl ContactFinder {
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx).modal(false));
+        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx).modal(false));
 
         Self { picker }
     }
@@ -84,7 +84,7 @@ impl PickerDelegate for ContactFinderDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search collaborator by username...".into()
     }
 

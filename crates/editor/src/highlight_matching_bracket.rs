@@ -17,7 +17,7 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
     let snapshot = editor.snapshot(cx);
     if let Some((opening_range, closing_range)) = snapshot
         .buffer_snapshot
-        .innermost_enclosing_bracket_ranges(head..head)
+        .innermost_enclosing_bracket_ranges(head..head, None)
     {
         editor.highlight_background::<MatchingBracketHighlight>(
             vec![

@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
+use collections::HashMap;
 use gpui::{Action, KeyContext};
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,8 @@ pub struct WorkspaceState {
     pub recorded_count: Option<usize>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
+
+    pub registers: HashMap<String, String>,
 }
 
 #[derive(Debug)]

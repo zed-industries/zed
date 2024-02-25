@@ -49,6 +49,7 @@
         "gitkeep": "vcs",
         "gitmodules": "vcs",
         "go": "go",
+        "graphql": "graphql",
         "h": "code",
         "handlebars": "code",
         "hbs": "template",
@@ -74,6 +75,7 @@
         "jxl": "image",
         "ldf": "storage",
         "lock": "lock",
+        "lockb": "bun",
         "log": "log",
         "lua": "lua",
         "m4a": "audio",
@@ -116,6 +118,7 @@
         "rebar.config": "erlang",
         "rkt": "code",
         "rs": "rust",
+        "r": "r",
         "rtf": "document",
         "sav": "storage",
         "scm": "code",
@@ -202,11 +205,17 @@
         "go": {
             "icon": "icons/file_icons/go.svg"
         },
+        "graphql": {
+            "icon": "icons/file_icons/graphql.svg"
+        },
         "image": {
             "icon": "icons/file_icons/image.svg"
         },
         "lock": {
             "icon": "icons/file_icons/lock.svg"
+        },
+        "bun": {
+            "icon": "icons/file_icons/bun.svg"
         },
         "log": {
             "icon": "icons/file_icons/info.svg"
@@ -237,6 +246,9 @@
         },
         "rust": {
             "icon": "icons/file_icons/rust.svg"
+        },
+        "r": {
+            "icon": "icons/file_icons/r.svg"
         },
         "settings": {
             "icon": "icons/file_icons/settings.svg"
