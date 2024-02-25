@@ -11,6 +11,13 @@ pub enum ProjectPanelDockPosition {
     Right,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelSortOrder {
+    Default,
+    DirsFirst,
+}
+
 #[derive(Deserialize, Debug)]
 pub struct ProjectPanelSettings {
     pub default_width: Pixels,
@@ -20,6 +27,7 @@ pub struct ProjectPanelSettings {
     pub git_status: bool,
     pub indent_size: f32,
     pub auto_reveal_entries: bool,
+    pub sort_order: ProjectPanelSortOrder,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -54,6 +62,9 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub auto_reveal_entries: Option<bool>,
+
+    /// The sort order of the project panel entries.
+    pub sort_order: Option<ProjectPanelSortOrder>,
 }
 
 impl Settings for ProjectPanelSettings {

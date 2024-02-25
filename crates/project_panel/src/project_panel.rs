@@ -21,7 +21,7 @@ use project::{
     repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
     Worktree, WorktreeId,
 };
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ProjectPanelSortOrder};
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, ffi::OsStr, ops::Range, path::Path, sync::Arc};
 use theme::ThemeSettings;
@@ -1168,31 +1168,68 @@ impl ProjectPanel {
 
             snapshot.propagate_git_statuses(&mut visible_worktree_entries);
 
-            visible_worktree_entries.sort_by(|entry_a, entry_b| {
-                let mut components_a = entry_a.path.components().peekable();
-                let mut components_b = entry_b.path.components().peekable();
-                loop {
-                    match (components_a.next(), components_b.next()) {
-                        (Some(component_a), Some(component_b)) => {
-                            let a_is_file = components_a.peek().is_none() && entry_a.is_file();
-                            let b_is_file = components_b.peek().is_none() && entry_b.is_file();
-                            let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                                let name_a =
-                                    UniCase::new(component_a.as_os_str().to_string_lossy());
-                                let name_b =
-                                    UniCase::new(component_b.as_os_str().to_string_lossy());
-                                name_a.cmp(&name_b)
-                            });
-                            if !ordering.is_eq() {
-                                return ordering;
+            let settings: &ProjectPanelSettings = ProjectPanelSettings::get_global(cx);
+            match settings.sort_order {
+                ProjectPanelSortOrder::DirsFirst => {
+                    visible_worktree_entries.sort_by(|entry_a, entry_b| {
+                        let a_components: Vec<_> = entry_a.path.components().map(|c| c.as_os_str()).collect();
+                        let b_components: Vec<_> = entry_b.path.components().map(|c| c.as_os_str()).collect();
+            
+                        for (a_comp, b_comp) in a_components.iter().zip(b_components.iter()) {
+                            let a_is_dir = Path::new(a_comp).is_dir(); 
+                            let b_is_dir = Path::new(b_comp).is_dir();
+                            let a_is_dotfile = a_comp.to_string_lossy().starts_with('.') && Path::new(a_comp).extension().is_some(); 
+                            let b_is_dotfile = b_comp.to_string_lossy().starts_with('.') && Path::new(a_comp).extension().is_some();
+                
+                            match (a_is_dir, b_is_dir) {
+                                (true, false) => return Ordering::Less,
+                                (false, true) => return Ordering::Greater,
+                                _ => {
+                                    match (a_is_dotfile, b_is_dotfile) {
+                                        (true, false) => return Ordering::Less,
+                                        (false, true) => return Ordering::Greater,
+                                        _ => {
+                                            let order = a_comp.cmp(b_comp);
+                                            if order != Ordering::Equal {
+                                                return order;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
-                        (Some(_), None) => break Ordering::Greater,
-                        (None, Some(_)) => break Ordering::Less,
-                        (None, None) => break Ordering::Equal,
-                    }
+                        a_components.len().cmp(&b_components.len())
+                    });
                 }
-            });
+                _ => {
+                    visible_worktree_entries.sort_by(|entry_a, entry_b| { 
+                        let mut components_a = entry_a.path.components().peekable(); 
+                        let mut components_b = entry_b.path.components().peekable(); 
+                        loop { 
+                            match (components_a.next(), components_b.next()) { 
+                                (Some(component_a), Some(component_b)) => { 
+                                    let a_is_file = components_a.peek().is_none() && entry_a.is_file(); 
+                                    let b_is_file = components_b.peek().is_none() && entry_b.is_file(); 
+                                    let ordering = a_is_file.cmp(&b_is_file).then_with(|| { 
+                                        let name_a = 
+                                            UniCase::new(component_a.as_os_str().to_string_lossy()); 
+                                        let name_b = 
+                                            UniCase::new(component_b.as_os_str().to_string_lossy()); 
+                                        name_a.cmp(&name_b) 
+                                    }); 
+                                    if !ordering.is_eq() { 
+                                        return ordering; 
+                                    } 
+                                } 
+                                (Some(_), None) => break Ordering::Greater, 
+                                (None, Some(_)) => break Ordering::Less, 
+                                (None, None) => break Ordering::Equal, 
+                            } 
+                        } 
+                    }); 
+                }
+            }
+
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries));
         }
