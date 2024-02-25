@@ -219,12 +219,12 @@ pub async fn prepare_completion_documentation(
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
-                let mut t = text.clone();
-                if t.len() > max_name_len {
-                    t.truncate(max_name_len - 3);
-                    t.push_str("...");
+                let mut text = text.clone();
+                if text.len() > max_name_len {
+                    text.truncate(max_name_len - 3);
+                    text.push_str("...");
                 }
-                Documentation::SingleLine(t)
+                Documentation::SingleLine(text)
             } else {
                 Documentation::MultiLinePlainText(text.clone())
             }
@@ -233,13 +233,13 @@ pub async fn prepare_completion_documentation(
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
-                    let mut t = value.clone();
-                    if t.len() > max_name_len {
-                        t.truncate(max_name_len);
-                        t.push_str("...");
+                    let mut text = value.clone();
+                    if text.len() > max_name_len {
+                        text.truncate(max_name_len);
+                        text.push_str("...");
                     }
 
-                    Documentation::SingleLine(t)
+                    Documentation::SingleLine(text)
                 } else {
                     Documentation::MultiLinePlainText(value.clone())
                 }
