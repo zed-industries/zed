@@ -24,6 +24,7 @@ anyhow.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
 collections.workspace = true
+command_palette_hooks.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
