@@ -11010,6 +11010,7 @@ dependencies = [
  "async-compat",
  "async-trait",
  "collections",
+ "command_palette",
  "command_palette_hooks",
  "editor",
  "futures 0.3.28",

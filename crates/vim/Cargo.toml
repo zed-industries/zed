@@ -39,6 +39,7 @@ zed_actions.workspace = true
 schemars.workspace = true
 
 [dev-dependencies]
+command_palette.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
