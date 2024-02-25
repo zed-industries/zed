@@ -1,8 +1,9 @@
 use editor::Editor;
 use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView};
+use settings::Settings;
 use std::sync::Arc;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{item::ItemHandle, StatusItemView, Workspace, WorkspaceSettings};
 
 use crate::LanguageSelector;
 
@@ -38,26 +39,30 @@ impl ActiveBufferLanguage {
 impl Render for ActiveBufferLanguage {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         // Logic to hide in status bar
-        div().when_some(self.active_language.as_ref(), |el, active_language| {
-            let active_language_text = if let Some(active_language_text) = active_language {
-                active_language_text.to_string()
-            } else {
-                "Unknown".to_string()
-            };
-
-            el.child(
-                Button::new("change-language", active_language_text)
-                    .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, cx| {
-                        if let Some(workspace) = this.workspace.upgrade() {
-                            workspace.update(cx, |workspace, cx| {
-                                LanguageSelector::toggle(workspace, cx)
-                            });
-                        }
-                    }))
-                    .tooltip(|cx| Tooltip::text("Select Language", cx)),
-            )
-        })
+        div().when(
+            WorkspaceSettings::get_global(cx).show_active_langauge,
+            |div| {
+                div.when_some(self.active_language.as_ref(), |el, active_language| {
+                    let active_language_text = if let Some(active_language_text) = active_language {
+                        active_language_text.to_string()
+                    } else {
+                        "Unknown".to_string()
+                    };
+                    el.child(
+                        Button::new("change-language", active_language_text)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, cx| {
+                                if let Some(workspace) = this.workspace.upgrade() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        LanguageSelector::toggle(workspace, cx)
+                                    });
+                                }
+                            }))
+                            .tooltip(|cx| Tooltip::text("Select Language", cx)),
+                    )
+                })
+            },
+        )
     }
 }
 

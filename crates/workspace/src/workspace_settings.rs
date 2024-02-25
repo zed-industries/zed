@@ -10,6 +10,7 @@ pub struct WorkspaceSettings {
     pub show_status_bar: bool,
     pub show_feedback_icon: bool,
     pub show_cursor_position: bool,
+    pub show_active_langauge: bool,
     pub autosave: AutosaveSetting,
 }
 
@@ -47,6 +48,11 @@ pub struct WorkspaceSettingsContent {
     /// Default: true
     #[serde(default)]
     pub show_cursor_position: Option<bool>,
+    /// Whether or not to show the active language in status bar.
+    ///
+    /// Default: true
+    #[serde(default)]
+    pub show_active_langauge: Option<bool>,
     /// When to automatically save edited buffers.
     ///
     /// Default: off

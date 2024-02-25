@@ -1,6 +1,6 @@
 use crate::{workspace_settings::WorkspaceSettings, ItemHandle, Pane};
 use gpui::{
-    div, AnyView, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    AnyView, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
 use settings::Settings;
@@ -35,19 +35,17 @@ pub struct StatusBar {
 
 impl Render for StatusBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if !WorkspaceSettings::get_global(cx).show_status_bar {
-            return div();
-        }
-        h_flex()
-            .w_full()
-            .justify_between()
-            .gap_2()
-            .py_0p5()
-            .px_1()
-            .h_8()
-            .bg(cx.theme().colors().status_bar_background)
-            .child(self.render_left_tools(cx))
-            .child(self.render_right_tools(cx))
+        h_flex().when(WorkspaceSettings::get_global(cx).show_status_bar, |d| {
+            d.w_full()
+                .justify_between()
+                .gap_2()
+                .py_0p5()
+                .px_1()
+                .h_8()
+                .bg(cx.theme().colors().status_bar_background)
+                .child(self.render_left_tools(cx))
+                .child(self.render_right_tools(cx))
+        })
     }
 }
 

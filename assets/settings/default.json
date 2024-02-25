@@ -240,6 +240,8 @@
   "show_call_status_icon": true,
   // Whether the call feedback icon is shown in the os status bar.
   "show_feedback_icon": true,
+  // Whether the call active language is shown in the os status bar.
+  "show_active_langauge": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
   // When to automatically save edited buffers. This setting can
