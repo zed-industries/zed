@@ -331,9 +331,8 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
 
 fn undo(_: &mut Workspace, _: &Undo, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |_, editor, cx| {
-            editor.buffer().update(cx, |buffer, cx| buffer.undo(cx));
-        });
+        vim.update_active_editor(cx, |_, editor, cx| editor.undo(&editor::actions::Undo, cx));
+        vim.switch_mode(Mode::Visual, false, cx);
         vim.switch_mode(Mode::Normal, false, cx);
     })
 }
