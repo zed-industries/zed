@@ -485,30 +485,7 @@ fn init_paths() {
 
 fn init_logger() {
     if stdout_is_a_pty() {
-        Builder::new()
-            .parse_default_env()
-            .format(|buf, record| {
-                use env_logger::fmt::Color;
-
-                let subtle = buf
-                    .style()
-                    .set_color(Color::Black)
-                    .set_intense(true)
-                    .clone();
-                write!(buf, "{}", subtle.value("["))?;
-                write!(
-                    buf,
-                    "{} ",
-                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
-                )?;
-                write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
-                if let Some(path) = record.module_path() {
-                    write!(buf, " {}", path)?;
-                }
-                write!(buf, "{}", subtle.value("]"))?;
-                writeln!(buf, " {}", record.args())
-            })
-            .init();
+        init_stdout_logger();
     } else {
         let level = LevelFilter::Info;
 
@@ -521,19 +498,54 @@ fn init_logger() {
             let _ = std::fs::rename(&*paths::LOG, &*paths::OLD_LOG);
         }
 
-        let log_file = OpenOptions::new()
+        match OpenOptions::new()
             .create(true)
             .append(true)
             .open(&*paths::LOG)
-            .expect("could not open logfile");
+        {
+            Ok(log_file) => {
+                let config = ConfigBuilder::new()
+                    .set_time_format_str("%Y-%m-%dT%T%:z")
+                    .set_time_to_local(true)
+                    .build();
 
-        let config = ConfigBuilder::new()
-            .set_time_format_str("%Y-%m-%dT%T%:z")
-            .set_time_to_local(true)
-            .build();
-
-        simplelog::WriteLogger::init(level, config, log_file).expect("could not initialize logger");
+                simplelog::WriteLogger::init(level, config, log_file)
+                    .expect("could not initialize logger");
+            }
+            Err(_) => {
+                // Silently defaulting to use stdout logger in case of any error.
+                init_stdout_logger();
+            }
+        }
     }
+    log::debug!("testing debug");
+}
+
+fn init_stdout_logger() {
+    Builder::new()
+        .parse_default_env()
+        .format(|buf, record| {
+            use env_logger::fmt::Color;
+
+            let subtle = buf
+                .style()
+                .set_color(Color::White)
+                .set_intense(true)
+                .clone();
+            write!(buf, "{}", subtle.value("["))?;
+            write!(
+                buf,
+                "{} ",
+                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
+            )?;
+            write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
+            if let Some(path) = record.module_path() {
+                write!(buf, " {}", path)?;
+            }
+            write!(buf, "{}", subtle.value("]"))?;
+            writeln!(buf, " {}", record.args())
+        })
+        .init();
 }
 
 #[derive(Serialize, Deserialize)]

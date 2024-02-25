@@ -477,42 +477,54 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             cx.spawn(|workspace, mut cx| async move {
                 let (old_log, new_log) =
                     futures::join!(fs.load(&paths::OLD_LOG), fs.load(&paths::LOG));
-
-                let mut lines = VecDeque::with_capacity(MAX_LINES);
-                for line in old_log
-                    .iter()
-                    .flat_map(|log| log.lines())
-                    .chain(new_log.iter().flat_map(|log| log.lines()))
-                {
-                    if lines.len() == MAX_LINES {
-                        lines.pop_front();
+                let log = match (old_log, new_log) {
+                    (Err(_), Err(_)) => None,
+                    (old_log, new_log) => {
+                        let mut lines = VecDeque::with_capacity(MAX_LINES);
+                        for line in old_log
+                            .iter()
+                            .flat_map(|log| log.lines())
+                            .chain(new_log.iter().flat_map(|log| log.lines()))
+                        {
+                            if lines.len() == MAX_LINES {
+                                lines.pop_front();
+                            }
+                            lines.push_back(line);
+                        }
+                        Some(
+                            lines
+                                .into_iter()
+                                .flat_map(|line| [line, "\n"])
+                                .collect::<String>(),
+                        )
                     }
-                    lines.push_back(line);
-                }
-                let log = lines
-                    .into_iter()
-                    .flat_map(|line| [line, "\n"])
-                    .collect::<String>();
+                };
 
                 workspace
                     .update(&mut cx, |workspace, cx| {
-                        let project = workspace.project().clone();
-                        let buffer = project
-                            .update(cx, |project, cx| project.create_buffer("", None, cx))
-                            .expect("creating buffers on a local workspace always succeeds");
-                        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
+                        if let Some(log) = log {
+                            let project = workspace.project().clone();
+                            let buffer = project
+                                .update(cx, |project, cx| project.create_buffer("", None, cx))
+                                .expect("creating buffers on a local workspace always succeeds");
+                            buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
 
-                        let buffer = cx.new_model(|cx| {
-                            MultiBuffer::singleton(buffer, cx).with_title("Log".into())
-                        });
-                        workspace.add_item(
-                            Box::new(
-                                cx.new_view(|cx| {
+                            let buffer = cx.new_model(|cx| {
+                                MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                            });
+                            workspace.add_item(
+                                Box::new(cx.new_view(|cx| {
                                     Editor::for_multibuffer(buffer, Some(project), cx)
-                                }),
-                            ),
-                            cx,
-                        );
+                                })),
+                                cx,
+                            );
+                        } else {
+                            workspace.show_notification(1, cx, |cx| {
+                                cx.new_view(|_| {
+                                    MessageNotification::new("Unable to access/open log file.")
+                                })
+                            })
+                        }
                     })
                     .log_err();
             })
