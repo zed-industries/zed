@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::platform::PlatformWindow;
-use crate::{AnyWindowHandle, DisplayId, ClipboardItem, PlatformDisplay, WindowOptions};
+use crate::{AnyWindowHandle, ClipboardItem, DisplayId, PlatformDisplay, WindowOptions};
 
 pub trait Client {
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>);

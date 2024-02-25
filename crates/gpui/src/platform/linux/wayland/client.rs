@@ -10,8 +10,7 @@ use wayland_backend::protocol::WEnum;
 use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
 use wayland_client::{
-    delegate_noop,
-    event_created_child,
+    delegate_noop, event_created_child,
     protocol::{
         wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager,
         wl_data_offer, wl_data_source, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
@@ -32,15 +31,17 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use crate::platform::linux::client::Client;
-use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow, WaylandWindowState};
+use crate::platform::linux::wayland::clipboard::{self, Clipboard};
+use crate::platform::linux::wayland::window::{
+    WaylandDecorationState, WaylandWindow, WaylandWindowState,
+};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    AnyWindowHandle, DisplayId, ClipboardItem, KeyDownEvent,
-    KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, WindowOptions,
+    AnyWindowHandle, ClipboardItem, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
+    PlatformDisplay, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    WindowOptions,
 };
-use crate::platform::linux::wayland::clipboard::{self, Clipboard};
 
 const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
 
@@ -141,8 +142,7 @@ impl WaylandClient {
         let state = self.state.0.borrow();
         // todo!(linux): the unwrap() can be avoided after the event loop refactor
         let manager = state.data_device_manager.as_ref().unwrap();
-        let source = manager.create_data_source(&self.qh, ());
-        source
+        manager.create_data_source(&self.qh, ())
     }
 }
 
@@ -254,7 +254,7 @@ impl Client for WaylandClient {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.state.0.borrow();
-        state.clipboard.read(&self).map(|string| ClipboardItem::new(string))
+        state.clipboard.read(self).map(ClipboardItem::new)
     }
 }
 
@@ -819,13 +819,8 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientState {
     ) {
         let mut state = state.0.borrow_mut();
 
-        match event {
-            wl_data_device::Event::Selection { id } => {
-                if let Some(offer) = id {
-                    state.clipboard.receive_offer(offer.clone());
-                }
-            }
-            _ => {}
+        if let wl_data_device::Event::Selection { id: Some(offer) } = event {
+            state.clipboard.receive_offer(offer.clone());
         }
     }
 
@@ -845,11 +840,8 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientState {
     ) {
         let mut state = state.0.borrow_mut();
 
-        match event {
-            wl_data_offer::Event::Offer { mime_type } => {
-                state.clipboard.receive_mime_type(&mime_type);
-            }
-            _ => {}
+        if let wl_data_offer::Event::Offer { mime_type } = event {
+            state.clipboard.receive_mime_type(&mime_type);
         }
     }
 }
@@ -865,15 +857,11 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientState {
     ) {
         let mut state = state.0.borrow_mut();
 
-        match event {
-            wl_data_source::Event::Send { mime_type, fd } => {
-                state.clipboard.send_source(&mime_type, fd);
-            }
-            _ => {}
+        if let wl_data_source::Event::Send { mime_type, fd } = event {
+            state.clipboard.send_source(&mime_type, fd);
         }
     }
 }
-
 
 impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientState {
     fn event(

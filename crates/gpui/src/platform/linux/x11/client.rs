@@ -11,8 +11,8 @@ use crate::platform::{
     LinuxPlatformInner, PlatformWindow, X11Display, X11Window, X11WindowState, XcbAtoms,
 };
 use crate::{
-    AnyWindowHandle, Bounds, DisplayId, ClipboardItem, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
-    TouchPhase, WindowOptions,
+    AnyWindowHandle, Bounds, ClipboardItem, DisplayId, PlatformDisplay, PlatformInput, Point,
+    ScrollDelta, Size, TouchPhase, WindowOptions,
 };
 
 pub(crate) struct X11ClientState {
@@ -272,7 +272,7 @@ impl Client for X11Client {
     }
 
     //todo!(linux)
-    fn write_to_clipboard(&self, item: ClipboardItem) {}
+    fn write_to_clipboard(&self, _item: ClipboardItem) {}
 
     //todo!(linux)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {

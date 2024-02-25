@@ -1,13 +1,13 @@
 use std::io::Read;
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 
-use anyhow::{Result, bail};
-use filedescriptor::{Pipe, FileDescriptor};
+use anyhow::{bail, Result};
+use filedescriptor::{FileDescriptor, Pipe};
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
 use wayland_client::protocol::wl_data_source::WlDataSource;
 
-use crate::ClipboardItem;
 use super::WaylandClient;
+use crate::ClipboardItem;
 
 pub const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 
@@ -28,16 +28,16 @@ impl Clipboard {
         }
     }
 
-    pub fn receive_offer(self: &mut Self, offer: WlDataOffer) {
+    pub fn receive_offer(&mut self, offer: WlDataOffer) {
         self.offer = Some(offer);
         self.has_text = false;
     }
 
-    pub fn receive_mime_type(self: &mut Self, mime: &str) {
+    pub fn receive_mime_type(&mut self, mime: &str) {
         self.has_text = self.has_text || mime == TEXT_MIME_TYPE;
     }
 
-    pub fn send_source(self: &mut Self, mime_type: &str, fd: OwnedFd) {
+    pub fn send_source(&mut self, mime_type: &str, fd: OwnedFd) {
         if let Some(ref mut source_content) = self.source_content {
             let result = unsafe {
                 libc::write(
@@ -52,8 +52,10 @@ impl Clipboard {
         }
     }
 
-    pub fn read(self: &Self, client: &WaylandClient) -> Option<String> {
-        let Some(ref offer) = self.offer else { return None; };
+    pub fn read(&self, client: &WaylandClient) -> Option<String> {
+        let Some(ref offer) = self.offer else {
+            return None;
+        };
         let read_pipe = setup_offer_read(offer.clone()).unwrap();
 
         client.flush();
@@ -64,7 +66,7 @@ impl Clipboard {
         }
     }
 
-    pub fn write(self: &mut Self, source: WlDataSource, item: ClipboardItem) {
+    pub fn write(&mut self, source: WlDataSource, item: ClipboardItem) {
         self.source = Some(source);
         self.source_content = Some(item.text);
     }
@@ -72,7 +74,9 @@ impl Clipboard {
 
 fn setup_offer_read(offer: wl_data_offer::WlDataOffer) -> anyhow::Result<FileDescriptor> {
     let pipe = Pipe::new().map_err(anyhow::Error::msg)?;
-    offer.receive(TEXT_MIME_TYPE.to_string(), unsafe { BorrowedFd::borrow_raw(pipe.write.as_raw_fd()) });
+    offer.receive(TEXT_MIME_TYPE.to_string(), unsafe {
+        BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+    });
     Ok(pipe.read)
 }
 
@@ -92,7 +96,7 @@ fn read_pipe_with_timeout(mut file: FileDescriptor) -> Result<String> {
     loop {
         if unsafe { libc::poll(&mut pfd, 1, 1000) == 1 } {
             match file.read(&mut buf) {
-                Ok(size) if size == 0 => {
+                Ok(0) => {
                     break;
                 }
                 Ok(size) => {
