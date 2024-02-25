@@ -19,7 +19,7 @@ log.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-shellexpand = "2.1.0"
+shellexpand.workspace = true
 util.workspace = true
 workspace.workspace = true
 
