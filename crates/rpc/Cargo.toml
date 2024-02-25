@@ -18,7 +18,6 @@ anyhow.workspace = true
 async-lock = "2.4"
 async-tungstenite = "0.16"
 base64 = "0.13"
-clock.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui = { workspace = true, optional = true }
@@ -29,7 +28,6 @@ rsa = "0.4"
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-smol-timeout = "0.6"
 strum.workspace = true
 tracing = { version = "0.1.34", features = ["log"] }
 util.workspace = true
@@ -39,9 +37,6 @@ zstd = "0.11"
 prost-build = "0.9"
 
 [dev-dependencies]
-collections = { workspace = true, features = ["test-support"] }
-ctor.workspace = true
+collections.workspace = true
 env_logger.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
-smol.workspace = true
-tempfile.workspace = true
+gpui.workspace = true
