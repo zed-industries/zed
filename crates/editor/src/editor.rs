@@ -88,6 +88,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
+use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -443,7 +444,8 @@ pub struct EditorSnapshot {
 }
 
 pub struct GutterDimensions {
-    pub padding: Pixels,
+    pub left_padding: Pixels,
+    pub right_padding: Pixels,
     pub width: Pixels,
     pub margin: Pixels,
 }
@@ -451,7 +453,8 @@ pub struct GutterDimensions {
 impl Default for GutterDimensions {
     fn default() -> Self {
         Self {
-            padding: Pixels::ZERO,
+            left_padding: Pixels::ZERO,
+            right_padding: Pixels::ZERO,
             width: Pixels::ZERO,
             margin: Pixels::ZERO,
         }
@@ -4058,7 +4061,8 @@ impl Editor {
         if self.available_code_actions.is_some() {
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
-                    .icon_size(IconSize::Small)
+                    .icon_size(IconSize::XSmall)
+                    .size(ui::ButtonSize::None)
                     .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(|editor, _e, cx| {
@@ -9636,23 +9640,50 @@ impl EditorSnapshot {
         max_line_number_width: Pixels,
         cx: &AppContext,
     ) -> GutterDimensions {
-        if self.show_gutter {
-            let descent = cx.text_system().descent(font_id, font_size);
-            let gutter_padding_factor = 4.0;
-            let gutter_padding = (em_width * gutter_padding_factor).round();
+        if !self.show_gutter {
+            return GutterDimensions::default();
+        }
+        let descent = cx.text_system().descent(font_id, font_size);
+
+        let show_git_gutter = matches!(
+            ProjectSettings::get_global(cx).git.git_gutter,
+            Some(GitGutterSetting::TrackedFiles)
+        );
+        let gutter_settings = EditorSettings::get_global(cx).gutter;
+
+        let line_gutter_width = if gutter_settings.line_numbers {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
             let min_width_for_number_on_gutter = em_width * 4.0;
-            let gutter_width =
-                max_line_number_width.max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
-            let gutter_margin = -descent;
-
-            GutterDimensions {
-                padding: gutter_padding,
-                width: gutter_width,
-                margin: gutter_margin,
-            }
+            max_line_number_width.max(min_width_for_number_on_gutter)
         } else {
-            GutterDimensions::default()
+            0.0.into()
+        };
+
+        let left_padding = if gutter_settings.code_actions {
+            em_width * 3.0
+        } else if show_git_gutter && gutter_settings.line_numbers {
+            em_width * 2.0
+        } else if show_git_gutter || gutter_settings.line_numbers {
+            em_width
+        } else {
+            px(0.)
+        };
+
+        let right_padding = if gutter_settings.folds && gutter_settings.line_numbers {
+            em_width * 4.0
+        } else if gutter_settings.folds {
+            em_width * 3.0
+        } else if gutter_settings.line_numbers {
+            em_width
+        } else {
+            px(0.)
+        };
+
+        GutterDimensions {
+            left_padding,
+            right_padding,
+            width: line_gutter_width + left_padding + right_padding,
+            margin: -descent,
         }
     }
 }
@@ -10159,9 +10190,14 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
             .group(group_id.clone())
             .relative()
             .size_full()
-            .pl(cx.gutter_width)
-            .w(cx.max_width + cx.gutter_width)
-            .child(div().flex().w(cx.anchor_x - cx.gutter_width).flex_shrink())
+            .pl(cx.gutter_dimensions.width)
+            .w(cx.max_width + cx.gutter_dimensions.width)
+            .child(
+                div()
+                    .flex()
+                    .w(cx.anchor_x - cx.gutter_dimensions.width)
+                    .flex_shrink(),
+            )
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,

@@ -140,6 +140,14 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  "gutter": {
+    // Whether to show line numbers in the gutter.
+    "line_numbers": true,
+    // Whether to show code action buttons in the gutter.
+    "code_actions": true,
+    // Whether to show fold buttons in the gutter.
+    "folds": true
+  },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
   "relative_line_numbers": false,

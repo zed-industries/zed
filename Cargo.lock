@@ -1911,6 +1911,7 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tungstenite",
  "chrono",
+ "clock",
  "collections",
  "db",
  "feature_flags",
@@ -1948,6 +1949,8 @@ dependencies = [
 name = "clock"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "parking_lot 0.11.2",
  "smallvec",
 ]
 
@@ -11732,6 +11735,7 @@ dependencies = [
  "bincode",
  "call",
  "client",
+ "clock",
  "collections",
  "db",
  "derive_more",
@@ -11956,6 +11960,7 @@ dependencies = [
  "chrono",
  "cli",
  "client",
+ "clock",
  "collab_ui",
  "collections",
  "command_palette",
