@@ -32,7 +32,6 @@ derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-install_cli.workspace = true
 itertools = "0.10"
 language.workspace = true
 lazy_static.workspace = true
@@ -44,12 +43,10 @@ project.workspace = true
 task.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 sqlez.workspace = true
-terminal.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -62,6 +59,5 @@ db = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-indoc.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }

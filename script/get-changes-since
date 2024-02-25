@@ -2,7 +2,7 @@
 
 const { execFileSync } = require("child_process");
 const { GITHUB_ACCESS_TOKEN } = process.env;
-const PR_REGEX = /#\d+/ // Ex: matches on #4241
+const PR_REGEX = /#\d+/; // Ex: matches on #4241
 const FIXES_REGEX = /(fixes|closes|completes) (.+[/#]\d+.*)$/im;
 
 main();
@@ -10,7 +10,7 @@ main();
 async function main() {
   // Use form of: YYYY-MM-DD - 2023-01-09
   const startDate = new Date(process.argv[2]);
-  const today = new Date()
+  const today = new Date();
 
   console.log(`Changes from ${startDate} to ${today}\n`);
 
@@ -32,10 +32,9 @@ async function main() {
     console.log("*", pullRequest.title);
     console.log("  PR URL:    ", webURL);
     console.log("  Merged:    ", pullRequest.merged_at);
-    console.log()
+    console.log();
   }
 }
-
 
 function getPullRequestNumbers(startDate, endDate) {
   const sinceDate = startDate.toISOString();
@@ -43,21 +42,16 @@ function getPullRequestNumbers(startDate, endDate) {
 
   const pullRequestNumbers = execFileSync(
     "git",
-    [
-      "log",
-      `--since=${sinceDate}`,
-      `--until=${untilDate}`,
-      "--oneline"
-    ],
-    { encoding: "utf8" }
+    ["log", `--since=${sinceDate}`, `--until=${untilDate}`, "--oneline"],
+    { encoding: "utf8" },
   )
     .split("\n")
-    .filter(line => line.length > 0)
-    .map(line => {
+    .filter((line) => line.length > 0)
+    .map((line) => {
       const match = line.match(/#(\d+)/);
       return match ? match[1] : null;
     })
-    .filter(line => line);
+    .filter((line) => line);
 
   return pullRequestNumbers;
 }

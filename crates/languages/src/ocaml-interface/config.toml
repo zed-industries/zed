@@ -7,8 +7,5 @@ brackets = [
   { start = "{", end = "}", close = true, newline = true },
   { start = "<", end = ">", close = true, newline = true },
   { start = "[", end = "]", close = true, newline = true },
-  { start = "(", end = ")", close = true, newline = true },
-  { start = "sig", end = " end", close = true, newline = true },
-  # HACK: For some reason `object` alone does not work
-  { start = "object ", end = "end", close = true, newline = true },
+  { start = "(", end = ")", close = true, newline = true }
 ]
