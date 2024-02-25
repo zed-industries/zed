@@ -47,11 +47,10 @@ use language::{
     PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
-use lsp::{notification::Notification, ServerStatus};
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf,
+    MessageActionItem, OneOf, ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -70,7 +69,6 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use std::{
-    borrow::Borrow,
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -3203,25 +3201,55 @@ impl Project {
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token.clone();
 
+        // Log LSP messages under experimental/serverStatus and display pop-up for errors
         language_server
-            .on_notification::<ServerStatus, _>(move |params, mut xs| {
-                match params.health.as_str() {
-                    "ok" => log::info!("Health: {}", params.health),
-                    "warning" => {
-                        log::warn!(
-                            "Health: {}.\nMessage: {}",
-                            params.health,
-                            params.message.unwrap_or_default()
-                        )
+            .on_notification::<ServerStatus, _>({
+                let this = this.clone();
+                let name = name.to_string();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    let name = name.to_string();
+                    match params.health.as_str() {
+                        "ok" => {
+                            log::info!("Health: {}", params.health);
+                        }
+                        "warning" => {
+                            log::warn!(
+                                "Health: {}.\nMessage: {}",
+                                params.health,
+                                params.message.unwrap_or_default()
+                            );
+                        }
+                        "error" => {
+                            log::error!(
+                                "Health: {}.\nMessage: {}",
+                                params.health,
+                                params.message.clone().unwrap_or_default()
+                            );
+                            let (tx, _rx) = smol::channel::bounded(1);
+                            let request = LanguageServerPromptRequest {
+                                level: match params.health.as_str() {
+                                    "error" => PromptLevel::Critical,
+                                    "warning" => PromptLevel::Warning,
+                                    "ok" => PromptLevel::Info,
+                                    _ => PromptLevel::Info,
+                                },
+                                message: params.message.unwrap_or_default(),
+                                actions: Vec::new(),
+                                response_channel: tx,
+                                lsp_name: name.clone(),
+                            };
+
+                            let _ = this
+                                .update(&mut cx, |_, cx| {
+                                    cx.emit(Event::LanguageServerPrompt(request));
+                                })
+                                .ok();
+                        }
+                        _ => {
+                            log::info!("Uncaught health status");
+                        } // this shouldn't occur as health is only 1 of the 3 statuses.
                     }
-                    "error" => {
-                        log::error!(
-                            "Health: {}.\nMessage: {}",
-                            params.health,
-                            params.message.unwrap_or_default()
-                        )
-                    }
-                    _ => log::info!("Uncaught health status"), // this shouldn't occur as health is only 1 of the 3 statuses.
                 }
             })
             .detach();
