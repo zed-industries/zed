@@ -1,3 +1,6 @@
+// Keep all event handlers in the format `match event { ... }`, easier for readability.
+#![allow(clippy::single_match)]
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,7 +34,7 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use crate::platform::linux::client::Client;
-use crate::platform::linux::wayland::clipboard::{self, Clipboard};
+use crate::platform::linux::wayland::clipboard::{Clipboard, DataOffer};
 use crate::platform::linux::wayland::window::{
     WaylandDecorationState, WaylandWindow, WaylandWindowState,
 };
@@ -55,6 +58,7 @@ pub(crate) struct WaylandClientStateInner {
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     data_device: Option<wl_data_device::WlDataDevice>,
+    data_offers: hashlru::Cache<ObjectId, DataOffer>,
     fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
     platform_inner: Rc<LinuxPlatformInner>,
@@ -99,6 +103,8 @@ impl WaylandClient {
             decoration_manager: None,
             data_device_manager: None,
             data_device: None,
+            // At most 3 concurrent offers: primary selection, clipboard selection, DnD
+            data_offers: hashlru::Cache::new(3),
             fractional_scale_manager: None,
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
@@ -241,15 +247,15 @@ impl Client for WaylandClient {
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         let source = self.create_data_source();
-        source.offer(clipboard::TEXT_MIME_TYPE.to_owned());
-
         let mut state = &mut self.state.0.borrow_mut();
+
+        state.clipboard.prepare_source(&source);
 
         if let Some(ref device) = state.data_device {
             device.set_selection(Some(&source), state.serial);
         }
 
-        state.clipboard.write(source, item);
+        state.clipboard.set_source(source, item);
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
@@ -819,8 +825,20 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientState {
     ) {
         let mut state = state.0.borrow_mut();
 
-        if let wl_data_device::Event::Selection { id: Some(offer) } = event {
-            state.clipboard.receive_offer(offer.clone());
+        match event {
+            wl_data_device::Event::DataOffer { id: offer } => {
+                state.data_offers.insert(offer.id(), DataOffer::new(offer));
+            }
+            wl_data_device::Event::Selection { id: offer } => {
+                if let Some(offer) = offer {
+                    let offer = state.data_offers.peek(&offer.id());
+                    let offer = offer.cloned();
+                    state.clipboard.set_offer(offer);
+                } else {
+                    state.clipboard.set_offer(None);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -840,8 +858,15 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientState {
     ) {
         let mut state = state.0.borrow_mut();
 
-        if let wl_data_offer::Event::Offer { mime_type } = event {
-            state.clipboard.receive_mime_type(&mime_type);
+        match event {
+            wl_data_offer::Event::Offer { mime_type } => {
+                if let Some(id) = state.data_offers.mru() {
+                    let id = id.clone();
+                    let mut offer = state.data_offers.peek_mut(&id).unwrap();
+                    offer.add_mime_type(mime_type);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -857,8 +882,14 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientState {
     ) {
         let mut state = state.0.borrow_mut();
 
-        if let wl_data_source::Event::Send { mime_type, fd } = event {
-            state.clipboard.send_source(&mime_type, fd);
+        match event {
+            wl_data_source::Event::Send { mime_type, fd } => {
+                state.clipboard.send_source(&mime_type, fd);
+            }
+            wl_data_source::Event::Cancelled => {
+                state.clipboard.destroy_source();
+            }
+            _ => {}
         }
     }
 }

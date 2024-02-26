@@ -4159,6 +4159,7 @@ dependencies = [
  "foreign-types 0.5.0",
  "futures 0.3.28",
  "gpui_macros",
+ "hashlru",
  "image",
  "itertools 0.10.5",
  "lazy_static",
@@ -4287,6 +4288,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8094feaf31ff591f651a2664fb9cfd92bba7a60ce3197265e9482ebe753c8f7"
 dependencies = [
  "hashbrown 0.14.0",
+]
+
+[[package]]
+name = "hashlru"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec243be29f0218c651d6dc31eafb562c4363b2e96cd42a92b6948964d28f4c5a"
+dependencies = [
+ "hashbrown 0.13.2",
 ]
 
 [[package]]
