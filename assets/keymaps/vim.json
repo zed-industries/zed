@@ -32,7 +32,7 @@
       "l": "vim::Right",
       "right": "vim::Right",
       "space": "vim::Space",
-      "$": "vim::EndOfLine",
+      "$": "vim::EndOfLineDownward",
       "^": "vim::FirstNonWhitespace",
       "_": "vim::StartOfLineDownward",
       "g _": "vim::EndOfLineDownward",
