@@ -36,6 +36,12 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub file_scan_exclusions: Option<Vec<String>>,
 
+    // #[serde(default)]
+    pub ui_font_size: i32,
+
+    // #[serde(default)]
+    pub buffer_font_size: i32,
+
     /// Treat the files matching these globs as `.env` files.
     /// Default: [ "**/.env*" ]
     pub private_files: Option<Vec<String>>,

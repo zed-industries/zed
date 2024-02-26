@@ -93,6 +93,7 @@ use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
+use schemars::_private::NoSerialize;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
@@ -110,7 +111,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use schemars::_private::NoSerialize;
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
@@ -777,50 +777,37 @@ impl CompletionsMenu {
         }
 
         let mut completions = completions.clone();
-        {
-            let completion_indices: Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
+        // {
+        //     let completion_indices: Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
 
-            let mut completions_guard = completions.write(); // Assuming a RwLock or similar
-            for completion_index in completion_indices {
-                let completion = &mut completions_guard[completion_index];
+        //     let mut completions_guard = completions.write(); // Assuming a RwLock or similar
+        //     for completion_index in completion_indices {
+        //         let completion = &mut completions_guard[completion_index];
 
-                // Check if documentation exists, skip otherwise.
-                if completion.documentation.is_some() {
-                    continue;
-                }
+        //         // Check if documentation exists, skip otherwise.
+        //         if completion.documentation.is_some() {
+        //             continue;
+        //         }
 
-                // Direct modification of the object within the collection.
-                let ui_font_size = settings.ui_font_size;
-                completion.label.text = "LABEL PLACEHOLDER...".to_string();
-                //PICK UP FROM HERE
-                //ELLIPSIS TRUNCATION SHOULD HAPPEN HERE
+        //         // Direct modification of the object within the collection.
+        //         let ui_font_size = settings.ui_font_size;
+        //         completion.label.text = "LABEL PLACEHOLDER...".to_string();
+        //         //PICK UP FROM HERE
+        //         //ELLIPSIS TRUNCATION SHOULD HAPPEN HERE
 
+        //         // let max_completion_len = 45;
+        //         // if lsp_completion.label.len() > max_completion_len {
+        //         //     lsp_completion.label.truncate(max_completion_len - 3);
+        //         //     lsp_completion.label.push_str("...");
+        //         // }
 
-                // let max_completion_len = 45;
-                // if lsp_completion.label.len() > max_completion_len {
-                //     lsp_completion.label.truncate(max_completion_len - 3);
-                //     lsp_completion.label.push_str("...");
-                // }
+        //         // // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
+        //         // if language.name().to_string().as_str() == "Python" {
+        //         //     lsp_completion.label.push_str("               ");
+        //         // }
+        //     }
+        // }
 
-                // // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
-                // if language.name().to_string().as_str() == "Python" {
-                //     lsp_completion.label.push_str("               ");
-                // }
-            }
-        }
-        {
-            let completion_indices:Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
-
-            for completion_index in completion_indices {
-                let completions_guard = completions.read();
-                let completion = &completions_guard[completion_index];
-                if completion.documentation.is_some() {
-                    continue;
-                }
-                let mut completion = completion.lsp_completion.clone();
-                drop(completions_guard);
-            }
-        }
         let Some(provider) = editor.completion_provider.as_ref() else {
             return Task::ready(());
         };
@@ -3307,10 +3294,7 @@ impl Editor {
                             .iter()
                             .enumerate()
                             .map(|(id, completion)| {
-                                StringMatchCandidate::new(
-                                    id,
-                                    completion.label.text.clone().into(),
-                                )
+                                StringMatchCandidate::new(id, completion.label.text.clone().into())
                             })
                             .collect(),
                         buffer,

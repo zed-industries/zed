@@ -1,7 +1,7 @@
 use crate::{
-    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
-    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
-    MarkupContent, Project, ProjectTransaction, ResolveState,
+    project_settings::ProjectSettings, DocumentHighlight, Hover, HoverBlock, HoverBlockKind,
+    InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip,
+    Location, LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -20,6 +20,7 @@ use lsp::{
     CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
     OneOf, ServerCapabilities,
 };
+use settings::Settings;
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
@@ -1472,6 +1473,11 @@ impl LspCommand for GetCompletions {
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
             let mut range_for_token = None;
+            let settings = ProjectSettings::get_global(cx);
+
+            println!("THE BUFFER TEXT SIZE IS {}", settings.buffer_font_size);
+            println!("THE UI TEXT SIZE IS {}", settings.ui_font_size);
+
             completions
                 .into_iter()
                 .filter_map(move |mut lsp_completion| {
@@ -1552,10 +1558,21 @@ impl LspCommand for GetCompletions {
 
                     let language_registry = language_registry.clone();
                     let language = language.clone();
+
                     LineEnding::normalize(&mut new_text);
                     Some(async move {
                         let mut label = None;
                         if let Some(language) = language.as_ref() {
+                            let max_completion_len = 45;
+                            if lsp_completion.label.len() > max_completion_len {
+                                lsp_completion.label.truncate(max_completion_len - 3);
+                                lsp_completion.label.push_str("...");
+                            }
+
+                            // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
+                            if language.name().to_string().as_str() == "Python" {
+                                lsp_completion.label.push_str("               ");
+                            }
                             language.process_completion(&mut lsp_completion).await;
                             label = language.label_for_completion(&lsp_completion).await;
                         }
