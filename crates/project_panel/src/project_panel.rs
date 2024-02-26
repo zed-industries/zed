@@ -505,7 +505,7 @@ impl ProjectPanel {
             .filter(|e| e.path.parent() == Some(&entry.path))
             .collect();
 
-        return children_count.len() <= 1 && (children_count.is_empty() || children_count[0].is_dir());
+        children_count.len() <= 1 && (children_count.is_empty() || children_count[0].is_dir())
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
@@ -874,7 +874,7 @@ impl ProjectPanel {
             while let Some(path) = parent_path {
                 if let Some(parent_entry) = worktree.entry_for_path(path) {
                     let children_count = worktree
-                        .entries(false)
+                        .entries(true)
                         .filter(|e| e.path.parent() == Some(path))
                         .count();
 
@@ -1314,18 +1314,19 @@ impl ProjectPanel {
     }
 
     fn should_omit_entry(snapshot: Snapshot, entry: &Entry) -> bool {
-        let mut children_iter = snapshot.entries(true).into_iter().filter(|e| {
-            if let Some(parent) = e.path.parent() {
-                parent == &*entry.path
-            } else {
-                false
+        if let Some(root_path) = snapshot.root_entry() {
+            if entry.path == root_path.path {
+                return false;
             }
-        });
-
-        match children_iter.next() {
-            Some(child) => children_iter.next().is_none() && child.kind.is_dir(),
-            None => false,
         }
+
+        let children: Vec<&Entry> = snapshot
+            .entries(true)
+            .into_iter()
+            .filter(|e| e.path.parent() == Some(&entry.path))
+            .collect();
+
+        children.len() == 1 && children[0].kind.is_dir()
     }
 
     fn expand_entry(
@@ -2160,7 +2161,7 @@ mod tests {
 
         toggle_expand_dir(
             &panel,
-            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3/nested_dir_4",
+            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3/nested_dir_4/nested_dir_5",
             cx,
         );
         assert_eq!(
