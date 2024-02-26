@@ -3246,6 +3246,7 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
         let completions = provider.completions(&buffer, buffer_position, cx);
+
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
             async move {
@@ -3300,7 +3301,6 @@ impl Editor {
                                 });
                         })
                         .ok();
-
                         Some(menu)
                     }
                 } else {
@@ -3347,6 +3347,7 @@ impl Editor {
 
         self.completion_tasks.push((id, task));
     }
+
     pub fn confirm_completion(
         &mut self,
         action: &ConfirmCompletion,

@@ -1475,8 +1475,9 @@ impl LspCommand for GetCompletions {
             let mut range_for_token = None;
             let settings = ProjectSettings::get_global(cx);
 
+            let buffer_font_size = settings.buffer_font_size;
             println!("THE BUFFER TEXT SIZE IS {}", settings.buffer_font_size);
-            println!("THE UI TEXT SIZE IS {}", settings.ui_font_size);
+            // println!("THE UI TEXT SIZE IS {}", settings.ui_font_size);
 
             completions
                 .into_iter()
@@ -1563,7 +1564,12 @@ impl LspCommand for GetCompletions {
                     Some(async move {
                         let mut label = None;
                         if let Some(language) = language.as_ref() {
-                            let max_completion_len = 45;
+                            // let max_completion_len = 45
+                            //     .min(10.max((-2.8333 * buffer_font_size as f32 + 87.0) as i32))
+                            //     as usize;
+
+                            let max_completion_len =
+                                10.max((-2.8333 * buffer_font_size as f32 + 87.0) as i32) as usize;
                             if lsp_completion.label.len() > max_completion_len {
                                 lsp_completion.label.truncate(max_completion_len - 3);
                                 lsp_completion.label.push_str("...");
