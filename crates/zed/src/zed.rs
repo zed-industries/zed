@@ -502,29 +502,31 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 
                 workspace
                     .update(&mut cx, |workspace, cx| {
-                        if let Some(log) = log {
-                            let project = workspace.project().clone();
-                            let buffer = project
-                                .update(cx, |project, cx| project.create_buffer("", None, cx))
-                                .expect("creating buffers on a local workspace always succeeds");
-                            buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
-
-                            let buffer = cx.new_model(|cx| {
-                                MultiBuffer::singleton(buffer, cx).with_title("Log".into())
-                            });
-                            workspace.add_item(
-                                Box::new(cx.new_view(|cx| {
-                                    Editor::for_multibuffer(buffer, Some(project), cx)
-                                })),
-                                cx,
-                            );
-                        } else {
-                            workspace.show_notification(1, cx, |cx| {
+                        let Some(log) = log else {
+                            workspace.show_notification(29, cx, |cx| {
                                 cx.new_view(|_| {
                                     MessageNotification::new("Unable to access/open log file.")
                                 })
-                            })
-                        }
+                            });
+                            return;
+                        };
+                        let project = workspace.project().clone();
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer("", None, cx))
+                            .expect("creating buffers on a local workspace always succeeds");
+                        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
+
+                        let buffer = cx.new_model(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                        });
+                        workspace.add_item(
+                            Box::new(
+                                cx.new_view(|cx| {
+                                    Editor::for_multibuffer(buffer, Some(project), cx)
+                                }),
+                            ),
+                            cx,
+                        );
                     })
                     .log_err();
             })

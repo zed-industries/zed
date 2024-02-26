@@ -518,7 +518,6 @@ fn init_logger() {
             }
         }
     }
-    log::debug!("testing debug");
 }
 
 fn init_stdout_logger() {
