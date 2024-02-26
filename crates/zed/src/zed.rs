@@ -28,6 +28,7 @@ use settings::{
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::{oneshot_source::OneshotSource, static_source::StaticSource};
+use tasks_ui::TestSource;
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -162,13 +163,15 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 app_state.fs.clone(),
                 paths::TASKS.clone(),
             );
+
             let static_source = StaticSource::new(tasks_file_rx, cx);
             let oneshot_source = OneshotSource::new(cx);
-
+            let tests_source = TestSource::new(project.downgrade(), cx);
             project.update(cx, |project, cx| {
                 project.task_inventory().update(cx, |inventory, cx| {
                     inventory.add_source(oneshot_source, cx);
                     inventory.add_source(static_source, cx);
+                    inventory.add_source(tests_source, cx);
                 })
             });
         }

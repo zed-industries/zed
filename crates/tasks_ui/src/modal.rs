@@ -7,7 +7,7 @@ use gpui::{
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use project::Inventory;
+use project::{Inventory, Item};
 use task::{oneshot_source::OneshotSource, Task};
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable, WindowContext};
 use util::ResultExt;
@@ -127,10 +127,30 @@ impl PickerDelegate for TasksModalDelegate {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
+                    let editor = picker
+                        .delegate
+                        .workspace
+                        .update(cx, |this, cx| this.active_item_as::<editor::Editor>(cx))
+                        .ok()
+                        .flatten();
+                    let path = (|| {
+                        Some(
+                            editor?
+                                .read(cx)
+                                .buffer()
+                                .read(cx)
+                                .as_singleton()
+                                .unwrap()
+                                .read(cx)
+                                .project_path(cx)?
+                                .path,
+                        )
+                    })();
+                    let path = path.as_deref();
                     picker.delegate.candidates = picker
                         .delegate
                         .inventory
-                        .update(cx, |inventory, cx| inventory.list_tasks(None, cx));
+                        .update(cx, |inventory, cx| inventory.list_tasks(path, cx));
                     picker
                         .delegate
                         .candidates

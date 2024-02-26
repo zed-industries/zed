@@ -7,6 +7,8 @@ use util::ResultExt;
 use workspace::Workspace;
 
 mod modal;
+mod tests_source;
+pub use tests_source::TestSource;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(

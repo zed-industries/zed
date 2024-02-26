@@ -9242,6 +9242,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "db",
+ "editor",
  "fs",
  "futures 0.3.28",
  "fuzzy",
