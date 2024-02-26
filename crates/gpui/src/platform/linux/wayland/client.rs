@@ -613,11 +613,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                             return;
                                         }
 
-                                        state
-                                            .keyboard_focused_window
-                                            .as_ref()
-                                            .unwrap()
-                                            .handle_input(input.clone());
+                                        let focused_window = &state.keyboard_focused_window;
+                                        let Some(focused_window) = focused_window else {
+                                            return;
+                                        };
+                                        let focused_window = focused_window.clone();
+
+                                        drop(state);
+
+                                        focused_window.handle_input(input.clone());
 
                                         wait_time = Duration::from_millis(1000 / rate as u64);
                                     }
