@@ -110,10 +110,6 @@ impl InvalidationStrategy {
             InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited
         )
     }
-
-    fn is_buffer_edited(&self) -> bool {
-        matches!(self, InvalidationStrategy::BufferEdited)
-    }
 }
 
 impl TasksForRanges {
@@ -369,10 +365,8 @@ impl InlayHintCache {
         let cache_version = self.version + 1;
         let refresh_debounce_duration = self.refresh_debounce_duration;
         self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
-            if invalidate.is_buffer_edited() {
-                if let Some(debounce_duration) = refresh_debounce_duration {
-                    cx.background_executor().timer(debounce_duration).await;
-                }
+            if let Some(debounce_duration) = refresh_debounce_duration {
+                cx.background_executor().timer(debounce_duration).await;
             }
 
             editor
