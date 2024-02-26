@@ -2837,14 +2837,7 @@ pub mod tests {
                 assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scrolled buffer");
             }).unwrap();
 
-        cx.executor().advance_clock(Duration::from_millis(
-            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
-        ));
-        cx.executor().run_until_parked();
-        editor_edited.store(true, Ordering::SeqCst);
-        // We split these changes up in two `editor.updates` with corresponding `cx.executor().run_until_parked()`
-        // because if we do both changes in the same `editor.update` the 2 callbacks to refresh inlay hints
-        // won't both be completed: the 2nd one will cancel the first one and only 2nd one will update.
+        editor_edited.store(true, Ordering::Release);
         editor
             .update(cx, |editor, cx| {
                 editor.change_selections(None, cx, |s| {

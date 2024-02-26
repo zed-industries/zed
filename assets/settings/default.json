@@ -169,7 +169,9 @@
     "show_type_hints": true,
     "show_parameter_hints": true,
     // Corresponds to null/None LSP hint type value.
-    "show_other_hints": true
+    "show_other_hints": true,
+    // Time to wait after editing the buffer, before requesting the hints.
+    "default_debounce_ms": 700
   },
   "project_panel": {
     // Default width of the project panel.
