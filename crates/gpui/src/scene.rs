@@ -3,7 +3,7 @@ mod primitives;
 use crate::{
     AtlasTextureId, BoundsSearchResult, BoundsTree, EntityId, Point, ScaledPixels, SharedString,
 };
-use collections::{FxHashMap, FxHashSet, HashMap};
+use collections::{FxHashMap, FxHashSet};
 pub use primitives::*;
 use std::{cmp::Reverse, fmt::Debug, iter::Peekable, slice};
 
@@ -110,8 +110,8 @@ impl Scene {
         self.quads.insert(
             Quad { order, ..quad },
             quad.background.is_opaque(),
-            hover,
-            group_hover,
+            hover.map(|quad| Quad { order, ..quad }),
+            group_hover.map(|(group_id, quad)| (group_id, quad.map(|quad| Quad { order, ..quad }))),
         );
         Some(order)
     }
@@ -379,7 +379,7 @@ pub(crate) struct PrimitiveSet<P> {
     primitive_metadata: FxHashMap<usize, PrimitiveMetadata<P>>,
 }
 
-impl<P> PrimitiveSet<P> {
+impl<P: Debug> PrimitiveSet<P> {
     /// Returns the number of primitives in the set.
     pub(crate) fn len(&self) -> usize {
         self.primitives.len()
@@ -390,6 +390,7 @@ impl<P> PrimitiveSet<P> {
     /// # Arguments
     ///
     /// * `primitive` - The primitive to insert.
+    /// * `occludes_hover` - A boolean indicating if the primitive occludes hover state.
     /// * `hover` - An optional hover state for the primitive.
     /// * `group_hover` - An optional group hover state for the primitive, with an associated shared string.
     fn insert(
@@ -441,7 +442,7 @@ impl<P> Default for PrimitiveSet<P> {
     fn default() -> Self {
         Self {
             primitives: Vec::new(),
-            primitive_metadata: HashMap::default(),
+            primitive_metadata: FxHashMap::default(),
         }
     }
 }

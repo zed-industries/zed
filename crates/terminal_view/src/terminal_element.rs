@@ -133,7 +133,7 @@ impl LayoutRect {
         )
         .into();
 
-        cx.paint_quad(fill(Bounds::new(position, size), self.color));
+        cx.paint_quad(fill(Bounds::new(position, size), self.color), None);
     }
 }
 
@@ -782,7 +782,7 @@ impl Element for TerminalElement {
     ) {
         let mut layout = self.compute_layout(bounds, cx);
 
-        cx.paint_quad(fill(bounds, layout.background_color));
+        cx.paint_quad(fill(bounds, layout.background_color), None);
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
         let terminal_input_handler = TerminalInputHandler {

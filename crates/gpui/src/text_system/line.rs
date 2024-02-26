@@ -130,13 +130,16 @@ fn paint_line(
             if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                 wraps.next();
                 if let Some((background_origin, background_color)) = current_background.as_mut() {
-                    cx.paint_quad(fill(
-                        Bounds {
-                            origin: *background_origin,
-                            size: size(glyph_origin.x - background_origin.x, line_height),
-                        },
-                        *background_color,
-                    ));
+                    cx.paint_quad(
+                        fill(
+                            Bounds {
+                                origin: *background_origin,
+                                size: size(glyph_origin.x - background_origin.x, line_height),
+                            },
+                            *background_color,
+                        ),
+                        None,
+                    );
                     background_origin.x = origin.x;
                     background_origin.y += line_height;
                 }

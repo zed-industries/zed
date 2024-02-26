@@ -766,7 +766,7 @@ mod element {
                 }
 
                 cx.add_opaque_layer(handle_bounds);
-                cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border));
+                cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border), None);
 
                 cx.on_mouse_event({
                     let dragged_handle = dragged_handle.clone();

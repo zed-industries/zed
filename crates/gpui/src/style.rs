@@ -436,17 +436,19 @@ impl Style {
                     border_color,
                 );
 
-                let hover_quad = hover.map(|hover| {
+                let hover_quad = if hover_background_color.is_transparent() {
+                    None
+                } else {
                     let mut border_color = hover_background_color;
                     border_color.a = 0.;
-                    quad(
+                    Some(quad(
                         bounds,
                         corner_radii,
                         hover_background_color,
                         Edges::default(),
                         border_color,
-                    )
-                });
+                    ))
+                };
 
                 cx.paint_quad(base_quad, hover_quad);
             });
@@ -456,7 +458,14 @@ impl Style {
             continuation(cx);
         });
 
-        if self.is_border_visible() {
+        let border_color = self.border_color.unwrap_or_default();
+        let hover_border_color = hover
+            .as_ref()
+            .and_then(|hover_style| hover_style.border_color)
+            .unwrap_or_default();
+        if self.border_widths.any(|width| !width.is_zero())
+            && (!border_color.is_transparent() || !hover_border_color.is_transparent())
+        {
             cx.with_z_index(3, |cx| {
                 let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
                 let border_widths = self.border_widths.to_pixels(rem_size);
@@ -482,25 +491,38 @@ impl Style {
                     bottom_bounds.upper_right(),
                 );
 
-                let mut background = self.border_color.unwrap_or_default();
+                let mut background = border_color;
                 background.a = 0.;
-                let quad = quad(
+                let border_quad = quad(
                     bounds,
                     corner_radii,
                     background,
                     border_widths,
-                    self.border_color.unwrap_or_default(),
+                    border_color,
                 );
+                let hover_border_quad = if hover_border_color.is_transparent() {
+                    None
+                } else {
+                    let mut background = hover_border_color;
+                    background.a = 0.;
+                    Some(quad(
+                        bounds,
+                        corner_radii,
+                        background,
+                        border_widths,
+                        hover_border_color,
+                    ))
+                };
 
                 cx.with_content_mask(Some(ContentMask { bounds: top_bounds }), |cx| {
-                    cx.paint_quad(quad.clone());
+                    cx.paint_quad(border_quad.clone(), hover_border_quad.clone());
                 });
                 cx.with_content_mask(
                     Some(ContentMask {
                         bounds: right_bounds,
                     }),
                     |cx| {
-                        cx.paint_quad(quad.clone());
+                        cx.paint_quad(border_quad.clone(), hover_border_quad.clone());
                     },
                 );
                 cx.with_content_mask(
@@ -508,7 +530,7 @@ impl Style {
                         bounds: bottom_bounds,
                     }),
                     |cx| {
-                        cx.paint_quad(quad.clone());
+                        cx.paint_quad(border_quad.clone(), hover_border_quad.clone());
                     },
                 );
                 cx.with_content_mask(
@@ -516,7 +538,7 @@ impl Style {
                         bounds: left_bounds,
                     }),
                     |cx| {
-                        cx.paint_quad(quad);
+                        cx.paint_quad(border_quad, hover_border_quad);
                     },
                 );
             });
@@ -526,12 +548,6 @@ impl Style {
         if self.debug_below {
             cx.remove_global::<DebugBelow>();
         }
-    }
-
-    fn is_border_visible(&self) -> bool {
-        self.border_color
-            .map_or(false, |color| !color.is_transparent())
-            && self.border_widths.any(|length| !length.is_zero())
     }
 }
 

@@ -1325,10 +1325,15 @@ impl Interactivity {
         }
 
         cx.with_z_index(z_index, |cx| {
-            let hover_style: Option<Style> = self
-                .hover_style
-                .take()
-                .map(|hover_refinement| style.refined(*hover_refinement));
+            let hover_style: Option<Style> = if cx.active_drag.is_some() {
+                None
+            } else {
+                self.hover_style.as_ref().map(|hover_refinement| {
+                    let mut hover_style = style.clone();
+                    hover_style.refine(hover_refinement);
+                    hover_style
+                })
+            };
 
             style.paint(bounds, hover_style, cx, |cx: &mut ElementContext| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
@@ -1958,29 +1963,6 @@ impl Interactivity {
 
             if let Some(bounds) = bounds {
                 let mouse_position = cx.mouse_position();
-                if !cx.has_active_drag() {
-                    if let Some(group_hover) = self.group_hover_style.as_ref() {
-                        if let Some(group_bounds) =
-                            GroupBounds::get(&group_hover.group, cx.deref_mut())
-                        {
-                            if group_bounds.contains(&mouse_position)
-                                && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                            {
-                                style.refine(&group_hover.style);
-                            }
-                        }
-                    }
-
-                    if let Some(hover_style) = self.hover_style.as_ref() {
-                        if bounds
-                            .intersect(&cx.content_mask().bounds)
-                            .contains(&mouse_position)
-                            && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                        {
-                            style.refine(hover_style);
-                        }
-                    }
-                }
 
                 if let Some(drag) = cx.active_drag.take() {
                     let mut can_drop = true;
