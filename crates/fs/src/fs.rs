@@ -30,7 +30,7 @@ use std::{
 };
 use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
-use util::ResultExt;
+use util::{ResultExt, paths};
 
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
@@ -189,7 +189,11 @@ impl Fs for RealFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = NamedTempFile::new()?;
+            let mut tmp_file = if cfg!(target_os = "linux") {
+                NamedTempFile::new_in(paths::TEMP_DIR.to_path_buf())
+            } else {
+                NamedTempFile::new()
+            }?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
             Ok::<(), anyhow::Error>(())
