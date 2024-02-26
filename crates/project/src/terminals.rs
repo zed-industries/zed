@@ -28,6 +28,7 @@ impl Project {
             "creating terminals as a guest is not supported yet"
         );
 
+        let is_terminal = !spawn_task.is_some();
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
@@ -82,16 +83,19 @@ impl Project {
             })
             .detach();
 
-            if let Some(python_settings) = &python_settings.as_option() {
-                let activate_command = Project::get_activate_command(python_settings);
-                let activate_script_path =
-                    self.find_activate_script_path(python_settings, working_directory);
-                self.activate_python_virtual_environment(
-                    activate_command,
-                    activate_script_path,
-                    &terminal_handle,
-                    cx,
-                );
+            // only apply venv settings if the terminal, not a task, is being created (#8334)
+            if is_terminal {
+                if let Some(python_settings) = &python_settings.as_option() {
+                    let activate_command = Project::get_activate_command(python_settings);
+                    let activate_script_path =
+                        self.find_activate_script_path(python_settings, working_directory);
+                    self.activate_python_virtual_environment(
+                        activate_command,
+                        activate_script_path,
+                        &terminal_handle,
+                        cx,
+                    );
+                }
             }
             terminal_handle
         });
