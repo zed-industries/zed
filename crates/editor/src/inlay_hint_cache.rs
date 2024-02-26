@@ -274,8 +274,7 @@ impl InlayHintCache {
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
             refresh_task: None,
-            refresh_debounce_duration: (inlay_hint_settings.debounce_ms > 0)
-                .then(|| Duration::from_millis(inlay_hint_settings.debounce_ms)),
+            refresh_debounce_duration: debounce_value(&inlay_hint_settings),
             version: 0,
             lsp_request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_LSP_REQUESTS)),
         }
@@ -291,6 +290,7 @@ impl InlayHintCache {
         visible_hints: Vec<Inlay>,
         cx: &mut ViewContext<Editor>,
     ) -> ControlFlow<Option<InlaySplice>> {
+        self.refresh_debounce_duration = debounce_value(&new_hint_settings);
         let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
         match (self.enabled, new_hint_settings.enabled) {
             (false, false) => {
@@ -625,6 +625,11 @@ impl InlayHintCache {
             }
         }
     }
+}
+
+fn debounce_value(inlay_hint_settings: &InlayHintSettings) -> Option<Duration> {
+    (inlay_hint_settings.debounce_ms > 0)
+        .then(|| Duration::from_millis(inlay_hint_settings.debounce_ms))
 }
 
 fn spawn_new_update_tasks(
