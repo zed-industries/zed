@@ -669,7 +669,6 @@ impl<'a> ElementContext<'a> {
             window.next_frame.scene.insert_shadow(
                 Shadow {
                     view_id: view_id.into(),
-                    layer_id: 0,
                     order: 0,
                     bounds: shadow_bounds.scale(scale_factor),
                     content_mask: content_mask.scale(scale_factor),
@@ -696,7 +695,6 @@ impl<'a> ElementContext<'a> {
         window.next_frame.scene.insert_quad(
             Quad {
                 view_id: view_id.into(),
-                layer_id: 0,
                 order: 0,
                 bounds: quad.bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -750,7 +748,6 @@ impl<'a> ElementContext<'a> {
         window.next_frame.scene.insert_underline(
             Underline {
                 view_id: view_id.into(),
-                layer_id: 0,
                 order: 0,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -783,7 +780,6 @@ impl<'a> ElementContext<'a> {
         window.next_frame.scene.insert_underline(
             Underline {
                 view_id: view_id.into(),
-                layer_id: 0,
                 order: 0,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -844,7 +840,6 @@ impl<'a> ElementContext<'a> {
             window.next_frame.scene.insert_monochrome_sprite(
                 MonochromeSprite {
                     view_id: view_id.into(),
-                    layer_id: 0,
                     order: 0,
                     bounds,
                     content_mask,
@@ -903,7 +898,6 @@ impl<'a> ElementContext<'a> {
             window.next_frame.scene.insert_polychrome_sprite(
                 PolychromeSprite {
                     view_id: view_id.into(),
-                    layer_id: 0,
                     order: 0,
                     bounds,
                     corner_radii: Default::default(),
@@ -950,7 +944,6 @@ impl<'a> ElementContext<'a> {
         window.next_frame.scene.insert_monochrome_sprite(
             MonochromeSprite {
                 view_id: view_id.into(),
-                layer_id: 0,
                 order: 0,
                 bounds,
                 content_mask,
@@ -990,7 +983,6 @@ impl<'a> ElementContext<'a> {
         window.next_frame.scene.insert_polychrome_sprite(
             PolychromeSprite {
                 view_id: view_id.into(),
-                layer_id: 0,
                 order: 0,
                 bounds,
                 content_mask,
@@ -1007,20 +999,27 @@ impl<'a> ElementContext<'a> {
 
     /// Paint a surface into the scene for the next frame at the current z-index.
     #[cfg(target_os = "macos")]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+    pub fn paint_surface(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        image_buffer: CVImageBuffer,
+        occludes_hover: bool,
+    ) {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
         let view_id = self.parent_view_id();
         let window = &mut *self.window;
-        window.next_frame.scene.insert_surface(crate::Surface {
-            view_id: view_id.into(),
-            layer_id: 0,
-            order: 0,
-            bounds,
-            content_mask,
-            image_buffer,
-        });
+        window.next_frame.scene.insert_surface(
+            crate::Surface {
+                view_id: view_id.into(),
+                order: 0,
+                bounds,
+                content_mask,
+                image_buffer,
+            },
+            occludes_hover,
+        );
     }
 
     #[must_use]

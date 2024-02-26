@@ -94,7 +94,7 @@ fn generate_shader_bindings() -> PathBuf {
     let mut builder = cbindgen::Builder::new();
 
     let src_paths = [
-        crate_dir.join("src/scene.rs"),
+        crate_dir.join("src/scene/primitives.rs"),
         crate_dir.join("src/geometry.rs"),
         crate_dir.join("src/color.rs"),
         crate_dir.join("src/window.rs"),

@@ -109,7 +109,11 @@ where
         }
 
         for node_index in self.stack.drain(..) {
-            let Node::Internal { max_ordering, .. } = &mut self.nodes[node_index] else {
+            let Node::Internal {
+                max_order: max_ordering,
+                ..
+            } = &mut self.nodes[node_index]
+            else {
                 unreachable!()
             };
             *max_ordering = cmp::max(*max_ordering, ordering);
@@ -119,7 +123,11 @@ where
     }
 
     /// Finds all nodes whose bounds contain the given point and pushes their (bounds, payload) pairs onto the result vector.
-    pub(crate) fn find_containing(&mut self, point: &Point<U>, result: &mut Vec<(Bounds<U>, T)>) {
+    pub(crate) fn find_containing(
+        &mut self,
+        point: &Point<U>,
+        result: &mut Vec<BoundsSearchResult<U, T>>,
+    ) {
         if let Some(mut index) = self.root {
             self.stack.clear();
             self.stack.push(index);
@@ -127,10 +135,16 @@ where
             while let Some(current_index) = self.stack.pop() {
                 match &self.nodes[current_index] {
                     Node::Leaf {
-                        bounds, payload, ..
+                        bounds,
+                        order,
+                        data,
                     } => {
                         if bounds.contains(point) {
-                            result.push((bounds.clone(), payload.clone()));
+                            result.push(BoundsSearchResult {
+                                bounds: bounds.clone(),
+                                order: *order,
+                                data: data.clone(),
+                            });
                         }
                     }
                     Node::Internal {
@@ -167,7 +181,7 @@ where
                 left,
                 right,
                 bounds: node_bounds,
-                max_ordering: node_max_ordering,
+                max_order: node_max_ordering,
                 ..
             } => {
                 if bounds.intersects(node_bounds) && max_ordering < *node_max_ordering {
@@ -189,7 +203,7 @@ where
     fn push_leaf(&mut self, bounds: Bounds<U>, payload: T, order: u32) -> usize {
         self.nodes.push(Node::Leaf {
             bounds,
-            payload,
+            data: payload,
             order,
         });
         self.nodes.len() - 1
@@ -204,7 +218,7 @@ where
             bounds: new_bounds,
             left,
             right,
-            max_ordering,
+            max_order: max_ordering,
         });
         self.nodes.len() - 1
     }
@@ -232,14 +246,14 @@ where
 {
     Leaf {
         bounds: Bounds<U>,
-        payload: T,
         order: u32,
+        data: T,
     },
     Internal {
         left: usize,
         right: usize,
         bounds: Bounds<U>,
-        max_ordering: u32,
+        max_order: u32,
     },
 }
 
@@ -260,9 +274,18 @@ where
             Node::Leaf {
                 order: ordering, ..
             } => *ordering,
-            Node::Internal { max_ordering, .. } => *max_ordering,
+            Node::Internal {
+                max_order: max_ordering,
+                ..
+            } => *max_ordering,
         }
     }
+}
+
+pub struct BoundsSearchResult<U: Clone + Default + Debug, T> {
+    pub bounds: Bounds<U>,
+    pub order: u32,
+    pub data: T,
 }
 
 #[cfg(test)]
@@ -306,23 +329,32 @@ mod tests {
         let point_inside_bounds2_and_3 = Point { x: 12.0, y: 12.0 };
         let point_outside_all_bounds = Point { x: 21.0, y: 21.0 };
 
+        assert!(!bounds1.contains(&point_inside_bounds2_and_3));
+        assert!(!bounds1.contains(&point_outside_all_bounds));
+        assert!(bounds2.contains(&point_inside_bounds1_and_2));
+        assert!(bounds2.contains(&point_inside_bounds2_and_3));
+        assert!(!bounds2.contains(&point_outside_all_bounds));
+        assert!(!bounds3.contains(&point_inside_bounds1));
+        assert!(bounds3.contains(&point_inside_bounds2_and_3));
+        assert!(!bounds3.contains(&point_outside_all_bounds));
+
         // Test find_containing for different points
         let mut result = Vec::new();
         tree.find_containing(&point_inside_bounds1, &mut result);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], (bounds1.clone(), "Payload 1".to_string()));
+        assert_eq!(result[0].data, "Payload 1");
 
         result.clear();
         tree.find_containing(&point_inside_bounds1_and_2, &mut result);
         assert_eq!(result.len(), 2);
-        assert!(result.contains(&(bounds1.clone(), "Payload 1".to_string())));
-        assert!(result.contains(&(bounds2.clone(), "Payload 2".to_string())));
+        assert!(result.iter().any(|r| r.data == "Payload 1"));
+        assert!(result.iter().any(|r| r.data == "Payload 2"));
 
         result.clear();
         tree.find_containing(&point_inside_bounds2_and_3, &mut result);
         assert_eq!(result.len(), 2);
-        assert!(result.contains(&(bounds2.clone(), "Payload 2".to_string())));
-        assert!(result.contains(&(bounds3.clone(), "Payload 3".to_string())));
+        assert!(result.iter().any(|r| r.data == "Payload 2"));
+        assert!(result.iter().any(|r| r.data == "Payload 3"));
 
         result.clear();
         tree.find_containing(&point_outside_all_bounds, &mut result);

@@ -152,7 +152,7 @@ impl Element for Img {
                             let size = size(surface.width().into(), surface.height().into());
                             let new_bounds = preserve_aspect_ratio(bounds, size);
                             // TODO: Add support for corner_radii and grayscale.
-                            cx.paint_surface(new_bounds, surface);
+                            cx.paint_surface(new_bounds, surface, true);
                         }
                     };
                 });

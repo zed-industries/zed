@@ -1,39 +1,11 @@
+mod primitives;
+
 use crate::{
-    point, AtlasTextureId, AtlasTile, Bounds, BoundsTree, ContentMask, Corners, Edges, EntityId,
-    Hsla, Pixels, Point, ScaledPixels, SharedString,
+    AtlasTextureId, BoundsSearchResult, BoundsTree, EntityId, Point, ScaledPixels, SharedString,
 };
 use collections::{FxHashMap, FxHashSet, HashMap};
-use std::{fmt::Debug, iter::Peekable, slice};
-
-#[allow(non_camel_case_types, unused)]
-pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
-
-pub(crate) type LayerId = u32;
-pub(crate) type DrawOrder = u32;
-
-#[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(C)]
-pub(crate) struct ViewId {
-    low_bits: u32,
-    high_bits: u32,
-}
-
-impl From<EntityId> for ViewId {
-    fn from(value: EntityId) -> Self {
-        let value = value.as_u64();
-        Self {
-            low_bits: value as u32,
-            high_bits: (value >> 32) as u32,
-        }
-    }
-}
-
-impl From<ViewId> for EntityId {
-    fn from(value: ViewId) -> Self {
-        let value = (value.low_bits as u64) | ((value.high_bits as u64) << 32);
-        value.into()
-    }
-}
+pub use primitives::*;
+use std::{cmp::Reverse, fmt::Debug, iter::Peekable, slice};
 
 #[derive(Default)]
 pub(crate) struct Scene {
@@ -43,9 +15,9 @@ pub(crate) struct Scene {
     pub(crate) underlines: PrimitiveSet<Underline>,
     pub(crate) monochrome_sprites: PrimitiveSet<MonochromeSprite>,
     pub(crate) polychrome_sprites: PrimitiveSet<PolychromeSprite>,
-    pub(crate) surfaces: Vec<Surface>,
+    pub(crate) surfaces: PrimitiveSet<Surface>,
     bounds_tree: BoundsTree<ScaledPixels, PrimitiveIndex>,
-    hovered_bounds: Vec<(Bounds<ScaledPixels>, PrimitiveIndex)>,
+    hovered_bounds: Vec<BoundsSearchResult<ScaledPixels, PrimitiveIndex>>,
 }
 
 impl Scene {
@@ -84,9 +56,9 @@ impl Scene {
             polychrome_sprites: &self.polychrome_sprites.primitives,
             polychrome_sprites_start: 0,
             polychrome_sprites_iter: self.polychrome_sprites.primitives.iter().peekable(),
-            surfaces: &self.surfaces,
+            surfaces: &self.surfaces.primitives,
             surfaces_start: 0,
-            surfaces_iter: self.surfaces.iter().peekable(),
+            surfaces_iter: self.surfaces.primitives.iter().peekable(),
         }
     }
 
@@ -111,7 +83,7 @@ impl Scene {
             },
         );
         self.shadows
-            .insert(Shadow { order, ..shadow }, hover, group_hover);
+            .insert(Shadow { order, ..shadow }, false, hover, group_hover);
         Some(order)
     }
 
@@ -135,8 +107,12 @@ impl Scene {
                 index: self.quads.primitives.len(),
             },
         );
-        self.quads
-            .insert(Quad { order, ..quad }, hover, group_hover);
+        self.quads.insert(
+            Quad { order, ..quad },
+            quad.background.is_opaque(),
+            hover,
+            group_hover,
+        );
         Some(order)
     }
 
@@ -161,7 +137,7 @@ impl Scene {
             },
         );
         self.paths
-            .insert(Path { order, ..path }, hover, group_hover);
+            .insert(Path { order, ..path }, false, hover, group_hover);
         Some(order)
     }
 
@@ -186,7 +162,7 @@ impl Scene {
             },
         );
         self.underlines
-            .insert(Underline { order, ..underline }, hover, group_hover);
+            .insert(Underline { order, ..underline }, false, hover, group_hover);
         Some(order)
     }
 
@@ -217,6 +193,7 @@ impl Scene {
                 order,
                 ..monochrome_sprite
             },
+            false,
             hover,
             group_hover,
         );
@@ -250,13 +227,14 @@ impl Scene {
                 order,
                 ..polychrome_sprite
             },
+            false,
             hover,
             group_hover,
         );
         Some(order)
     }
 
-    pub(crate) fn insert_surface(&mut self, surface: Surface) -> Option<u32> {
+    pub(crate) fn insert_surface(&mut self, surface: Surface, occludes_hover: bool) -> Option<u32> {
         let clipped_bounds = surface.bounds.intersect(&surface.content_mask.bounds);
         if clipped_bounds.size.width <= ScaledPixels(0.)
             || clipped_bounds.size.height <= ScaledPixels(0.)
@@ -271,7 +249,8 @@ impl Scene {
                 index: self.surfaces.len(),
             },
         );
-        self.surfaces.push(Surface { order, ..surface });
+        self.surfaces
+            .insert(Surface { order, ..surface }, occludes_hover, None, None);
         Some(order)
     }
 
@@ -331,9 +310,46 @@ impl Scene {
         self.hovered_bounds.clear();
         self.bounds_tree
             .find_containing(&mouse_position, &mut self.hovered_bounds);
+        self.hovered_bounds
+            .sort_unstable_by_key(|hovered| Reverse(hovered.order));
 
-        todo!("replace hovered primitives");
-        todo!("replace group-hovered primitives. i think we'll need to index group membership to do so.");
+        for PrimitiveIndex { kind, index } in
+            self.hovered_bounds.iter().map(|bounds| bounds.data.clone())
+        {
+            let occludes_hover = match kind {
+                PrimitiveKind::Shadow => {
+                    self.shadows.hover(index);
+                    self.shadows.occludes_hover(index)
+                }
+                PrimitiveKind::Quad => {
+                    self.quads.hover(index);
+                    self.quads.occludes_hover(index)
+                }
+                PrimitiveKind::Path => {
+                    self.paths.hover(index);
+                    self.paths.occludes_hover(index)
+                }
+                PrimitiveKind::Underline => {
+                    self.underlines.hover(index);
+                    self.underlines.occludes_hover(index)
+                }
+                PrimitiveKind::MonochromeSprite => {
+                    self.monochrome_sprites.hover(index);
+                    self.monochrome_sprites.occludes_hover(index)
+                }
+                PrimitiveKind::PolychromeSprite => {
+                    self.polychrome_sprites.hover(index);
+                    self.polychrome_sprites.occludes_hover(index)
+                }
+                PrimitiveKind::Surface => self.surfaces.occludes_hover(index),
+            };
+
+            if occludes_hover {
+                break;
+            }
+        }
+
+        // TODO: Handle group-hover
 
         self.shadows
             .primitives
@@ -353,13 +369,15 @@ impl Scene {
         self.polychrome_sprites
             .primitives
             .sort_unstable_by_key(|sprite| sprite.order);
-        self.surfaces.sort_unstable_by_key(|surface| surface.order);
+        self.surfaces
+            .primitives
+            .sort_unstable_by_key(|surface| surface.order);
     }
 }
 
 pub(crate) struct PrimitiveSet<P> {
     pub(crate) primitives: Vec<P>,
-    hovers: FxHashMap<usize, PrimitiveHover<P>>,
+    primitive_metadata: FxHashMap<usize, PrimitiveMetadata<P>>,
 }
 
 impl<P> PrimitiveSet<P> {
@@ -375,44 +393,48 @@ impl<P> PrimitiveSet<P> {
     /// * `primitive` - The primitive to insert.
     /// * `hover` - An optional hover state for the primitive.
     /// * `group_hover` - An optional group hover state for the primitive, with an associated shared string.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use zed::SharedString;
-    /// let mut primitive_set = PrimitiveSet::default();
-    /// let primitive = Quad::default();
-    /// let hover = Some(Quad::default());
-    /// let group_hover = Some((SharedString::from("group"), Some(Quad::default())));
-    ///
-    /// primitive_set.insert(primitive, hover, group_hover);
-    /// ```
     fn insert(
         &mut self,
         primitive: P,
+        occludes_hover: bool,
         hover: Option<P>,
         group_hover: Option<(SharedString, Option<P>)>,
     ) {
         let index = self.primitives.len();
         self.primitives.push(primitive);
-        if hover.is_some() || group_hover.is_some() {
-            self.hovers
-                .insert(index, PrimitiveHover { hover, group_hover });
+        if occludes_hover || hover.is_some() || group_hover.is_some() {
+            self.primitive_metadata.insert(
+                index,
+                PrimitiveMetadata {
+                    occludes_hover,
+                    hover,
+                    group_hover,
+                },
+            );
         }
     }
 
+    /// Overrides the primitive at the given index with its hovered variant, if a variant exists.
+    fn hover(&mut self, index: usize) {
+        if let Some(hovered_primitive) = self
+            .primitive_metadata
+            .get_mut(&index)
+            .and_then(|data| data.hover.take())
+        {
+            self.primitives[index] = hovered_primitive;
+        }
+    }
+
+    fn occludes_hover(&self, index: usize) -> bool {
+        self.primitive_metadata
+            .get(&index)
+            .map_or(false, |data| data.occludes_hover)
+    }
+
     /// Clears all primitives and associated hover information from the set.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # let mut primitive_set = PrimitiveSet::default();
-    /// primitive_set.clear();
-    /// assert!(primitive_set.len() == 0);
-    /// ```
     fn clear(&mut self) {
         self.primitives.clear();
-        self.hovers.clear();
+        self.primitive_metadata.clear();
     }
 }
 
@@ -420,12 +442,13 @@ impl<P> Default for PrimitiveSet<P> {
     fn default() -> Self {
         Self {
             primitives: Vec::new(),
-            hovers: HashMap::default(),
+            primitive_metadata: HashMap::default(),
         }
     }
 }
 
-struct PrimitiveHover<P> {
+struct PrimitiveMetadata<P> {
+    occludes_hover: bool,
     hover: Option<P>,
     group_hover: Option<(SharedString, Option<P>)>,
 }
@@ -648,326 +671,4 @@ pub(crate) enum PrimitiveBatch<'a> {
         sprites: &'a [PolychromeSprite],
     },
     Surfaces(&'a [Surface]),
-}
-
-#[derive(Default, Debug, Clone, Eq, PartialEq)]
-#[repr(C)]
-pub(crate) struct Quad {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
-    pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
-    pub background: Hsla,
-    pub border_color: Hsla,
-    pub corner_radii: Corners<ScaledPixels>,
-    pub border_widths: Edges<ScaledPixels>,
-}
-
-impl Ord for Quad {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Quad {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-#[repr(C)]
-pub(crate) struct Underline {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
-    pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
-    pub color: Hsla,
-    pub thickness: ScaledPixels,
-    pub wavy: bool,
-}
-
-impl Ord for Underline {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Underline {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-#[repr(C)]
-pub(crate) struct Shadow {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
-    pub bounds: Bounds<ScaledPixels>,
-    pub corner_radii: Corners<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
-    pub color: Hsla,
-    pub blur_radius: ScaledPixels,
-    pub pad: u32, // align to 8 bytes
-}
-
-impl Ord for Shadow {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Shadow {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[repr(C)]
-pub(crate) struct MonochromeSprite {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
-    pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
-    pub color: Hsla,
-    pub tile: AtlasTile,
-}
-
-impl Ord for MonochromeSprite {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.order.cmp(&other.order) {
-            std::cmp::Ordering::Equal => self.tile.tile_id.cmp(&other.tile.tile_id),
-            order => order,
-        }
-    }
-}
-
-impl PartialOrd for MonochromeSprite {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[repr(C)]
-pub(crate) struct PolychromeSprite {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
-    pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
-    pub corner_radii: Corners<ScaledPixels>,
-    pub tile: AtlasTile,
-    pub grayscale: bool,
-    pub pad: u32, // align to 8 bytes
-}
-
-impl Ord for PolychromeSprite {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.order.cmp(&other.order) {
-            std::cmp::Ordering::Equal => self.tile.tile_id.cmp(&other.tile.tile_id),
-            order => order,
-        }
-    }
-}
-
-impl PartialOrd for PolychromeSprite {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Surface {
-    pub view_id: ViewId,
-    pub layer_id: LayerId,
-    pub order: DrawOrder,
-    pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
-    #[cfg(target_os = "macos")]
-    pub image_buffer: media::core_video::CVImageBuffer,
-}
-
-impl Ord for Surface {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Surface {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PathId(pub(crate) usize);
-
-/// A line made up of a series of vertices and control points.
-#[derive(Debug)]
-pub struct Path<P: Clone + Default + Debug> {
-    pub(crate) id: PathId,
-    pub(crate) view_id: ViewId,
-    layer_id: LayerId,
-    order: DrawOrder,
-    pub(crate) bounds: Bounds<P>,
-    pub(crate) content_mask: ContentMask<P>,
-    pub(crate) vertices: Vec<PathVertex<P>>,
-    pub(crate) color: Hsla,
-    start: Point<P>,
-    current: Point<P>,
-    contour_count: usize,
-}
-
-impl Path<Pixels> {
-    /// Create a new path with the given starting point.
-    pub fn new(start: Point<Pixels>) -> Self {
-        Self {
-            id: PathId(0),
-            view_id: ViewId::default(),
-            layer_id: LayerId::default(),
-            order: DrawOrder::default(),
-            vertices: Vec::new(),
-            start,
-            current: start,
-            bounds: Bounds {
-                origin: start,
-                size: Default::default(),
-            },
-            content_mask: Default::default(),
-            color: Default::default(),
-            contour_count: 0,
-        }
-    }
-
-    /// Scale this path by the given factor.
-    pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
-        Path {
-            id: self.id,
-            view_id: self.view_id,
-            layer_id: self.layer_id,
-            order: self.order,
-            bounds: self.bounds.scale(factor),
-            content_mask: self.content_mask.scale(factor),
-            vertices: self
-                .vertices
-                .iter()
-                .map(|vertex| vertex.scale(factor))
-                .collect(),
-            start: self.start.map(|start| start.scale(factor)),
-            current: self.current.scale(factor),
-            contour_count: self.contour_count,
-            color: self.color,
-        }
-    }
-
-    /// Draw a straight line from the current point to the given point.
-    pub fn line_to(&mut self, to: Point<Pixels>) {
-        self.contour_count += 1;
-        if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
-        }
-        self.current = to;
-    }
-
-    /// Draw a curve from the current point to the given point, using the given control point.
-    pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
-        self.contour_count += 1;
-        if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
-        }
-
-        self.push_triangle(
-            (self.current, ctrl, to),
-            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
-        );
-        self.current = to;
-    }
-
-    fn push_triangle(
-        &mut self,
-        xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
-        st: (Point<f32>, Point<f32>, Point<f32>),
-    ) {
-        self.bounds = self
-            .bounds
-            .union(&Bounds {
-                origin: xy.0,
-                size: Default::default(),
-            })
-            .union(&Bounds {
-                origin: xy.1,
-                size: Default::default(),
-            })
-            .union(&Bounds {
-                origin: xy.2,
-                size: Default::default(),
-            });
-
-        self.vertices.push(PathVertex {
-            xy_position: xy.0,
-            st_position: st.0,
-            content_mask: Default::default(),
-        });
-        self.vertices.push(PathVertex {
-            xy_position: xy.1,
-            st_position: st.1,
-            content_mask: Default::default(),
-        });
-        self.vertices.push(PathVertex {
-            xy_position: xy.2,
-            st_position: st.2,
-            content_mask: Default::default(),
-        });
-    }
-}
-
-impl Eq for Path<ScaledPixels> {}
-
-impl PartialEq for Path<ScaledPixels> {
-    fn eq(&self, other: &Self) -> bool {
-        self.order == other.order
-    }
-}
-
-impl Ord for Path<ScaledPixels> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Path<ScaledPixels> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub(crate) struct PathVertex<P: Clone + Default + Debug> {
-    pub(crate) xy_position: Point<P>,
-    pub(crate) st_position: Point<f32>,
-    pub(crate) content_mask: ContentMask<P>,
-}
-
-impl PathVertex<Pixels> {
-    pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {
-        PathVertex {
-            xy_position: self.xy_position.scale(factor),
-            st_position: self.st_position,
-            content_mask: self.content_mask.scale(factor),
-        }
-    }
 }
