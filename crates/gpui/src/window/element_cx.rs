@@ -651,6 +651,7 @@ impl<'a> ElementContext<'a> {
                 }
             })
     }
+
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
     pub fn paint_shadows(
         &mut self,
@@ -1173,6 +1174,22 @@ impl<'a> ElementContext<'a> {
                 result
             }
         })
+    }
+
+    /// Invoke the given function with the given hover group id present on the hover stack.
+    /// This is a fairly low-level method used to paint hover effects for views that share
+    /// the same hover group.
+    pub fn with_hover_group<R>(
+        &mut self,
+        name: Option<SharedString>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let window = &mut self.window;
+        let group = window.next_frame.scene.hover_group(name);
+        window.hover_group_stack.push(group);
+        let result = f(self);
+        window.hover_group_stack.pop();
+        result
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the

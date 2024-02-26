@@ -412,196 +412,203 @@ impl Style {
             );
         });
 
-        let background_color = self.background_color();
-        let hover_background_color = hover
+        let named_hover_group = group_hover
             .as_ref()
-            .map(|hover_style| hover_style.background_color())
-            .unwrap_or_default();
-        let group_hover_background_color = group_hover
-            .as_ref()
-            .and_then(|(_, group_hover_style)| Some(group_hover_style.as_ref()?.background_color()))
-            .unwrap_or_default();
+            .map(|(group_name, _)| group_name.clone());
+        cx.with_hover_group(named_hover_group, |cx| {
+            let background_color = self.background_color();
+            let hover_background_color = hover
+                .as_ref()
+                .map(|hover_style| hover_style.background_color())
+                .unwrap_or_default();
+            let group_hover_background_color = group_hover
+                .as_ref()
+                .and_then(|(_, group_hover_style)| {
+                    Some(group_hover_style.as_ref()?.background_color())
+                })
+                .unwrap_or_default();
 
-        if !background_color.is_transparent()
-            || !hover_background_color.is_transparent()
-            || !group_hover_background_color.is_transparent()
-        {
-            cx.with_z_index(1, |cx| {
-                let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
+            if !background_color.is_transparent()
+                || !hover_background_color.is_transparent()
+                || !group_hover_background_color.is_transparent()
+            {
+                cx.with_z_index(1, |cx| {
+                    let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
 
-                let mut border_color = background_color;
-                border_color.a = 0.;
-                let base_quad = quad(
-                    bounds,
-                    corner_radii,
-                    background_color,
-                    Edges::default(),
-                    border_color,
-                );
-
-                let hover_quad = if hover_background_color.is_transparent() {
-                    None
-                } else {
-                    let mut border_color = hover_background_color;
+                    let mut border_color = background_color;
                     border_color.a = 0.;
-                    Some(quad(
+                    let base_quad = quad(
                         bounds,
                         corner_radii,
-                        hover_background_color,
+                        background_color,
                         Edges::default(),
                         border_color,
-                    ))
-                };
+                    );
 
-                let group_hover_quad = group_hover.as_ref().map(|(group_id, _)| {
-                    let quad = if group_hover_background_color.is_transparent() {
+                    let hover_quad = if hover_background_color.is_transparent() {
                         None
                     } else {
-                        let mut border_color = group_hover_background_color;
+                        let mut border_color = hover_background_color;
                         border_color.a = 0.;
                         Some(quad(
                             bounds,
                             corner_radii,
-                            group_hover_background_color,
+                            hover_background_color,
                             Edges::default(),
                             border_color,
                         ))
                     };
-                    (group_id.clone(), quad)
+
+                    let group_hover_quad = group_hover.as_ref().map(|(group_id, _)| {
+                        let quad = if group_hover_background_color.is_transparent() {
+                            None
+                        } else {
+                            let mut border_color = group_hover_background_color;
+                            border_color.a = 0.;
+                            Some(quad(
+                                bounds,
+                                corner_radii,
+                                group_hover_background_color,
+                                Edges::default(),
+                                border_color,
+                            ))
+                        };
+                        (group_id.clone(), quad)
+                    });
+
+                    cx.paint_quad(base_quad, hover_quad, group_hover_quad);
                 });
+            }
 
-                cx.paint_quad(base_quad, hover_quad, group_hover_quad);
+            cx.with_z_index(2, |cx| {
+                continuation(cx);
             });
-        }
 
-        cx.with_z_index(2, |cx| {
-            continuation(cx);
-        });
+            let border_color = self.border_color();
+            let hover_border_color = hover
+                .as_ref()
+                .map(|hover_style| hover_style.border_color())
+                .unwrap_or_default();
+            let group_hover_border_color = group_hover
+                .as_ref()
+                .and_then(|(_, group_hover_style)| Some(group_hover_style.as_ref()?.border_color()))
+                .unwrap_or_default();
+            if self.border_widths.any(|width| !width.is_zero())
+                && (!border_color.is_transparent()
+                    || !hover_border_color.is_transparent()
+                    || !group_hover_border_color.is_transparent())
+            {
+                cx.with_z_index(3, |cx| {
+                    let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
+                    let border_widths = self.border_widths.to_pixels(rem_size);
+                    let max_border_width = border_widths.max();
+                    let max_corner_radius = corner_radii.max();
 
-        let border_color = self.border_color();
-        let hover_border_color = hover
-            .as_ref()
-            .map(|hover_style| hover_style.border_color())
-            .unwrap_or_default();
-        let group_hover_border_color = group_hover
-            .as_ref()
-            .and_then(|(_, group_hover_style)| Some(group_hover_style.as_ref()?.border_color()))
-            .unwrap_or_default();
-        if self.border_widths.any(|width| !width.is_zero())
-            && (!border_color.is_transparent()
-                || !hover_border_color.is_transparent()
-                || !group_hover_border_color.is_transparent())
-        {
-            cx.with_z_index(3, |cx| {
-                let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
-                let border_widths = self.border_widths.to_pixels(rem_size);
-                let max_border_width = border_widths.max();
-                let max_corner_radius = corner_radii.max();
+                    let top_bounds = Bounds::from_corners(
+                        bounds.origin,
+                        bounds.upper_right()
+                            + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                    );
+                    let bottom_bounds = Bounds::from_corners(
+                        bounds.lower_left()
+                            - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                        bounds.lower_right(),
+                    );
+                    let left_bounds = Bounds::from_corners(
+                        top_bounds.lower_left(),
+                        bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
+                    );
+                    let right_bounds = Bounds::from_corners(
+                        top_bounds.lower_right() - point(max_border_width, Pixels::ZERO),
+                        bottom_bounds.upper_right(),
+                    );
 
-                let top_bounds = Bounds::from_corners(
-                    bounds.origin,
-                    bounds.upper_right()
-                        + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-                );
-                let bottom_bounds = Bounds::from_corners(
-                    bounds.lower_left()
-                        - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-                    bounds.lower_right(),
-                );
-                let left_bounds = Bounds::from_corners(
-                    top_bounds.lower_left(),
-                    bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
-                );
-                let right_bounds = Bounds::from_corners(
-                    top_bounds.lower_right() - point(max_border_width, Pixels::ZERO),
-                    bottom_bounds.upper_right(),
-                );
-
-                let mut background = border_color;
-                background.a = 0.;
-                let border_quad = quad(
-                    bounds,
-                    corner_radii,
-                    background,
-                    border_widths,
-                    border_color,
-                );
-                let hover_border_quad = if hover_border_color.is_transparent() {
-                    None
-                } else {
-                    let mut background = hover_border_color;
+                    let mut background = border_color;
                     background.a = 0.;
-                    Some(quad(
+                    let border_quad = quad(
                         bounds,
                         corner_radii,
                         background,
                         border_widths,
-                        hover_border_color,
-                    ))
-                };
-                let group_hover_border_quad = group_hover.as_ref().map(|(group_id, _)| {
-                    let quad = if group_hover_border_color.is_transparent() {
+                        border_color,
+                    );
+                    let hover_border_quad = if hover_border_color.is_transparent() {
                         None
                     } else {
-                        let mut background = group_hover_border_color;
+                        let mut background = hover_border_color;
                         background.a = 0.;
                         Some(quad(
                             bounds,
                             corner_radii,
                             background,
                             border_widths,
-                            group_hover_border_color,
+                            hover_border_color,
                         ))
                     };
-                    (group_id.clone(), quad)
-                });
+                    let group_hover_border_quad = group_hover.as_ref().map(|(group_id, _)| {
+                        let quad = if group_hover_border_color.is_transparent() {
+                            None
+                        } else {
+                            let mut background = group_hover_border_color;
+                            background.a = 0.;
+                            Some(quad(
+                                bounds,
+                                corner_radii,
+                                background,
+                                border_widths,
+                                group_hover_border_color,
+                            ))
+                        };
+                        (group_id.clone(), quad)
+                    });
 
-                cx.with_content_mask(Some(ContentMask { bounds: top_bounds }), |cx| {
-                    cx.paint_quad(
-                        border_quad.clone(),
-                        hover_border_quad.clone(),
-                        group_hover_border_quad.clone(),
+                    cx.with_content_mask(Some(ContentMask { bounds: top_bounds }), |cx| {
+                        cx.paint_quad(
+                            border_quad.clone(),
+                            hover_border_quad.clone(),
+                            group_hover_border_quad.clone(),
+                        );
+                    });
+                    cx.with_content_mask(
+                        Some(ContentMask {
+                            bounds: right_bounds,
+                        }),
+                        |cx| {
+                            cx.paint_quad(
+                                border_quad.clone(),
+                                hover_border_quad.clone(),
+                                group_hover_border_quad.clone(),
+                            );
+                        },
+                    );
+                    cx.with_content_mask(
+                        Some(ContentMask {
+                            bounds: bottom_bounds,
+                        }),
+                        |cx| {
+                            cx.paint_quad(
+                                border_quad.clone(),
+                                hover_border_quad.clone(),
+                                group_hover_border_quad.clone(),
+                            );
+                        },
+                    );
+                    cx.with_content_mask(
+                        Some(ContentMask {
+                            bounds: left_bounds,
+                        }),
+                        |cx| {
+                            cx.paint_quad(border_quad, hover_border_quad, group_hover_border_quad);
+                        },
                     );
                 });
-                cx.with_content_mask(
-                    Some(ContentMask {
-                        bounds: right_bounds,
-                    }),
-                    |cx| {
-                        cx.paint_quad(
-                            border_quad.clone(),
-                            hover_border_quad.clone(),
-                            group_hover_border_quad.clone(),
-                        );
-                    },
-                );
-                cx.with_content_mask(
-                    Some(ContentMask {
-                        bounds: bottom_bounds,
-                    }),
-                    |cx| {
-                        cx.paint_quad(
-                            border_quad.clone(),
-                            hover_border_quad.clone(),
-                            group_hover_border_quad.clone(),
-                        );
-                    },
-                );
-                cx.with_content_mask(
-                    Some(ContentMask {
-                        bounds: left_bounds,
-                    }),
-                    |cx| {
-                        cx.paint_quad(border_quad, hover_border_quad, group_hover_border_quad);
-                    },
-                );
-            });
-        }
+            }
 
-        #[cfg(debug_assertions)]
-        if self.debug_below {
-            cx.remove_global::<DebugBelow>();
-        }
+            #[cfg(debug_assertions)]
+            if self.debug_below {
+                cx.remove_global::<DebugBelow>();
+            }
+        })
     }
 
     /// Returns the background color of the style based on the visibility.
