@@ -1,4 +1,4 @@
-use crate::face_pile::FacePile;
+use crate::{face_pile::FacePile, CollaborationPanelSettings};
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, User, UserStore};
@@ -11,6 +11,7 @@ use gpui::{
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use rpc::proto;
+use settings::Settings as _;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -458,10 +459,17 @@ impl CollabTitlebarItem {
             .as_ref()
             .and_then(RepositoryEntry::branch)
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
-        Some(
-            popover_menu("project_branch_trigger")
-                .trigger(
+        Some(popover_menu("project_branch_trigger").when(
+            CollaborationPanelSettings::get_global(cx).git_branch,
+            |m| {
+                m.trigger(
                     Button::new("project_branch_trigger", branch_name)
+                        .when(CollaborationPanelSettings::get_global(cx).git_icon, |b| {
+                            b.icon(IconName::Git)
+                                .icon_position(IconPosition::Start)
+                                .icon_color(Color::Muted)
+                                .icon_size(IconSize::Small)
+                        })
                         .color(Color::Muted)
                         .style(ButtonStyle::Subtle)
                         .label_size(LabelSize::Small)
@@ -474,8 +482,9 @@ impl CollabTitlebarItem {
                             )
                         }),
                 )
-                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), cx)),
-        )
+                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), cx))
+            },
+        ))
     }
 
     fn render_collaborator(

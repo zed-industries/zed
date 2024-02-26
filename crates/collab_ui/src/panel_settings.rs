@@ -10,6 +10,8 @@ pub struct CollaborationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
+    pub git_icon: bool,
+    pub git_branch: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -24,6 +26,26 @@ pub struct NotificationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct CollaborationPanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel.
+    ///
+    /// Default: left
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 240
+    pub default_width: Option<f32>,
+    /// Whether to show the git icon in the title bar.
+    pub git_icon: Option<bool>,
+    /// Whether to show the git branch in the title bar.
+    pub git_branch: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -44,7 +66,7 @@ pub struct PanelSettingsContent {
 
 impl Settings for CollaborationPanelSettings {
     const KEY: Option<&'static str> = Some("collaboration_panel");
-    type FileContent = PanelSettingsContent;
+    type FileContent = CollaborationPanelSettingsContent;
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
