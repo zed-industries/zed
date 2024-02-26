@@ -1,4 +1,13 @@
 {
+  "stems": {
+    "Podfile": "ruby",
+    "LICENSE": "license",
+    "LICENSE-AGPL": "license",
+    "LICENSE-APACHE": "license",
+    "LICENSE-BSD": "license",
+    "Procfile": "heroku",
+    "Dockerfile": "docker"
+  },
   "suffixes": {
     "astro": "astro",
     "Emakefile": "erlang",
@@ -86,6 +95,7 @@
     "mdb": "storage",
     "mdf": "storage",
     "mdx": "document",
+    "metadata": "code",
     "mkv": "video",
     "mjs": "code",
     "mka": "audio",
@@ -187,9 +197,13 @@
     "default": {
       "icon": "icons/file_icons/file.svg"
     },
+    "docker": {
+      "icon": "icons/file_icons/docker.svg"
+    },
     "document": {
       "icon": "icons/file_icons/book.svg"
     },
+
     "elixir": {
       "icon": "icons/file_icons/elixir.svg"
     },
@@ -214,6 +228,9 @@
     "haskell": {
       "icon": "icons/file_icons/haskell.svg"
     },
+    "heroku": {
+      "icon": "icons/file_icons/heroku.svg"
+    },
     "go": {
       "icon": "icons/file_icons/go.svg"
     },
@@ -226,8 +243,11 @@
     "java": {
       "icon": "icons/file_icons/java.svg"
     },
-    "kotlin":{
+    "kotlin": {
       "icon": "icons/file_icons/kotlin.svg"
+    },
+    "license": {
+      "icon": "icons/file_icons/license.svg"
     },
     "lock": {
       "icon": "icons/file_icons/lock.svg"
