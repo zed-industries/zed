@@ -11,6 +11,3 @@ doctest = false
 
 [dependencies]
 derive_refineable = { path = "./derive_refineable" }
-proc-macro2 = "1.0.66"
-quote = "1.0.9"
-syn = "1.0.72"

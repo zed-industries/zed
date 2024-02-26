@@ -318,3 +318,6 @@ opt-level = 3
 debug = "limited"
 lto = "thin"
 codegen-units = 1
+
+[workspace.metadata.cargo-machete]
+ignored = ["bindgen", "cbindgen", "prost_build", "serde"]

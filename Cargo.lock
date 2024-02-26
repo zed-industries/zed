@@ -13,9 +13,7 @@ dependencies = [
  "gpui",
  "language",
  "project",
- "settings",
  "smallvec",
- "theme",
  "ui",
  "util",
  "workspace",
@@ -94,7 +92,6 @@ dependencies = [
  "parse_duration",
  "postage",
  "rand 0.8.5",
- "regex",
  "rusqlite",
  "serde",
  "serde_json",
@@ -756,9 +753,7 @@ dependencies = [
  "anyhow",
  "collections",
  "derive_more",
- "futures 0.3.28",
  "gpui",
- "log",
  "parking_lot 0.11.2",
  "rodio",
  "util",
@@ -774,11 +769,9 @@ dependencies = [
  "editor",
  "gpui",
  "isahc",
- "lazy_static",
  "log",
  "markdown_preview",
  "menu",
- "project",
  "release_channel",
  "schemars",
  "serde",
@@ -787,7 +780,6 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
- "theme",
  "util",
  "workspace",
 ]
@@ -1514,15 +1506,10 @@ dependencies = [
 name = "breadcrumbs"
 version = "0.1.0"
 dependencies = [
- "collections",
  "editor",
  "gpui",
  "itertools 0.11.0",
- "language",
  "outline",
- "project",
- "search",
- "settings",
  "theme",
  "ui",
  "workspace",
@@ -1722,34 +1709,18 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "db",
- "feature_flags",
  "futures 0.3.28",
  "gpui",
- "image",
  "language",
- "lazy_static",
  "log",
- "parking_lot 0.11.2",
- "postage",
  "rand 0.8.5",
  "release_channel",
  "rpc",
- "schemars",
- "serde",
- "serde_derive",
  "settings",
- "smallvec",
- "smol",
  "sum_tree",
- "tempfile",
  "text",
- "thiserror",
  "time",
- "tiny_http",
- "url",
  "util",
- "uuid",
 ]
 
 [[package]]
@@ -2002,7 +1973,7 @@ dependencies = [
  "block",
  "cocoa-foundation",
  "core-foundation",
- "core-graphics 0.23.1",
+ "core-graphics",
  "foreign-types 0.5.0",
  "libc",
  "objc",
@@ -2131,19 +2102,16 @@ dependencies = [
  "db",
  "editor",
  "extensions_ui",
- "feature_flags",
  "feedback",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
  "language",
  "lazy_static",
- "log",
  "menu",
  "notifications",
  "parking_lot 0.11.2",
  "picker",
- "postage",
  "pretty_assertions",
  "project",
  "recent_projects",
@@ -2156,7 +2124,6 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
- "sys-locale",
  "theme",
  "theme_selector",
  "time",
@@ -2366,19 +2333,6 @@ checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 
 [[package]]
 name = "core-graphics"
-version = "0.22.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2581bbab3b8ffc6fcbd550bf46c355135d16e9ff2a6ea032ad6b9bf1d7efe4fb"
-dependencies = [
- "bitflags 1.3.2",
- "core-foundation",
- "core-graphics-types",
- "foreign-types 0.3.2",
- "libc",
-]
-
-[[package]]
-name = "core-graphics"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "970a29baf4110c26fedbc7f82107d42c23f7e88e404c4577ed73fe99ff85a212"
@@ -2417,7 +2371,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9d2790b5c08465d49f8dc05c8bcae9fea467855947db39b0f8145c091aaced5"
 dependencies = [
  "core-foundation",
- "core-graphics 0.23.1",
+ "core-graphics",
  "foreign-types 0.5.0",
  "libc",
 ]
@@ -2813,17 +2767,11 @@ name = "db"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
- "collections",
- "env_logger",
  "gpui",
  "indoc",
  "lazy_static",
  "log",
- "parking_lot 0.11.2",
  "release_channel",
- "serde",
- "serde_derive",
  "smol",
  "sqlez",
  "sqlez_macros",
@@ -2902,22 +2850,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "dhat"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f2aaf837aaf456f6706cb46386ba8dffd4013a757e36f4ea05c20dd46b209a3"
-dependencies = [
- "backtrace",
- "lazy_static",
- "mintex",
- "parking_lot 0.12.1",
- "rustc-hash",
- "serde",
- "serde_json",
- "thousands",
 ]
 
 [[package]]
@@ -3118,25 +3050,20 @@ dependencies = [
  "multi_buffer",
  "ordered-float 2.10.0",
  "parking_lot 0.11.2",
- "postage",
  "project",
  "rand 0.8.5",
  "release_channel",
- "rich_text",
  "rpc",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "smallvec",
  "smol",
  "snippet",
- "sqlez",
  "sum_tree",
  "text",
  "theme",
- "tree-sitter",
  "tree-sitter-html",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -3323,7 +3250,6 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-tar",
- "client",
  "collections",
  "fs",
  "futures 0.3.28",
@@ -3344,25 +3270,13 @@ dependencies = [
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-compression",
- "async-tar",
  "client",
- "db",
  "editor",
  "extension",
- "fs",
- "futures 0.3.28",
- "fuzzy",
  "gpui",
- "log",
- "project",
- "serde",
- "serde_json",
  "settings",
  "theme",
  "ui",
- "util",
  "workspace",
 ]
 
@@ -3419,7 +3333,6 @@ checksum = "6999dc1837253364c2ebb0704ba97994bd874e8f195d665c50b7548f6ea92764"
 name = "feature_flags"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui",
 ]
 
@@ -3565,7 +3478,7 @@ dependencies = [
  "bitflags 1.3.2",
  "byteorder",
  "core-foundation",
- "core-graphics 0.23.1",
+ "core-graphics",
  "core-text",
  "dirs-next",
  "dwrote",
@@ -3709,7 +3622,6 @@ dependencies = [
  "log",
  "notify",
  "parking_lot 0.11.2",
- "regex",
  "rope",
  "serde",
  "serde_derive",
@@ -3997,20 +3909,14 @@ dependencies = [
 name = "git"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
  "clock",
- "collections",
- "futures 0.3.28",
  "git2",
  "lazy_static",
  "log",
- "parking_lot 0.11.2",
  "smol",
  "sum_tree",
  "text",
  "unindent",
- "util",
 ]
 
 [[package]]
@@ -4076,9 +3982,6 @@ dependencies = [
  "editor",
  "gpui",
  "menu",
- "postage",
- "serde",
- "settings",
  "text",
  "theme",
  "ui",
@@ -4126,7 +4029,6 @@ dependencies = [
  "async-task",
  "backtrace",
  "bindgen 0.65.1",
- "bitflags 2.4.1",
  "blade-graphics",
  "blade-macros",
  "block",
@@ -4135,12 +4037,11 @@ dependencies = [
  "cocoa",
  "collections",
  "core-foundation",
- "core-graphics 0.23.1",
+ "core-graphics",
  "core-text",
  "cosmic-text",
  "ctor",
  "derive_more",
- "dhat",
  "env_logger",
  "etagere",
  "flume",
@@ -4158,11 +4059,9 @@ dependencies = [
  "num_cpus",
  "objc",
  "open",
- "ordered-float 2.10.0",
  "parking",
  "parking_lot 0.11.2",
  "pathfinder_geometry",
- "png",
  "postage",
  "profiling",
  "rand 0.8.5",
@@ -4175,7 +4074,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "simplelog",
  "slotmap",
  "smallvec",
  "smol",
@@ -4662,7 +4560,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
- "log",
  "smol",
  "util",
 ]
@@ -4939,9 +4836,7 @@ name = "language"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-broadcast 0.4.1",
  "async-trait",
- "client",
  "clock",
  "collections",
  "ctor",
@@ -4963,7 +4858,6 @@ dependencies = [
  "rpc",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "similar",
@@ -4972,7 +4866,6 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
- "toml 0.8.10",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
@@ -4980,7 +4873,6 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
- "tree-sitter-python",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -5020,13 +4912,11 @@ dependencies = [
  "lsp",
  "project",
  "release_channel",
- "serde",
  "serde_json",
  "settings",
  "theme",
  "tree-sitter",
  "ui",
- "unindent",
  "util",
  "workspace",
 ]
@@ -5279,27 +5169,17 @@ dependencies = [
  "anyhow",
  "async-broadcast 0.4.1",
  "async-trait",
- "block",
- "byteorder",
- "bytes 1.5.0",
- "cocoa",
  "collections",
  "core-foundation",
- "core-graphics 0.22.3",
- "foreign-types 0.3.2",
  "futures 0.3.28",
  "gpui",
- "hmac 0.12.1",
- "jwt",
  "live_kit_server",
  "log",
  "media",
  "nanoid",
- "objc",
  "parking_lot 0.11.2",
  "postage",
  "serde",
- "serde_derive",
  "serde_json",
  "sha2 0.10.7",
  "simplelog",
@@ -5311,7 +5191,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "futures 0.3.28",
  "hmac 0.12.1",
  "jwt",
  "log",
@@ -5320,7 +5199,6 @@ dependencies = [
  "prost-types 0.8.0",
  "reqwest",
  "serde",
- "serde_derive",
  "sha2 0.10.7",
 ]
 
@@ -5435,19 +5313,13 @@ dependencies = [
 name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "editor",
  "gpui",
  "language",
- "lazy_static",
- "log",
- "menu",
  "pretty_assertions",
- "project",
  "pulldown-cmark",
  "theme",
  "ui",
- "util",
  "workspace",
 ]
 
@@ -5497,8 +5369,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bindgen 0.65.1",
- "block",
- "bytes 1.5.0",
  "core-foundation",
  "foreign-types 0.5.0",
  "metal",
@@ -5635,16 +5505,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e53debba6bda7a793e5f99b8dacf19e626084f525f7829104ba9898f367d85ff"
 
 [[package]]
-name = "mintex"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd7c5ba1c3b5a23418d7bbf98c71c3d4946a0125002129231da8d6b723d559cb"
-dependencies = [
- "once_cell",
- "sys-info",
-]
-
-[[package]]
 name = "mio"
 version = "0.6.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5712,46 +5572,22 @@ dependencies = [
 name = "multi_buffer"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "anyhow",
- "client",
  "clock",
  "collections",
- "convert_case 0.6.0",
- "copilot",
- "ctor",
- "env_logger",
  "futures 0.3.28",
  "git",
  "gpui",
  "indoc",
  "itertools 0.11.0",
  "language",
- "lazy_static",
  "log",
- "lsp",
- "ordered-float 2.10.0",
  "parking_lot 0.11.2",
- "postage",
- "project",
- "pulldown-cmark",
  "rand 0.8.5",
- "rich_text",
- "schemars",
- "serde",
- "serde_derive",
  "settings",
- "smallvec",
- "smol",
- "snippet",
  "sum_tree",
  "text",
  "theme",
- "tree-sitter",
- "tree-sitter-html",
- "tree-sitter-rust",
- "tree-sitter-typescript",
- "unindent",
  "util",
 ]
 
@@ -6385,10 +6221,8 @@ dependencies = [
  "language",
  "ordered-float 2.10.0",
  "picker",
- "postage",
  "settings",
  "smol",
- "text",
  "theme",
  "ui",
  "util",
@@ -6857,10 +6691,8 @@ name = "prettier"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "collections",
  "fs",
- "futures 0.3.28",
  "gpui",
  "language",
  "log",
@@ -6868,7 +6700,6 @@ dependencies = [
  "node_runtime",
  "parking_lot 0.11.2",
  "serde",
- "serde_derive",
  "serde_json",
  "util",
 ]
@@ -6986,7 +6817,6 @@ dependencies = [
  "clock",
  "collections",
  "copilot",
- "db",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -7034,11 +6864,9 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "futures 0.3.28",
  "gpui",
  "language",
  "menu",
- "postage",
  "pretty_assertions",
  "project",
  "schemars",
@@ -7047,7 +6875,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "smallvec",
  "theme",
  "ui",
  "unicase",
@@ -7068,13 +6895,10 @@ dependencies = [
  "lsp",
  "ordered-float 2.10.0",
  "picker",
- "postage",
  "project",
  "release_channel",
  "serde_json",
  "settings",
- "smol",
- "text",
  "theme",
  "util",
  "workspace",
@@ -7369,7 +7193,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac4ea493258d54c24cb46aa9345d099e58e2ea3f30dd63667fc54fc892f18e76"
 dependencies = [
  "cocoa",
- "core-graphics 0.23.1",
+ "core-graphics",
  "objc",
  "raw-window-handle 0.5.2",
 ]
@@ -7479,9 +7303,6 @@ name = "refineable"
 version = "0.1.0"
 dependencies = [
  "derive_refineable",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -7796,7 +7617,6 @@ name = "rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-lock 2.8.0",
  "async-tungstenite",
  "base64 0.13.1",
  "collections",
@@ -7809,7 +7629,6 @@ dependencies = [
  "rand 0.8.5",
  "rsa 0.4.0",
  "serde",
- "serde_derive",
  "serde_json",
  "strum",
  "tracing",
@@ -8299,13 +8118,10 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "language",
- "log",
  "menu",
- "postage",
  "project",
  "semantic_index",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "smallvec",
@@ -8366,19 +8182,15 @@ version = "0.1.0"
 dependencies = [
  "ai",
  "anyhow",
- "async-trait",
- "client",
  "collections",
  "ctor",
  "env_logger",
  "futures 0.3.28",
- "globset",
  "gpui",
  "language",
  "lazy_static",
  "log",
  "ndarray",
- "node_runtime",
  "ordered-float 2.10.0",
  "parking_lot 0.11.2",
  "postage",
@@ -8388,7 +8200,6 @@ dependencies = [
  "release_channel",
  "rpc",
  "rusqlite",
- "rust-embed",
  "schemars",
  "serde",
  "serde_json",
@@ -8396,7 +8207,6 @@ dependencies = [
  "sha1",
  "smol",
  "tempfile",
- "tiktoken-rs",
  "tree-sitter",
  "tree-sitter-cpp",
  "tree-sitter-elixir",
@@ -8889,8 +8699,6 @@ name = "sqlez_macros"
 version = "0.1.0"
 dependencies = [
  "lazy_static",
- "proc-macro2",
- "quote",
  "sqlez",
  "sqlformat",
  "syn 1.0.109",
@@ -9362,16 +9170,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2047c6ded9c721764247e62cd3b03c09ffc529b2ba5b10ec482ae507a4a70160"
 
 [[package]]
-name = "sys-info"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b3a0d0aba8bf96a0e1ddfdc352fc53b3df7f39318c71854910c3c4b024ae52c"
-dependencies = [
- "cc",
- "libc",
-]
-
-[[package]]
 name = "sys-locale"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9510,15 +9308,12 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "collections",
- "db",
  "dirs 4.0.0",
  "futures 0.3.28",
  "gpui",
  "itertools 0.11.0",
  "lazy_static",
  "libc",
- "mio-extras",
- "ordered-float 2.10.0",
  "procinfo",
  "rand 0.8.5",
  "schemars",
@@ -9526,8 +9321,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "shellexpand",
- "smallvec",
  "smol",
  "task",
  "theme",
@@ -9581,7 +9374,6 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "digest 0.9.0",
  "env_logger",
  "gpui",
  "lazy_static",
@@ -9662,17 +9454,13 @@ name = "theme_selector"
 version = "0.1.0"
 dependencies = [
  "client",
- "editor",
  "feature_flags",
  "fs",
  "fuzzy",
  "gpui",
  "log",
- "parking_lot 0.11.2",
  "picker",
- "postage",
  "settings",
- "smol",
  "theme",
  "ui",
  "util",
@@ -9698,12 +9486,6 @@ dependencies = [
  "quote",
  "syn 2.0.48",
 ]
-
-[[package]]
-name = "thousands"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bf63baf9f5039dadc247375c29eb13706706cfde997d0330d05aa63a77d8820"
 
 [[package]]
 name = "thread_local"
@@ -10718,8 +10500,6 @@ dependencies = [
  "gpui",
  "itertools 0.11.0",
  "menu",
- "rand 0.8.5",
- "serde",
  "settings",
  "smallvec",
  "story",
@@ -12045,14 +11825,9 @@ name = "zed"
 version = "0.125.0"
 dependencies = [
  "activity_indicator",
- "ai",
  "anyhow",
  "assets",
  "assistant",
- "async-compression",
- "async-recursion 0.3.2",
- "async-tar",
- "async-trait",
  "audio",
  "auto_update",
  "backtrace",
@@ -12068,14 +11843,12 @@ dependencies = [
  "command_palette",
  "copilot",
  "copilot_ui",
- "ctor",
  "db",
  "diagnostics",
  "editor",
  "env_logger",
  "extension",
  "extensions_ui",
- "feature_flags",
  "feedback",
  "file_finder",
  "fs",
@@ -12083,9 +11856,6 @@ dependencies = [
  "futures 0.3.28",
  "go_to_line",
  "gpui",
- "ignore",
- "image",
- "indexmap 1.9.3",
  "install_cli",
  "isahc",
  "itertools 0.11.0",
@@ -12094,57 +11864,34 @@ dependencies = [
  "language_selector",
  "language_tools",
  "languages",
- "lazy_static",
- "libc",
  "log",
- "lsp",
  "markdown_preview",
  "menu",
  "mimalloc",
  "node_runtime",
  "notifications",
- "num_cpus",
  "outline",
  "parking_lot 0.11.2",
- "postage",
- "profiling",
  "project",
  "project_panel",
  "project_symbols",
  "quick_action_bar",
- "rand 0.8.5",
  "recent_projects",
- "regex",
  "release_channel",
  "rope",
- "rpc",
- "rsa 0.4.0",
- "rust-embed",
- "schemars",
  "search",
  "semantic_index",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
- "shellexpand",
  "simplelog",
- "smallvec",
  "smol",
- "sum_tree",
  "task",
  "tasks_ui",
- "tempfile",
  "terminal_view",
- "text",
  "theme",
  "theme_selector",
- "thiserror",
- "tiny_http",
- "toml 0.8.10",
  "tree-sitter-rust",
- "unindent",
- "url",
  "urlencoding",
  "util",
  "uuid",

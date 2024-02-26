@@ -17,34 +17,18 @@ anyhow.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
-db.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
-image = "0.23"
 language.workspace = true
-lazy_static.workspace = true
 log.workspace = true
-parking_lot.workspace = true
-postage.workspace = true
 rand.workspace = true
 release_channel.workspace = true
 rpc.workspace = true
-schemars.workspace = true
-serde.workspace = true
-serde_derive.workspace = true
 settings.workspace = true
-smallvec.workspace = true
-smol.workspace = true
 sum_tree.workspace = true
-tempfile.workspace = true
 text.workspace = true
-thiserror.workspace = true
 time.workspace = true
-tiny_http = "0.8"
-url.workspace = true
 util.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

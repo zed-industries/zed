@@ -13,16 +13,17 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-futures.workspace = true
 hmac = "0.12"
 jwt = "0.16"
 log.workspace = true
-prost = "0.8"
+prost.workspace = true
 prost-types = "0.8"
 reqwest = "0.11"
 serde.workspace = true
-serde_derive.workspace = true
-sha2 = "0.10"
+sha2.workspace = true
 
 [build-dependencies]
 prost-build = "0.9"
+
+[package.metadata.cargo-machete]
+ignored = ["prost-types"]
