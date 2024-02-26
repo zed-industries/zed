@@ -777,7 +777,6 @@ impl CompletionsMenu {
         }
 
         let mut completions = completions.clone();
-        println!("And it's half my fault");
         {
             let completion_indices: Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
 
@@ -791,14 +790,24 @@ impl CompletionsMenu {
                 }
 
                 // Direct modification of the object within the collection.
-                completion.label.text = "BOB".to_string();
+                let ui_font_size = settings.ui_font_size;
+                completion.label.text = "LABEL PLACEHOLDER...".to_string();
                 //PICK UP FROM HERE
+                //ELLIPSIS TRUNCATION SHOULD HAPPEN HERE
 
+
+                // let max_completion_len = 45;
+                // if lsp_completion.label.len() > max_completion_len {
+                //     lsp_completion.label.truncate(max_completion_len - 3);
+                //     lsp_completion.label.push_str("...");
+                // }
+
+                // // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
+                // if language.name().to_string().as_str() == "Python" {
+                //     lsp_completion.label.push_str("               ");
+                // }
             }
         }
-        // let font_size = observe_buffer_font_size_adjustment(cx, cx).maybe_to_value().unwrap();
-        let p = Some((3, Path::new("buffer_font_size")));
-        println!("UI Size: {}", settings.ui_font_size);
         {
             let completion_indices:Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
 
@@ -810,8 +819,6 @@ impl CompletionsMenu {
                 }
                 let mut completion = completion.lsp_completion.clone();
                 drop(completions_guard);
-
-                println!("i just love to  play the victim2: {}", completion.label);
             }
         }
         let Some(provider) = editor.completion_provider.as_ref() else {
@@ -3286,8 +3293,6 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
         let completions = provider.completions(&buffer, buffer_position, cx);
-        println!("She forgot that I exist");
-        //EPHRAM
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
             async move {
@@ -3304,8 +3309,7 @@ impl Editor {
                             .map(|(id, completion)| {
                                 StringMatchCandidate::new(
                                     id,
-                                    completion.label.text.clone().into(), // completion.label.text[completion.label.filter_range.clone()]
-                                                                          //     .into(),
+                                    completion.label.text.clone().into(),
                                 )
                             })
                             .collect(),
@@ -9551,7 +9555,6 @@ impl CompletionProvider for Model<Project> {
         buffer_position: text::Anchor,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>> {
-        println!("And i saw your mom");
         self.update(cx, |project, cx| {
             project.completions(&buffer, buffer_position, cx)
         })

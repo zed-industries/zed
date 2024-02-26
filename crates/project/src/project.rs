@@ -5030,8 +5030,6 @@ impl Project {
                         completions.extend_from_slice(&new_completions);
                     }
                 }
-                println!("i love vermont but {}", 7);
-                //EPHRAM
                 Ok(completions)
             })
         } else if let Some(project_id) = self.remote_id() {
@@ -5046,8 +5044,6 @@ impl Project {
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
-        println!("Season of the sticks");
-        //EPHRAM
         let position = position.to_point_utf16(buffer.read(cx));
         self.completions_impl(buffer, position, cx)
     }

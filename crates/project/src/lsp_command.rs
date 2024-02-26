@@ -1556,16 +1556,6 @@ impl LspCommand for GetCompletions {
                     Some(async move {
                         let mut label = None;
                         if let Some(language) = language.as_ref() {
-                            // let max_completion_len = 45;
-                            // if lsp_completion.label.len() > max_completion_len {
-                            //     lsp_completion.label.truncate(max_completion_len - 3);
-                            //     lsp_completion.label.push_str("...");
-                            // }
-
-                            // // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
-                            // if language.name().to_string().as_str() == "Python" {
-                            //     lsp_completion.label.push_str("               ");
-                            // }
                             language.process_completion(&mut lsp_completion).await;
                             label = language.label_for_completion(&lsp_completion).await;
                         }
