@@ -78,7 +78,8 @@ use language::{
 };
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
-use lsp::{DiagnosticSeverity, LanguageServerId};
+use log::kv::Source;
+use lsp::{CompletionItem, DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
@@ -109,7 +110,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use log::kv::Source;
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
@@ -775,6 +775,40 @@ impl CompletionsMenu {
             return Task::ready(());
         }
 
+        let mut completions = completions.clone();
+        println!("And it's half my fault");
+        {
+            let completion_indices: Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
+
+            let mut completions_guard = completions.write(); // Assuming a RwLock or similar
+            for completion_index in completion_indices {
+                let completion = &mut completions_guard[completion_index];
+
+                // Check if documentation exists, skip otherwise.
+                if completion.documentation.is_some() {
+                    continue;
+                }
+
+                // Direct modification of the object within the collection.
+                completion.label.text = "BOB".to_string();
+                //PICK UP FROM HERE
+            }
+        }//changes arent being persistentc
+        {
+            let completion_indices:Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
+
+            for completion_index in completion_indices {
+                let completions_guard = completions.read();
+                let completion = &completions_guard[completion_index];
+                if completion.documentation.is_some() {
+                    continue;
+                }
+                let mut completion = completion.lsp_completion.clone();
+                drop(completions_guard);
+
+                println!("i just love to  play the victim2: {}", completion.label);
+            }
+        }
         let Some(provider) = editor.completion_provider.as_ref() else {
             return Task::ready(());
         };
@@ -3255,12 +3289,7 @@ impl Editor {
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
                     //FOUND THE MENU
-                    let clone =  completions.clone();
-                    for t in clone {
-                        println!("Label Text: {}", t.label.text[t.label.filter_range.clone()].to_string());
-                        println!("New Text: {}", t.new_text);
-                        println!("----");
-                    }
+
                     let mut menu = CompletionsMenu {
                         id,
                         initial_position: position,
@@ -3270,8 +3299,8 @@ impl Editor {
                             .map(|(id, completion)| {
                                 StringMatchCandidate::new(
                                     id,
-                                    completion.label.text[completion.label.filter_range.clone()]
-                                        .into(),
+                                    completion.label.text.clone().into(), // completion.label.text[completion.label.filter_range.clone()]
+                                                                          //     .into(),
                                 )
                             })
                             .collect(),
