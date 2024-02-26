@@ -190,6 +190,9 @@ impl Fs for RealFs {
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
             let mut tmp_file = if cfg!(target_os = "linux") {
+                // Use temp dir in the same filesystem to home directory to
+                // avoid invalid cross-device link error returned by rename.
+                // See https://github.com/zed-industries/zed/pull/8437 for more details.
                 NamedTempFile::new_in(paths::TEMP_DIR.to_path_buf())
             } else {
                 NamedTempFile::new()
