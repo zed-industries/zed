@@ -406,17 +406,18 @@ impl<'a> ElementContext<'a> {
     pub fn with_element_id<R>(
         &mut self,
         id: Option<impl Into<ElementId>>,
-        f: impl FnOnce(&mut Self) -> R,
+        f: impl FnOnce(Option<GlobalElementId>, &mut Self) -> R,
     ) -> R {
         if let Some(id) = id.map(Into::into) {
             let window = self.window_mut();
             window.element_id_stack.push(id);
-            let result = f(self);
+            let global_id = Some(window.element_id_stack.clone());
+            let result = f(global_id, self);
             let window: &mut Window = self.borrow_mut();
             window.element_id_stack.pop();
             result
         } else {
-            f(self)
+            f(None, self)
         }
     }
 
@@ -571,7 +572,7 @@ impl<'a> ElementContext<'a> {
     where
         S: 'static,
     {
-        self.with_element_id(Some(id), |cx| {
+        self.with_element_id(Some(id), |_, cx| {
                 let global_id = cx.window().element_id_stack.clone();
 
                 if let Some(any) = cx
