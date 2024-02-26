@@ -22,6 +22,7 @@
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
+    "dart": "dart",
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
@@ -64,7 +65,7 @@
     "ico": "image",
     "ini": "settings",
     "j2k": "image",
-    "java": "code",
+    "java": "java",
     "jfif": "image",
     "jp2": "image",
     "jpeg": "image",
@@ -73,6 +74,7 @@
     "json": "storage",
     "jsonc": "storage",
     "jxl": "image",
+    "kt": "kotlin",
     "ldf": "storage",
     "lock": "lock",
     "lockb": "bun",
@@ -101,9 +103,11 @@
     "odt": "document",
     "ogg": "audio",
     "opus": "audio",
+    "otf": "font",
     "pdb": "storage",
     "pdf": "document",
     "php": "php",
+    "plist": "template",
     "png": "image",
     "ppt": "document",
     "pptx": "document",
@@ -128,11 +132,12 @@
     "sqlite": "storage",
     "svelte": "template",
     "svg": "image",
-    "swift": "code",
+    "swift": "swift",
     "tiff": "image",
     "toml": "toml",
     "ts": "typescript",
     "tsv": "storage",
+    "ttf": "font",
     "tsx": "code",
     "txt": "document",
     "vue": "vue",
@@ -176,6 +181,9 @@
     "css": {
       "icon": "icons/file_icons/css.svg"
     },
+    "dart": {
+      "icon": "icons/file_icons/dart.svg"
+    },
     "default": {
       "icon": "icons/file_icons/file.svg"
     },
@@ -200,6 +208,9 @@
     "expanded_folder": {
       "icon": "icons/file_icons/folder_open.svg"
     },
+    "font": {
+      "icon": "icons/file_icons/font.svg"
+    },
     "haskell": {
       "icon": "icons/file_icons/haskell.svg"
     },
@@ -211,6 +222,12 @@
     },
     "image": {
       "icon": "icons/file_icons/image.svg"
+    },
+    "java": {
+      "icon": "icons/file_icons/java.svg"
+    },
+    "kotlin":{
+      "icon": "icons/file_icons/kotlin.svg"
     },
     "lock": {
       "icon": "icons/file_icons/lock.svg"
@@ -256,6 +273,9 @@
     },
     "storage": {
       "icon": "icons/file_icons/database.svg"
+    },
+    "swift": {
+      "icon": "icons/file_icons/swift.svg"
     },
     "template": {
       "icon": "icons/file_icons/html.svg"
