@@ -366,7 +366,7 @@ impl MessageEditor {
         lazy_static! {
             static ref EMOJI_FUZZY_MATCH_CANDIDATES: Vec<StringMatchCandidate> = {
                 let emojis = emojis::iter()
-                    .filter_map(|s| s.shortcode())
+                    .flat_map(|s| s.shortcodes())
                     .map(|emoji| StringMatchCandidate {
                         id: 0,
                         string: emoji.to_string(),
