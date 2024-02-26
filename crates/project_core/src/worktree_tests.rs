@@ -1,7 +1,7 @@
 use crate::{
     project_settings::ProjectSettings,
+    worktree::{Entry, EntryKind, PathChange, Worktree},
     worktree::{Event, Snapshot, WorktreeModelHandle},
-    Entry, EntryKind, PathChange, Project, Worktree,
 };
 use anyhow::Result;
 use client::Client;
@@ -14,7 +14,7 @@ use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::{
     env,
     fmt::Write,
@@ -2535,6 +2535,6 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        Project::init_settings(cx);
+        ProjectSettings::register(cx);
     });
 }
