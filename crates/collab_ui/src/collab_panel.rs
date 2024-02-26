@@ -7,7 +7,7 @@ use crate::{
     CollaborationPanelSettings,
 };
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
+use channel::{Channel, ChannelEvent, ChannelId, ChannelStore, HostedProjectId};
 use client::{Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
@@ -183,6 +183,10 @@ enum ListEntry {
     },
     ChannelEditor {
         depth: usize,
+    },
+    HostedProject {
+        id: HostedProjectId,
+        name: SharedString,
     },
     Contact {
         contact: Arc<Contact>,
@@ -563,6 +567,8 @@ impl CollabPanel {
                     }
                 }
 
+                let hosted_projects = channel_store.projects_for_id(channel.id);
+                dbg!(&channel.id, &hosted_projects);
                 let has_children = channel_store
                     .channel_at_index(mat.candidate_id + 1)
                     .map_or(false, |next_channel| {
@@ -595,6 +601,10 @@ impl CollabPanel {
                             has_children,
                         });
                     }
+                }
+
+                for (name, id) in hosted_projects {
+                    self.entries.push(ListEntry::HostedProject { id, name })
                 }
             }
         }
@@ -1021,6 +1031,33 @@ impl CollabPanel {
             )
             .child(Label::new("chat"))
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
+    }
+
+    fn render_channel_project(
+        &self,
+        id: HostedProjectId,
+        name: &SharedString,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        ListItem::new(ElementId::NamedInteger(
+            "channel-project".into(),
+            id.0 as usize,
+        ))
+        .indent_level(2)
+        .indent_step_size(px(20.))
+        .selected(is_selected)
+        .on_click(cx.listener(move |_this, _, _cx| {
+            todo!();
+        }))
+        .start_slot(
+            h_flex()
+                .relative()
+                .gap_1()
+                .child(IconButton::new(0, IconName::FileTree)),
+        )
+        .child(Label::new(name.clone()))
+        .tooltip(move |cx| Tooltip::text("Open Project", cx))
     }
 
     fn has_subchannels(&self, ix: usize) -> bool {
@@ -1485,6 +1522,12 @@ impl CollabPanel {
                     }
                     ListEntry::ChannelChat { channel_id } => {
                         self.join_channel_chat(*channel_id, cx)
+                    }
+                    ListEntry::HostedProject {
+                        id: _id,
+                        name: _name,
+                    } => {
+                        todo!()
                     }
 
                     ListEntry::OutgoingRequest(_) => {}
@@ -2088,6 +2131,10 @@ impl CollabPanel {
                 .into_any_element(),
             ListEntry::ChannelChat { channel_id } => self
                 .render_channel_chat(*channel_id, is_selected, cx)
+                .into_any_element(),
+
+            ListEntry::HostedProject { id, name } => self
+                .render_channel_project(*id, name, is_selected, cx)
                 .into_any_element(),
         }
     }
@@ -2824,6 +2871,11 @@ impl PartialEq for ListEntry {
                 } = other
                 {
                     return channel_1.id == channel_2.id;
+                }
+            }
+            ListEntry::HostedProject { id, .. } => {
+                if let ListEntry::HostedProject { id: other_id, .. } = other {
+                    return id == other_id;
                 }
             }
             ListEntry::ChannelNotes { channel_id } => {
