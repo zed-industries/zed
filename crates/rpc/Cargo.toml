@@ -15,7 +15,6 @@ test-support = ["collections/test-support", "gpui/test-support"]
 
 [dependencies]
 anyhow.workspace = true
-async-lock = "2.4"
 async-tungstenite = "0.16"
 base64 = "0.13"
 collections.workspace = true
@@ -26,7 +25,6 @@ prost.workspace = true
 rand.workspace = true
 rsa = "0.4"
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 strum.workspace = true
 tracing = { version = "0.1.34", features = ["log"] }
