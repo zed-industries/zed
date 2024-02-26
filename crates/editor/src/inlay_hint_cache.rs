@@ -38,6 +38,7 @@ pub struct InlayHintCache {
     pub(super) enabled: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
     refresh_task: Option<Task<()>>,
+    refresh_debounce_duration: Option<Duration>,
     lsp_request_limiter: Arc<Semaphore>,
 }
 
@@ -265,8 +266,6 @@ impl TasksForRanges {
     }
 }
 
-const INLAY_HINTS_BUFFER_EDITED_DEBOUNCE: Duration = Duration::from_millis(700);
-
 impl InlayHintCache {
     pub(super) fn new(inlay_hint_settings: InlayHintSettings) -> Self {
         Self {
@@ -275,6 +274,8 @@ impl InlayHintCache {
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
             refresh_task: None,
+            refresh_debounce_duration: (inlay_hint_settings.debounce_ms > 0)
+                .then(|| Duration::from_millis(inlay_hint_settings.debounce_ms)),
             version: 0,
             lsp_request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_LSP_REQUESTS)),
         }
@@ -366,11 +367,12 @@ impl InlayHintCache {
         }
 
         let cache_version = self.version + 1;
+        let refresh_debounce_duration = self.refresh_debounce_duration;
         self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
             if invalidate.is_buffer_edited() {
-                cx.background_executor()
-                    .timer(INLAY_HINTS_BUFFER_EDITED_DEBOUNCE)
-                    .await;
+                if let Some(debounce_duration) = refresh_debounce_duration {
+                    cx.background_executor().timer(debounce_duration).await;
+                }
             }
 
             editor
@@ -1272,6 +1274,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
@@ -1402,6 +1405,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -1519,6 +1523,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -1747,6 +1752,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
@@ -1908,6 +1914,7 @@ pub mod tests {
             update_test_language_settings(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    debounce_ms: 0,
                     show_type_hints: new_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                     show_parameter_hints: new_allowed_hint_kinds
                         .contains(&Some(InlayHintKind::Parameter)),
@@ -1952,6 +1959,7 @@ pub mod tests {
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: false,
+                debounce_ms: 0,
                 show_type_hints: another_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: another_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
@@ -2010,6 +2018,7 @@ pub mod tests {
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: final_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: final_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
@@ -2084,6 +2093,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -2216,6 +2226,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -2374,6 +2385,11 @@ pub mod tests {
         editor
             .update(cx, |editor, cx| {
                 editor.scroll_screen(&ScrollAmount::Page(1.0), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, cx| {
                 editor.scroll_screen(&ScrollAmount::Page(1.0), cx);
             })
             .unwrap();
@@ -2510,6 +2526,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -2861,6 +2878,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: false,
                 show_parameter_hints: false,
                 show_other_hints: false,
@@ -3062,6 +3080,7 @@ pub mod tests {
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -3095,6 +3114,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -3193,6 +3213,7 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: false,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -3271,6 +3292,7 @@ pub mod tests {
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
