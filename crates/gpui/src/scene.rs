@@ -5,6 +5,7 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 pub use primitives::*;
+use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Debug, iter::Peekable, slice};
 
 #[derive(Default)]
@@ -17,6 +18,7 @@ pub(crate) struct Scene {
     pub(crate) polychrome_sprites: PrimitiveSet<PolychromeSprite>,
     pub(crate) surfaces: PrimitiveSet<Surface>,
     bounds_tree: BoundsTree<ScaledPixels, PrimitiveIndex>,
+    primitives_by_group_id: FxHashMap<SharedString, SmallVec<[PrimitiveIndex; 4]>>,
     hovered_bounds: Vec<BoundsSearchResult<ScaledPixels, PrimitiveIndex>>,
 }
 
@@ -30,6 +32,8 @@ impl Scene {
         self.polychrome_sprites.clear();
         self.surfaces.clear();
         self.bounds_tree.clear();
+        self.hovered_bounds.clear();
+        self.primitives_by_group_id.clear();
     }
 
     pub fn paths(&self) -> &[Path<ScaledPixels>] {
@@ -100,18 +104,26 @@ impl Scene {
             return None;
         }
 
-        let order = self.bounds_tree.insert(
-            clipped_bounds,
-            PrimitiveIndex {
-                kind: PrimitiveKind::Quad,
-                index: self.quads.primitives.len(),
-            },
-        );
+        let primitive_ix = PrimitiveIndex {
+            kind: PrimitiveKind::Quad,
+            index: self.quads.primitives.len(),
+        };
+        let order = self.bounds_tree.insert(clipped_bounds, primitive_ix);
+        let group_hover = if let Some((group_id, quad)) = group_hover {
+            self.primitives_by_group_id
+                .entry(group_id.clone())
+                .or_default()
+                .push(primitive_ix);
+            Some((group_id, quad.map(|quad| Quad { order, ..quad })))
+        } else {
+            None
+        };
+
         self.quads.insert(
             Quad { order, ..quad },
             quad.background.is_opaque(),
             hover.map(|quad| Quad { order, ..quad }),
-            group_hover.map(|(group_id, quad)| (group_id, quad.map(|quad| Quad { order, ..quad }))),
+            group_hover,
         );
         Some(order)
     }
@@ -312,43 +324,43 @@ impl Scene {
         self.hovered_bounds
             .sort_unstable_by_key(|hovered| Reverse(hovered.order));
 
-        for PrimitiveIndex { kind, index } in
-            self.hovered_bounds.iter().map(|bounds| bounds.data.clone())
-        {
-            let occludes_hover = match kind {
-                PrimitiveKind::Shadow => {
-                    self.shadows.hover(index);
-                    self.shadows.occludes_hover(index)
-                }
-                PrimitiveKind::Quad => {
-                    self.quads.hover(index);
-                    self.quads.occludes_hover(index)
-                }
-                PrimitiveKind::Path => {
-                    self.paths.hover(index);
-                    self.paths.occludes_hover(index)
-                }
-                PrimitiveKind::Underline => {
-                    self.underlines.hover(index);
-                    self.underlines.occludes_hover(index)
-                }
-                PrimitiveKind::MonochromeSprite => {
-                    self.monochrome_sprites.hover(index);
-                    self.monochrome_sprites.occludes_hover(index)
-                }
-                PrimitiveKind::PolychromeSprite => {
-                    self.polychrome_sprites.hover(index);
-                    self.polychrome_sprites.occludes_hover(index)
-                }
-                PrimitiveKind::Surface => self.surfaces.occludes_hover(index),
+        let mut hovered_group_id = None;
+        for PrimitiveIndex { kind, index } in self.hovered_bounds.iter().map(|bounds| bounds.data) {
+            let (occludes_hover, group_id) = match kind {
+                PrimitiveKind::Shadow => self.shadows.hover(index),
+                PrimitiveKind::Quad => self.quads.hover(index),
+                PrimitiveKind::Path => self.paths.hover(index),
+                PrimitiveKind::Underline => self.underlines.hover(index),
+                PrimitiveKind::MonochromeSprite => self.monochrome_sprites.hover(index),
+                PrimitiveKind::PolychromeSprite => self.polychrome_sprites.hover(index),
+                PrimitiveKind::Surface => self.surfaces.hover(index),
             };
 
             if occludes_hover {
+                hovered_group_id = group_id;
                 break;
             }
         }
 
-        // TODO: Handle group-hover
+        if let Some(hovered_group_id) = hovered_group_id {
+            let group_primitives = self
+                .primitives_by_group_id
+                .get(&hovered_group_id)
+                .into_iter()
+                .flatten()
+                .copied();
+            for PrimitiveIndex { kind, index } in group_primitives {
+                match kind {
+                    PrimitiveKind::Shadow => self.shadows.group_hovered(index),
+                    PrimitiveKind::Quad => self.quads.group_hovered(index),
+                    PrimitiveKind::Path => self.paths.group_hovered(index),
+                    PrimitiveKind::Underline => self.underlines.group_hovered(index),
+                    PrimitiveKind::MonochromeSprite => self.monochrome_sprites.group_hovered(index),
+                    PrimitiveKind::PolychromeSprite => self.polychrome_sprites.group_hovered(index),
+                    PrimitiveKind::Surface => self.surfaces.group_hovered(index),
+                }
+            }
+        }
 
         self.shadows
             .primitives
@@ -414,21 +426,58 @@ impl<P: Debug> PrimitiveSet<P> {
         }
     }
 
-    /// Overrides the primitive at the given index with its hovered variant, if a variant exists.
-    fn hover(&mut self, index: usize) {
-        if let Some(hovered_primitive) = self
-            .primitive_metadata
-            .get_mut(&index)
-            .and_then(|data| data.hover.take())
-        {
-            self.primitives[index] = hovered_primitive;
+    /// Attempts to update the hover state of a primitive at the specified index.
+    ///
+    /// If the primitive at the given index has a hover state, it replaces the current primitive
+    /// with the hover state. If the primitive occludes hover, it will also check for a group hover
+    /// state and update accordingly.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the primitive to check for hover state.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing a boolean indicating whether the primitive occludes hover and an
+    /// `Option<SharedString>` which holds the group ID if a group hover state is present.
+    fn hover(&mut self, index: usize) -> (bool, Option<SharedString>) {
+        if let Some(metadata) = self.primitive_metadata.get_mut(&index) {
+            if let Some(hovered_primitive) = metadata.hover.take() {
+                self.primitives[index] = hovered_primitive;
+            }
+
+            if metadata.occludes_hover {
+                if let Some((primitive_group_id, group_hovered_primitive)) =
+                    metadata.group_hover.as_mut()
+                {
+                    if let Some(group_hovered_primitive) = group_hovered_primitive.take() {
+                        self.primitives[index] = group_hovered_primitive;
+                    }
+
+                    return (true, Some(primitive_group_id.clone()));
+                }
+            }
         }
+
+        (false, None)
     }
 
-    fn occludes_hover(&self, index: usize) -> bool {
-        self.primitive_metadata
-            .get(&index)
-            .map_or(false, |data| data.occludes_hover)
+    /// Updates the hover state for a group hover primitive at the specified index.
+    ///
+    /// If the primitive at the given index has a group hover state, it replaces the current primitive
+    /// with the group hover state.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the primitive to check for group hover state.
+    fn group_hovered(&mut self, index: usize) {
+        if let Some(metadata) = self.primitive_metadata.get_mut(&index) {
+            if let Some((_, group_hovered_primitive)) = &mut metadata.group_hover {
+                if let Some(group_hovered_primitive) = group_hovered_primitive.take() {
+                    self.primitives[index] = group_hovered_primitive;
+                }
+            }
+        }
     }
 
     /// Clears all primitives and associated hover information from the set.
@@ -650,7 +699,7 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct PrimitiveIndex {
     kind: PrimitiveKind,
     index: usize,
