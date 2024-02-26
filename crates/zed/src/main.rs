@@ -323,8 +323,10 @@ fn main() {
                 cx.spawn(|cx| async move {
                     // ignore errors here, we'll show a generic "not signed in"
                     let _ = authenticate(client, &cx).await;
-                    cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))?
-                        .await?;
+                    cx.update(|cx| {
+                        workspace::join_channel(client::ChannelId(channel_id), app_state, None, cx)
+                    })?
+                    .await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -343,7 +345,7 @@ fn main() {
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     let workspace = workspace_window.root_view(&cx)?;
                     cx.update_window(workspace_window.into(), |_, cx| {
-                        ChannelView::open(channel_id, heading, workspace, cx)
+                        ChannelView::open(client::ChannelId(channel_id), heading, workspace, cx)
                     })?
                     .await?;
                     anyhow::Ok(())
@@ -378,7 +380,12 @@ fn main() {
                         cx.update(|mut cx| {
                             cx.spawn(|cx| async move {
                                 cx.update(|cx| {
-                                    workspace::join_channel(channel_id, app_state, None, cx)
+                                    workspace::join_channel(
+                                        client::ChannelId(channel_id),
+                                        app_state,
+                                        None,
+                                        cx,
+                                    )
                                 })?
                                 .await?;
                                 anyhow::Ok(())
@@ -397,7 +404,12 @@ fn main() {
                                 workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                             let workspace = workspace_window.root_view(&cx)?;
                             cx.update_window(workspace_window.into(), |_, cx| {
-                                ChannelView::open(channel_id, heading, workspace, cx)
+                                ChannelView::open(
+                                    client::ChannelId(channel_id),
+                                    heading,
+                                    workspace,
+                                    cx,
+                                )
                             })?
                             .await?;
                             anyhow::Ok(())

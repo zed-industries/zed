@@ -7,8 +7,8 @@ use crate::{
     CollaborationPanelSettings,
 };
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelId, ChannelStore, HostedProjectId};
-use client::{Client, Contact, User, UserStore};
+use channel::{Channel, ChannelEvent, ChannelStore, HostedProjectId};
+use client::{ChannelId, Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -330,7 +330,10 @@ impl CollabPanel {
                     panel.width = serialized_panel.width;
                     panel.collapsed_channels = serialized_panel
                         .collapsed_channels
-                        .unwrap_or_else(|| Vec::new());
+                        .unwrap_or_else(|| Vec::new())
+                        .iter()
+                        .map(|cid| ChannelId(*cid))
+                        .collect();
                     cx.notify();
                 });
             }
@@ -348,7 +351,9 @@ impl CollabPanel {
                         COLLABORATION_PANEL_KEY.into(),
                         serde_json::to_string(&SerializedCollabPanel {
                             width,
-                            collapsed_channels: Some(collapsed_channels),
+                            collapsed_channels: Some(
+                                collapsed_channels.iter().map(|cid| cid.0).collect(),
+                            ),
                         })?,
                     )
                     .await?;
@@ -568,7 +573,6 @@ impl CollabPanel {
                 }
 
                 let hosted_projects = channel_store.projects_for_id(channel.id);
-                dbg!(&channel.id, &hosted_projects);
                 let has_children = channel_store
                     .channel_at_index(mat.candidate_id + 1)
                     .map_or(false, |next_channel| {
@@ -1048,7 +1052,7 @@ impl CollabPanel {
         .indent_step_size(px(20.))
         .selected(is_selected)
         .on_click(cx.listener(move |_this, _, _cx| {
-            todo!();
+            // todo!()
         }))
         .start_slot(
             h_flex()
@@ -1527,7 +1531,7 @@ impl CollabPanel {
                         id: _id,
                         name: _name,
                     } => {
-                        todo!()
+                        // todo!()
                     }
 
                     ListEntry::OutgoingRequest(_) => {}
@@ -1966,7 +1970,7 @@ impl CollabPanel {
 
     fn respond_to_channel_invite(
         &mut self,
-        channel_id: u64,
+        channel_id: ChannelId,
         accept: bool,
         cx: &mut ViewContext<Self>,
     ) {
@@ -1985,7 +1989,7 @@ impl CollabPanel {
             .detach_and_prompt_err("Call failed", cx, |_, _| None);
     }
 
-    fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+    fn join_channel(&self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -2452,7 +2456,7 @@ impl CollabPanel {
                 .tooltip(|cx| Tooltip::text("Accept invite", cx)),
         ];
 
-        ListItem::new(("channel-invite", channel.id as usize))
+        ListItem::new(("channel-invite", channel.id.0 as usize))
             .selected(is_selected)
             .child(
                 h_flex()
@@ -2544,7 +2548,7 @@ impl CollabPanel {
 
         div()
             .h_6()
-            .id(channel_id as usize)
+            .id(channel_id.0 as usize)
             .group("")
             .flex()
             .w_full()
@@ -2572,7 +2576,7 @@ impl CollabPanel {
                 this.move_channel(dragged_channel.id, channel_id, cx);
             }))
             .child(
-                ListItem::new(channel_id as usize)
+                ListItem::new(channel_id.0 as usize)
                     // Add one level of depth for the disclosure arrow.
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
@@ -2619,7 +2623,7 @@ impl CollabPanel {
                     )
                     .child(
                         h_flex()
-                            .id(channel_id as usize)
+                            .id(channel_id.0 as usize)
                             .child(Label::new(channel.name.clone()))
                             .children(face_pile.map(|face_pile| face_pile.p_1())),
                     ),

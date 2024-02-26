@@ -1,7 +1,7 @@
-use channel::{ChannelId, ChannelMembership, ChannelStore};
+use channel::{ChannelMembership, ChannelStore};
 use client::{
     proto::{self, ChannelRole, ChannelVisibility},
-    User, UserId, UserStore,
+    ChannelId, User, UserId, UserStore,
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{

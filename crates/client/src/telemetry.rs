@@ -1,6 +1,6 @@
 mod event_coalescer;
 
-use crate::TelemetrySettings;
+use crate::{ChannelId, TelemetrySettings};
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use futures::Future;
@@ -278,12 +278,12 @@ impl Telemetry {
         self: &Arc<Self>,
         operation: &'static str,
         room_id: Option<u64>,
-        channel_id: Option<u64>,
+        channel_id: Option<ChannelId>,
     ) {
         let event = Event::Call(CallEvent {
             operation: operation.to_string(),
             room_id,
-            channel_id,
+            channel_id: channel_id.map(|cid| cid.0),
         });
 
         self.report_event(event)
