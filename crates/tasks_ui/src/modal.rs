@@ -115,7 +115,7 @@ impl PickerDelegate for TasksModalDelegate {
 
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
         Arc::from(format!(
-            "{} runs the selected, {} spawns a bash-like task from the prompt",
+            "{} runs the selected task, {} spawns a bash-like task from the prompt",
             cx.keystroke_text_for(&menu::Confirm),
             cx.keystroke_text_for(&menu::SecondaryConfirm),
         ))
