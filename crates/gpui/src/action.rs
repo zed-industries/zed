@@ -1,4 +1,4 @@
-use crate::SharedString;
+use crate::{SharedString, WindowContext};
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 pub use no_action::NoAction;
@@ -62,6 +62,25 @@ pub trait Action: 'static + Send {
     fn build(value: serde_json::Value) -> Result<Box<dyn Action>>
     where
         Self: Sized;
+
+    /// Represent this action as a key binding string, for display in the UI.
+    fn bindings_text(&self, cx: &WindowContext) -> String
+    where
+        Self: Sized,
+    {
+        cx.bindings_for_action(self)
+            .into_iter()
+            .next()
+            .map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_else(|| self.name().to_string())
+    }
 }
 
 impl std::fmt::Debug for dyn Action {

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
-    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView,
+    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusableView,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
@@ -23,7 +23,6 @@ pub(crate) struct TasksModalDelegate {
     candidates: Vec<Arc<dyn Task>>,
     matches: Vec<StringMatch>,
     selected_index: usize,
-    placeholder_text: Arc<str>,
     workspace: WeakView<Workspace>,
     last_prompt: String,
 }
@@ -36,7 +35,6 @@ impl TasksModalDelegate {
             candidates: Vec::new(),
             matches: Vec::new(),
             selected_index: 0,
-            placeholder_text: Arc::from("Select task..."),
             last_prompt: String::default(),
         }
     }
@@ -115,8 +113,12 @@ impl PickerDelegate for TasksModalDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
-        self.placeholder_text.clone()
+    fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
+        Arc::from(format!(
+            "{} runs the selected, {} spawns a bash-like task from the prompt",
+            menu::Confirm.bindings_text(cx),
+            menu::SecondaryConfirm.bindings_text(cx),
+        ))
     }
 
     fn update_matches(

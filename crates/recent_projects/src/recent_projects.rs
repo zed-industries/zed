@@ -2,7 +2,7 @@ mod highlighted_workspace_location;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result,
+    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result,
     Subscription, Task, View, ViewContext, WeakView,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
@@ -147,24 +147,10 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
-        let action_binding_text = |action: &dyn gpui::Action| {
-            cx.bindings_for_action(action)
-                .into_iter()
-                .next()
-                .map(|binding| {
-                    binding
-                        .keystrokes()
-                        .into_iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
-                .unwrap_or_else(|| format!("{action:?}"))
-        };
         Arc::from(format!(
             "{} reuses the window, {} opens a new one",
-            action_binding_text(&menu::Confirm),
-            action_binding_text(&menu::SecondaryConfirm),
+            menu::Confirm.bindings_text(cx),
+            menu::SecondaryConfirm.bindings_text(cx),
         ))
     }
 
