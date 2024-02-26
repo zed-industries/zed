@@ -1017,7 +1017,7 @@ fn find_forward(
 
     for _ in 0..times {
         found = false;
-        let new_to = find_boundary(map, to, FindRange::SingleLine, |_, right| {
+        let new_to = find_boundary(map, to, FindRange::MultiLine, |_, right| {
             found = right == target;
             found
         });
@@ -1050,7 +1050,7 @@ fn find_backward(
 
     for _ in 0..times {
         let new_to =
-            find_preceding_boundary_display_point(map, to, FindRange::SingleLine, |_, right| {
+            find_preceding_boundary_display_point(map, to, FindRange::MultiLine, |_, right| {
                 right == target
             });
         if to == new_to {
