@@ -124,6 +124,7 @@ fn setup_offer_read(offer: &WlDataOffer) -> anyhow::Result<FileDescriptor> {
     Ok(pipe.read)
 }
 
+// sourced from https://github.com/wez/wezterm/blob/95581d8697f3749f84ccb1402ac94ea6582b227f/window/src/os/wayland/window.rs#L468
 fn read_pipe_with_timeout(mut file: FileDescriptor) -> Result<String> {
     let mut result = Vec::new();
 
