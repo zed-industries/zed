@@ -1,7 +1,6 @@
 name: Crash Report
 description: |
-    Use this template for **crash-related** bug reports.
-    Tip: open this issue template from within Zed with the `file bug report` command palette action.
+    Use this template for crash reports.
 labels: ["admin read", "triage", "defect", "panic / crash"]
 body:
     - type: checkboxes
