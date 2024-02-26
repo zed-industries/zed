@@ -224,20 +224,14 @@ impl MessageEditor {
         {
             if !candidates.is_empty() {
                 return cx.spawn(|_, cx| async move {
-                    let matches = fuzzy::match_strings(
+                    Ok(Self::resolve_completions_for_candidates(
+                        &cx,
+                        query.as_str(),
                         &candidates,
-                        &query,
-                        true,
-                        10,
-                        &Default::default(),
-                        cx.background_executor().clone(),
+                        start_anchor..end_anchor,
+                        Self::completion_for_mention,
                     )
-                    .await;
-
-                    Ok(matches
-                        .into_iter()
-                        .map(|mat| Self::completion_for_mention(&mat, start_anchor..end_anchor))
-                        .collect())
+                    .await)
                 });
             }
         }
@@ -247,20 +241,14 @@ impl MessageEditor {
         {
             if !candidates.is_empty() {
                 return cx.spawn(|_, cx| async move {
-                    let matches = fuzzy::match_strings(
-                        &candidates,
-                        &query,
-                        true,
-                        10,
-                        &Default::default(),
-                        cx.background_executor().clone(),
+                    Ok(Self::resolve_completions_for_candidates(
+                        &cx,
+                        query.as_str(),
+                        candidates,
+                        start_anchor..end_anchor,
+                        Self::completion_for_emoji,
                     )
-                    .await;
-
-                    Ok(matches
-                        .into_iter()
-                        .map(|mat| Self::completion_for_emoji(&mat, start_anchor..end_anchor))
-                        .collect())
+                    .await)
                 });
             }
         }
@@ -268,35 +256,56 @@ impl MessageEditor {
         Task::ready(Ok(vec![]))
     }
 
-    fn completion_for_mention(mat: &StringMatch, range: Range<Anchor>) -> Completion {
-        Completion {
-            old_range: range,
-            new_text: mat.string.clone(),
-            label: CodeLabel {
-                filter_range: 1..mat.string.len() + 1,
-                text: format!("@{}", mat.string),
-                runs: Vec::new(),
-            },
-            documentation: None,
-            server_id: LanguageServerId(0), // TODO: Make this optional or something?
-            lsp_completion: Default::default(), // TODO: Make this optional or something?
-        }
+    async fn resolve_completions_for_candidates(
+        cx: &AsyncWindowContext,
+        query: &str,
+        candidates: &[StringMatchCandidate],
+        range: Range<Anchor>,
+        completion_fn: impl Fn(&StringMatch) -> (String, CodeLabel),
+    ) -> Vec<Completion> {
+        let matches = fuzzy::match_strings(
+            &candidates,
+            &query,
+            true,
+            10,
+            &Default::default(),
+            cx.background_executor().clone(),
+        )
+        .await;
+
+        matches
+            .into_iter()
+            .map(|mat| {
+                let (new_text, label) = completion_fn(&mat);
+                Completion {
+                    old_range: range.clone(),
+                    new_text,
+                    label,
+                    documentation: None,
+                    server_id: LanguageServerId(0), // TODO: Make this optional or something?
+                    lsp_completion: Default::default(), // TODO: Make this optional or something?
+                }
+            })
+            .collect()
     }
 
-    fn completion_for_emoji(mat: &StringMatch, range: Range<Anchor>) -> Completion {
+    fn completion_for_mention(mat: &StringMatch) -> (String, CodeLabel) {
+        let label = CodeLabel {
+            filter_range: 1..mat.string.len() + 1,
+            text: format!("@{}", mat.string),
+            runs: Vec::new(),
+        };
+        (mat.string.clone(), label)
+    }
+
+    fn completion_for_emoji(mat: &StringMatch) -> (String, CodeLabel) {
         let emoji = emojis::get_by_shortcode(&mat.string).unwrap();
-        Completion {
-            old_range: range,
-            new_text: emoji.to_string(),
-            label: CodeLabel {
-                filter_range: 1..mat.string.len() + 1,
-                text: format!(":{}: {}", mat.string, emoji),
-                runs: Vec::new(),
-            },
-            documentation: None,
-            server_id: LanguageServerId(0), // TODO: Make this optional or something?
-            lsp_completion: Default::default(), // TODO: Make this optional or something?
-        }
+        let label = CodeLabel {
+            filter_range: 1..mat.string.len() + 1,
+            text: format!(":{}: {}", mat.string, emoji),
+            runs: Vec::new(),
+        };
+        (emoji.to_string(), label)
     }
 
     fn collect_mention_candidates(
