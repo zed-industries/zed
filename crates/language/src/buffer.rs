@@ -212,18 +212,18 @@ pub async fn prepare_completion_documentation(
     completion_length: usize,
 ) -> Documentation {
     // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
-    let max_name_len: usize = 10
-        .max(57 - (0.max(completion_length as i32 - 15)))
-        .try_into()
-        .unwrap();
+    // let max_name_len: usize = 10
+    //     .max(57 - (0.max(completion_length as i32 - 15)))
+    //     .try_into()
+    //     .unwrap();
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
                 let mut text = text.clone();
-                if text.len() > max_name_len {
-                    text.truncate(max_name_len - 3);
-                    text.push_str("...");
-                }
+                // if text.len() > max_name_len {
+                //     text.truncate(max_name_len - 3);
+                //     text.push_str("...");
+                // }
                 Documentation::SingleLine(text)
             } else {
                 Documentation::MultiLinePlainText(text.clone())
@@ -234,10 +234,10 @@ pub async fn prepare_completion_documentation(
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
                     let mut text = value.clone();
-                    if text.len() > max_name_len {
-                        text.truncate(max_name_len);
-                        text.push_str("...");
-                    }
+                    // if text.len() > max_name_len {
+                    //     text.truncate(max_name_len);
+                    //     text.push_str("...");
+                    // }
 
                     Documentation::SingleLine(text)
                 } else {

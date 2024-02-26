@@ -109,6 +109,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use log::kv::Source;
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
@@ -3246,12 +3247,20 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
         let completions = provider.completions(&buffer, buffer_position, cx);
-
+        println!("She forgot that I exist");
+        //EPHRAM
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
+                    //FOUND THE MENU
+                    let clone =  completions.clone();
+                    for t in clone {
+                        println!("Label Text: {}", t.label.text[t.label.filter_range.clone()].to_string());
+                        println!("New Text: {}", t.new_text);
+                        println!("----");
+                    }
                     let mut menu = CompletionsMenu {
                         id,
                         initial_position: position,
@@ -3301,6 +3310,7 @@ impl Editor {
                                 });
                         })
                         .ok();
+
                         Some(menu)
                     }
                 } else {
@@ -9507,6 +9517,7 @@ impl CompletionProvider for Model<Project> {
         buffer_position: text::Anchor,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>> {
+        println!("And i saw your mom");
         self.update(cx, |project, cx| {
             project.completions(&buffer, buffer_position, cx)
         })
