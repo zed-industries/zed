@@ -17,9 +17,6 @@ pub struct EditorSettings {
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub redact_private_values: bool,
-    pub ui_font_size: i32,
-    pub buffer_font_size: i32
-
 }
 
 /// When to populate a new search's query based on the text under the cursor.
@@ -130,17 +127,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub redact_private_values: Option<bool>,
-
-    /// Font size of the UI
-    ///
-    /// Default: 16
-    pub ui_font_size: i32,
-
-    /// Font size of buffer text
-    ///
-    /// Default: 15
-    pub buffer_font_size: i32
-
 }
 
 // Toolbar related settings

@@ -78,8 +78,7 @@ use language::{
 };
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
-use log::kv::Source;
-use lsp::{CompletionItem, DiagnosticSeverity, LanguageServerId};
+use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
@@ -93,7 +92,6 @@ use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
-use schemars::_private::NoSerialize;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
@@ -775,38 +773,6 @@ impl CompletionsMenu {
         if !settings.show_completion_documentation {
             return Task::ready(());
         }
-
-        let mut completions = completions.clone();
-        // {
-        //     let completion_indices: Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
-
-        //     let mut completions_guard = completions.write(); // Assuming a RwLock or similar
-        //     for completion_index in completion_indices {
-        //         let completion = &mut completions_guard[completion_index];
-
-        //         // Check if documentation exists, skip otherwise.
-        //         if completion.documentation.is_some() {
-        //             continue;
-        //         }
-
-        //         // Direct modification of the object within the collection.
-        //         let ui_font_size = settings.ui_font_size;
-        //         completion.label.text = "LABEL PLACEHOLDER...".to_string();
-        //         //PICK UP FROM HERE
-        //         //ELLIPSIS TRUNCATION SHOULD HAPPEN HERE
-
-        //         // let max_completion_len = 45;
-        //         // if lsp_completion.label.len() > max_completion_len {
-        //         //     lsp_completion.label.truncate(max_completion_len - 3);
-        //         //     lsp_completion.label.push_str("...");
-        //         // }
-
-        //         // // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
-        //         // if language.name().to_string().as_str() == "Python" {
-        //         //     lsp_completion.label.push_str("               ");
-        //         // }
-        //     }
-        // }
 
         let Some(provider) = editor.completion_provider.as_ref() else {
             return Task::ready(());
@@ -3285,8 +3251,6 @@ impl Editor {
             async move {
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
-                    //FOUND THE MENU
-
                     let mut menu = CompletionsMenu {
                         id,
                         initial_position: position,
@@ -3294,7 +3258,11 @@ impl Editor {
                             .iter()
                             .enumerate()
                             .map(|(id, completion)| {
-                                StringMatchCandidate::new(id, completion.label.text.clone().into())
+                                StringMatchCandidate::new(
+                                    id,
+                                    completion.label.text[completion.label.filter_range.clone()]
+                                        .into(),
+                                )
                             })
                             .collect(),
                         buffer,
@@ -3379,7 +3347,6 @@ impl Editor {
 
         self.completion_tasks.push((id, task));
     }
-
     pub fn confirm_completion(
         &mut self,
         action: &ConfirmCompletion,
