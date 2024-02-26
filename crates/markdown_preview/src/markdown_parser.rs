@@ -1,6 +1,6 @@
 use crate::markdown_elements::*;
 use gpui::FontWeight;
-use pulldown_cmark::{Alignment, Event, Options, Parser, Tag};
+use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use std::{ops::Range, path::PathBuf};
 
 pub fn parse_markdown(
@@ -70,11 +70,11 @@ impl<'a> MarkdownParser<'a> {
             | Event::Code(_)
             | Event::Html(_)
             | Event::FootnoteReference(_)
-            | Event::Start(Tag::Link(_, _, _))
+            | Event::Start(Tag::Link { link_type: _, dest_url: _, title: _, id: _ })
             | Event::Start(Tag::Emphasis)
             | Event::Start(Tag::Strong)
             | Event::Start(Tag::Strikethrough)
-            | Event::Start(Tag::Image(_, _, _)) => {
+            | Event::Start(Tag::Image { link_type: _, dest_url: _, title: _, id: _ }) => {
                 return true;
             }
             _ => return false,
@@ -99,15 +99,21 @@ impl<'a> MarkdownParser<'a> {
                     let text = self.parse_text(false);
                     Some(ParsedMarkdownElement::Paragraph(text))
                 }
-                Tag::Heading(level, _, _) => {
+                Tag::Heading {
+                    level,
+                    id: _,
+                    classes: _,
+                    attrs: _,
+                } => {
                     let level = level.clone();
                     self.cursor += 1;
                     let heading = self.parse_heading(level);
                     Some(ParsedMarkdownElement::Heading(heading))
                 }
-                Tag::Table(_) => {
+                Tag::Table(alignment) => {
+                    let alignment = alignment.clone();
                     self.cursor += 1;
-                    let table = self.parse_table();
+                    let table = self.parse_table(alignment);
                     Some(ParsedMarkdownElement::Table(table))
                 }
                 Tag::List(order) => {
@@ -257,9 +263,16 @@ impl<'a> MarkdownParser<'a> {
                     Tag::Emphasis => italic_depth += 1,
                     Tag::Strong => bold_depth += 1,
                     Tag::Strikethrough => strikethrough_depth += 1,
-                    Tag::Link(_type, url, _title) => {
-                        link =
-                            Link::identify(self.file_location_directory.clone(), url.to_string());
+                    Tag::Link {
+                        link_type: _,
+                        dest_url,
+                        title: _,
+                        id: _,
+                    } => {
+                        link = Link::identify(
+                            self.file_location_directory.clone(),
+                            dest_url.to_string(),
+                        );
                     }
                     _ => {
                         break;
@@ -267,19 +280,19 @@ impl<'a> MarkdownParser<'a> {
                 },
 
                 Event::End(tag) => match tag {
-                    Tag::Emphasis => {
+                    TagEnd::Emphasis => {
                         italic_depth -= 1;
                     }
-                    Tag::Strong => {
+                    TagEnd::Strong => {
                         bold_depth -= 1;
                     }
-                    Tag::Strikethrough => {
+                    TagEnd::Strikethrough => {
                         strikethrough_depth -= 1;
                     }
-                    Tag::Link(_, _, _) => {
+                    TagEnd::Link => {
                         link = None;
                     }
-                    Tag::Paragraph => {
+                    TagEnd::Paragraph => {
                         self.cursor += 1;
                         break;
                     }
@@ -327,14 +340,17 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    fn parse_table(&mut self) -> ParsedMarkdownTable {
+    fn parse_table(&mut self, alignment: Vec<Alignment>) -> ParsedMarkdownTable {
         let (_event, source_range) = self.previous().unwrap();
         let source_range = source_range.clone();
         let mut header = ParsedMarkdownTableRow::new();
         let mut body = vec![];
         let mut current_row = vec![];
         let mut in_header = true;
-        let mut alignment: Vec<ParsedMarkdownTableAlignment> = vec![];
+        let column_alignments = alignment
+            .iter()
+            .map(|a| Self::convert_alignment(a))
+            .collect();
 
         loop {
             if self.eof() {
@@ -345,7 +361,7 @@ impl<'a> MarkdownParser<'a> {
             match current {
                 Event::Start(Tag::TableHead)
                 | Event::Start(Tag::TableRow)
-                | Event::End(Tag::TableCell) => {
+                | Event::End(TagEnd::TableCell) => {
                     self.cursor += 1;
                 }
                 Event::Start(Tag::TableCell) => {
@@ -353,7 +369,7 @@ impl<'a> MarkdownParser<'a> {
                     let cell_contents = self.parse_text(false);
                     current_row.push(cell_contents);
                 }
-                Event::End(Tag::TableHead) | Event::End(Tag::TableRow) => {
+                Event::End(TagEnd::TableHead) | Event::End(TagEnd::TableRow) => {
                     self.cursor += 1;
                     let new_row = std::mem::replace(&mut current_row, vec![]);
                     if in_header {
@@ -364,11 +380,7 @@ impl<'a> MarkdownParser<'a> {
                         body.push(row);
                     }
                 }
-                Event::End(Tag::Table(table_alignment)) => {
-                    alignment = table_alignment
-                        .iter()
-                        .map(|a| Self::convert_alignment(a))
-                        .collect();
+                Event::End(TagEnd::Table) => {
                     self.cursor += 1;
                     break;
                 }
@@ -382,7 +394,7 @@ impl<'a> MarkdownParser<'a> {
             source_range,
             header,
             body,
-            column_alignments: alignment,
+            column_alignments,
         }
     }
 
@@ -416,7 +428,7 @@ impl<'a> MarkdownParser<'a> {
                     let block = ParsedMarkdownElement::List(inner_list);
                     current_list_items.push(Box::new(block));
                 }
-                Event::End(Tag::List(_)) => {
+                Event::End(TagEnd::List(_)) => {
                     self.cursor += 1;
                     break;
                 }
@@ -450,7 +462,7 @@ impl<'a> MarkdownParser<'a> {
                         }
                     }
                 }
-                Event::End(Tag::Item) => {
+                Event::End(TagEnd::Item) => {
                     self.cursor += 1;
 
                     let item_type = if let Some(checked) = task_item {
@@ -524,7 +536,7 @@ impl<'a> MarkdownParser<'a> {
                 Event::Start(Tag::BlockQuote) => {
                     nested_depth += 1;
                 }
-                Event::End(Tag::BlockQuote) => {
+                Event::End(TagEnd::BlockQuote) => {
                     nested_depth -= 1;
                     if nested_depth == 0 {
                         self.cursor += 1;
@@ -553,7 +565,7 @@ impl<'a> MarkdownParser<'a> {
                     code.push_str(&text);
                     self.cursor += 1;
                 }
-                Event::End(Tag::CodeBlock(_)) => {
+                Event::End(TagEnd::CodeBlock) => {
                     self.cursor += 1;
                     break;
                 }
