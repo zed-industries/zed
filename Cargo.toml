@@ -207,6 +207,7 @@ futures = "0.3"
 git2 = { version = "0.15", default-features = false }
 globset = "0.4"
 hex = "0.4.3"
+ignore = "0.4.22"
 indoc = "1"
 # We explicitly disable http2 support in isahc.
 isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
