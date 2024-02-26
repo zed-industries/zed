@@ -482,7 +482,8 @@ fn init_paths() {
     std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
     std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
 
-    // Create temp dir in zed's config dir to avoid cross-device issue in linux rename syscall
+    // Create a fallback temp dir to avoid cross-device issue in linux rename syscall
+    // See https://github.com/zed-industries/zed/pull/8437 for more details.
     #[cfg(target_os = "linux")]
     std::fs::create_dir_all(&*util::paths::TEMP_DIR).expect("could not create tmp path");
 }
