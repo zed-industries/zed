@@ -22,6 +22,7 @@
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
+    "coffee": "coffeescript",
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
@@ -42,6 +43,7 @@
     "fmp": "storage",
     "fp7": "storage",
     "frm": "storage",
+    "fs": "fsharp",
     "gdb": "storage",
     "gif": "image",
     "gitattributes": "vcs",
@@ -78,6 +80,7 @@
     "lockb": "bun",
     "log": "log",
     "lua": "lua",
+    "nim": "nim",
     "m4a": "audio",
     "m4v": "video",
     "md": "document",
@@ -129,6 +132,9 @@
     "svelte": "template",
     "svg": "image",
     "swift": "code",
+    "sc": "scala",
+    "scala": "scala",
+    "sql": "storage",
     "tiff": "image",
     "toml": "toml",
     "ts": "typescript",
@@ -176,6 +182,9 @@
     "css": {
       "icon": "icons/file_icons/css.svg"
     },
+    "coffeescript": {
+      "icon": "icons/file_icons/coffeescript.svg"
+    },
     "default": {
       "icon": "icons/file_icons/file.svg"
     },
@@ -200,6 +209,9 @@
     "expanded_folder": {
       "icon": "icons/file_icons/folder_open.svg"
     },
+    "fsharp": {
+      "icon": "icons/file_icons/fsharp.svg"
+    },
     "haskell": {
       "icon": "icons/file_icons/haskell.svg"
     },
@@ -223,6 +235,9 @@
     },
     "lua": {
       "icon": "icons/file_icons/lua.svg"
+    },
+    "nim": {
+      "icon": "icons/file_icons/nim.svg"
     },
     "ocaml": {
       "icon": "icons/file_icons/ocaml.svg"
@@ -257,6 +272,9 @@
     "storage": {
       "icon": "icons/file_icons/database.svg"
     },
+    "scala": {
+      "icon": "icons/file_icons/scala.svg"
+    },
     "template": {
       "icon": "icons/file_icons/html.svg"
     },
@@ -267,6 +285,9 @@
       "icon": "icons/file_icons/toml.svg"
     },
     "typescript": {
+      "icon": "icons/file_icons/typescript.svg"
+    },
+    "tcl": {
       "icon": "icons/file_icons/typescript.svg"
     },
     "vcs": {
