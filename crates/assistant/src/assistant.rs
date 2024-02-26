@@ -1,5 +1,5 @@
 pub mod assistant_panel;
-mod assistant_settings;
+pub mod assistant_settings;
 mod codegen;
 mod prompts;
 mod streaming_diff;
@@ -68,6 +68,7 @@ struct SavedConversation {
     messages: Vec<SavedMessage>,
     message_metadata: HashMap<MessageId, MessageMetadata>,
     summary: String,
+    api_url: Option<String>,
     model: OpenAiModel,
 }
 

@@ -199,9 +199,10 @@ fn show_hover(
             if symbol_range
                 .as_text_range()
                 .map(|range| {
-                    range
-                        .to_offset(&snapshot.buffer_snapshot)
-                        .contains(&multibuffer_offset)
+                    let hover_range = range.to_offset(&snapshot.buffer_snapshot);
+                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+                    // use an inclusive range here to check if we should dismiss the popover
+                    (hover_range.start..=hover_range.end).contains(&multibuffer_offset)
                 })
                 .unwrap_or(false)
             {
@@ -289,6 +290,7 @@ fn show_hover(
             })?;
 
             let hover_result = hover_request.await.ok().flatten();
+            let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
             let hover_popover = match hover_result {
                 Some(hover_result) if !hover_result.is_empty() => {
                     // Create symbol range of anchors for highlighting and filtering of future requests.

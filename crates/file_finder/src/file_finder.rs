@@ -93,7 +93,7 @@ impl FileFinder {
 
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            picker: cx.new_view(|cx| Picker::new(delegate, cx)),
+            picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
         }
     }
 }
@@ -663,7 +663,7 @@ impl FileFinderDelegate {
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search project files...".into()
     }
 

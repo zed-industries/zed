@@ -1,8 +1,8 @@
-use crate::{Anchor, InlayId, MultiBufferSnapshot, ToOffset};
+use crate::InlayId;
 use collections::{BTreeMap, BTreeSet};
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{MultiBufferChunks, MultiBufferRows};
+use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferRows, MultiBufferSnapshot, ToOffset};
 use std::{
     any::TypeId,
     cmp,
@@ -16,6 +16,9 @@ use text::{Patch, Rope};
 
 use super::Highlights;
 
+/// Decides where the [`Inlay`]s should be displayed.
+///
+/// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct InlayMap {
     snapshot: InlaySnapshot,
     inlays: Vec<Inlay>,

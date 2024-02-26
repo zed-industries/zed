@@ -11,7 +11,6 @@ doctest = false
 
 [dependencies]
 client.workspace = true
-editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 fuzzy.workspace = true

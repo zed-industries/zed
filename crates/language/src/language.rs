@@ -38,6 +38,7 @@ use serde_json::Value;
 use std::{
     any::Any,
     cell::RefCell,
+    ffi::OsString,
     fmt::Debug,
     hash::Hash,
     mem,
@@ -83,8 +84,8 @@ thread_local! {
 }
 
 lazy_static! {
+    static ref NEXT_LANGUAGE_ID: AtomicUsize = Default::default();
     static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
-
     static ref WASM_ENGINE: wasmtime::Engine = wasmtime::Engine::default();
 
     /// A shared grammar for plain text, exposed for reuse by downstream crates.
@@ -138,6 +139,14 @@ impl CachedLspAdapter {
             adapter,
             reinstall_attempt_count: AtomicU64::new(0),
         })
+    }
+
+    pub fn check_if_user_installed(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        self.adapter.check_if_user_installed(delegate, cx)
     }
 
     pub async fn fetch_latest_server_version(
@@ -240,6 +249,11 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn which_command(
+        &self,
+        command: OsString,
+        cx: &AppContext,
+    ) -> Task<Option<(PathBuf, HashMap<String, String>)>>;
 }
 
 #[async_trait]
@@ -247,6 +261,14 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn name(&self) -> LanguageServerName;
 
     fn short_name(&self) -> &'static str;
+
+    fn check_if_user_installed(
+        &self,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncAppContext,
+    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        None
+    }
 
     async fn fetch_latest_server_version(
         &self,
@@ -613,7 +635,17 @@ pub struct BracketPair {
     pub newline: bool,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub(crate) struct LanguageId(usize);
+
+impl LanguageId {
+    pub(crate) fn new() -> Self {
+        Self(NEXT_LANGUAGE_ID.fetch_add(1, SeqCst))
+    }
+}
+
 pub struct Language {
+    pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) adapters: Vec<Arc<CachedLspAdapter>>,
@@ -625,8 +657,17 @@ pub struct Language {
     )>,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub struct GrammarId(pub usize);
+
+impl GrammarId {
+    pub(crate) fn new() -> Self {
+        Self(NEXT_GRAMMAR_ID.fetch_add(1, SeqCst))
+    }
+}
+
 pub struct Grammar {
-    id: usize,
+    id: GrammarId,
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
@@ -697,11 +738,24 @@ struct BracketConfig {
 
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
+        Self::new_with_id(
+            LanguageId(NEXT_LANGUAGE_ID.fetch_add(1, SeqCst)),
+            config,
+            ts_language,
+        )
+    }
+
+    fn new_with_id(
+        id: LanguageId,
+        config: LanguageConfig,
+        ts_language: Option<tree_sitter::Language>,
+    ) -> Self {
         Self {
+            id,
             config,
             grammar: ts_language.map(|ts_language| {
                 Arc::new(Grammar {
-                    id: NEXT_GRAMMAR_ID.fetch_add(1, SeqCst),
+                    id: GrammarId::new(),
                     highlights_query: None,
                     brackets_config: None,
                     outline_config: None,
@@ -724,10 +778,6 @@ impl Language {
 
     pub fn lsp_adapters(&self) -> &[Arc<CachedLspAdapter>] {
         &self.adapters
-    }
-
-    pub fn id(&self) -> Option<usize> {
-        self.grammar.as_ref().map(|g| g.id)
     }
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
@@ -1237,13 +1287,13 @@ impl LanguageScope {
 
 impl Hash for Language {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id().hash(state)
+        self.id.hash(state)
     }
 }
 
 impl PartialEq for Language {
     fn eq(&self, other: &Self) -> bool {
-        self.id().eq(&other.id())
+        self.id.eq(&other.id)
     }
 }
 
@@ -1258,7 +1308,7 @@ impl Debug for Language {
 }
 
 impl Grammar {
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> GrammarId {
         self.id
     }
 

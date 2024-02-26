@@ -7,6 +7,7 @@ use crate::{
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
 use ai::prompts::repository_context::PromptCodeSnippet;
+use ai::providers::open_ai::OPEN_AI_API_URL;
 use ai::{
     auth::ProviderCredential,
     completion::{CompletionProvider, CompletionRequest},
@@ -14,7 +15,6 @@ use ai::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use client::telemetry::AssistantKind;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
@@ -51,6 +51,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{
     prelude::*,
@@ -121,10 +122,19 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            // Defaulting currently to GPT4, allow for this to be set via config.
-            let completion_provider =
-                OpenAiCompletionProvider::new("gpt-4".into(), cx.background_executor().clone())
-                    .await;
+            let (api_url, model_name) = cx.update(|cx| {
+                let settings = AssistantSettings::get_global(cx);
+                (
+                    settings.openai_api_url.clone(),
+                    settings.default_open_ai_model.full_name().to_string(),
+                )
+            })?;
+            let completion_provider = OpenAiCompletionProvider::new(
+                api_url,
+                model_name,
+                cx.background_executor().clone(),
+            )
+            .await;
 
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
@@ -352,7 +362,7 @@ impl AssistantPanel {
                         move |cx: &mut BlockContext| {
                             measurements.set(BlockMeasurements {
                                 anchor_x: cx.anchor_x,
-                                gutter_width: cx.gutter_width,
+                                gutter_width: cx.gutter_dimensions.width,
                             });
                             inline_assistant.clone().into_any_element()
                         }
@@ -1407,6 +1417,7 @@ struct Conversation {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     model: OpenAiModel,
+    api_url: Option<String>,
     token_count: Option<usize>,
     max_token_count: usize,
     pending_token_count: Task<Option<()>>,
@@ -1441,6 +1452,7 @@ impl Conversation {
 
         let settings = AssistantSettings::get_global(cx);
         let model = settings.default_open_ai_model.clone();
+        let api_url = settings.openai_api_url.clone();
 
         let mut this = Self {
             id: Some(Uuid::new_v4().to_string()),
@@ -1454,6 +1466,7 @@ impl Conversation {
             token_count: None,
             max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
             pending_token_count: Task::ready(None),
+            api_url: Some(api_url),
             model: model.clone(),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
@@ -1499,6 +1512,7 @@ impl Conversation {
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
             model: self.model.clone(),
+            api_url: self.api_url.clone(),
         }
     }
 
@@ -1513,8 +1527,12 @@ impl Conversation {
             None => Some(Uuid::new_v4().to_string()),
         };
         let model = saved_conversation.model;
+        let api_url = saved_conversation.api_url;
         let completion_provider: Arc<dyn CompletionProvider> = Arc::new(
             OpenAiCompletionProvider::new(
+                api_url
+                    .clone()
+                    .unwrap_or_else(|| OPEN_AI_API_URL.to_string()),
                 model.full_name().into(),
                 cx.background_executor().clone(),
             )
@@ -1567,6 +1585,7 @@ impl Conversation {
                 token_count: None,
                 max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
                 pending_token_count: Task::ready(None),
+                api_url,
                 model,
                 _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
                 pending_save: Task::ready(Ok(())),

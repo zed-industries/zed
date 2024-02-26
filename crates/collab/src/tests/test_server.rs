@@ -1,7 +1,7 @@
 use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
+    rpc::{Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState, Config,
 };
 use anyhow::anyhow;
@@ -10,6 +10,7 @@ use channel::{ChannelBuffer, ChannelStore};
 use client::{
     self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
+use clock::FakeSystemClock;
 use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
@@ -163,6 +164,7 @@ impl TestServer {
             client::init_settings(cx);
         });
 
+        let clock = Arc::new(FakeSystemClock::default());
         let http = FakeHttpClient::with_404_response();
         let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
         {
@@ -185,7 +187,7 @@ impl TestServer {
                 .user_id
         };
         let client_name = name.to_string();
-        let mut client = cx.update(|cx| Client::new(http.clone(), cx));
+        let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();
@@ -231,7 +233,7 @@ impl TestServer {
                                 server_conn,
                                 client_name,
                                 user,
-                                SemanticVersion::default(),
+                                ZedVersion(SemanticVersion::new(1, 0, 0)),
                                 None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
@@ -274,7 +276,7 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
         });
 
         client
@@ -480,6 +482,8 @@ impl TestServer {
         Arc::new(AppState {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
+            blob_store_client: None,
+            clickhouse_client: None,
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
@@ -492,6 +496,16 @@ impl TestServer {
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
+                blob_store_url: None,
+                blob_store_region: None,
+                blob_store_access_key: None,
+                blob_store_secret_key: None,
+                blob_store_bucket: None,
+                clickhouse_url: None,
+                clickhouse_user: None,
+                clickhouse_password: None,
+                clickhouse_database: None,
+                zed_client_checksum_seed: None,
             },
         })
     }
@@ -687,7 +701,7 @@ impl TestClient {
         channel_id: u64,
         cx: &'a mut TestAppContext,
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
-        cx.update(|cx| workspace::open_channel(channel_id, self.app_state.clone(), None, cx))
+        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
             .await
             .unwrap();
         cx.run_until_parked();
@@ -760,11 +774,6 @@ impl TestClient {
         // it might be nice to try and cleanup these at the end of each test.
         (view, cx)
     }
-}
-
-pub fn join_channel_call(cx: &mut TestAppContext) -> Task<anyhow::Result<()>> {
-    let room = cx.read(|cx| ActiveCall::global(cx).read(cx).room().cloned());
-    room.unwrap().update(cx, |room, cx| room.join_call(cx))
 }
 
 pub fn open_channel_notes(

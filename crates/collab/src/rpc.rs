@@ -28,7 +28,7 @@ use axum::{
     Extension, Router, TypedHeader,
 };
 use collections::{HashMap, HashSet};
-pub use connection_pool::ConnectionPool;
+pub use connection_pool::{ConnectionPool, ZedVersion};
 use futures::{
     channel::oneshot,
     future::{self, BoxFuture},
@@ -102,10 +102,8 @@ impl<R: RequestMessage> Response<R> {
 
 #[derive(Clone)]
 struct Session {
-    zed_environment: Arc<str>,
     user_id: UserId,
     connection_id: ConnectionId,
-    zed_version: SemanticVersion,
     db: Arc<tokio::sync::Mutex<DbHandle>>,
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
@@ -130,19 +128,6 @@ impl Session {
         ConnectionPoolGuard {
             guard,
             _not_send: PhantomData,
-        }
-    }
-
-    fn endpoint_removed_in(&self, endpoint: &str, version: SemanticVersion) -> anyhow::Result<()> {
-        if self.zed_version > version {
-            Err(anyhow!(
-                "{} was removed in {} (you're on {})",
-                endpoint,
-                version,
-                self.zed_version
-            ))
-        } else {
-            Ok(())
         }
     }
 }
@@ -288,11 +273,8 @@ impl Server {
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
-            .add_request_handler(join_channel2)
             .add_request_handler(join_channel_chat)
             .add_message_handler(leave_channel_chat)
-            .add_request_handler(join_channel_call)
-            .add_request_handler(leave_channel_call)
             .add_request_handler(send_channel_message)
             .add_request_handler(remove_channel_message)
             .add_request_handler(get_channel_messages)
@@ -576,7 +558,7 @@ impl Server {
         connection: Connection,
         address: String,
         user: User,
-        zed_version: SemanticVersion,
+        zed_version: ZedVersion,
         impersonator: Option<User>,
         mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
@@ -618,7 +600,7 @@ impl Server {
 
             {
                 let mut pool = this.connection_pool.lock();
-                pool.add_connection(connection_id, user_id, user.admin);
+                pool.add_connection(connection_id, user_id, user.admin, zed_version);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
                 this.peer.send(connection_id, build_update_user_channels(&channels_for_user))?;
                 this.peer.send(connection_id, build_channels_update(
@@ -634,9 +616,7 @@ impl Server {
             let session = Session {
                 user_id,
                 connection_id,
-                zed_version,
                 db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
-                zed_environment: this.app_state.config.zed_environment.clone(),
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone(),
@@ -900,11 +880,21 @@ pub async fn handle_websocket_request(
             .into_response();
     }
 
-    // zed 0.122.x was the first version that sent an app header, so once that hits stable
-    // we can return UPGRADE_REQUIRED instead of unwrap_or_default();
-    let app_version = app_version_header
-        .map(|header| header.0 .0)
-        .unwrap_or_default();
+    let Some(version) = app_version_header.map(|header| ZedVersion(header.0 .0)) else {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            "no version header found".to_string(),
+        )
+            .into_response();
+    };
+
+    if !version.is_supported() {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            "client must be upgraded".to_string(),
+        )
+            .into_response();
+    }
 
     let socket_address = socket_address.to_string();
     ws.on_upgrade(move |socket| {
@@ -920,7 +910,7 @@ pub async fn handle_websocket_request(
                     connection,
                     socket_address,
                     user,
-                    app_version,
+                    version,
                     impersonator.0,
                     None,
                     Executor::Production,
@@ -1035,12 +1025,7 @@ async fn create_room(
     let room = session
         .db()
         .await
-        .create_room(
-            session.user_id,
-            session.connection_id,
-            &live_kit_room,
-            &session.zed_environment,
-        )
+        .create_room(session.user_id, session.connection_id, &live_kit_room)
         .await?;
 
     response.send(proto::CreateRoomResponse {
@@ -1063,19 +1048,14 @@ async fn join_room(
     let channel_id = session.db().await.channel_id_for_room(room_id).await?;
 
     if let Some(channel_id) = channel_id {
-        return join_channel_internal(channel_id, true, Box::new(response), session).await;
+        return join_channel_internal(channel_id, Box::new(response), session).await;
     }
 
     let joined_room = {
         let room = session
             .db()
             .await
-            .join_room(
-                room_id,
-                session.user_id,
-                session.connection_id,
-                session.zed_environment.as_ref(),
-            )
+            .join_room(room_id, session.user_id, session.connection_id)
             .await?;
         room_updated(&room.room, &session.peer);
         room.into_inner()
@@ -1336,6 +1316,22 @@ async fn set_room_participant_role(
     response: Response<proto::SetRoomParticipantRole>,
     session: Session,
 ) -> Result<()> {
+    let user_id = UserId::from_proto(request.user_id);
+    let role = ChannelRole::from(request.role());
+
+    if role == ChannelRole::Talker {
+        let pool = session.connection_pool().await;
+
+        for connection in pool.user_connections(user_id) {
+            if !connection.zed_version.supports_talker_role() {
+                Err(anyhow!(
+                    "This user is on zed {} which does not support unmute",
+                    connection.zed_version
+                ))?;
+            }
+        }
+    }
+
     let (live_kit_room, can_publish) = {
         let room = session
             .db()
@@ -1343,13 +1339,13 @@ async fn set_room_participant_role(
             .set_room_participant_role(
                 session.user_id,
                 RoomId::from_proto(request.room_id),
-                UserId::from_proto(request.user_id),
-                ChannelRole::from(request.role()),
+                user_id,
+                role,
             )
             .await?;
 
         let live_kit_room = room.live_kit_room.clone();
-        let can_publish = ChannelRole::from(request.role()).can_publish_to_rooms();
+        let can_publish = ChannelRole::from(request.role()).can_use_microphone();
         room_updated(&room, &session.peer);
         (live_kit_room, can_publish)
     };
@@ -2113,21 +2109,16 @@ async fn update_followers(request: proto::UpdateFollowers, session: Session) -> 
     };
 
     // For now, don't send view update messages back to that view's current leader.
-    let connection_id_to_omit = request.variant.as_ref().and_then(|variant| match variant {
+    let peer_id_to_omit = request.variant.as_ref().and_then(|variant| match variant {
         proto::update_followers::Variant::UpdateView(payload) => payload.leader_id,
         _ => None,
     });
 
-    for follower_peer_id in request.follower_ids.iter().copied() {
-        let follower_connection_id = follower_peer_id.into();
-        if Some(follower_peer_id) != connection_id_to_omit
-            && connection_ids.contains(&follower_connection_id)
-        {
-            session.peer.forward_send(
-                session.connection_id,
-                follower_connection_id,
-                request.clone(),
-            )?;
+    for connection_id in connection_ids.iter().cloned() {
+        if Some(connection_id.into()) != peer_id_to_omit && connection_id != session.connection_id {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())?;
         }
     }
     Ok(())
@@ -2726,67 +2717,14 @@ async fn respond_to_channel_invite(
     Ok(())
 }
 
-/// Join the channels' call
+/// Join the channels' room
 async fn join_channel(
     request: proto::JoinChannel,
     response: Response<proto::JoinChannel>,
     session: Session,
 ) -> Result<()> {
-    session.endpoint_removed_in("join_channel", "0.123.0".parse().unwrap())?;
-
     let channel_id = ChannelId::from_proto(request.channel_id);
-    join_channel_internal(channel_id, true, Box::new(response), session).await
-}
-
-async fn join_channel2(
-    request: proto::JoinChannel2,
-    response: Response<proto::JoinChannel2>,
-    session: Session,
-) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    join_channel_internal(channel_id, false, Box::new(response), session).await
-}
-
-async fn join_channel_call(
-    request: proto::JoinChannelCall,
-    response: Response<proto::JoinChannelCall>,
-    session: Session,
-) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let db = session.db().await;
-    let (joined_room, role) = db
-        .set_in_channel_call(channel_id, session.user_id, true)
-        .await?;
-
-    let Some(connection_info) = session.live_kit_client.as_ref().and_then(|live_kit| {
-        live_kit_info_for_user(live_kit, &session.user_id, role, &joined_room.live_kit_room)
-    }) else {
-        Err(anyhow!("no live kit token info"))?
-    };
-
-    room_updated(&joined_room, &session.peer);
-    response.send(proto::JoinChannelCallResponse {
-        live_kit_connection_info: Some(connection_info),
-    })?;
-
-    Ok(())
-}
-
-async fn leave_channel_call(
-    request: proto::LeaveChannelCall,
-    response: Response<proto::LeaveChannelCall>,
-    session: Session,
-) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let db = session.db().await;
-    let (joined_room, _) = db
-        .set_in_channel_call(channel_id, session.user_id, false)
-        .await?;
-
-    room_updated(&joined_room, &session.peer);
-    response.send(proto::Ack {})?;
-
-    Ok(())
+    join_channel_internal(channel_id, Box::new(response), session).await
 }
 
 trait JoinChannelInternalResponse {
@@ -2802,15 +2740,9 @@ impl JoinChannelInternalResponse for Response<proto::JoinRoom> {
         Response::<proto::JoinRoom>::send(self, result)
     }
 }
-impl JoinChannelInternalResponse for Response<proto::JoinChannel2> {
-    fn send(self, result: proto::JoinRoomResponse) -> Result<()> {
-        Response::<proto::JoinChannel2>::send(self, result)
-    }
-}
 
 async fn join_channel_internal(
     channel_id: ChannelId,
-    autojoin: bool,
     response: Box<impl JoinChannelInternalResponse>,
     session: Session,
 ) -> Result<()> {
@@ -2819,25 +2751,37 @@ async fn join_channel_internal(
         let db = session.db().await;
 
         let (joined_room, membership_updated, role) = db
-            .join_channel(
-                channel_id,
-                session.user_id,
-                autojoin,
-                session.connection_id,
-                session.zed_environment.as_ref(),
-            )
+            .join_channel(channel_id, session.user_id, session.connection_id)
             .await?;
 
         let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {
-            if !autojoin {
-                return None;
-            }
-            live_kit_info_for_user(
-                live_kit,
-                &session.user_id,
-                role,
-                &joined_room.room.live_kit_room,
-            )
+            let (can_publish, token) = if role == ChannelRole::Guest {
+                (
+                    false,
+                    live_kit
+                        .guest_token(
+                            &joined_room.room.live_kit_room,
+                            &session.user_id.to_string(),
+                        )
+                        .trace_err()?,
+                )
+            } else {
+                (
+                    true,
+                    live_kit
+                        .room_token(
+                            &joined_room.room.live_kit_room,
+                            &session.user_id.to_string(),
+                        )
+                        .trace_err()?,
+                )
+            };
+
+            Some(LiveKitConnectionInfo {
+                server_url: live_kit.url().into(),
+                token,
+                can_publish,
+            })
         });
 
         response.send(proto::JoinRoomResponse {
@@ -2871,35 +2815,6 @@ async fn join_channel_internal(
 
     update_user_contacts(session.user_id, &session).await?;
     Ok(())
-}
-
-fn live_kit_info_for_user(
-    live_kit: &Arc<dyn live_kit_server::api::Client>,
-    user_id: &UserId,
-    role: ChannelRole,
-    live_kit_room: &String,
-) -> Option<LiveKitConnectionInfo> {
-    let (can_publish, token) = if role == ChannelRole::Guest {
-        (
-            false,
-            live_kit
-                .guest_token(live_kit_room, &user_id.to_string())
-                .trace_err()?,
-        )
-    } else {
-        (
-            true,
-            live_kit
-                .room_token(live_kit_room, &user_id.to_string())
-                .trace_err()?,
-        )
-    };
-
-    Some(LiveKitConnectionInfo {
-        server_url: live_kit.url().into(),
-        token,
-        can_publish,
-    })
 }
 
 /// Start editing the channel notes

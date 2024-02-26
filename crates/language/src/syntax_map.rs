@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod syntax_map_tests;
 
-use crate::{Grammar, InjectionConfig, Language, LanguageRegistry};
+use crate::{Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry};
 use collections::HashMap;
 use futures::FutureExt;
 use parking_lot::Mutex;
@@ -102,9 +102,9 @@ enum SyntaxLayerContent {
 }
 
 impl SyntaxLayerContent {
-    fn language_id(&self) -> Option<usize> {
+    fn language_id(&self) -> Option<LanguageId> {
         match self {
-            SyntaxLayerContent::Parsed { language, .. } => language.id(),
+            SyntaxLayerContent::Parsed { language, .. } => Some(language.id),
             SyntaxLayerContent::Pending { .. } => None,
         }
     }
@@ -144,7 +144,7 @@ struct SyntaxLayerSummary {
     max_depth: usize,
     range: Range<Anchor>,
     last_layer_range: Range<Anchor>,
-    last_layer_language: Option<usize>,
+    last_layer_language: Option<LanguageId>,
     contains_unknown_injections: bool,
 }
 
@@ -152,7 +152,7 @@ struct SyntaxLayerSummary {
 struct SyntaxLayerPosition {
     depth: usize,
     range: Range<Anchor>,
-    language: Option<usize>,
+    language: Option<LanguageId>,
 }
 
 #[derive(Clone, Debug)]
@@ -182,9 +182,9 @@ enum ParseStepLanguage {
 }
 
 impl ParseStepLanguage {
-    fn id(&self) -> Option<usize> {
+    fn id(&self) -> Option<LanguageId> {
         match self {
-            ParseStepLanguage::Loaded { language } => language.id(),
+            ParseStepLanguage::Loaded { language } => Some(language.id),
             ParseStepLanguage::Pending { .. } => None,
         }
     }

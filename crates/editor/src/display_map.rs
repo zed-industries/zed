@@ -3,7 +3,7 @@
 //! Not literally though - rendering, layout and all that jazz is a responsibility of [`EditorElement`][EditorElement].
 //! Instead, [`DisplayMap`] decides where Inlays/Inlay hints are displayed, when
 //! to apply a soft wrap, where to add fold indicators, whether there are any tabs in the buffer that
-//! we display as spaces and where to display custom blocks (like diagnostics)
+//! we display as spaces and where to display custom blocks (like diagnostics).
 //! Seems like a lot? That's because it is. [`DisplayMap`] is conceptually made up
 //! of several smaller structures that form a hierarchy (starting at the bottom):
 //! - [`InlayMap`] that decides where the [`Inlay`]s should be displayed.
@@ -24,10 +24,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::EditorStyle;
-use crate::{
-    hover_links::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt, InlayId,
-    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
-};
+use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
@@ -37,6 +34,7 @@ use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
 };
 use lsp::DiagnosticSeverity;
+use multi_buffer::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
@@ -67,15 +65,27 @@ pub trait ToDisplayPoint {
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
+/// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
+/// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
+///
+/// See the [module level documentation](self) for more information.
 pub struct DisplayMap {
+    /// The buffer that we are displaying.
     buffer: Model<MultiBuffer>,
     buffer_subscription: BufferSubscription,
-    fold_map: FoldMap,
+    /// Decides where the [`Inlay`]s should be displayed.
     inlay_map: InlayMap,
+    /// Decides where the fold indicators should be and tracks parts of a source file that are currently folded.
+    fold_map: FoldMap,
+    /// Keeps track of hard tabs in a buffer.
     tab_map: TabMap,
+    /// Handles soft wrapping.
     wrap_map: Model<WrapMap>,
+    /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
     block_map: BlockMap,
+    /// Regions of text that should be highlighted.
     text_highlights: TextHighlights,
+    /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     pub clip_at_line_ends: bool,
 }

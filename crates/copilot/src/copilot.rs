@@ -3,6 +3,7 @@ use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use collections::{HashMap, HashSet};
+use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
@@ -32,17 +33,6 @@ use util::{
     ResultExt,
 };
 
-// HACK: This type is only defined in `copilot` since it is the earliest ancestor
-// of the crates that use it.
-//
-// This is not great. Let's find a better place for it to live.
-#[derive(Default)]
-pub struct CommandPaletteFilter {
-    pub hidden_namespaces: HashSet<&'static str>,
-    pub hidden_action_types: HashSet<TypeId>,
-}
-
-impl Global for CommandPaletteFilter {}
 actions!(
     copilot,
     [
@@ -428,6 +418,8 @@ impl Copilot {
                 let binary = LanguageServerBinary {
                     path: node_path,
                     arguments,
+                    // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
+                    env: None,
                 };
 
                 let server = LanguageServer::new(
@@ -512,7 +504,7 @@ impl Copilot {
                                     .await?;
                                 match sign_in {
                                     request::SignInInitiateResult::AlreadySignedIn { user } => {
-                                        Ok(request::SignInStatus::Ok { user })
+                                        Ok(request::SignInStatus::Ok { user: Some(user) })
                                     }
                                     request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
                                         this.update(&mut cx, |this, cx| {
@@ -920,7 +912,7 @@ impl Copilot {
 
         if let Ok(server) = self.server.as_running() {
             match lsp_status {
-                request::SignInStatus::Ok { .. }
+                request::SignInStatus::Ok { user: Some(_) }
                 | request::SignInStatus::MaybeOk { .. }
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
@@ -936,7 +928,7 @@ impl Copilot {
                         self.unregister_buffer(&buffer);
                     }
                 }
-                request::SignInStatus::NotSignedIn => {
+                request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
                     server.sign_in_status = SignInStatus::SignedOut;
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);

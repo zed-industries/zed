@@ -22,7 +22,10 @@ pub use panel_settings::{
 use settings::Settings;
 use workspace::{notifications::DetachAndPromptErr, AppState};
 
-actions!(collab, [ToggleScreenSharing, ToggleMute, LeaveCall]);
+actions!(
+    collab,
+    [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
+);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     CollaborationPanelSettings::register(cx);
@@ -79,6 +82,12 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
 
             room.toggle_mute(cx)
         });
+    }
+}
+
+pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
+    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+        room.update(cx, |room, cx| room.toggle_deafen(cx));
     }
 }
 

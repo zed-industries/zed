@@ -1,12 +1,20 @@
 // todo!(linux): remove
 #![cfg_attr(target_os = "linux", allow(dead_code))]
+// todo!("windows"): remove
+#![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
 mod keystroke;
+
 #[cfg(target_os = "linux")]
 mod linux;
+
 #[cfg(target_os = "macos")]
 mod mac;
+
+#[cfg(any(target_os = "linux", feature = "macos-blade"))]
+mod blade;
+
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
@@ -54,6 +62,11 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(LinuxPlatform::new())
+}
+// todo!("windows")
+#[cfg(target_os = "windows")]
+pub(crate) fn current_platform() -> Rc<dyn Platform> {
+    unimplemented!()
 }
 
 pub(crate) trait Platform: 'static {
@@ -406,11 +419,8 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    pub(crate) fn flush_pending_input(&mut self, input: &str, cx: &mut WindowContext) {
-        let Some(range) = self.handler.selected_text_range(cx) else {
-            return;
-        };
-        self.handler.replace_text_in_range(Some(range), input, cx);
+    pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
+        self.handler.replace_text_in_range(None, input, cx);
     }
 }
 

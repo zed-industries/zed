@@ -117,12 +117,15 @@
       "ctrl-e": "vim::LineDown",
       "ctrl-y": "vim::LineUp",
       // "g" commands
+      "g e": "vim::PreviousWordEnd",
+      "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
       "g t": "pane::ActivateNextItem",
       "g shift-t": "pane::ActivatePrevItem",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
+      "g x": "editor::OpenUrl",
       "g n": "vim::SelectNext",
       "g shift-n": "vim::SelectPrevious",
       "g >": [
@@ -394,7 +397,8 @@
       "}": "vim::CurlyBrackets",
       "shift-b": "vim::CurlyBrackets",
       "<": "vim::AngleBrackets",
-      ">": "vim::AngleBrackets"
+      ">": "vim::AngleBrackets",
+      "a": "vim::Argument"
     }
   },
   {
@@ -485,7 +489,9 @@
       "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
       "ctrl-x ctrl-c": "copilot::Suggest", // zed specific
       "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
-      "ctrl-x ctrl-z": "editor::Cancel"
+      "ctrl-x ctrl-z": "editor::Cancel",
+      "ctrl-w": "editor::DeleteToPreviousWordStart",
+      "ctrl-u": "editor::DeleteToBeginningOfLine"
     }
   },
   {
@@ -502,6 +508,28 @@
     "bindings": {
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
+    }
+  },
+  {
+    // netrw compatibility
+    "context": "ProjectPanel && not_editing",
+    "bindings": {
+      ":": "command_palette::Toggle",
+      "%": "project_panel::NewFile",
+      "/": "project_panel::NewSearchInDirectory",
+      "d": "project_panel::NewDirectory",
+      "enter": "project_panel::Open",
+      "escape": "project_panel::ToggleFocus",
+      "h": "project_panel::CollapseSelectedEntry",
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrev",
+      "l": "project_panel::ExpandSelectedEntry",
+      "o": "project_panel::Open",
+      "shift-d": "project_panel::Delete",
+      "shift-r": "project_panel::Rename",
+      "t": "project_panel::Open",
+      "v": "project_panel::Open",
+      "x": "project_panel::RevealInFinder"
     }
   }
 ]

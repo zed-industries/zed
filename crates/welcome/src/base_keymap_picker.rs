@@ -55,7 +55,7 @@ impl BaseKeymapSelector {
         delegate: BaseKeymapSelectorDelegate,
         cx: &mut ViewContext<BaseKeymapSelector>,
     ) -> Self {
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
         Self { picker }
     }
 }
@@ -99,7 +99,7 @@ impl BaseKeymapSelectorDelegate {
 impl PickerDelegate for BaseKeymapSelectorDelegate {
     type ListItem = ui::ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Select a base keymap...".into()
     }
 

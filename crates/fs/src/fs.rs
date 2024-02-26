@@ -11,6 +11,9 @@ use fsevent::StreamFlags;
 #[cfg(not(target_os = "macos"))]
 use notify::{Config, EventKind, Watcher};
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 use futures::{future::BoxFuture, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
@@ -21,12 +24,11 @@ use std::io::Write;
 use std::sync::Arc;
 use std::{
     io,
-    os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     pin::Pin,
     time::{Duration, SystemTime},
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
 use util::ResultExt;
 
@@ -66,6 +68,7 @@ pub trait Fs: Send + Sync {
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>>;
     fn is_fake(&self) -> bool;
+    async fn is_case_sensitive(&self) -> Result<bool>;
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs;
 }
@@ -238,8 +241,15 @@ impl Fs for RealFs {
         } else {
             symlink_metadata
         };
+
+        #[cfg(unix)]
+        let inode = metadata.ino();
+
+        #[cfg(windows)]
+        let inode = file_id(path).await?;
+
         Ok(Some(Metadata {
-            inode: metadata.ino(),
+            inode,
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
@@ -339,6 +349,44 @@ impl Fs for RealFs {
     fn is_fake(&self) -> bool {
         false
     }
+
+    /// Checks whether the file system is case sensitive by attempting to create two files
+    /// that have the same name except for the casing.
+    ///
+    /// It creates both files in a temporary directory it removes at the end.
+    async fn is_case_sensitive(&self) -> Result<bool> {
+        let temp_dir = TempDir::new()?;
+        let test_file_1 = temp_dir.path().join("case_sensitivity_test.tmp");
+        let test_file_2 = temp_dir.path().join("CASE_SENSITIVITY_TEST.TMP");
+
+        let create_opts = CreateOptions {
+            overwrite: false,
+            ignore_if_exists: false,
+        };
+
+        // Create file1
+        self.create_file(&test_file_1, create_opts).await?;
+
+        // Now check whether it's possible to create file2
+        let case_sensitive = match self.create_file(&test_file_2, create_opts).await {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                if let Some(io_error) = e.downcast_ref::<io::Error>() {
+                    if io_error.kind() == io::ErrorKind::AlreadyExists {
+                        Ok(false)
+                    } else {
+                        Err(e)
+                    }
+                } else {
+                    Err(e)
+                }
+            }
+        };
+
+        temp_dir.close()?;
+        case_sensitive
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs {
         panic!("called `RealFs::as_fake`")
@@ -1186,6 +1234,10 @@ impl Fs for FakeFs {
         true
     }
 
+    async fn is_case_sensitive(&self) -> Result<bool> {
+        Ok(true)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs {
         self
@@ -1282,6 +1334,41 @@ pub fn copy_recursive<'a>(
         }
     }
     .boxed()
+}
+
+// todo!(windows)
+// can we get file id not open the file twice?
+// https://github.com/rust-lang/rust/issues/63010
+#[cfg(target_os = "windows")]
+async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
+    use std::os::windows::io::AsRawHandle;
+
+    use smol::fs::windows::OpenOptionsExt;
+    use windows_sys::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+        },
+    };
+
+    let file = smol::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .await?;
+
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
+    // This function supports Windows XP+
+    smol::unblock(move || {
+        let ret = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
+        if ret == 0 {
+            return Err(anyhow!(format!("{}", std::io::Error::last_os_error())));
+        };
+
+        Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
+    })
+    .await
 }
 
 #[cfg(test)]
