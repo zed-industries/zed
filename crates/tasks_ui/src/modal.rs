@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusableView,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
@@ -116,8 +116,8 @@ impl PickerDelegate for TasksModalDelegate {
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
         Arc::from(format!(
             "{} runs the selected, {} spawns a bash-like task from the prompt",
-            menu::Confirm.bindings_text(cx),
-            menu::SecondaryConfirm.bindings_text(cx),
+            cx.keystroke_text_for(&menu::Confirm),
+            cx.keystroke_text_for(&menu::SecondaryConfirm),
         ))
     }
 
