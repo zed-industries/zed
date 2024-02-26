@@ -110,6 +110,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use schemars::_private::NoSerialize;
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
@@ -792,8 +793,12 @@ impl CompletionsMenu {
                 // Direct modification of the object within the collection.
                 completion.label.text = "BOB".to_string();
                 //PICK UP FROM HERE
+
             }
-        }//changes arent being persistentc
+        }
+        // let font_size = observe_buffer_font_size_adjustment(cx, cx).maybe_to_value().unwrap();
+        let p = Some((3, Path::new("buffer_font_size")));
+        println!("UI Size: {}", settings.ui_font_size);
         {
             let completion_indices:Vec<usize> = matches.iter().map(|m| m.candidate_id).collect();
 
