@@ -399,6 +399,8 @@ fn box_suffixes() -> Vec<(&'static str, TokenStream2, &'static str)> {
         ("72", quote! { rems(18.) }, "288px (18rem)"),
         ("80", quote! { rems(20.) }, "320px (20rem)"),
         ("96", quote! { rems(24.) }, "384px (24rem)"),
+        ("112", quote! { rems(28.) }, "448px (28rem)"),
+        ("128", quote! { rems(32.) }, "512px (32rem)"),
         ("auto", quote! { auto() }, "Auto"),
         ("px", quote! { px(1.) }, "1px"),
         ("full", quote! { relative(1.) }, "100%"),

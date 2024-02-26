@@ -7,6 +7,7 @@ use crate::prelude::*;
 pub enum LabelSize {
     #[default]
     Default,
+    Large,
     Small,
     XSmall,
 }
@@ -97,6 +98,7 @@ impl RenderOnce for LabelLike {
                 )
             })
             .map(|this| match self.size {
+                LabelSize::Large => this.text_ui_lg(),
                 LabelSize::Default => this.text_ui(),
                 LabelSize::Small => this.text_ui_sm(),
                 LabelSize::XSmall => this.text_ui_xs(),

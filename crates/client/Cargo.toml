@@ -13,7 +13,7 @@ doctest = false
 test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
 db.workspace = true
@@ -41,9 +41,10 @@ schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
+sha2.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
+telemetry_events.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 time.workspace = true

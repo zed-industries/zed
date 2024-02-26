@@ -84,7 +84,7 @@ impl PickerDelegate for ContactFinderDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search collaborator by username...".into()
     }
 

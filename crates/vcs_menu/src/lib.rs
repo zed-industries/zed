@@ -135,7 +135,7 @@ impl BranchListDelegate {
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Select branch...".into()
     }
 

@@ -1,0 +1,14 @@
+[package]
+name = "command_palette_hooks"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/command_palette_hooks.rs"
+doctest = false
+
+[dependencies]
+collections.workspace = true
+gpui.workspace = true

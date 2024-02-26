@@ -24,10 +24,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::EditorStyle;
-use crate::{
-    hover_links::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt, InlayId,
-    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
-};
+use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
@@ -37,6 +34,7 @@ use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
 };
 use lsp::DiagnosticSeverity;
+use multi_buffer::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;

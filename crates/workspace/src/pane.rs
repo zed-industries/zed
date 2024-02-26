@@ -9,9 +9,9 @@ use collections::{HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
-    AsyncWindowContext, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter, ExternalPaths,
-    FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point,
-    PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
+    AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
+    ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
+    Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
 use parking_lot::Mutex;
@@ -1505,6 +1505,7 @@ impl Pane {
             )
             .child(
                 div()
+                    .id("tab_bar_drop_target")
                     .min_w_6()
                     // HACK: This empty child is currently necessary to force the drop target to appear
                     // despite us setting a min width above.
@@ -1528,6 +1529,11 @@ impl Pane {
                     .on_drop(cx.listener(move |this, paths, cx| {
                         this.drag_split_direction = None;
                         this.handle_external_paths_drop(paths, cx)
+                    }))
+                    .on_click(cx.listener(move |_, event: &ClickEvent, cx| {
+                        if event.up.click_count == 2 {
+                            cx.dispatch_action(NewFile.boxed_clone());
+                        }
                     })),
             )
     }

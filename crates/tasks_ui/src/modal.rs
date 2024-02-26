@@ -9,7 +9,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::Inventory;
 use task::{oneshot_source::OneshotSource, Task};
-use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
+use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable, WindowContext};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -115,7 +115,7 @@ impl PickerDelegate for TasksModalDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         self.placeholder_text.clone()
     }
 

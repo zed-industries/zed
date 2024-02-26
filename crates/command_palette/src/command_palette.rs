@@ -6,7 +6,9 @@ use std::{
 
 use client::telemetry::Telemetry;
 use collections::HashMap;
-use copilot::CommandPaletteFilter;
+use command_palette_hooks::{
+    CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
+};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
@@ -99,18 +101,6 @@ impl Render for CommandPalette {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
-}
-
-pub struct CommandPaletteInterceptor(
-    pub Box<dyn Fn(&str, &AppContext) -> Option<CommandInterceptResult>>,
-);
-
-impl Global for CommandPaletteInterceptor {}
-
-pub struct CommandInterceptResult {
-    pub action: Box<dyn Action>,
-    pub string: String,
-    pub positions: Vec<usize>,
 }
 
 pub struct CommandPaletteDelegate {
@@ -231,7 +221,7 @@ impl CommandPaletteDelegate {
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Execute a command...".into()
     }
 
