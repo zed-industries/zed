@@ -5,8 +5,8 @@ use crate::{
     Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
     Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
     MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
+    PromptLevel, Quad, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, View, ViewId, VisualContext, WeakView, WindowAppearance, WindowBounds,
     WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -2796,6 +2796,24 @@ impl PaintQuad {
         PaintQuad {
             background: background.into(),
             ..self
+        }
+    }
+
+    pub(crate) fn into_primitive(
+        self,
+        view_id: impl Into<ViewId>,
+        scale_factor: f32,
+        content_mask: ContentMask<Pixels>,
+    ) -> Quad {
+        Quad {
+            view_id: view_id.into(),
+            order: 0,
+            bounds: self.bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            background: self.background,
+            border_color: self.border_color,
+            corner_radii: self.corner_radii.scale(scale_factor),
+            border_widths: self.border_widths.scale(scale_factor),
         }
     }
 }

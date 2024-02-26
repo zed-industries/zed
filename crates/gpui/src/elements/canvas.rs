@@ -45,7 +45,7 @@ impl Element for Canvas {
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, style: &mut Style, cx: &mut ElementContext) {
-        style.paint(bounds, cx, |cx| {
+        style.paint(bounds, None, cx, |cx| {
             (self.paint_callback.take().unwrap())(&bounds, cx)
         });
     }

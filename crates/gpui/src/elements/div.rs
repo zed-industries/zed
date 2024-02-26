@@ -1325,7 +1325,12 @@ impl Interactivity {
         }
 
         cx.with_z_index(z_index, |cx| {
-            style.paint(bounds, cx, |cx: &mut ElementContext| {
+            let hover_style: Option<Style> = self
+                .hover_style
+                .take()
+                .map(|hover_refinement| style.refined(*hover_refinement));
+
+            style.paint(bounds, hover_style, cx, |cx: &mut ElementContext| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                         #[cfg(debug_assertions)]
@@ -1403,20 +1408,23 @@ impl Interactivity {
                                                 }
                                             }
                                         });
-                                        cx.paint_quad(crate::outline(
-                                            crate::Bounds {
-                                                origin: bounds.origin
-                                                    + crate::point(
-                                                        crate::px(0.),
-                                                        FONT_SIZE - px(2.),
-                                                    ),
-                                                size: crate::Size {
-                                                    width: text_bounds.size.width,
-                                                    height: crate::px(1.),
+                                        cx.paint_quad(
+                                            crate::outline(
+                                                crate::Bounds {
+                                                    origin: bounds.origin
+                                                        + crate::point(
+                                                            crate::px(0.),
+                                                            FONT_SIZE - px(2.),
+                                                        ),
+                                                    size: crate::Size {
+                                                        width: text_bounds.size.width,
+                                                        height: crate::px(1.),
+                                                    },
                                                 },
-                                            },
-                                            crate::red(),
-                                        ))
+                                                crate::red(),
+                                            ),
+                                            None,
+                                        )
                                     }
                                 }
                             };

@@ -686,7 +686,7 @@ impl<'a> ElementContext<'a> {
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
-    pub fn paint_quad(&mut self, quad: PaintQuad) {
+    pub fn paint_quad(&mut self, quad: PaintQuad, hover: Option<PaintQuad>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let view_id = self.parent_view_id();
@@ -703,7 +703,7 @@ impl<'a> ElementContext<'a> {
                 corner_radii: quad.corner_radii.scale(scale_factor),
                 border_widths: quad.border_widths.scale(scale_factor),
             },
-            None,
+            hover.map(|quad| quad.into_primitive(view_id, scale_factor, content_mask)),
             None,
         );
     }

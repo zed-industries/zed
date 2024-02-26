@@ -383,10 +383,11 @@ impl Style {
         }
     }
 
-    /// Paints the background of an element styled with this style.
+    /// Paints the background of an element styled with this style, then calls the continuation function, then paints the border.
     pub fn paint(
         &self,
         bounds: Bounds<Pixels>,
+        hover: Option<Self>,
         cx: &mut ElementContext,
         continuation: impl FnOnce(&mut ElementContext),
     ) {
@@ -397,7 +398,7 @@ impl Style {
 
         #[cfg(debug_assertions)]
         if self.debug || cx.has_global::<DebugBelow>() {
-            cx.paint_quad(crate::outline(bounds, crate::red()));
+            cx.paint_quad(crate::outline(bounds, crate::red()), None);
         }
 
         let rem_size = cx.rem_size();
@@ -410,18 +411,44 @@ impl Style {
             );
         });
 
-        let background_color = self.background.as_ref().and_then(Fill::color);
-        if background_color.map_or(false, |color| !color.is_transparent()) {
+        let background_color = self
+            .background
+            .as_ref()
+            .and_then(Fill::color)
+            .unwrap_or_default();
+        let hover_background_color = hover
+            .as_ref()
+            .and_then(|hover_style| hover_style.background.as_ref())
+            .and_then(Fill::color)
+            .unwrap_or_default();
+
+        if !background_color.is_transparent() || !hover_background_color.is_transparent() {
             cx.with_z_index(1, |cx| {
-                let mut border_color = background_color.unwrap_or_default();
+                let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
+
+                let mut border_color = background_color;
                 border_color.a = 0.;
-                cx.paint_quad(quad(
+                let base_quad = quad(
                     bounds,
-                    self.corner_radii.to_pixels(bounds.size, rem_size),
-                    background_color.unwrap_or_default(),
+                    corner_radii,
+                    background_color,
                     Edges::default(),
                     border_color,
-                ));
+                );
+
+                let hover_quad = hover.map(|hover| {
+                    let mut border_color = hover_background_color;
+                    border_color.a = 0.;
+                    quad(
+                        bounds,
+                        corner_radii,
+                        hover_background_color,
+                        Edges::default(),
+                        border_color,
+                    )
+                });
+
+                cx.paint_quad(base_quad, hover_quad);
             });
         }
 
