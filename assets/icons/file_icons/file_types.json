@@ -22,6 +22,7 @@
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
+    "coffee": "coffeescript",
     "dart": "dart",
     "dat": "storage",
     "db": "storage",
@@ -43,6 +44,7 @@
     "fmp": "storage",
     "fp7": "storage",
     "frm": "storage",
+    "fs": "fsharp",
     "gdb": "storage",
     "gif": "image",
     "gitattributes": "vcs",
@@ -98,6 +100,7 @@
     "myd": "storage",
     "myi": "storage",
     "nu": "terminal",
+    "nim": "nim",
     "odp": "document",
     "ods": "document",
     "odt": "document",
@@ -132,6 +135,9 @@
     "sqlite": "storage",
     "svelte": "template",
     "svg": "image",
+    "sc": "scala",
+    "scala": "scala",
+    "sql": "storage",
     "swift": "swift",
     "tiff": "image",
     "toml": "toml",
@@ -140,6 +146,7 @@
     "ttf": "font",
     "tsx": "code",
     "txt": "document",
+    "tcl": "tcl",
     "vue": "vue",
     "wav": "audio",
     "webm": "video",
@@ -181,6 +188,9 @@
     "css": {
       "icon": "icons/file_icons/css.svg"
     },
+    "coffeescript": {
+      "icon": "icons/file_icons/coffeescript.svg"
+    },
     "dart": {
       "icon": "icons/file_icons/dart.svg"
     },
@@ -210,6 +220,9 @@
     },
     "font": {
       "icon": "icons/file_icons/font.svg"
+    },
+    "fsharp": {
+      "icon": "icons/file_icons/fsharp.svg"
     },
     "haskell": {
       "icon": "icons/file_icons/haskell.svg"
@@ -244,6 +257,9 @@
     "ocaml": {
       "icon": "icons/file_icons/ocaml.svg"
     },
+    "nim": {
+      "icon": "icons/file_icons/nim.svg"
+    },
     "phoenix": {
       "icon": "icons/file_icons/phoenix.svg"
     },
@@ -274,6 +290,9 @@
     "storage": {
       "icon": "icons/file_icons/database.svg"
     },
+    "scala": {
+      "icon": "icons/file_icons/scala.svg"
+    },
     "swift": {
       "icon": "icons/file_icons/swift.svg"
     },
@@ -289,6 +308,9 @@
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
     },
+    "tcl": {
+      "icon": "icons/file_icons/tcl.svg"
+    },  
     "vcs": {
       "icon": "icons/file_icons/git.svg"
     },
