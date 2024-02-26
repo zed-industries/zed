@@ -2492,6 +2492,61 @@ impl Editor {
                         continue;
                     }
                 }
+
+                if scope.should_auto_replace_emoji_shortcode()
+                    && selection.is_empty()
+                    && text.as_ref().ends_with(":")
+                {
+                    let mut chars = Vec::new();
+                    let mut end_index = 0;
+                    for (idx, char) in snapshot
+                        .reversed_chars_at(selection.start)
+                        .enumerate()
+                        .take(100)
+                    {
+                        if char.is_whitespace() || !char.is_ascii() {
+                            break;
+                        }
+
+                        if char == ':' {
+                            end_index = idx;
+                            break;
+                        }
+                        chars.push(char);
+                    }
+                    chars.reverse();
+                    let possible_emoji_shortcode: String = chars.iter().collect();
+                    if !chars.is_empty() {
+                        if let Some(emoji) = emojis::get_by_shortcode(&possible_emoji_shortcode) {
+                            let start_replace = Point::new(
+                                selection.start.row,
+                                selection.start.column - end_index as u32 - 1,
+                            );
+
+                            // Remove shortcode from buffer
+                            edits.push((start_replace..selection.start, "".to_string().into()));
+                            new_selections.push((
+                                Selection {
+                                    id: selection.id,
+                                    start: snapshot.anchor_after(start_replace),
+                                    end: snapshot.anchor_before(selection.start),
+                                    reversed: selection.reversed,
+                                    goal: selection.goal,
+                                },
+                                0,
+                            ));
+
+                            // Insert emoji
+                            let anchor = snapshot.anchor_after(selection.start);
+                            new_selections.push((selection.map(|_| anchor), 0));
+                            edits.push((selection.start..selection.end, emoji.to_string().into()));
+
+                            dbg!(start_replace, selection.start);
+
+                            continue;
+                        }
+                    }
+                }
             }
 
             // If not handling any auto-close operation, then just replace the selected
