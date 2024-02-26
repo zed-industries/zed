@@ -141,6 +141,7 @@
     "tsv": "storage",
     "tsx": "code",
     "txt": "document",
+    "tcl": "tcl",
     "vue": "vue",
     "wav": "audio",
     "webm": "video",
@@ -288,7 +289,7 @@
       "icon": "icons/file_icons/typescript.svg"
     },
     "tcl": {
-      "icon": "icons/file_icons/typescript.svg"
+      "icon": "icons/file_icons/tcl.svg"
     },
     "vcs": {
       "icon": "icons/file_icons/git.svg"
