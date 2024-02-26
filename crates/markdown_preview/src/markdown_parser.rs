@@ -654,6 +654,56 @@ mod tests {
     }
 
     #[test]
+    fn test_nested_bold_strikethrough_text() {
+        let parsed = parse("Some **bo~~strikethrough~~ld** text");
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children[0],
+            ParsedMarkdownElement::Paragraph(ParsedMarkdownText {
+                source_range: 0..35,
+                contents: "Some bostrikethroughld text".to_string(),
+                highlights: Vec::new(),
+                region_ranges: Vec::new(),
+                regions: Vec::new(),
+            })
+        );
+
+        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.highlights,
+            vec![
+                (
+                    5..7,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        weight: FontWeight::BOLD,
+                        ..Default::default()
+                    }),
+                ),
+                (
+                    7..20,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        weight: FontWeight::BOLD,
+                        strikethrough: true,
+                        ..Default::default()
+                    }),
+                ),
+                (
+                    20..22,
+                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        weight: FontWeight::BOLD,
+                        ..Default::default()
+                    }),
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn test_header_only_table() {
         let markdown = "\
 | Header 1 | Header 2 |
