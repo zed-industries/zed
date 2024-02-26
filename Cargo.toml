@@ -206,8 +206,9 @@ git2 = { version = "0.15", default-features = false }
 globset = "0.4"
 hex = "0.4.3"
 indoc = "1"
-# We explicitly disable a http2 support in isahc.
+# We explicitly disable http2 support in isahc.
 isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
+itertools = "0.11.0"
 lazy_static = "1.4.0"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
