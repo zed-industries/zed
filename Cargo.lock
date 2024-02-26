@@ -3100,6 +3100,7 @@ dependencies = [
  "copilot",
  "ctor",
  "db",
+ "emojis",
  "env_logger",
  "futures 0.3.28",
  "fuzzy",
