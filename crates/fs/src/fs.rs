@@ -193,7 +193,7 @@ impl Fs for RealFs {
                 // Use temp dir in the same filesystem to home directory to
                 // avoid invalid cross-device link error returned by rename.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                NamedTempFile::new_in(paths::TEMP_DIR.to_path_buf())
+                NamedTempFile::new_in(path.parent().unwrap_or(&paths::TEMP_DIR))
             } else {
                 NamedTempFile::new()
             }?;
