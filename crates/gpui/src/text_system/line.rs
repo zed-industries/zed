@@ -139,6 +139,7 @@ fn paint_line(
                             *background_color,
                         ),
                         None,
+                        None,
                     );
                     background_origin.x = origin.x;
                     background_origin.y += line_height;
@@ -241,6 +242,7 @@ fn paint_line(
                         background_color,
                     ),
                     None,
+                    None,
                 );
             }
 
@@ -303,6 +305,7 @@ fn paint_line(
                 },
                 background_color,
             ),
+            None,
             None,
         );
     }

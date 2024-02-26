@@ -2688,12 +2688,14 @@ fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> 
                 color,
             ),
             None,
+            None,
         );
         cx.paint_quad(
             fill(
                 Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
                 color,
             ),
+            None,
             None,
         );
     })

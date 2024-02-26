@@ -388,6 +388,7 @@ impl Style {
         &self,
         bounds: Bounds<Pixels>,
         hover: Option<Self>,
+        group_hover: Option<(SharedString, Option<Self>)>,
         cx: &mut ElementContext,
         continuation: impl FnOnce(&mut ElementContext),
     ) {
@@ -398,7 +399,7 @@ impl Style {
 
         #[cfg(debug_assertions)]
         if self.debug || cx.has_global::<DebugBelow>() {
-            cx.paint_quad(crate::outline(bounds, crate::red()), None);
+            cx.paint_quad(crate::outline(bounds, crate::red()), None, None);
         }
 
         let rem_size = cx.rem_size();
@@ -411,18 +412,20 @@ impl Style {
             );
         });
 
-        let background_color = self
-            .background
-            .as_ref()
-            .and_then(Fill::color)
-            .unwrap_or_default();
+        let background_color = self.background_color();
         let hover_background_color = hover
             .as_ref()
-            .and_then(|hover_style| hover_style.background.as_ref())
-            .and_then(Fill::color)
+            .map(|hover_style| hover_style.background_color())
+            .unwrap_or_default();
+        let group_hover_background_color = group_hover
+            .as_ref()
+            .and_then(|(_, group_hover_style)| Some(group_hover_style.as_ref()?.background_color()))
             .unwrap_or_default();
 
-        if !background_color.is_transparent() || !hover_background_color.is_transparent() {
+        if !background_color.is_transparent()
+            || !hover_background_color.is_transparent()
+            || !group_hover_background_color.is_transparent()
+        {
             cx.with_z_index(1, |cx| {
                 let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
 
@@ -450,7 +453,24 @@ impl Style {
                     ))
                 };
 
-                cx.paint_quad(base_quad, hover_quad);
+                let group_hover_quad = group_hover.as_ref().map(|(group_id, _)| {
+                    let quad = if group_hover_background_color.is_transparent() {
+                        None
+                    } else {
+                        let mut border_color = group_hover_background_color;
+                        border_color.a = 0.;
+                        Some(quad(
+                            bounds,
+                            corner_radii,
+                            group_hover_background_color,
+                            Edges::default(),
+                            border_color,
+                        ))
+                    };
+                    (group_id.clone(), quad)
+                });
+
+                cx.paint_quad(base_quad, hover_quad, group_hover_quad);
             });
         }
 
@@ -458,13 +478,19 @@ impl Style {
             continuation(cx);
         });
 
-        let border_color = self.border_color.unwrap_or_default();
+        let border_color = self.border_color();
         let hover_border_color = hover
             .as_ref()
-            .and_then(|hover_style| hover_style.border_color)
+            .map(|hover_style| hover_style.border_color())
+            .unwrap_or_default();
+        let group_hover_border_color = group_hover
+            .as_ref()
+            .and_then(|(_, group_hover_style)| Some(group_hover_style.as_ref()?.border_color()))
             .unwrap_or_default();
         if self.border_widths.any(|width| !width.is_zero())
-            && (!border_color.is_transparent() || !hover_border_color.is_transparent())
+            && (!border_color.is_transparent()
+                || !hover_border_color.is_transparent()
+                || !group_hover_border_color.is_transparent())
         {
             cx.with_z_index(3, |cx| {
                 let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
@@ -513,16 +539,40 @@ impl Style {
                         hover_border_color,
                     ))
                 };
+                let group_hover_border_quad = group_hover.as_ref().map(|(group_id, _)| {
+                    let quad = if group_hover_border_color.is_transparent() {
+                        None
+                    } else {
+                        let mut background = group_hover_border_color;
+                        background.a = 0.;
+                        Some(quad(
+                            bounds,
+                            corner_radii,
+                            background,
+                            border_widths,
+                            group_hover_border_color,
+                        ))
+                    };
+                    (group_id.clone(), quad)
+                });
 
                 cx.with_content_mask(Some(ContentMask { bounds: top_bounds }), |cx| {
-                    cx.paint_quad(border_quad.clone(), hover_border_quad.clone());
+                    cx.paint_quad(
+                        border_quad.clone(),
+                        hover_border_quad.clone(),
+                        group_hover_border_quad.clone(),
+                    );
                 });
                 cx.with_content_mask(
                     Some(ContentMask {
                         bounds: right_bounds,
                     }),
                     |cx| {
-                        cx.paint_quad(border_quad.clone(), hover_border_quad.clone());
+                        cx.paint_quad(
+                            border_quad.clone(),
+                            hover_border_quad.clone(),
+                            group_hover_border_quad.clone(),
+                        );
                     },
                 );
                 cx.with_content_mask(
@@ -530,7 +580,11 @@ impl Style {
                         bounds: bottom_bounds,
                     }),
                     |cx| {
-                        cx.paint_quad(border_quad.clone(), hover_border_quad.clone());
+                        cx.paint_quad(
+                            border_quad.clone(),
+                            hover_border_quad.clone(),
+                            group_hover_border_quad.clone(),
+                        );
                     },
                 );
                 cx.with_content_mask(
@@ -538,7 +592,7 @@ impl Style {
                         bounds: left_bounds,
                     }),
                     |cx| {
-                        cx.paint_quad(border_quad, hover_border_quad);
+                        cx.paint_quad(border_quad, hover_border_quad, group_hover_border_quad);
                     },
                 );
             });
@@ -547,6 +601,32 @@ impl Style {
         #[cfg(debug_assertions)]
         if self.debug_below {
             cx.remove_global::<DebugBelow>();
+        }
+    }
+
+    /// Returns the background color of the style based on the visibility.
+    /// If the visibility is `Visible`, it returns the background color of the style if set,
+    /// otherwise it returns the default color. If the visibility is `Hidden`, it returns
+    /// a transparent black color.
+    fn background_color(&self) -> Hsla {
+        match self.visibility {
+            Visibility::Visible => self
+                .background
+                .as_ref()
+                .and_then(Fill::color)
+                .unwrap_or_default(),
+            Visibility::Hidden => Hsla::transparent_black(),
+        }
+    }
+
+    /// Returns the border color of the style based on the visibility.
+    /// If the visibility is `Visible`, it returns the border color of the style if set,
+    /// otherwise it returns the default color. If the visibility is `Hidden`, it returns
+    /// a transparent black color.
+    fn border_color(&self) -> Hsla {
+        match self.visibility {
+            Visibility::Visible => self.border_color.unwrap_or_default(),
+            Visibility::Hidden => Hsla::transparent_black(),
         }
     }
 }

@@ -632,8 +632,8 @@ impl EditorElement {
         let scroll_top =
             layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
         let gutter_bg = cx.theme().colors().editor_gutter_background;
-        cx.paint_quad(fill(gutter_bounds, gutter_bg), None);
-        cx.paint_quad(fill(text_bounds, self.style.background), None);
+        cx.paint_quad(fill(gutter_bounds, gutter_bg), None, None);
+        cx.paint_quad(fill(text_bounds, self.style.background), None, None);
 
         if let EditorMode::Full = layout.mode {
             let mut active_rows = layout.active_rows.iter().peekable();
@@ -657,7 +657,7 @@ impl EditorElement {
                         layout.position_map.line_height * (end_row - start_row + 1) as f32,
                     );
                     let active_line_bg = cx.theme().colors().editor_active_line_background;
-                    cx.paint_quad(fill(Bounds { origin, size }, active_line_bg), None);
+                    cx.paint_quad(fill(Bounds { origin, size }, active_line_bg), None, None);
                 }
             }
 
@@ -673,7 +673,11 @@ impl EditorElement {
                     layout.position_map.line_height * highlighted_rows.len() as f32,
                 );
                 let highlighted_line_bg = cx.theme().colors().editor_highlighted_line_background;
-                cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg), None);
+                cx.paint_quad(
+                    fill(Bounds { origin, size }, highlighted_line_bg),
+                    None,
+                    None,
+                );
             }
 
             let scroll_left =
@@ -702,6 +706,7 @@ impl EditorElement {
                         },
                         color,
                     ),
+                    None,
                     None,
                 );
             }
@@ -816,6 +821,7 @@ impl EditorElement {
                             transparent_black(),
                         ),
                         None,
+                        None,
                     );
 
                     continue;
@@ -851,6 +857,7 @@ impl EditorElement {
                             Edges::default(),
                             transparent_black(),
                         ),
+                        None,
                         None,
                     );
 
@@ -894,6 +901,7 @@ impl EditorElement {
                     Edges::default(),
                     transparent_black(),
                 ),
+                None,
                 None,
             );
         }
@@ -1372,6 +1380,7 @@ impl EditorElement {
                     cx.theme().colors().scrollbar_track_border,
                 ),
                 None,
+                None,
             );
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
             if layout.is_singleton && scrollbar_settings.selections {
@@ -1405,6 +1414,7 @@ impl EditorElement {
                             },
                             cx.theme().colors().scrollbar_thumb_border,
                         ),
+                        None,
                         None,
                     );
                 }
@@ -1446,6 +1456,7 @@ impl EditorElement {
                             },
                             cx.theme().colors().scrollbar_thumb_border,
                         ),
+                        None,
                         None,
                     );
                 }
@@ -1492,6 +1503,7 @@ impl EditorElement {
                             },
                             cx.theme().colors().scrollbar_thumb_border,
                         ),
+                        None,
                         None,
                     );
                 }
@@ -1554,6 +1566,7 @@ impl EditorElement {
                             cx.theme().colors().scrollbar_thumb_border,
                         ),
                         None,
+                        None,
                     );
                 }
             }
@@ -1571,6 +1584,7 @@ impl EditorElement {
                     },
                     cx.theme().colors().scrollbar_thumb_border,
                 ),
+                None,
                 None,
             );
         }
@@ -3451,7 +3465,7 @@ impl Cursor {
             })
         }
 
-        cx.paint_quad(cursor, None);
+        cx.paint_quad(cursor, None, None);
 
         if let Some(block_text) = &self.block_text {
             block_text
