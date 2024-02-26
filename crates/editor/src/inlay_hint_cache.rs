@@ -2812,6 +2812,9 @@ pub mod tests {
                 });
             })
             .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
+        ));
         cx.executor().run_until_parked();
         editor.update(cx, |editor, cx| {
                 let expected_hints = vec![
@@ -2834,7 +2837,14 @@ pub mod tests {
                 assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scrolled buffer");
             }).unwrap();
 
-        editor_edited.store(true, Ordering::Release);
+        cx.executor().advance_clock(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
+        ));
+        cx.executor().run_until_parked();
+        editor_edited.store(true, Ordering::SeqCst);
+        // We split these changes up in two `editor.updates` with corresponding `cx.executor().run_until_parked()`
+        // because if we do both changes in the same `editor.update` the 2 callbacks to refresh inlay hints
+        // won't both be completed: the 2nd one will cancel the first one and only 2nd one will update.
         editor
             .update(cx, |editor, cx| {
                 editor.change_selections(None, cx, |s| {
@@ -2846,12 +2856,12 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor.update(cx, |editor, cx| {
             let expected_hints = vec![
-                "main hint(edited) #0".to_string(),
-                "main hint(edited) #1".to_string(),
-                "main hint(edited) #2".to_string(),
-                "main hint(edited) #3".to_string(),
-                "main hint(edited) #4".to_string(),
-                "main hint(edited) #5".to_string(),
+                "main hint #0".to_string(),
+                "main hint #1".to_string(),
+                "main hint #2".to_string(),
+                "main hint #3".to_string(),
+                "main hint #4".to_string(),
+                "main hint #5".to_string(),
                 "other hint(edited) #0".to_string(),
                 "other hint(edited) #1".to_string(),
             ];
@@ -2864,11 +2874,12 @@ pub mod tests {
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
 
             let current_cache_version = editor.inlay_hint_cache().version;
-            let expected_version = last_scroll_update_version + expected_hints.len();
-            assert!(
-                current_cache_version == expected_version || current_cache_version == expected_version + 1 ,
-                // TODO we sometimes get an extra cache version bump, why?
-                "We should have updated cache N times == N of new hints arrived (separately from each excerpt), or hit a bug and do that one extra time"
+            // We expect two new hints for the excerpts from `other.rs`:
+            let expected_version = last_scroll_update_version + 2;
+            assert_eq!(
+                current_cache_version,
+                expected_version,
+                "We should have updated cache N times == N of new hints arrived (separately from each edited excerpt)"
             );
         }).unwrap();
     }
