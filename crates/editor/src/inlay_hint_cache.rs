@@ -340,6 +340,7 @@ impl InlayHintCache {
         reason: &'static str,
         excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
+        ignore_debounce: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Option<InlaySplice> {
         if !self.enabled {
@@ -363,7 +364,7 @@ impl InlayHintCache {
         }
 
         let cache_version = self.version + 1;
-        let refresh_debounce_duration = self.refresh_debounce_duration;
+        let refresh_debounce_duration = self.refresh_debounce_duration.filter(|_| !ignore_debounce);
         self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
             if let Some(debounce_duration) = refresh_debounce_duration {
                 cx.background_executor().timer(debounce_duration).await;
