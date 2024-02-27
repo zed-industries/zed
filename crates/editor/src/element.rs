@@ -739,52 +739,51 @@ impl EditorElement {
             }
         }
 
-        cx.with_z_index(1, |cx| {
-            for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
-                if let Some(fold_indicator) = fold_indicator {
-                    debug_assert!(gutter_settings.folds);
-                    let mut fold_indicator = fold_indicator.into_any_element();
-                    let available_space = size(
-                        AvailableSpace::MinContent,
-                        AvailableSpace::Definite(line_height * 0.55),
-                    );
-                    let fold_indicator_size = fold_indicator.measure(available_space, cx);
-
-                    let position = point(
-                        bounds.size.width - layout.gutter_dimensions.right_padding,
-                        ix as f32 * line_height - (scroll_top % line_height),
-                    );
-                    let centering_offset = point(
-                        (layout.gutter_dimensions.right_padding + layout.gutter_dimensions.margin
-                            - fold_indicator_size.width)
-                            / 2.,
-                        (line_height - fold_indicator_size.height) / 2.,
-                    );
-                    let origin = bounds.origin + position + centering_offset;
-                    fold_indicator.draw(origin, available_space, cx);
-                }
-            }
-
-            if let Some(indicator) = layout.code_actions_indicator.take() {
-                debug_assert!(gutter_settings.code_actions);
-                let mut button = indicator.button.into_any_element();
+        for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
+            if let Some(fold_indicator) = fold_indicator {
+                debug_assert!(gutter_settings.folds);
+                let mut fold_indicator = fold_indicator.into_any_element();
                 let available_space = size(
                     AvailableSpace::MinContent,
-                    AvailableSpace::Definite(line_height),
+                    AvailableSpace::Definite(line_height * 0.55),
                 );
-                let indicator_size = button.measure(available_space, cx);
+                let fold_indicator_size = fold_indicator.measure(available_space, cx);
 
-                let mut x = Pixels::ZERO;
-                let mut y = indicator.row as f32 * line_height - scroll_top;
-                // Center indicator.
-                x += (layout.gutter_dimensions.margin + layout.gutter_dimensions.left_padding
-                    - indicator_size.width)
-                    / 2.;
-                y += (line_height - indicator_size.height) / 2.;
-
-                button.draw(bounds.origin + point(x, y), available_space, cx);
+                let position = point(
+                    bounds.size.width - layout.gutter_dimensions.right_padding,
+                    ix as f32 * line_height - (scroll_top % line_height),
+                );
+                let centering_offset = point(
+                    (layout.gutter_dimensions.right_padding + layout.gutter_dimensions.margin
+                        - fold_indicator_size.width)
+                        / 2.,
+                    (line_height - fold_indicator_size.height) / 2.,
+                );
+                let origin = bounds.origin + position + centering_offset;
+                // TODO: commit to fold indicator bounds
+                fold_indicator.paint(cx);
             }
-        });
+        }
+
+        if let Some(indicator) = layout.code_actions_indicator.take() {
+            debug_assert!(gutter_settings.code_actions);
+            let mut button = indicator.button.into_any_element();
+            let available_space = size(
+                AvailableSpace::MinContent,
+                AvailableSpace::Definite(line_height),
+            );
+            let indicator_size = button.measure(available_space, cx);
+
+            let mut x = Pixels::ZERO;
+            let mut y = indicator.row as f32 * line_height - scroll_top;
+            // Center indicator.
+            x += (layout.gutter_dimensions.margin + layout.gutter_dimensions.left_padding
+                - indicator_size.width)
+                / 2.;
+            y += (line_height - indicator_size.height) / 2.;
+
+            button.draw(bounds.origin + point(x, y), available_space, cx);
+        }
     }
 
     fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &LayoutState, cx: &mut ElementContext) {
@@ -964,7 +963,7 @@ impl EditorElement {
                             size: size(end_x - start_x, layout.position_map.line_height),
                         };
 
-                        let fold_background = cx.with_z_index(1, |cx| {
+                        let fold_background = {
                             let _fold_frame_state = div()
                                 .id(fold.id)
                                 .size_full()
@@ -991,7 +990,7 @@ impl EditorElement {
                             // } else {
                             //     cx.theme().colors().ghost_element_background
                             // }
-                        });
+                        };
 
                         self.paint_highlighted_range(
                             display_range.clone(),
@@ -1144,13 +1143,11 @@ impl EditorElement {
                     )
                 }
 
-                cx.with_z_index(0, |cx| self.paint_redactions(text_bounds, &layout, cx));
+                self.paint_redactions(text_bounds, &layout, cx);
 
-                cx.with_z_index(1, |cx| {
-                    for cursor in cursors {
-                        cursor.paint(content_origin, cx);
-                    }
-                });
+                for cursor in cursors {
+                    cursor.paint(content_origin, cx);
+                }
             },
         )
     }
@@ -3080,6 +3077,15 @@ impl Element for EditorElement {
         })
     }
 
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        todo!("implement commit_bounds on editor")
+    }
+
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
@@ -3123,29 +3129,20 @@ impl Element for EditorElement {
                                 self.paint_gutter(gutter_bounds, &mut layout, cx);
                             }
                             self.paint_text(text_bounds, &mut layout, cx);
-
-                            cx.with_z_index(0, |cx| {
-                                self.paint_mouse_listeners(
-                                    bounds,
-                                    gutter_bounds,
-                                    text_bounds,
-                                    &layout,
-                                    cx,
-                                );
-                            });
+                            self.paint_mouse_listeners(
+                                bounds,
+                                gutter_bounds,
+                                text_bounds,
+                                &layout,
+                                cx,
+                            );
                             if !layout.blocks.is_empty() {
-                                cx.with_z_index(0, |cx| {
-                                    cx.with_element_id(Some("editor_blocks"), |cx| {
-                                        self.paint_blocks(bounds, &mut layout, cx);
-                                    });
-                                })
+                                cx.with_element_id(Some("editor_blocks"), |cx| {
+                                    self.paint_blocks(bounds, &mut layout, cx);
+                                });
                             }
-
-                            cx.with_z_index(1, |cx| {
-                                self.paint_overlays(text_bounds, &mut layout, cx);
-                            });
-
-                            cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
+                            self.paint_overlays(text_bounds, &mut layout, cx);
+                            self.paint_scrollbar(bounds, &mut layout, cx);
                         });
                     })
                 },
@@ -3392,21 +3389,19 @@ impl Cursor {
             } else {
                 point(bounds.left(), bounds.top() - text_size / 2. - px(1.))
             };
-            cx.with_z_index(name.z_index, |cx| {
-                div()
-                    .bg(self.color)
-                    .text_size(text_size)
-                    .px_0p5()
-                    .line_height(text_size + px(2.))
-                    .text_color(name.color)
-                    .child(name.string.clone())
-                    .into_any_element()
-                    .draw(
-                        name_origin,
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent),
-                        cx,
-                    )
-            })
+            div()
+                .bg(self.color)
+                .text_size(text_size)
+                .px_0p5()
+                .line_height(text_size + px(2.))
+                .text_color(name.color)
+                .child(name.string.clone())
+                .into_any_element()
+                .draw(
+                    name_origin,
+                    size(AvailableSpace::MinContent, AvailableSpace::MinContent),
+                    cx,
+                )
         }
 
         cx.paint_quad(cursor);

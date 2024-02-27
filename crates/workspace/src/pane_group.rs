@@ -258,7 +258,6 @@ impl Member {
                                 .right_3()
                                 .elevation_2(cx)
                                 .p_1()
-                                .z_index(1)
                                 .child(status_box)
                                 .when_some(
                                     leader_join_data,
@@ -753,60 +752,58 @@ mod element {
                 size: pane_bounds.size.apply_along(axis, |_| px(DIVIDER_SIZE)),
             };
 
-            cx.with_z_index(3, |cx| {
-                let interactive_handle_bounds = InteractiveBounds {
-                    bounds: handle_bounds,
-                    stacking_order: cx.stacking_order().clone(),
-                };
-                if interactive_handle_bounds.visibly_contains(&cx.mouse_position(), cx) {
-                    cx.set_cursor_style(match axis {
-                        Axis::Vertical => CursorStyle::ResizeUpDown,
-                        Axis::Horizontal => CursorStyle::ResizeLeftRight,
-                    })
+            let interactive_handle_bounds = InteractiveBounds {
+                bounds: handle_bounds,
+                stacking_order: cx.stacking_order().clone(),
+            };
+            if interactive_handle_bounds.visibly_contains(&cx.mouse_position(), cx) {
+                cx.set_cursor_style(match axis {
+                    Axis::Vertical => CursorStyle::ResizeUpDown,
+                    Axis::Horizontal => CursorStyle::ResizeLeftRight,
+                })
+            }
+
+            cx.add_opaque_layer(handle_bounds);
+            cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border));
+
+            cx.on_mouse_event({
+                let dragged_handle = dragged_handle.clone();
+                let flexes = flexes.clone();
+                let workspace = workspace.clone();
+                move |e: &MouseDownEvent, phase, cx| {
+                    if phase.bubble() && handle_bounds.contains(&e.position) {
+                        dragged_handle.replace(Some(ix));
+                        if e.click_count >= 2 {
+                            let mut borrow = flexes.lock();
+                            *borrow = vec![1.; borrow.len()];
+                            workspace
+                                .update(cx, |this, cx| this.schedule_serialize(cx))
+                                .log_err();
+
+                            cx.refresh();
+                        }
+                        cx.stop_propagation();
+                    }
                 }
+            });
+            cx.on_mouse_event({
+                let workspace = workspace.clone();
+                move |e: &MouseMoveEvent, phase, cx| {
+                    let dragged_handle = dragged_handle.borrow();
 
-                cx.add_opaque_layer(handle_bounds);
-                cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border));
-
-                cx.on_mouse_event({
-                    let dragged_handle = dragged_handle.clone();
-                    let flexes = flexes.clone();
-                    let workspace = workspace.clone();
-                    move |e: &MouseDownEvent, phase, cx| {
-                        if phase.bubble() && handle_bounds.contains(&e.position) {
-                            dragged_handle.replace(Some(ix));
-                            if e.click_count >= 2 {
-                                let mut borrow = flexes.lock();
-                                *borrow = vec![1.; borrow.len()];
-                                workspace
-                                    .update(cx, |this, cx| this.schedule_serialize(cx))
-                                    .log_err();
-
-                                cx.refresh();
-                            }
-                            cx.stop_propagation();
-                        }
+                    if phase.bubble() && *dragged_handle == Some(ix) {
+                        Self::compute_resize(
+                            &flexes,
+                            e,
+                            ix,
+                            axis,
+                            pane_bounds.origin,
+                            axis_bounds.size,
+                            workspace.clone(),
+                            cx,
+                        )
                     }
-                });
-                cx.on_mouse_event({
-                    let workspace = workspace.clone();
-                    move |e: &MouseMoveEvent, phase, cx| {
-                        let dragged_handle = dragged_handle.borrow();
-
-                        if phase.bubble() && *dragged_handle == Some(ix) {
-                            Self::compute_resize(
-                                &flexes,
-                                e,
-                                ix,
-                                axis,
-                                pane_bounds.origin,
-                                axis_bounds.size,
-                                workspace.clone(),
-                                cx,
-                            )
-                        }
-                    }
-                });
+                }
             });
         }
     }
@@ -833,6 +830,16 @@ mod element {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
             (cx.request_layout(&style, None), ())
+        }
+
+        fn commit_bounds(
+            &mut self,
+            bounds: Bounds<Pixels>,
+            state: &mut Self::FrameState,
+            cx: &mut ElementContext,
+        ) {
+            // we paint children below that need to be commited
+            todo!("implement commit bounds on pane axis element")
         }
 
         fn paint(
@@ -894,40 +901,34 @@ mod element {
                     size: child_size,
                 };
                 bounding_boxes.push(Some(child_bounds));
-                cx.with_z_index(0, |cx| {
-                    child.draw(origin, child_size.into(), cx);
-                });
+                child.paint(cx);
 
                 if active_pane_magnification.is_none() {
-                    cx.with_z_index(1, |cx| {
-                        if ix < len - 1 {
-                            Self::push_handle(
-                                self.flexes.clone(),
-                                state.clone(),
-                                self.axis,
-                                ix,
-                                child_bounds,
-                                bounds,
-                                self.workspace.clone(),
-                                cx,
-                            );
-                        }
-                    });
+                    if ix < len - 1 {
+                        Self::push_handle(
+                            self.flexes.clone(),
+                            state.clone(),
+                            self.axis,
+                            ix,
+                            child_bounds,
+                            bounds,
+                            self.workspace.clone(),
+                            cx,
+                        );
+                    }
                 }
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
             }
 
-            cx.with_z_index(1, |cx| {
-                cx.on_mouse_event({
-                    let state = state.clone();
-                    move |_: &MouseUpEvent, phase, _cx| {
-                        if phase.bubble() {
-                            state.replace(None);
-                        }
+            cx.on_mouse_event({
+                let state = state.clone();
+                move |_: &MouseUpEvent, phase, _cx| {
+                    if phase.bubble() {
+                        state.replace(None);
                     }
-                });
-            })
+                }
+            });
         }
     }
 

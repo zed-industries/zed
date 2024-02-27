@@ -1302,26 +1302,20 @@ impl Interactivity {
                     element_state.map(|element_state| element_state.unwrap_or_default());
                 let style = self.compute_style_internal(None, element_state.as_mut(), cx);
 
-                cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-                    // TODO: this is ensuring we have the same z-index stack. We should ditch this as soon as we get rid of z-index.
-                    cx.with_z_index(2, |cx| {
-                        cx.with_text_style(style.text_style().cloned(), |cx| {
-                            cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                                if self.block_mouse
-                                    || style.background.as_ref().is_some_and(|fill| {
-                                        fill.color().is_some_and(|color| !color.is_transparent())
-                                    })
-                                {
-                                    let clipped_bounds =
-                                        bounds.intersect(&cx.content_mask().bounds);
-                                    cx.add_opaque_layer(clipped_bounds);
-                                }
-
-                                let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
-                                f(&style, scroll_offset, cx);
-                                ((), element_state)
+                cx.with_text_style(style.text_style().cloned(), |cx| {
+                    cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
+                        if self.block_mouse
+                            || style.background.as_ref().is_some_and(|fill| {
+                                fill.color().is_some_and(|color| !color.is_transparent())
                             })
-                        })
+                        {
+                            let clipped_bounds = bounds.intersect(&cx.content_mask().bounds);
+                            cx.add_opaque_layer(clipped_bounds);
+                        }
+
+                        let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
+                        f(&style, scroll_offset, cx);
+                        ((), element_state)
                     })
                 })
             },
@@ -1391,7 +1385,6 @@ impl Interactivity {
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
                 let style = self.compute_style_internal(Some(bounds), element_state.as_mut(), cx);
-                let z_index = style.z_index.unwrap_or(0);
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
@@ -1401,58 +1394,53 @@ impl Interactivity {
                         .insert(debug_selector.clone(), bounds);
                 }
 
-                cx.with_z_index(z_index, |cx| {
-                    if style.visibility == Visibility::Hidden {
-                        self.paint_hover_group_handler(cx);
-                        return ((), element_state);
-                    }
+                if style.visibility == Visibility::Hidden {
+                    self.paint_hover_group_handler(cx);
+                    return ((), element_state);
+                }
 
-                    style.paint(bounds, cx, |cx: &mut ElementContext| {
-                        cx.with_text_style(style.text_style().cloned(), |cx| {
-                            cx.with_content_mask(
-                                style.overflow_mask(bounds, cx.rem_size()),
-                                |cx| {
-                                    self.paint_debug_info(bounds, &style, cx);
+                style.paint(bounds, cx, |cx: &mut ElementContext| {
+                    cx.with_text_style(style.text_style().cloned(), |cx| {
+                        cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
+                            self.paint_debug_info(bounds, &style, cx);
 
-                                    let interactive_bounds = InteractiveBounds {
-                                        bounds: bounds.intersect(&cx.content_mask().bounds),
-                                        stacking_order: cx.stacking_order().clone(),
-                                    };
+                            let interactive_bounds = InteractiveBounds {
+                                bounds: bounds.intersect(&cx.content_mask().bounds),
+                                stacking_order: cx.stacking_order().clone(),
+                            };
 
-                                    if !cx.has_active_drag() {
-                                        if let Some(mouse_cursor) = style.mouse_cursor {
-                                            let mouse_position = &cx.mouse_position();
-                                            let hovered = interactive_bounds
-                                                .visibly_contains(mouse_position, cx);
-                                            if hovered {
-                                                cx.set_cursor_style(mouse_cursor);
-                                            }
-                                        }
+                            if !cx.has_active_drag() {
+                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                    let mouse_position = &cx.mouse_position();
+                                    let hovered =
+                                        interactive_bounds.visibly_contains(mouse_position, cx);
+                                    if hovered {
+                                        cx.set_cursor_style(mouse_cursor);
                                     }
+                                }
+                            }
 
-                                    if let Some(group) = self.group.clone() {
-                                        GroupBounds::push(group, bounds, cx);
-                                    }
+                            if let Some(group) = self.group.clone() {
+                                GroupBounds::push(group, bounds, cx);
+                            }
 
-                                    self.paint_hover_group_handler(cx);
-                                    self.paint_mouse_listeners(
-                                        &interactive_bounds,
-                                        element_state.as_mut(),
-                                        cx,
-                                    );
-                                    self.paint_scroll_listener(&interactive_bounds, &style, cx);
-                                    self.paint_keyboard_listeners(&style, cx, f);
-
-                                    if let Some(group) = self.group.as_ref() {
-                                        GroupBounds::pop(group, cx);
-                                    }
-                                },
+                            self.paint_hover_group_handler(cx);
+                            self.paint_mouse_listeners(
+                                &interactive_bounds,
+                                element_state.as_mut(),
+                                cx,
                             );
+                            self.paint_scroll_listener(&interactive_bounds, &style, cx);
+                            self.paint_keyboard_listeners(&style, cx, f);
+
+                            if let Some(group) = self.group.as_ref() {
+                                GroupBounds::pop(group, cx);
+                            }
                         });
                     });
+                });
 
-                    ((), element_state)
-                })
+                ((), element_state)
             },
         );
     }
@@ -1542,17 +1530,15 @@ impl Interactivity {
                 }
             };
 
-            cx.with_z_index(1, |cx| {
-                cx.with_text_style(
-                    Some(crate::TextStyleRefinement {
-                        color: Some(crate::red()),
-                        line_height: Some(FONT_SIZE.into()),
-                        background_color: Some(crate::white()),
-                        ..Default::default()
-                    }),
-                    render_debug_text,
-                )
-            });
+            cx.with_text_style(
+                Some(crate::TextStyleRefinement {
+                    color: Some(crate::red()),
+                    line_height: Some(FONT_SIZE.into()),
+                    background_color: Some(crate::white()),
+                    ..Default::default()
+                }),
+                render_debug_text,
+            )
         }
     }
 
@@ -2002,103 +1988,100 @@ impl Interactivity {
         let mut style = Style::default();
         style.refine(&self.base_style);
 
-        cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-            if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-                if let Some(in_focus_style) = self.in_focus_style.as_ref() {
-                    if focus_handle.within_focused(cx) {
-                        style.refine(in_focus_style);
-                    }
-                }
-
-                if let Some(focus_style) = self.focus_style.as_ref() {
-                    if focus_handle.is_focused(cx) {
-                        style.refine(focus_style);
-                    }
+        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
+            if let Some(in_focus_style) = self.in_focus_style.as_ref() {
+                if focus_handle.within_focused(cx) {
+                    style.refine(in_focus_style);
                 }
             }
 
-            if let Some(bounds) = bounds {
-                let mouse_position = cx.mouse_position();
-                if !cx.has_active_drag() {
-                    if let Some(group_hover) = self.group_hover_style.as_ref() {
-                        if let Some(group_bounds) =
-                            GroupBounds::get(&group_hover.group, cx.deref_mut())
-                        {
-                            if group_bounds.contains(&mouse_position)
-                                && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                            {
-                                style.refine(&group_hover.style);
-                            }
-                        }
-                    }
+            if let Some(focus_style) = self.focus_style.as_ref() {
+                if focus_handle.is_focused(cx) {
+                    style.refine(focus_style);
+                }
+            }
+        }
 
-                    if let Some(hover_style) = self.hover_style.as_ref() {
-                        if bounds
-                            .intersect(&cx.content_mask().bounds)
-                            .contains(&mouse_position)
+        if let Some(bounds) = bounds {
+            let mouse_position = cx.mouse_position();
+            if !cx.has_active_drag() {
+                if let Some(group_hover) = self.group_hover_style.as_ref() {
+                    if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx.deref_mut())
+                    {
+                        if group_bounds.contains(&mouse_position)
                             && cx.was_top_layer(&mouse_position, cx.stacking_order())
                         {
-                            style.refine(hover_style);
+                            style.refine(&group_hover.style);
                         }
                     }
                 }
 
-                if let Some(drag) = cx.active_drag.take() {
-                    let mut can_drop = true;
-                    if let Some(can_drop_predicate) = &self.can_drop_predicate {
-                        can_drop = can_drop_predicate(drag.value.as_ref(), cx.deref_mut());
+                if let Some(hover_style) = self.hover_style.as_ref() {
+                    if bounds
+                        .intersect(&cx.content_mask().bounds)
+                        .contains(&mouse_position)
+                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                    {
+                        style.refine(hover_style);
                     }
+                }
+            }
 
-                    if can_drop {
-                        for (state_type, group_drag_style) in &self.group_drag_over_styles {
-                            if let Some(group_bounds) =
-                                GroupBounds::get(&group_drag_style.group, cx.deref_mut())
-                            {
-                                if *state_type == drag.value.as_ref().type_id()
-                                    && group_bounds.contains(&mouse_position)
-                                {
-                                    style.refine(&group_drag_style.style);
-                                }
-                            }
-                        }
+            if let Some(drag) = cx.active_drag.take() {
+                let mut can_drop = true;
+                if let Some(can_drop_predicate) = &self.can_drop_predicate {
+                    can_drop = can_drop_predicate(drag.value.as_ref(), cx.deref_mut());
+                }
 
-                        for (state_type, build_drag_over_style) in &self.drag_over_styles {
+                if can_drop {
+                    for (state_type, group_drag_style) in &self.group_drag_over_styles {
+                        if let Some(group_bounds) =
+                            GroupBounds::get(&group_drag_style.group, cx.deref_mut())
+                        {
                             if *state_type == drag.value.as_ref().type_id()
-                                && bounds
-                                    .intersect(&cx.content_mask().bounds)
-                                    .contains(&mouse_position)
-                                && cx.was_top_layer_under_active_drag(
-                                    &mouse_position,
-                                    cx.stacking_order(),
-                                )
+                                && group_bounds.contains(&mouse_position)
                             {
-                                style.refine(&build_drag_over_style(drag.value.as_ref(), cx));
+                                style.refine(&group_drag_style.style);
                             }
                         }
                     }
 
-                    cx.active_drag = Some(drag);
-                }
-            }
-
-            if let Some(element_state) = element_state {
-                let clicked_state = element_state
-                    .clicked_state
-                    .get_or_insert_with(Default::default)
-                    .borrow();
-                if clicked_state.group {
-                    if let Some(group) = self.group_active_style.as_ref() {
-                        style.refine(&group.style)
+                    for (state_type, build_drag_over_style) in &self.drag_over_styles {
+                        if *state_type == drag.value.as_ref().type_id()
+                            && bounds
+                                .intersect(&cx.content_mask().bounds)
+                                .contains(&mouse_position)
+                            && cx.was_top_layer_under_active_drag(
+                                &mouse_position,
+                                cx.stacking_order(),
+                            )
+                        {
+                            style.refine(&build_drag_over_style(drag.value.as_ref(), cx));
+                        }
                     }
                 }
 
-                if let Some(active_style) = self.active_style.as_ref() {
-                    if clicked_state.element {
-                        style.refine(active_style)
-                    }
+                cx.active_drag = Some(drag);
+            }
+        }
+
+        if let Some(element_state) = element_state {
+            let clicked_state = element_state
+                .clicked_state
+                .get_or_insert_with(Default::default)
+                .borrow();
+            if clicked_state.group {
+                if let Some(group) = self.group_active_style.as_ref() {
+                    style.refine(&group.style)
                 }
             }
-        });
+
+            if let Some(active_style) = self.active_style.as_ref() {
+                if clicked_state.element {
+                    style.refine(active_style)
+                }
+            }
+        }
 
         style
     }

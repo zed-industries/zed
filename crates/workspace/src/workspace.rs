@@ -2750,13 +2750,13 @@ impl Workspace {
     }
 
     fn render_notifications(&self, _cx: &ViewContext<Self>) -> Option<Div> {
+        // TODO! Put these in the right spo
         if self.notifications.is_empty() {
             None
         } else {
             Some(
                 div()
                     .absolute()
-                    .z_index(100)
                     .right_3()
                     .bottom_3()
                     .w_112()
@@ -3910,7 +3910,6 @@ impl Render for Workspace {
                     .children(self.zoomed.as_ref().and_then(|view| {
                         let zoomed_view = view.upgrade()?;
                         let div = div()
-                            .z_index(1)
                             .absolute()
                             .overflow_hidden()
                             .border_color(colors.border)
@@ -4601,6 +4600,7 @@ pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
 
 struct DisconnectedOverlay;
 
+// TODO! Actually render this on top
 impl Element for DisconnectedOverlay {
     type FrameState = AnyElement;
 
@@ -4631,10 +4631,8 @@ impl Element for DisconnectedOverlay {
         overlay: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        cx.with_z_index(u16::MAX, |cx| {
-            cx.add_opaque_layer(bounds);
-            overlay.commit_bounds(cx);
-        })
+        cx.add_opaque_layer(bounds);
+        overlay.commit_bounds(cx);
     }
 
     fn paint(
@@ -4643,7 +4641,7 @@ impl Element for DisconnectedOverlay {
         overlay: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        cx.with_z_index(u16::MAX, |cx| overlay.paint(cx))
+        overlay.paint(cx)
     }
 }
 

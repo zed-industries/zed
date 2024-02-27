@@ -116,49 +116,47 @@ impl Element for Img {
         let source = self.source.clone();
         self.interactivity.paint(bounds, cx, |style, cx| {
             let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
-            cx.with_z_index(1, |cx| {
-                match source {
-                    ImageSource::Uri(_) | ImageSource::File(_) => {
-                        let uri_or_path: UriOrPath = match source {
-                            ImageSource::Uri(uri) => uri.into(),
-                            ImageSource::File(path) => path.into(),
-                            _ => unreachable!(),
-                        };
+            match source {
+                ImageSource::Uri(_) | ImageSource::File(_) => {
+                    let uri_or_path: UriOrPath = match source {
+                        ImageSource::Uri(uri) => uri.into(),
+                        ImageSource::File(path) => path.into(),
+                        _ => unreachable!(),
+                    };
 
-                        let image_future = cx.image_cache.get(uri_or_path.clone(), cx);
-                        if let Some(data) = image_future
-                            .clone()
-                            .now_or_never()
-                            .and_then(|result| result.ok())
-                        {
-                            let new_bounds = preserve_aspect_ratio(bounds, data.size());
-                            cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
-                                .log_err();
-                        } else {
-                            cx.spawn(|mut cx| async move {
-                                if image_future.await.ok().is_some() {
-                                    cx.on_next_frame(|cx| cx.refresh());
-                                }
-                            })
-                            .detach();
-                        }
-                    }
-
-                    ImageSource::Data(data) => {
+                    let image_future = cx.image_cache.get(uri_or_path.clone(), cx);
+                    if let Some(data) = image_future
+                        .clone()
+                        .now_or_never()
+                        .and_then(|result| result.ok())
+                    {
                         let new_bounds = preserve_aspect_ratio(bounds, data.size());
                         cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
                             .log_err();
+                    } else {
+                        cx.spawn(|mut cx| async move {
+                            if image_future.await.ok().is_some() {
+                                cx.on_next_frame(|cx| cx.refresh());
+                            }
+                        })
+                        .detach();
                     }
+                }
 
-                    #[cfg(target_os = "macos")]
-                    ImageSource::Surface(surface) => {
-                        let size = size(surface.width().into(), surface.height().into());
-                        let new_bounds = preserve_aspect_ratio(bounds, size);
-                        // TODO: Add support for corner_radii and grayscale.
-                        cx.paint_surface(new_bounds, surface);
-                    }
-                };
-            });
+                ImageSource::Data(data) => {
+                    let new_bounds = preserve_aspect_ratio(bounds, data.size());
+                    cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
+                        .log_err();
+                }
+
+                #[cfg(target_os = "macos")]
+                ImageSource::Surface(surface) => {
+                    let size = size(surface.width().into(), surface.height().into());
+                    let new_bounds = preserve_aspect_ratio(bounds, size);
+                    // TODO: Add support for corner_radii and grayscale.
+                    cx.paint_surface(new_bounds, surface);
+                }
+            }
         })
     }
 }

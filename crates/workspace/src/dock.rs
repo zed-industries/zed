@@ -563,7 +563,6 @@ impl Render for Dock {
                         cx.stop_propagation();
                     }
                 }))
-                .z_index(1)
                 .block_mouse();
 
             match self.position() {

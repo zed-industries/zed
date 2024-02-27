@@ -210,23 +210,18 @@ impl Element for UniformList {
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
                     let mut items = (self.render_items)(visible_range.clone(), cx);
-                    cx.with_z_index(1, |cx| {
-                        let content_mask = ContentMask { bounds };
-                        cx.with_content_mask(Some(content_mask), |cx| {
-                            for (mut item, ix) in items.into_iter().zip(visible_range) {
-                                let item_origin = padded_bounds.origin
-                                    + point(
-                                        px(0.),
-                                        item_height * ix + scroll_offset.y + padding.top,
-                                    );
-                                let available_space = size(
-                                    AvailableSpace::Definite(padded_bounds.size.width),
-                                    AvailableSpace::Definite(item_height),
-                                );
-                                item.commit_root(item_origin, available_space, cx);
-                                frame_state.items.push(item);
-                            }
-                        });
+                    let content_mask = ContentMask { bounds };
+                    cx.with_content_mask(Some(content_mask), |cx| {
+                        for (mut item, ix) in items.into_iter().zip(visible_range) {
+                            let item_origin = padded_bounds.origin
+                                + point(px(0.), item_height * ix + scroll_offset.y + padding.top);
+                            let available_space = size(
+                                AvailableSpace::Definite(padded_bounds.size.width),
+                                AvailableSpace::Definite(item_height),
+                            );
+                            item.commit_root(item_origin, available_space, cx);
+                            frame_state.items.push(item);
+                        }
                     });
                 }
             },
@@ -240,13 +235,11 @@ impl Element for UniformList {
         cx: &mut ElementContext,
     ) {
         self.interactivity.paint(bounds, cx, |_, cx| {
-            cx.with_z_index(1, |cx| {
-                let content_mask = ContentMask { bounds };
-                cx.with_content_mask(Some(content_mask), |cx| {
-                    for item in &mut frame_state.items {
-                        item.paint(cx);
-                    }
-                });
+            let content_mask = ContentMask { bounds };
+            cx.with_content_mask(Some(content_mask), |cx| {
+                for item in &mut frame_state.items {
+                    item.paint(cx);
+                }
             });
         })
     }

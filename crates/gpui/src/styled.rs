@@ -15,12 +15,6 @@ pub trait Styled: Sized {
 
     gpui_macros::style_helpers!();
 
-    /// Set the z-index of this element.
-    fn z_index(mut self, z_index: u16) -> Self {
-        self.style().z_index = Some(z_index);
-        self
-    }
-
     /// Sets the position of the element to `relative`.
     /// [Docs](https://tailwindcss.com/docs/position)
     fn relative(mut self) -> Self {
