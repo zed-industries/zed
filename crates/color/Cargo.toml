@@ -13,4 +13,4 @@ path = "src/color.rs"
 doctest = true
 
 [dependencies]
-palette = "0.7.3"
+palette.workspace = true
