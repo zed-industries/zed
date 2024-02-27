@@ -924,7 +924,7 @@ mod test {
             Mode::Normal,
             indoc! {"
             function test() {
-                console.ˇlog('ok')
+                consoˇle.log('ok')
             }
             "},
             Mode::Normal,
@@ -940,7 +940,7 @@ mod test {
             Mode::Normal,
             indoc! {"
             function test() {
-                consoleˇ.log('ok')
+                consˇole.log('ok')
             }
             "},
             Mode::Normal,
