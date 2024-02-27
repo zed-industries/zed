@@ -512,9 +512,12 @@ fn init_logger() {
                 simplelog::WriteLogger::init(level, config, log_file)
                     .expect("could not initialize logger");
             }
-            Err(_) => {
-                // Silently defaulting to use stdout logger in case of any error.
+            Err(err) => {
                 init_stdout_logger();
+                log::error!(
+                    "could not open log file: {}. defaulting to stdout logging.",
+                    err
+                );
             }
         }
     }
@@ -528,7 +531,7 @@ fn init_stdout_logger() {
 
             let subtle = buf
                 .style()
-                .set_color(Color::White)
+                .set_color(Color::Black)
                 .set_intense(true)
                 .clone();
             write!(buf, "{}", subtle.value("["))?;

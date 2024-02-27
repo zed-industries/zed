@@ -505,7 +505,10 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                         let Some(log) = log else {
                             workspace.show_notification(29, cx, |cx| {
                                 cx.new_view(|_| {
-                                    MessageNotification::new("Unable to access/open log file.")
+                                    MessageNotification::new(format!(
+                                        "Unable to access/open log file. \n Log Path: {}",
+                                        &paths::LOG.to_string_lossy()
+                                    ))
                                 })
                             });
                             return;
