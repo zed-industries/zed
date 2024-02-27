@@ -107,8 +107,6 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - run: rustup toolchain install stable --profile minimal
-
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2
         with:
@@ -135,8 +133,6 @@ jobs:
         with:
           clean: false
           submodules: "recursive"
-
-      - run: rustup toolchain install stable --profile minimal
 
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2
