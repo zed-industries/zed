@@ -19,11 +19,7 @@ use util::ResultExt;
 impl Element for &'static str {
     type FrameState = TextState;
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(SharedString::from(*self), None, cx);
         (layout_id, state)
@@ -61,11 +57,7 @@ impl IntoElement for String {
 impl Element for SharedString {
     type FrameState = TextState;
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.clone(), None, cx);
         (layout_id, state)
@@ -140,11 +132,7 @@ impl StyledText {
 impl Element for StyledText {
     type FrameState = TextState;
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.text.clone(), self.runs.take(), cx);
         (layout_id, state)
@@ -329,8 +317,8 @@ struct InteractiveTextClickEvent {
 }
 
 #[doc(hidden)]
+#[derive(Default)]
 pub struct InteractiveTextState {
-    text_state: TextState,
     mouse_down_index: Rc<Cell<Option<usize>>>,
     hovered_index: Rc<Cell<Option<usize>>>,
     active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
@@ -390,174 +378,157 @@ impl InteractiveText {
 }
 
 impl Element for InteractiveText {
-    type FrameState = InteractiveTextState;
+    type FrameState = TextState;
 
-    fn request_layout(
-        &mut self,
-        state: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
-        if let Some(InteractiveTextState {
-            mouse_down_index,
-            hovered_index,
-            active_tooltip,
-            ..
-        }) = state
-        {
-            let (layout_id, text_state) = self.text.request_layout(None, cx);
-            let element_state = InteractiveTextState {
-                text_state,
-                mouse_down_index,
-                hovered_index,
-                active_tooltip,
-            };
-            (layout_id, element_state)
-        } else {
-            let (layout_id, text_state) = self.text.request_layout(None, cx);
-            let element_state = InteractiveTextState {
-                text_state,
-                mouse_down_index: Rc::default(),
-                hovered_index: Rc::default(),
-                active_tooltip: Rc::default(),
-            };
-            (layout_id, element_state)
-        }
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+        self.text.request_layout(cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::FrameState,
+        text_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        if let Some(click_listener) = self.click_listener.take() {
-            let mouse_position = cx.mouse_position();
-            if let Some(ix) = state.text_state.index_for_position(bounds, mouse_position) {
-                if self
-                    .clickable_ranges
-                    .iter()
-                    .any(|range| range.contains(&ix))
-                    && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                {
-                    cx.set_cursor_style(crate::CursorStyle::PointingHand)
-                }
-            }
+        cx.with_element_state::<InteractiveTextState, _>(
+            Some(self.element_id.clone()),
+            |interactive_state, cx| {
+                let mut interactive_state = interactive_state.unwrap().unwrap_or_default();
 
-            let text_state = state.text_state.clone();
-            let mouse_down = state.mouse_down_index.clone();
-            if let Some(mouse_down_index) = mouse_down.get() {
-                let clickable_ranges = mem::take(&mut self.clickable_ranges);
-                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble {
-                        if let Some(mouse_up_index) =
-                            text_state.index_for_position(bounds, event.position)
+                if let Some(click_listener) = self.click_listener.take() {
+                    let mouse_position = cx.mouse_position();
+                    if let Some(ix) = text_state.index_for_position(bounds, mouse_position) {
+                        if self
+                            .clickable_ranges
+                            .iter()
+                            .any(|range| range.contains(&ix))
+                            && cx.was_top_layer(&mouse_position, cx.stacking_order())
                         {
-                            click_listener(
-                                &clickable_ranges,
-                                InteractiveTextClickEvent {
-                                    mouse_down_index,
-                                    mouse_up_index,
-                                },
-                                cx,
-                            )
-                        }
-
-                        mouse_down.take();
-                        cx.refresh();
-                    }
-                });
-            } else {
-                cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble {
-                        if let Some(mouse_down_index) =
-                            text_state.index_for_position(bounds, event.position)
-                        {
-                            mouse_down.set(Some(mouse_down_index));
-                            cx.refresh();
+                            cx.set_cursor_style(crate::CursorStyle::PointingHand)
                         }
                     }
-                });
-            }
-        }
-        if let Some(hover_listener) = self.hover_listener.take() {
-            let text_state = state.text_state.clone();
-            let hovered_index = state.hovered_index.clone();
-            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    let current = hovered_index.get();
-                    let updated = text_state.index_for_position(bounds, event.position);
-                    if current != updated {
-                        hovered_index.set(updated);
-                        hover_listener(updated, event.clone(), cx);
-                        cx.refresh();
-                    }
-                }
-            });
-        }
-        if let Some(tooltip_builder) = self.tooltip_builder.clone() {
-            let active_tooltip = state.active_tooltip.clone();
-            let pending_mouse_down = state.mouse_down_index.clone();
-            let text_state = state.text_state.clone();
 
-            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                let position = text_state.index_for_position(bounds, event.position);
-                let is_hovered = position.is_some() && pending_mouse_down.get().is_none();
-                if !is_hovered {
-                    active_tooltip.take();
-                    return;
-                }
-                let position = position.unwrap();
+                    let text_state = text_state.clone();
+                    let mouse_down = interactive_state.mouse_down_index.clone();
+                    if let Some(mouse_down_index) = mouse_down.get() {
+                        let clickable_ranges = mem::take(&mut self.clickable_ranges);
+                        cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
+                            if phase == DispatchPhase::Bubble {
+                                if let Some(mouse_up_index) =
+                                    text_state.index_for_position(bounds, event.position)
+                                {
+                                    click_listener(
+                                        &clickable_ranges,
+                                        InteractiveTextClickEvent {
+                                            mouse_down_index,
+                                            mouse_up_index,
+                                        },
+                                        cx,
+                                    )
+                                }
 
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
-                if active_tooltip.borrow().is_none() {
-                    let task = cx.spawn({
-                        let active_tooltip = active_tooltip.clone();
-                        let tooltip_builder = tooltip_builder.clone();
-
-                        move |mut cx| async move {
-                            cx.background_executor().timer(TOOLTIP_DELAY).await;
-                            cx.update(|cx| {
-                                let new_tooltip =
-                                    tooltip_builder(position, cx).map(|tooltip| ActiveTooltip {
-                                        tooltip: Some(AnyTooltip {
-                                            view: tooltip,
-                                            cursor_offset: cx.mouse_position(),
-                                        }),
-                                        _task: None,
-                                    });
-                                *active_tooltip.borrow_mut() = new_tooltip;
+                                mouse_down.take();
                                 cx.refresh();
-                            })
-                            .ok();
+                            }
+                        });
+                    } else {
+                        cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                            if phase == DispatchPhase::Bubble {
+                                if let Some(mouse_down_index) =
+                                    text_state.index_for_position(bounds, event.position)
+                                {
+                                    mouse_down.set(Some(mouse_down_index));
+                                    cx.refresh();
+                                }
+                            }
+                        });
+                    }
+                }
+                if let Some(hover_listener) = self.hover_listener.take() {
+                    let text_state = text_state.clone();
+                    let hovered_index = interactive_state.hovered_index.clone();
+                    cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                        if phase == DispatchPhase::Bubble {
+                            let current = hovered_index.get();
+                            let updated = text_state.index_for_position(bounds, event.position);
+                            if current != updated {
+                                hovered_index.set(updated);
+                                hover_listener(updated, event.clone(), cx);
+                                cx.refresh();
+                            }
                         }
                     });
-                    *active_tooltip.borrow_mut() = Some(ActiveTooltip {
-                        tooltip: None,
-                        _task: Some(task),
-                    });
                 }
-            });
+                if let Some(tooltip_builder) = self.tooltip_builder.clone() {
+                    let active_tooltip = interactive_state.active_tooltip.clone();
+                    let pending_mouse_down = interactive_state.mouse_down_index.clone();
+                    let text_state = text_state.clone();
 
-            let active_tooltip = state.active_tooltip.clone();
-            cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
-                active_tooltip.take();
-            });
+                    cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                        let position = text_state.index_for_position(bounds, event.position);
+                        let is_hovered = position.is_some() && pending_mouse_down.get().is_none();
+                        if !is_hovered {
+                            active_tooltip.take();
+                            return;
+                        }
+                        let position = position.unwrap();
 
-            if let Some(tooltip) = state
-                .active_tooltip
-                .clone()
-                .borrow()
-                .as_ref()
-                .and_then(|at| at.tooltip.clone())
-            {
-                cx.set_tooltip(tooltip);
-            }
-        }
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
 
-        self.text.paint(bounds, &mut state.text_state, cx)
+                        if active_tooltip.borrow().is_none() {
+                            let task = cx.spawn({
+                                let active_tooltip = active_tooltip.clone();
+                                let tooltip_builder = tooltip_builder.clone();
+
+                                move |mut cx| async move {
+                                    cx.background_executor().timer(TOOLTIP_DELAY).await;
+                                    cx.update(|cx| {
+                                        let new_tooltip =
+                                            tooltip_builder(position, cx).map(|tooltip| {
+                                                ActiveTooltip {
+                                                    tooltip: Some(AnyTooltip {
+                                                        view: tooltip,
+                                                        cursor_offset: cx.mouse_position(),
+                                                    }),
+                                                    _task: None,
+                                                }
+                                            });
+                                        *active_tooltip.borrow_mut() = new_tooltip;
+                                        cx.refresh();
+                                    })
+                                    .ok();
+                                }
+                            });
+                            *active_tooltip.borrow_mut() = Some(ActiveTooltip {
+                                tooltip: None,
+                                _task: Some(task),
+                            });
+                        }
+                    });
+
+                    let active_tooltip = interactive_state.active_tooltip.clone();
+                    cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
+                        active_tooltip.take();
+                    });
+
+                    if let Some(tooltip) = interactive_state
+                        .active_tooltip
+                        .clone()
+                        .borrow()
+                        .as_ref()
+                        .and_then(|at| at.tooltip.clone())
+                    {
+                        cx.set_tooltip(tooltip);
+                    }
+                }
+
+                self.text.paint(bounds, text_state, cx);
+
+                ((), Some(interactive_state))
+            },
+        );
     }
 }
 

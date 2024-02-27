@@ -118,7 +118,6 @@ pub use anyhow::Result;
 pub use app::*;
 pub(crate) use arena::*;
 pub use assets::*;
-pub use bounds_tree::*;
 pub use color::*;
 pub use ctor::ctor;
 pub use element::*;

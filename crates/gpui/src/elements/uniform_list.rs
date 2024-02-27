@@ -6,8 +6,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
-    ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
-    Pixels, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Render, Size,
+    StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -97,72 +97,40 @@ impl Styled for UniformList {
     }
 }
 
-#[doc(hidden)]
-#[derive(Default)]
-pub struct UniformListState {
-    interactive: InteractiveElementState,
-    item_size: Size<Pixels>,
-}
-
 impl Element for UniformList {
-    type FrameState = UniformListState;
+    type FrameState = Size<Pixels>;
 
-    fn request_layout(
-        &mut self,
-        state: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let max_items = self.item_count;
-        let item_size = state
-            .as_ref()
-            .map(|s| s.item_size)
-            .unwrap_or_else(|| self.measure_item(None, cx));
+        let item_size = self.measure_item(None, cx);
+        let layout_id = self.interactivity.layout(cx, |style, cx| {
+            cx.request_measured_layout(style, move |known_dimensions, available_space, _cx| {
+                let desired_height = item_size.height * max_items;
+                let width = known_dimensions
+                    .width
+                    .unwrap_or(match available_space.width {
+                        AvailableSpace::Definite(x) => x,
+                        AvailableSpace::MinContent | AvailableSpace::MaxContent => item_size.width,
+                    });
 
-        let (layout_id, interactive) =
-            self.interactivity
-                .layout(state.map(|s| s.interactive), cx, |style, cx| {
-                    cx.request_measured_layout(
-                        style,
-                        move |known_dimensions, available_space, _cx| {
-                            let desired_height = item_size.height * max_items;
-                            let width =
-                                known_dimensions
-                                    .width
-                                    .unwrap_or(match available_space.width {
-                                        AvailableSpace::Definite(x) => x,
-                                        AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                            item_size.width
-                                        }
-                                    });
+                let height = match available_space.height {
+                    AvailableSpace::Definite(height) => desired_height.min(height),
+                    AvailableSpace::MinContent | AvailableSpace::MaxContent => desired_height,
+                };
+                size(width, height)
+            })
+        });
 
-                            let height = match available_space.height {
-                                AvailableSpace::Definite(height) => desired_height.min(height),
-                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                    desired_height
-                                }
-                            };
-                            size(width, height)
-                        },
-                    )
-                });
-
-        let element_state = UniformListState {
-            interactive,
-            item_size,
-        };
-
-        (layout_id, element_state)
+        (layout_id, item_size)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        element_state: &mut Self::FrameState,
+        item_size: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        let style =
-            self.interactivity
-                .compute_style(Some(bounds), &mut element_state.interactive, cx);
+        let style = self.interactivity.compute_style(Some(bounds), cx);
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -172,17 +140,12 @@ impl Element for UniformList {
                 - point(border.right + padding.right, border.bottom + padding.bottom),
         );
 
-        let item_size = element_state.item_size;
         let content_size = Size {
             width: padded_bounds.size.width,
             height: item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
-        let shared_scroll_offset = element_state
-            .interactive
-            .scroll_offset
-            .get_or_insert_with(Rc::default)
-            .clone();
+        let shared_scroll_offset = self.interactivity.scroll_offset(cx).unwrap();
 
         let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;
         let shared_scroll_to_item = self
@@ -190,12 +153,8 @@ impl Element for UniformList {
             .as_mut()
             .and_then(|handle| handle.deferred_scroll_to_item.take());
 
-        self.interactivity.paint(
-            bounds,
-            content_size,
-            &mut element_state.interactive,
-            cx,
-            |style, mut scroll_offset, cx| {
+        self.interactivity
+            .paint(bounds, content_size, cx, |style, mut scroll_offset, cx| {
                 let border = style.border_widths.to_pixels(cx.rem_size());
                 let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -256,8 +215,7 @@ impl Element for UniformList {
                         });
                     });
                 }
-            },
-        )
+            })
     }
 }
 

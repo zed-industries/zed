@@ -53,11 +53,7 @@ pub trait Element: 'static + IntoElement {
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.
     /// Use this method to request a layout from Taffy and initialize the element's state.
-    fn request_layout(
-        &mut self,
-        state: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState);
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState);
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
@@ -179,11 +175,7 @@ impl<C: RenderOnce> Component<C> {
 impl<C: RenderOnce> Element for Component<C> {
     type FrameState = AnyElement;
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut element = self
             .0
             .take()
@@ -277,7 +269,7 @@ impl<E: Element> DrawableElement<E> {
     }
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
-        let (layout_id, frame_state) = self.element.as_mut().unwrap().request_layout(None, cx);
+        let (layout_id, frame_state) = self.element.as_mut().unwrap().request_layout(cx);
         self.phase = ElementDrawPhase::LayoutRequested {
             layout_id,
             frame_state,
@@ -452,11 +444,7 @@ impl AnyElement {
 impl Element for AnyElement {
     type FrameState = ();
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let layout_id = self.request_layout(cx);
         (layout_id, ())
     }
@@ -500,11 +488,7 @@ impl IntoElement for () {
 impl Element for () {
     type FrameState = ();
 
-    fn request_layout(
-        &mut self,
-        _state: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         (cx.request_layout(&crate::Style::default(), None), ())
     }
 

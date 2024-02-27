@@ -520,7 +520,6 @@ impl Element for List {
 
     fn request_layout(
         &mut self,
-        _state: Option<Self::FrameState>,
         cx: &mut crate::ElementContext,
     ) -> (crate::LayoutId, Self::FrameState) {
         let layout_id = match self.sizing_behavior {

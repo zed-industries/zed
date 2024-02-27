@@ -3032,7 +3032,7 @@ impl Element for EditorElement {
         _element_state: Option<Self::FrameState>,
         cx: &mut gpui::ElementContext,
     ) -> (gpui::LayoutId, Self::FrameState) {
-        cx.with_view_id(self.editor.entity_id(), |cx| {
+        cx.with_view(self.editor.entity_id(), |cx| {
             self.editor.update(cx, |editor, cx| {
                 editor.set_style(self.style.clone(), cx);
 
@@ -3681,7 +3681,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view_id(view.entity_id(), |cx| {
+                    cx.with_view(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
                                 origin: point(px(500.), px(500.)),
@@ -3777,7 +3777,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view_id(view.entity_id(), |cx| {
+                    cx.with_view(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
                                 origin: point(px(500.), px(500.)),
@@ -3843,7 +3843,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view_id(view.entity_id(), |cx| {
+                    cx.with_view(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
                                 origin: point(px(500.), px(500.)),

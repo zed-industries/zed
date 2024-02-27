@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Element, ElementContext, ElementId, InteractiveElement, InteractiveElementState,
-    Interactivity, IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled,
+    Bounds, Element, ElementContext, ElementId, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Pixels, SharedString, StyleRefinement, Styled,
 };
 use util::ResultExt;
 
@@ -27,28 +27,25 @@ impl Svg {
 }
 
 impl Element for Svg {
-    type FrameState = InteractiveElementState;
+    type FrameState = ();
 
-    fn request_layout(
-        &mut self,
-        element_state: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
-        self.interactivity.layout(element_state, cx, |style, cx| {
-            cx.request_layout(&style, None)
-        })
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+        let layout_id = self
+            .interactivity
+            .layout(cx, |style, cx| cx.request_layout(&style, None));
+        (layout_id, ())
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        element_state: &mut Self::FrameState,
+        _frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) where
         Self: Sized,
     {
         self.interactivity
-            .paint(bounds, bounds.size, element_state, cx, |style, _, cx| {
+            .paint(bounds, bounds.size, cx, |style, _, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     cx.paint_svg(bounds, path.clone(), color).log_err();
                 }

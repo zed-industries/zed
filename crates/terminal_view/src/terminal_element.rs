@@ -754,24 +754,22 @@ impl TerminalElement {
 }
 
 impl Element for TerminalElement {
-    type FrameState = InteractiveElementState;
+    type FrameState = ();
 
     fn request_layout(
         &mut self,
         element_state: Option<Self::FrameState>,
         cx: &mut ElementContext<'_>,
     ) -> (LayoutId, Self::FrameState) {
-        let (layout_id, interactive_state) =
-            self.interactivity
-                .layout(element_state, cx, |mut style, cx| {
-                    style.size.width = relative(1.).into();
-                    style.size.height = relative(1.).into();
-                    let layout_id = cx.request_layout(&style, None);
+        let layout_id = self.interactivity.layout(cx, |mut style, cx| {
+            style.size.width = relative(1.).into();
+            style.size.height = relative(1.).into();
+            let layout_id = cx.request_layout(&style, None);
 
-                    layout_id
-                });
+            layout_id
+        });
 
-        (layout_id, interactive_state)
+        (layout_id, ())
     }
 
     fn paint(
@@ -797,7 +795,7 @@ impl Element for TerminalElement {
         self.register_mouse_listeners(origin, layout.mode, bounds, cx);
 
         self.interactivity
-            .paint(bounds, bounds.size, state, cx, |_, _, cx| {
+            .paint(bounds, bounds.size, cx, |_, _, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
 
                 cx.on_key_event({

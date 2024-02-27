@@ -33,11 +33,7 @@ impl IntoElement for Canvas {
 impl Element for Canvas {
     type FrameState = Style;
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (crate::LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::FrameState) {
         let mut style = Style::default();
         style.refine(&self.style);
         let layout_id = cx.request_layout(&style, []);

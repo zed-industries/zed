@@ -29,14 +29,14 @@ use smallvec::SmallVec;
 use util::post_inc;
 
 use crate::{
-    prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
-    Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
-    EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
-    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
-    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    prelude::*, size, AnyTooltip, AnyViewState, AppContext, AvailableSpace, Bounds, BoxShadow,
+    ContentMask, Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId,
+    ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent,
+    PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
+    StackingContext, StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline,
+    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -565,13 +565,19 @@ impl<'a> ElementContext<'a> {
     /// when drawing the next frame.
     pub fn with_element_state<S, R>(
         &mut self,
-        id: ElementId,
-        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+        element_id: Option<ElementId>,
+        f: impl FnOnce(Option<Option<S>>, &mut Self) -> (R, Option<S>),
     ) -> R
     where
         S: 'static,
     {
-        self.with_element_id(Some(id), |cx| {
+        let id_is_none = element_id.is_none();
+        self.with_element_id(element_id, |cx| {
+            if id_is_none {
+                let (result, state) = f(None, cx);
+                debug_assert!(state.is_none(), "you must not return an element state when passing None for the element id");
+                result
+            } else {
                 let global_id = cx.window().element_id_stack.clone();
                 let key = (global_id, TypeId::of::<S>());
 
@@ -621,8 +627,8 @@ impl<'a> ElementContext<'a> {
                     let state = state_box
                         .take()
                         .expect("reentrant call to with_element_state for the same state type and element id");
-                    let (result, state) = f(Some(state), cx);
-                    state_box.replace(state);
+                    let (result, state) = f(Some(Some(state)), cx);
+                    state_box.replace(state.expect("you must return "));
                     cx.window_mut()
                         .next_frame
                         .element_states
@@ -634,14 +640,14 @@ impl<'a> ElementContext<'a> {
                         });
                     result
                 } else {
-                    let (result, state) = f(None, cx);
+                    let (result, state) = f(Some(None), cx);
                     let parent_view_id = cx.parent_view_id();
                     cx.window_mut()
                         .next_frame
                         .element_states
                         .insert(key,
                             ElementStateBox {
-                                inner: Box::new(Some(state)),
+                                inner: Box::new(Some(state.expect("you must return Some<State> when you pass some element id"))),
                                 parent_view_id,
                                 #[cfg(debug_assertions)]
                                 type_name: std::any::type_name::<S>()
@@ -650,7 +656,8 @@ impl<'a> ElementContext<'a> {
                         );
                     result
                 }
-            })
+            }
+        })
     }
 
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
@@ -1127,19 +1134,32 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Invoke the given function with the given view id present on the view stack.
-    /// This is a fairly low-level method used to layout views.
-    pub fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
+    /// This is a fairly low-level method used to implement views as elements.
+    pub fn with_view<R>(
+        &mut self,
+        view_id: EntityId,
+        f: impl FnOnce(&mut Option<AnyViewState>, &mut Self) -> R,
+    ) -> R {
         let text_system = self.text_system().clone();
-        text_system.with_view(view_id, || {
-            if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                f(self)
-            } else {
-                self.window.next_frame.view_stack.push(view_id);
-                let result = f(self);
-                self.window.next_frame.view_stack.pop();
-                result
-            }
-        })
+        self.with_element_state::<AnyViewState, _>(
+            Some(ElementId::View(view_id)),
+            |view_state, cx| {
+                let mut view_state = view_state.unwrap();
+                let result = text_system.with_view(view_id, || {
+                    debug_assert!(
+                        !cx.window.next_frame.view_stack.contains(&view_id),
+                        "don't nest with_view calls for the same view id"
+                    );
+
+                    cx.window.next_frame.view_stack.push(view_id);
+                    let result = f(&mut view_state, cx);
+                    cx.window.next_frame.view_stack.pop();
+                    result
+                });
+
+                (result, view_state)
+            },
+        )
     }
 
     /// Invoke the given function with the given view id present on the view stack.

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::{
     point, size, Bounds, DevicePixels, Element, ElementContext, ImageData, InteractiveElement,
-    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedUri, Size,
-    StyleRefinement, Styled, UriOrPath,
+    Interactivity, IntoElement, LayoutId, Pixels, SharedUri, Size, StyleRefinement, Styled,
+    UriOrPath,
 };
 use futures::FutureExt;
 #[cfg(target_os = "macos")]
@@ -88,30 +88,24 @@ impl Img {
 }
 
 impl Element for Img {
-    type FrameState = InteractiveElementState;
+    type FrameState = ();
 
-    fn request_layout(
-        &mut self,
-        element_state: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
-        self.interactivity
-            .layout(element_state, cx, |style, cx| cx.request_layout(&style, []))
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+        let layout_id = self
+            .interactivity
+            .layout(cx, |style, cx| cx.request_layout(&style, []));
+        (layout_id, ())
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        element_state: &mut Self::FrameState,
+        frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         let source = self.source.clone();
-        self.interactivity.paint(
-            bounds,
-            bounds.size,
-            element_state,
-            cx,
-            |style, _scroll_offset, cx| {
+        self.interactivity
+            .paint(bounds, bounds.size, cx, |style, _scroll_offset, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.with_z_index(1, |cx| {
                     match source {
@@ -156,8 +150,7 @@ impl Element for Img {
                         }
                     };
                 });
-            },
-        )
+            })
     }
 }
 

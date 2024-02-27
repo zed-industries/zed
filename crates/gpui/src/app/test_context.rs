@@ -682,7 +682,7 @@ impl<'a> VisualTestContext {
                 .entity_id();
 
             cx.with_element_context(|cx| {
-                cx.with_view_id(entity_id, |cx| {
+                cx.with_view(entity_id, |_view_state, cx| {
                     f(cx).draw(origin, space, cx);
                 })
             });

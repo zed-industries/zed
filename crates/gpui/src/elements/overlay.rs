@@ -71,11 +71,7 @@ impl ParentElement for Overlay {
 impl Element for Overlay {
     type FrameState = OverlayState;
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (crate::LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::FrameState) {
         let child_layout_ids = self
             .children
             .iter_mut()
