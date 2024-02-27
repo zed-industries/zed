@@ -2492,7 +2492,7 @@ impl BufferSnapshot {
         self.syntax.layers_for_range(0..self.len(), &self.text)
     }
 
-    fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
+    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
         let offset = position.to_offset(self);
         self.syntax
             .layers_for_range(offset..offset, &self.text)
@@ -2884,6 +2884,52 @@ impl BufferSnapshot {
             }
             None
         })
+    }
+
+    /// Returns enclosing bracket ranges containing the given range
+    pub fn enclosing_bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        self.bracket_ranges(range.clone())
+            .filter(move |(open, close)| open.start <= range.start && close.end >= range.end)
+    }
+
+    /// Returns the smallest enclosing bracket ranges containing the given range or None if no brackets contain range
+    ///
+    /// Can optionally pass a range_filter to filter the ranges of brackets to consider
+    pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        // Get the ranges of the innermost pair of brackets.
+        let mut result: Option<(Range<usize>, Range<usize>)> = None;
+
+        for (open, close) in self.enclosing_bracket_ranges(range.clone()) {
+            if let Some(range_filter) = range_filter {
+                if !range_filter(open.clone(), close.clone()) {
+                    continue;
+                }
+            }
+
+            let len = close.end - open.start;
+
+            if let Some((existing_open, existing_close)) = &result {
+                let existing_len = existing_close.end - existing_open.start;
+                if len > existing_len {
+                    continue;
+                }
+            }
+
+            result = Some((open, close));
+        }
+
+        result
     }
 
     /// Returns anchor ranges for any matches of the redaction query.

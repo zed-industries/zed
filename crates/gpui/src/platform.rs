@@ -1,5 +1,7 @@
 // todo!(linux): remove
 #![cfg_attr(target_os = "linux", allow(dead_code))]
+// todo!("windows"): remove
+#![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
 mod keystroke;
@@ -61,9 +63,10 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(LinuxPlatform::new())
 }
+// todo!("windows")
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    todo!("windows")
+    unimplemented!()
 }
 
 pub(crate) trait Platform: 'static {

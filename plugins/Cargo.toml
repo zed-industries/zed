@@ -1,2 +1,0 @@
-[workspace]
-members = ["./json_language", "./test_plugin"]

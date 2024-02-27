@@ -1,12 +1,12 @@
 use crate::{
-    copy_recursive, ignore::IgnoreStack, project_settings::ProjectSettings, DiagnosticSummary,
-    ProjectEntryId, RemoveOptions,
+    ignore::IgnoreStack, project_settings::ProjectSettings, DiagnosticSummary, ProjectEntryId,
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
+use fs::{copy_recursive, RemoveOptions};
 use fs::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     Fs,
@@ -255,6 +255,12 @@ pub struct LocalRepositoryEntry {
     /// Path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
     pub(crate) git_dir_path: Arc<Path>,
+}
+
+impl LocalRepositoryEntry {
+    pub fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
+        self.repo_ptr.lock().load_index_text(relative_file_path)
+    }
 }
 
 impl Deref for LocalSnapshot {
@@ -718,7 +724,7 @@ impl LocalWorktree {
         path.starts_with(&self.abs_path)
     }
 
-    pub(crate) fn load_buffer(
+    pub fn load_buffer(
         &mut self,
         id: BufferId,
         path: &Path,
@@ -1593,7 +1599,7 @@ impl RemoteWorktree {
         self.completed_scan_id >= scan_id
     }
 
-    pub(crate) fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
         let (tx, rx) = oneshot::channel();
         if self.observed_snapshot(scan_id) {
             let _ = tx.send(());
@@ -1659,7 +1665,7 @@ impl RemoteWorktree {
         })
     }
 
-    pub(crate) fn delete_entry(
+    pub fn delete_entry(
         &mut self,
         id: ProjectEntryId,
         scan_id: usize,
@@ -2093,7 +2099,7 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub(crate) fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
+    pub fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
         self.git_repositories.get(&repo.work_directory.0)
     }
 
@@ -2744,7 +2750,7 @@ impl WorktreeId {
         Self(handle_id)
     }
 
-    pub(crate) fn from_proto(id: u64) -> Self {
+    pub fn from_proto(id: u64) -> Self {
         Self(id as usize)
     }
 
@@ -2829,10 +2835,10 @@ pub struct File {
     pub worktree: Model<Worktree>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
-    pub(crate) entry_id: Option<ProjectEntryId>,
-    pub(crate) is_local: bool,
-    pub(crate) is_deleted: bool,
-    pub(crate) is_private: bool,
+    pub entry_id: Option<ProjectEntryId>,
+    pub is_local: bool,
+    pub is_deleted: bool,
+    pub is_private: bool,
 }
 
 impl language::File for File {

@@ -25,8 +25,6 @@ mod go;
 mod haskell;
 mod html;
 mod json;
-#[cfg(feature = "plugin_runtime")]
-mod language_plugin;
 mod lua;
 mod nu;
 mod ocaml;
@@ -38,6 +36,7 @@ mod ruby;
 mod rust;
 mod svelte;
 mod tailwind;
+mod terraform;
 mod toml;
 mod typescript;
 mod uiua;
@@ -314,8 +313,11 @@ pub fn init(
     );
     language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language("proto", vec![]);
-    language("terraform", vec![]);
-    language("terraform-vars", vec![]);
+    language("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
+    language(
+        "terraform-vars",
+        vec![Arc::new(terraform::TerraformLspAdapter)],
+    );
     language("hcl", vec![]);
     language(
         "prisma",

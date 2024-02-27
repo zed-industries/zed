@@ -14,6 +14,8 @@
 
   (field_declaration)
   (field_expression)
+
+  (application_expression)
 ] @indent
 
 (_ "[" "]" @end) @indent

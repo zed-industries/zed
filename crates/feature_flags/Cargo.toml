@@ -9,5 +9,4 @@ license = "GPL-3.0-or-later"
 path = "src/feature_flags.rs"
 
 [dependencies]
-anyhow.workspace = true
 gpui.workspace = true
