@@ -17,8 +17,8 @@ use language::{
     Unclipped,
 };
 use lsp::{
-    CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
-    OneOf, ServerCapabilities,
+    CompletionListItemDefaultsEditRange, DocumentHighlightKind, DocumentSymbol,
+    DocumentSymbolResponse, LanguageServer, LanguageServerId, OneOf, ServerCapabilities,
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
@@ -140,6 +140,8 @@ pub(crate) struct OnTypeFormatting {
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
+
+pub(crate) struct DocumentSymbols;
 
 pub(crate) struct FormattingOptions {
     tab_size: u32,
@@ -2467,6 +2469,97 @@ impl LspCommand for InlayHints {
         }
 
         Ok(hints)
+    }
+
+    fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for DocumentSymbols {
+    type Response = Vec<DocumentSymbol>;
+    type LspRequest = lsp::DocumentSymbolRequest;
+    // todo: add proto support
+    type ProtoRequest = proto::InlayHints;
+    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
+        let Some(document_symbol_capabilities) = &server_capabilities.document_symbol_provider
+        else {
+            dbg!("Sadge");
+            return false;
+        };
+        match document_symbol_capabilities {
+            lsp::OneOf::Left(enabled) => dbg!(*enabled),
+            lsp::OneOf::Right(_) => true,
+        }
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::DocumentSymbolParams {
+        dbg!("to_lsp");
+        lsp::DocumentSymbolParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: lsp::Url::from_file_path(path).unwrap(),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<DocumentSymbolResponse>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) -> anyhow::Result<Vec<DocumentSymbol>> {
+        dbg!("response_from_lsp");
+        let message = message.context("Invalid DocumentSymbolResponse")?;
+        dbg!(message);
+        return Ok(vec![]);
+        // match message {
+        //     DocumentSymbolResponse::Flat(contents) => {}
+        //     DocumentSymbolResponse::Nested(contents) => {}
+        // }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
+        todo!();
+    }
+
+    async fn from_proto(
+        message: proto::InlayHints,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        todo!();
+    }
+
+    fn response_to_proto(
+        response: Vec<lsp::DocumentSymbol>,
+        _: &mut Project,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::InlayHintsResponse {
+        todo!();
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::InlayHintsResponse,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> anyhow::Result<Vec<lsp::DocumentSymbol>> {
+        todo!();
     }
 
     fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {

@@ -6,6 +6,7 @@ pub mod static_source;
 
 use collections::HashMap;
 use gpui::ModelContext;
+use project_core::Location;
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -62,7 +63,7 @@ pub trait Source: Any {
     /// Collects all tasks available for scheduling, for the path given.
     fn tasks_for_path(
         &mut self,
-        path: Option<&Path>,
+        path: Option<&Location>,
         cx: &mut ModelContext<Box<dyn Source>>,
     ) -> Vec<Arc<dyn Task>>;
 }

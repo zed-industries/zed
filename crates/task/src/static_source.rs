@@ -8,6 +8,7 @@ use std::{
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
+use project_core::Location;
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
@@ -184,7 +185,7 @@ impl StaticSource {
 impl Source for StaticSource {
     fn tasks_for_path(
         &mut self,
-        _: Option<&Path>,
+        _: Option<&Location>,
         _: &mut ModelContext<Box<dyn Source>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks

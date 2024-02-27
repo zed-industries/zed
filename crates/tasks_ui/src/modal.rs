@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use editor::Anchor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
@@ -8,6 +9,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{Inventory, Item};
+use project_core::Location;
 use task::{oneshot_source::OneshotSource, Task};
 use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable, WindowContext};
 use util::ResultExt;
@@ -135,24 +137,18 @@ impl PickerDelegate for TasksModalDelegate {
                         .update(cx, |this, cx| this.active_item_as::<editor::Editor>(cx))
                         .ok()
                         .flatten();
-                    let path = (|| {
-                        Some(
-                            editor?
-                                .read(cx)
-                                .buffer()
-                                .read(cx)
-                                .as_singleton()
-                                .unwrap()
-                                .read(cx)
-                                .project_path(cx)?
-                                .path,
-                        )
-                    })();
-                    let path = path.as_deref();
+                    let buffer =
+                        (|| Some(editor.clone()?.read(cx).buffer().read(cx).as_singleton()?))();
+                    let range = (|| Some(editor?.read(cx).selections.first_anchor()))();
+                    let path = buffer.zip(range).map(|(buffer, _)| Location {
+                        buffer,
+                        range: language::Anchor::MIN..language::Anchor::MAX,
+                    });
+                    //let path = path.as_deref();
                     picker.delegate.candidates = picker
                         .delegate
                         .inventory
-                        .update(cx, |inventory, cx| inventory.list_tasks(path, cx));
+                        .update(cx, |inventory, cx| inventory.list_tasks(path.as_ref(), cx));
                     picker
                         .delegate
                         .candidates

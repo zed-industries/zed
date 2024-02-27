@@ -3,6 +3,7 @@
 use std::{any::TypeId, path::Path, sync::Arc};
 
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
+use project_core::{Location, ProjectPath};
 use task::{Source, Task, TaskId};
 
 /// Inventory tracks available tasks for a given project.
@@ -55,7 +56,7 @@ impl Inventory {
     }
 
     /// Pulls its sources to list runanbles for the path given (up to the source to decide what to return for no path).
-    pub fn list_tasks(&self, path: Option<&Path>, cx: &mut AppContext) -> Vec<Arc<dyn Task>> {
+    pub fn list_tasks(&self, path: Option<&Location>, cx: &mut AppContext) -> Vec<Arc<dyn Task>> {
         let mut tasks = Vec::new();
         for source in &self.sources {
             tasks.extend(

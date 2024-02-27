@@ -45,7 +45,7 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf,
+    MessageActionItem, OneOf, SymbolInformation,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -4916,6 +4916,18 @@ impl Project {
         self.hover_impl(buffer, position, cx)
     }
 
+    pub fn document_symbols(
+        &self,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<lsp::DocumentSymbol>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            DocumentSymbols,
+            cx,
+        )
+    }
     #[inline(never)]
     fn completions_impl(
         &self,

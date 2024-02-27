@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::{Source, SpawnInTerminal, Task, TaskId};
 use gpui::{AppContext, Context, Model};
+use project_core::{Location, ProjectPath};
 
 /// A storage and source of tasks generated out of user command prompt inputs.
 pub struct OneshotSource {
@@ -73,7 +74,7 @@ impl Source for OneshotSource {
 
     fn tasks_for_path(
         &mut self,
-        _path: Option<&std::path::Path>,
+        _path: Option<&Location>,
         _cx: &mut gpui::ModelContext<Box<dyn Source>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks.clone()

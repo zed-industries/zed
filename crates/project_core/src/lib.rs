@@ -1,11 +1,14 @@
-use std::path::Path;
+use std::ops::Range;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
+use std::{path::Path, sync::Arc};
 
-use language::DiagnosticEntry;
+use gpui::Model;
+use language::{Buffer, DiagnosticEntry};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
 use serde::Serialize;
+use worktree::WorktreeId;
 
 mod ignore;
 pub mod project_settings;
@@ -78,4 +81,16 @@ impl DiagnosticSummary {
             warning_count: self.warning_count as u32,
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub struct ProjectPath {
+    pub worktree_id: WorktreeId,
+    pub path: Arc<Path>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Location {
+    pub buffer: Model<Buffer>,
+    pub range: Range<language::Anchor>,
 }

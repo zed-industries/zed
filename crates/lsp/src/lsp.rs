@@ -600,6 +600,13 @@ impl LanguageServer {
                         related_document_support: Some(true),
                         dynamic_registration: None,
                     }),
+                    document_symbol: Some(DocumentSymbolClientCapabilities {
+                        dynamic_registration: None,
+                        symbol_kind: Some(SymbolKindCapability {
+                            value_set: Some(vec![SymbolKind::FUNCTION]),
+                        }),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({
