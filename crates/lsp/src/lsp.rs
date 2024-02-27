@@ -603,8 +603,15 @@ impl LanguageServer {
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         dynamic_registration: None,
                         symbol_kind: Some(SymbolKindCapability {
-                            value_set: Some(vec![SymbolKind::FUNCTION]),
+                            value_set: Some(vec![
+                                SymbolKind::FUNCTION,
+                                SymbolKind::PACKAGE,
+                                SymbolKind::MODULE,
+                                SymbolKind::FILE,
+                                SymbolKind::NAMESPACE
+                            ]),
                         }),
+                        hierarchical_document_symbol_support: Some(true),
                         ..Default::default()
                     }),
                     ..Default::default()
