@@ -86,7 +86,7 @@ impl X11Client {
                 {
                     let client = Rc::clone(&client);
                     move |readiness, _, _| {
-                        if readiness.readable {
+                        if readiness.readable || readiness.error {
                             while let Some(event) = xcb_connection.poll_for_event()? {
                                 client.handle_event(event);
                             }
@@ -249,25 +249,31 @@ impl X11Client {
 impl Client for X11Client {
     fn event_loop_will_wait(&self) {
         // Just in case, check if we've received any more events before we draw.
-        while let Some(event) = self.xcb_connection.poll_for_event().unwrap() {
+        while let Some(event) = self.xcb_connection.poll_for_queued_event().unwrap() {
             self.handle_event(event);
         }
 
         // Drawing is done here to make sure we process all other event loop tasks first.
-        let mut state = self.state.lock();
-        if let Some(x_window) = state.windows_to_refresh.iter().next().cloned() {
-            state.windows_to_refresh.remove(&x_window);
-            drop(state);
-            let window = self.get_window(x_window);
-            window.refresh();
-            window.request_refresh();
+        loop {
+            let mut state = self.state.lock();
+            if let Some(x_window) = state.windows_to_refresh.iter().next().cloned() {
+                state.windows_to_refresh.remove(&x_window);
+                drop(state);
+                let window = self.get_window(x_window);
+                window.refresh();
+                window.request_refresh();
+            } else {
+                break;
+            }
         }
 
         // Before the event loop will go to sleep, we have to make sure no more X11 events arrived
         // and are waiting in libxcb's internal buffer.
-        while let Some(event) = self.xcb_connection.poll_for_event().unwrap() {
+        while let Some(event) = self.xcb_connection.poll_for_queued_event().unwrap() {
             self.handle_event(event);
         }
+
+        self.xcb_connection.flush().unwrap();
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

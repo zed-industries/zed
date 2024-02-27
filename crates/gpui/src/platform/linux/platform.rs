@@ -122,6 +122,7 @@ impl Platform for LinuxPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
+        self.client.event_loop_will_wait();
         self.inner
             .event_loop
             .lock()
