@@ -107,14 +107,9 @@ impl<T: AsRef<Path>> PathExt for T {
         if file_name.starts_with('.') {
             return file_name.strip_prefix('.');
         }
-
-        let extension = path.extension().and_then(|e| e.to_str());
-        let file_stem = path.file_stem()?.to_str()?;
-
-        match extension {
-            Some(ext) => Some(ext),
-            None => Some(file_stem),
-        }
+        path.extension()
+        .and_then(|e| e.to_str())
+        .or_else(|| path.file_stem()?.to_str())
     }
 
     /// Returns a file's extension or, if the file is hidden, its name without the leading dot
