@@ -281,12 +281,17 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                         }
 
                         // In the visual selection result of a paragraph object, the cursor is
-                        // placed at the start of the last line
+                        // placed at the start of the last line. And in the visual mode, the
+                        // selection end is located after the end character.
                         if object == Object::Paragraph {
-                            let start_of_selection_end_line =
-                                Point::new(selection.end.to_point(map).row, 0)
-                                    .to_display_point(map);
-                            selection.end = start_of_selection_end_line;
+                            let row_of_selection_end_line = selection.end.to_point(map).row;
+                            let new_selection_end =
+                                if map.buffer_snapshot.line_len(row_of_selection_end_line) == 0 {
+                                    Point::new(row_of_selection_end_line + 1, 0)
+                                } else {
+                                    Point::new(row_of_selection_end_line, 1)
+                                };
+                            selection.end = new_selection_end.to_display_point(map);
                         }
                     });
                 });

@@ -1211,20 +1211,29 @@ mod test {
     async fn test_visual_paragraph_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // The current test method does not properly test the visual line mode.
-        for paragraph_example in PARAGRAPH_EXAMPLES {
-            cx.assert_binding_matches_all_exempted(
-                ["v", "i", "p"],
-                paragraph_example,
-                ExemptionFeatures::IncorrectLandingPosition,
-            )
-            .await;
-            cx.assert_binding_matches_all_exempted(
-                ["v", "a", "p"],
-                paragraph_example,
-                ExemptionFeatures::IncorrectLandingPosition,
-            )
-            .await;
+        const EXAMPLES: &[&'static str] = &[
+            indoc! {"
+                ˇThe quick brown
+                fox jumps over
+                the lazy dog.
+            "},
+            indoc! {"
+                ˇ
+
+                ˇThe quick brown fox jumps
+                over the lazy dog.
+                ˇ
+
+                ˇThe quick brown fox jumps
+                over the lazy dog.
+            "},
+        ];
+
+        for paragraph_example in EXAMPLES {
+            cx.assert_binding_matches_all(["v", "i", "p"], paragraph_example)
+                .await;
+            cx.assert_binding_matches_all(["v", "a", "p"], paragraph_example)
+                .await;
         }
     }
 
