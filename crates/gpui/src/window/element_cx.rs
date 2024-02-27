@@ -54,7 +54,7 @@ pub(crate) struct TooltipRequest {
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
-    pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
+    pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     pub(crate) mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -406,18 +406,17 @@ impl<'a> ElementContext<'a> {
     pub fn with_element_id<R>(
         &mut self,
         id: Option<impl Into<ElementId>>,
-        f: impl FnOnce(Option<GlobalElementId>, &mut Self) -> R,
+        f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         if let Some(id) = id.map(Into::into) {
             let window = self.window_mut();
             window.element_id_stack.push(id);
-            let global_id = Some(window.element_id_stack.clone());
-            let result = f(global_id, self);
+            let result = f(self);
             let window: &mut Window = self.borrow_mut();
             window.element_id_stack.pop();
             result
         } else {
-            f(None, self)
+            f(self)
         }
     }
 
@@ -572,19 +571,20 @@ impl<'a> ElementContext<'a> {
     where
         S: 'static,
     {
-        self.with_element_id(Some(id), |_, cx| {
+        self.with_element_id(Some(id), |cx| {
                 let global_id = cx.window().element_id_stack.clone();
+                let key = (global_id, TypeId::of::<S>());
 
                 if let Some(any) = cx
                     .window_mut()
                     .next_frame
                     .element_states
-                    .remove(&global_id)
+                    .remove(&key)
                     .or_else(|| {
                         cx.window_mut()
                             .rendered_frame
                             .element_states
-                            .remove(&global_id)
+                            .remove(&key)
                     })
                 {
                     let ElementStateBox {
@@ -620,13 +620,13 @@ impl<'a> ElementContext<'a> {
                     // Requested: () <- AnyElement
                     let state = state_box
                         .take()
-                        .expect("element state is already on the stack");
+                        .expect("reentrant call to with_element_state for the same state type and element id");
                     let (result, state) = f(Some(state), cx);
                     state_box.replace(state);
                     cx.window_mut()
                         .next_frame
                         .element_states
-                        .insert(global_id, ElementStateBox {
+                        .insert(key, ElementStateBox {
                             inner: state_box,
                             parent_view_id,
                             #[cfg(debug_assertions)]
@@ -639,7 +639,7 @@ impl<'a> ElementContext<'a> {
                     cx.window_mut()
                         .next_frame
                         .element_states
-                        .insert(global_id,
+                        .insert(key,
                             ElementStateBox {
                                 inner: Box::new(Some(state)),
                                 parent_view_id,
@@ -652,6 +652,7 @@ impl<'a> ElementContext<'a> {
                 }
             })
     }
+
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
     pub fn paint_shadows(
         &mut self,

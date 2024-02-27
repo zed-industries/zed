@@ -222,7 +222,7 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 
 /// A globally unique identifier for an element, used to track state across frames.
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
+pub(crate) struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
 trait ElementObject {
     fn element_id(&self) -> Option<ElementId>;

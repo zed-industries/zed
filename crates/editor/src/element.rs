@@ -930,7 +930,7 @@ impl EditorElement {
                 }
 
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
-                cx.with_element_id(Some("folds"), |_, cx| {
+                cx.with_element_id(Some("folds"), |cx| {
                     let snapshot = &layout.position_map.snapshot;
 
                     for fold in snapshot.folds_in_range(layout.visible_anchor_range.clone()) {
@@ -2227,7 +2227,7 @@ impl EditorElement {
             let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
 
             let (scroll_width, blocks) = cx.with_element_context(|cx| {
-                cx.with_element_id(Some("editor_blocks"), |_, cx| {
+                cx.with_element_id(Some("editor_blocks"), |cx| {
                     self.layout_blocks(
                         start_row..end_row,
                         &snapshot,
@@ -2330,7 +2330,7 @@ impl EditorElement {
             let editor_view = cx.view().clone();
             let fold_indicators = if gutter_settings.folds {
                 cx.with_element_context(|cx| {
-                    cx.with_element_id(Some("gutter_fold_indicators"), |_global_id, _cx| {
+                    cx.with_element_id(Some("gutter_fold_indicators"), |_cx| {
                         editor.render_fold_indicators(
                             fold_statuses,
                             &style,
@@ -3140,7 +3140,7 @@ impl Element for EditorElement {
                             });
                             if !layout.blocks.is_empty() {
                                 cx.with_z_index(0, |cx| {
-                                    cx.with_element_id(Some("editor_blocks"), |_global_id, cx| {
+                                    cx.with_element_id(Some("editor_blocks"), |cx| {
                                         self.paint_blocks(bounds, &mut layout, cx);
                                     });
                                 })
