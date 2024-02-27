@@ -3029,12 +3029,7 @@ impl Editor {
             return;
         }
 
-        let reason_description = reason.description();
-        let ignore_debounce = matches!(
-            reason,
-            InlayHintRefreshReason::SettingsChange(_) | InlayHintRefreshReason::Toggle(_)
-        );
-        let (invalidate_cache, required_languages) = match reason {
+        let (invalidate_cache, required_languages) = match reason.clone() {
             InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
                 if enabled {
@@ -3093,10 +3088,9 @@ impl Editor {
             to_remove,
             to_insert,
         }) = self.inlay_hint_cache.spawn_hint_refresh(
-            reason_description,
+            reason,
             self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
             invalidate_cache,
-            ignore_debounce,
             cx,
         ) {
             self.splice_inlay_hints(to_remove, to_insert, cx);

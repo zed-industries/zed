@@ -14,7 +14,8 @@ use std::{
 };
 
 use crate::{
-    display_map::Inlay, Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot,
+    display_map::Inlay, Anchor, Editor, ExcerptId, InlayHintRefreshReason, InlayId, MultiBuffer,
+    MultiBufferSnapshot,
 };
 use anyhow::Context;
 use clock::Global;
@@ -337,15 +338,21 @@ impl InlayHintCache {
     /// This way, concequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
     pub(super) fn spawn_hint_refresh(
         &mut self,
-        reason: &'static str,
+        reason: InlayHintRefreshReason,
         excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
-        ignore_debounce: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Option<InlaySplice> {
         if !self.enabled {
             return None;
         }
+
+        let reason_description = reason.description();
+        let debounce_duration = match reason {
+            InlayHintRefreshReason::SettingsChange(_) | InlayHintRefreshReason::Toggle(_) => None,
+            InlayHintRefreshReason::NewLinesShown => Some(Duration::from_millis(50)),
+            _ => self.refresh_debounce_duration,
+        };
 
         let mut invalidated_hints = Vec::new();
         if invalidate.should_invalidate() {
@@ -364,9 +371,8 @@ impl InlayHintCache {
         }
 
         let cache_version = self.version + 1;
-        let refresh_debounce_duration = self.refresh_debounce_duration.filter(|_| !ignore_debounce);
         self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
-            if let Some(debounce_duration) = refresh_debounce_duration {
+            if let Some(debounce_duration) = debounce_duration {
                 cx.background_executor().timer(debounce_duration).await;
             }
 
@@ -374,7 +380,7 @@ impl InlayHintCache {
                 .update(&mut cx, |editor, cx| {
                     spawn_new_update_tasks(
                         editor,
-                        reason,
+                        reason_description,
                         excerpts_to_query,
                         invalidate,
                         cache_version,
