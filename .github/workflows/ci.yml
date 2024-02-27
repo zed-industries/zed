@@ -107,16 +107,10 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - name: Restore from cache
-        uses: actions/cache@v4
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: configure linux
         shell: bash -euxo pipefail {0}
@@ -140,16 +134,10 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - name: Restore from cache
-        uses: actions/cache@v4
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo clippy
         shell: bash -euxo pipefail {0}
