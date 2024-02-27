@@ -30,7 +30,7 @@ use std::{
 };
 use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
-use util::{ResultExt, paths};
+use util::{paths, ResultExt};
 
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
