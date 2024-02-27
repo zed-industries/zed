@@ -1,4 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
+// todo!("windows"): remove
+#![allow(unused_variables)]
 
 use std::{
     any::Any,
@@ -264,11 +266,12 @@ impl HasWindowHandle for WindowsWindow {
     }
 }
 
+// todo!("windows")
 impl HasDisplayHandle for WindowsWindow {
     fn display_handle(
         &self,
     ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
-        todo!()
+        unimplemented!()
     }
 }
 
@@ -332,6 +335,7 @@ impl PlatformWindow for WindowsWindow {
         self.inner.input_handler.take()
     }
 
+    // todo!("windows")
     fn prompt(
         &self,
         level: PromptLevel,
@@ -339,7 +343,7 @@ impl PlatformWindow for WindowsWindow {
         detail: Option<&str>,
         answers: &[&str],
     ) -> Receiver<usize> {
-        todo!()
+        unimplemented!()
     }
 
     // todo!("windows")

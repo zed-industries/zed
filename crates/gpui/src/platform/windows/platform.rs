@@ -1,3 +1,6 @@
+// todo!("windows"): remove
+#![allow(unused_variables)]
+
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
@@ -26,7 +29,6 @@ use crate::{
 };
 
 pub(crate) struct WindowsPlatform {
-    // client: Rc<dyn Client>,
     inner: Rc<WindowsPlatformInner>,
 }
 
@@ -111,24 +113,27 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
+    // todo!("windows")
     fn restart(&self) {
-        todo!()
+        unimplemented!()
     }
 
-    fn activate(&self, ignoring_other_apps: bool) {
-        // todo!("windows")
-    }
+    // todo!("windows")
+    fn activate(&self, ignoring_other_apps: bool) {}
 
+    // todo!("windows")
     fn hide(&self) {
-        todo!()
+        unimplemented!()
     }
 
+    // todo!("windows")
     fn hide_other_apps(&self) {
-        todo!()
+        unimplemented!()
     }
 
+    // todo!("windows")
     fn unhide_other_apps(&self) {
-        todo!()
+        unimplemented!()
     }
 
     // todo!("windows")
@@ -141,8 +146,9 @@ impl Platform for WindowsPlatform {
         Some(Rc::new(WindowsDisplay::new()))
     }
 
+    // todo!("windows")
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        todo!()
+        unimplemented!()
     }
 
     fn open_window(
@@ -158,24 +164,29 @@ impl Platform for WindowsPlatform {
         WindowAppearance::Dark
     }
 
+    // todo!("windows")
     fn open_url(&self, url: &str) {
         // todo!("windows")
     }
 
+    // todo!("windows")
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.inner.callbacks.lock().open_urls = callback.into();
     }
 
+    // todo!("windows")
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
-        todo!()
+        unimplemented!()
     }
 
+    // todo!("windows")
     fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Option<PathBuf>> {
-        todo!()
+        unimplemented!()
     }
 
+    // todo!("windows")
     fn reveal_path(&self, path: &Path) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
@@ -198,9 +209,8 @@ impl Platform for WindowsPlatform {
         self.inner.callbacks.lock().event = callback.into();
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
-        // todo!("windows")
-    }
+    // todo!("windows")
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.inner.callbacks.lock().app_menu_action = callback.into();
@@ -262,12 +272,14 @@ impl Platform for WindowsPlatform {
         false
     }
 
+    // todo!("windows")
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        todo!()
+        unimplemented!()
     }
 
+    // todo!("windows")
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        todo!()
+        unimplemented!()
     }
 
     // todo!("windows")
