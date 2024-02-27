@@ -894,6 +894,7 @@ impl EditorElement {
         cx: &mut ElementContext,
     ) {
         let start_row = layout.visible_display_row_range.start;
+        // Offset the content_bounds from the text_bounds by the gutter margin (which is roughly half a character wide) to make hit testing work more like how we want.
         let content_origin =
             text_bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
@@ -1903,7 +1904,7 @@ impl EditorElement {
         rows: Range<u32>,
         line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
-        cx: &ViewContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
             return Vec::new();
@@ -1913,7 +1914,7 @@ impl EditorElement {
         if snapshot.is_empty() {
             let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
             let placeholder_color = cx.theme().colors().text_placeholder;
-            let placeholder_text = snapshot.placeholder_text();
+            let placeholder_text = snapshot.placeholder_text(cx);
 
             let placeholder_lines = placeholder_text
                 .as_ref()
@@ -2225,7 +2226,6 @@ impl EditorElement {
                 .width;
             let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
 
-            let editor_view = cx.view().clone();
             let (scroll_width, blocks) = cx.with_element_context(|cx| {
              cx.with_element_id(Some("editor_blocks"), |cx| {
                 self.layout_blocks(
@@ -2241,7 +2241,6 @@ impl EditorElement {
                     &style,
                     &line_layouts,
                     editor,
-                    editor_view,
                     cx,
                 )
             })
@@ -2436,7 +2435,6 @@ impl EditorElement {
         style: &EditorStyle,
         line_layouts: &[LineWithInvisibles],
         editor: &mut Editor,
-        editor_view: View<Editor>,
         cx: &mut ElementContext,
     ) -> (Pixels, Vec<BlockLayout>) {
         let mut block_id = 0;
@@ -2477,7 +2475,6 @@ impl EditorElement {
                         em_width,
                         block_id,
                         max_width: scroll_width.max(text_width),
-                        view: editor_view.clone(),
                         editor_style: &self.style,
                     })
                 }

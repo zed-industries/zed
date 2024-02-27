@@ -15,14 +15,14 @@
     "bashrc": "terminal",
     "bmp": "image",
     "c": "code",
-    "cc": "cpp",
+    "cc": "code",
     "cjs": "code",
     "conf": "settings",
-    "cpp": "cpp",
+    "cpp": "code",
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
-    "cxx": "cpp",
+    "dart": "dart",
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
@@ -50,6 +50,7 @@
     "gitkeep": "vcs",
     "gitmodules": "vcs",
     "go": "go",
+    "graphql": "graphql",
     "h": "code",
     "handlebars": "code",
     "hbs": "template",
@@ -64,7 +65,7 @@
     "ico": "image",
     "ini": "settings",
     "j2k": "image",
-    "java": "code",
+    "java": "java",
     "jfif": "image",
     "jp2": "image",
     "jpeg": "image",
@@ -73,8 +74,10 @@
     "json": "storage",
     "jsonc": "storage",
     "jxl": "image",
+    "kt": "kotlin",
     "ldf": "storage",
     "lock": "lock",
+    "lockb": "bun",
     "log": "log",
     "lua": "lua",
     "m4a": "audio",
@@ -94,14 +97,17 @@
     "mts": "typescript",
     "myd": "storage",
     "myi": "storage",
+    "nu": "terminal",
     "odp": "document",
     "ods": "document",
     "odt": "document",
     "ogg": "audio",
     "opus": "audio",
+    "otf": "font",
     "pdb": "storage",
     "pdf": "document",
     "php": "php",
+    "plist": "template",
     "png": "image",
     "ppt": "document",
     "pptx": "document",
@@ -117,6 +123,7 @@
     "rebar.config": "erlang",
     "rkt": "code",
     "rs": "rust",
+    "r": "r",
     "rtf": "document",
     "sav": "storage",
     "scm": "code",
@@ -125,11 +132,14 @@
     "sqlite": "storage",
     "svelte": "template",
     "svg": "image",
-    "swift": "code",
+    "swift": "swift",
+    "tf": "terraform",
+    "tfvars": "terraform",
     "tiff": "image",
     "toml": "toml",
     "ts": "typescript",
     "tsv": "storage",
+    "ttf": "font",
     "tsx": "code",
     "txt": "document",
     "vue": "vue",
@@ -170,11 +180,11 @@
     "collapsed_folder": {
       "icon": "icons/file_icons/folder.svg"
     },
-    "cpp": {
-      "icon": "icons/file_icons/cpp.svg"
-    },
     "css": {
       "icon": "icons/file_icons/css.svg"
+    },
+    "dart": {
+      "icon": "icons/file_icons/dart.svg"
     },
     "default": {
       "icon": "icons/file_icons/file.svg"
@@ -200,17 +210,32 @@
     "expanded_folder": {
       "icon": "icons/file_icons/folder_open.svg"
     },
+    "font": {
+      "icon": "icons/file_icons/font.svg"
+    },
     "haskell": {
       "icon": "icons/file_icons/haskell.svg"
     },
     "go": {
       "icon": "icons/file_icons/go.svg"
     },
+    "graphql": {
+      "icon": "icons/file_icons/graphql.svg"
+    },
     "image": {
       "icon": "icons/file_icons/image.svg"
     },
+    "java": {
+      "icon": "icons/file_icons/java.svg"
+    },
+    "kotlin":{
+      "icon": "icons/file_icons/kotlin.svg"
+    },
     "lock": {
       "icon": "icons/file_icons/lock.svg"
+    },
+    "bun": {
+      "icon": "icons/file_icons/bun.svg"
     },
     "log": {
       "icon": "icons/file_icons/info.svg"
@@ -242,14 +267,23 @@
     "rust": {
       "icon": "icons/file_icons/rust.svg"
     },
+    "r": {
+      "icon": "icons/file_icons/r.svg"
+    },
     "settings": {
       "icon": "icons/file_icons/settings.svg"
     },
     "storage": {
       "icon": "icons/file_icons/database.svg"
     },
+    "swift": {
+      "icon": "icons/file_icons/swift.svg"
+    },
     "template": {
       "icon": "icons/file_icons/html.svg"
+    },
+    "terraform": {
+      "icon": "icons/file_icons/terraform.svg"
     },
     "terminal": {
       "icon": "icons/file_icons/terminal.svg"

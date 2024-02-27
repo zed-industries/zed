@@ -828,7 +828,7 @@ fn next_word_end(
         let mut new_point = point;
         if new_point.column() < map.line_len(new_point.row()) {
             *new_point.column_mut() += 1;
-        } else if new_point.row() < map.max_buffer_row() {
+        } else if new_point < map.max_point() {
             *new_point.row_mut() += 1;
             *new_point.column_mut() = 0;
         }
@@ -1110,13 +1110,15 @@ fn window_top(
 
     if let Some(visible_rows) = text_layout_details.visible_rows {
         let bottom_row = first_visible_line.row() + visible_rows as u32;
-        let new_row = (first_visible_line.row() + (times as u32)).min(bottom_row);
+        let new_row = (first_visible_line.row() + (times as u32))
+            .min(bottom_row)
+            .min(map.max_point().row());
         let new_col = point.column().min(map.line_len(first_visible_line.row()));
 
         let new_point = DisplayPoint::new(new_row, new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
-        let new_row = first_visible_line.row() + (times as u32);
+        let new_row = (first_visible_line.row() + (times as u32)).min(map.max_point().row());
         let new_col = point.column().min(map.line_len(first_visible_line.row()));
 
         let new_point = DisplayPoint::new(new_row, new_col);
@@ -1134,8 +1136,12 @@ fn window_middle(
             .scroll_anchor
             .anchor
             .to_display_point(map);
-        let max_rows = (visible_rows as u32).min(map.max_buffer_row());
-        let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
+
+        let max_visible_rows =
+            (visible_rows as u32).min(map.max_point().row() - first_visible_line.row());
+
+        let new_row =
+            (first_visible_line.row() + (max_visible_rows / 2) as u32).min(map.max_point().row());
         let new_col = point.column().min(map.line_len(new_row));
         let new_point = DisplayPoint::new(new_row, new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
@@ -1157,12 +1163,12 @@ fn window_bottom(
             .to_display_point(map);
         let bottom_row = first_visible_line.row()
             + (visible_rows + text_layout_details.scroll_anchor.offset.y - 1.).floor() as u32;
-        if bottom_row < map.max_buffer_row()
+        if bottom_row < map.max_point().row()
             && text_layout_details.vertical_scroll_margin as usize > times
         {
             times = text_layout_details.vertical_scroll_margin.ceil() as usize;
         }
-        let bottom_row_capped = bottom_row.min(map.max_buffer_row());
+        let bottom_row_capped = bottom_row.min(map.max_point().row());
         let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_line.row() {
             first_visible_line.row()
         } else {

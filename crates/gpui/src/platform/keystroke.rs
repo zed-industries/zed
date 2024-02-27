@@ -108,6 +108,35 @@ impl Keystroke {
             ime_key,
         })
     }
+
+    /// Returns a new keystroke with the ime_key filled.
+    /// This is used for dispatch_keystroke where we want users to
+    /// be able to simulate typing "space", etc.
+    pub fn with_simulated_ime(mut self) -> Self {
+        if self.ime_key.is_none()
+            && !self.modifiers.command
+            && !self.modifiers.control
+            && !self.modifiers.function
+            && !self.modifiers.alt
+        {
+            self.ime_key = match self.key.as_str() {
+                "space" => Some(" ".into()),
+                "tab" => Some("\t".into()),
+                "enter" => Some("\n".into()),
+                "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end"
+                | "delete" | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6"
+                | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => None,
+                key => {
+                    if self.modifiers.shift {
+                        Some(key.to_uppercase())
+                    } else {
+                        Some(key.into())
+                    }
+                }
+            }
+        }
+        self
+    }
 }
 
 impl std::fmt::Display for Keystroke {

@@ -14,22 +14,16 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
-collections.workspace = true
 gpui.workspace = true
 indoc.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-parking_lot.workspace = true
 release_channel.workspace = true
-serde.workspace = true
-serde_derive.workspace = true
 smol.workspace = true
 sqlez.workspace = true
 sqlez_macros.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

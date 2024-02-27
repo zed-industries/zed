@@ -37,8 +37,6 @@ struct Args {
 }
 
 fn main() {
-    // unsafe { backtrace_on_stack_overflow::enable() };
-
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     menu::init();
