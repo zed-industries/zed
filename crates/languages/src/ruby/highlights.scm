@@ -49,6 +49,11 @@
 (setter (identifier) @function.method)
 (method name: [(identifier) (constant)] @function.method)
 (singleton_method name: [(identifier) (constant)] @function.method)
+(method_parameters [
+  (identifier) @variable.parameter
+  (optional_parameter name: (identifier) @variable.parameter)
+  (keyword_parameter [name: (identifier) (":")] @variable.parameter)
+  ])
 
 ; Identifiers
 

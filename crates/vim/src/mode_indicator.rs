@@ -41,14 +41,9 @@ impl Render for ModeIndicator {
             return div().into_any();
         };
 
-        let text = match mode {
-            Mode::Normal => "-- NORMAL --",
-            Mode::Insert => "-- INSERT --",
-            Mode::Visual => "-- VISUAL --",
-            Mode::VisualLine => "-- VISUAL LINE --",
-            Mode::VisualBlock => "-- VISUAL BLOCK --",
-        };
-        Label::new(text).size(LabelSize::Small).into_any_element()
+        Label::new(format!("-- {} --", mode))
+            .size(LabelSize::Small)
+            .into_any_element()
     }
 }
 

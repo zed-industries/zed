@@ -13,11 +13,11 @@ doctest = false
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
-# HACK: We're only depending on `copilot` here for `CommandPaletteFilter`.  See the attached comment on that type.
-copilot.workspace = true
+command_palette_hooks.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 picker.workspace = true
+postage.workspace = true
 project.workspace = true
 release_channel.workspace = true
 serde.workspace = true
@@ -27,7 +27,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-postage.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

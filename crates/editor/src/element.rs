@@ -1904,7 +1904,7 @@ impl EditorElement {
         rows: Range<u32>,
         line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
-        cx: &ViewContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
             return Vec::new();
@@ -1914,7 +1914,7 @@ impl EditorElement {
         if snapshot.is_empty() {
             let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
             let placeholder_color = cx.theme().colors().text_placeholder;
-            let placeholder_text = snapshot.placeholder_text();
+            let placeholder_text = snapshot.placeholder_text(cx);
 
             let placeholder_lines = placeholder_text
                 .as_ref()
