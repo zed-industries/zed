@@ -100,7 +100,7 @@ impl Element for Img {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        frame_state: &mut Self::FrameState,
+        _frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         let source = self.source.clone();

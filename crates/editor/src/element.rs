@@ -965,7 +965,7 @@ impl EditorElement {
                         };
 
                         let fold_background = cx.with_z_index(1, |cx| {
-                            let fold_frame_state = div()
+                            let _fold_frame_state = div()
                                 .id(fold.id)
                                 .size_full()
                                 .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
@@ -1700,7 +1700,7 @@ impl EditorElement {
         let scroll_left = scroll_position.x * layout.position_map.em_width;
         let scroll_top = scroll_position.y * layout.position_map.line_height;
 
-        for mut block in layout.blocks.drain(..) {
+        for block in layout.blocks.drain(..) {
             let mut origin = bounds.origin
                 + point(
                     Pixels::ZERO,

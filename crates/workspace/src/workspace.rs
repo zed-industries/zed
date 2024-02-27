@@ -1744,6 +1744,7 @@ impl Workspace {
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
+        dbg!("toggling panel focus for {}", std::any::type_name::<T>());
         self.focus_or_unfocus_panel::<T>(cx, |panel, cx| {
             !panel.focus_handle(cx).contains_focused(cx)
         });

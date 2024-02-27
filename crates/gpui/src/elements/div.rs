@@ -23,8 +23,8 @@ use crate::{
     ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task,
     View, Visibility, WindowContext,
 };
-
 use collections::HashMap;
+use derive_more::{Deref, DerefMut};
 use refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
@@ -485,25 +485,6 @@ impl Interactivity {
     pub fn block_mouse(&mut self) {
         self.block_mouse = true;
     }
-
-    /// Returns the scroll offset if this Interactivity has an element_id.
-    /// It's returned as an Rc<RefCell>, allowing you to sample the latest value at any time.
-    pub fn scroll_offset(&self, cx: &mut ElementContext) -> Option<Rc<RefCell<Point<Pixels>>>> {
-        cx.with_element_state::<InteractiveElementState, _>(
-            self.element_id.clone(),
-            |element_state, _cx| {
-                let mut element_state =
-                    element_state.map(|element_state| element_state.unwrap_or_default());
-                let scroll_offset = element_state.as_mut().map(|element_state| {
-                    element_state
-                        .scroll_offset
-                        .get_or_insert_with(|| Rc::default())
-                        .clone()
-                });
-                (scroll_offset, element_state)
-            },
-        )
-    }
 }
 
 /// A trait for elements that want to use the standard GPUI event handlers that don't
@@ -891,7 +872,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Track the scroll state of this element with the given handle.
     fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
-        self.interactivity().scroll_handle = Some(scroll_handle.clone());
+        self.interactivity().tracked_scroll_handle = Some(scroll_handle.clone());
         self
     }
 
@@ -1106,7 +1087,7 @@ impl Element for Div {
         let mut child_max = Point::default();
         let content_size = if frame_state.child_layout_ids.is_empty() {
             bounds.size
-        } else if let Some(scroll_handle) = self.interactivity.scroll_handle.as_ref() {
+        } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
             let mut state = scroll_handle.0.borrow_mut();
             state.child_bounds = Vec::with_capacity(frame_state.child_layout_ids.len());
             state.bounds = bounds;
@@ -1167,7 +1148,8 @@ pub struct Interactivity {
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
-    pub(crate) scroll_handle: Option<ScrollHandle>,
+    pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
+    pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
@@ -1206,8 +1188,10 @@ pub struct Interactivity {
 }
 
 /// The bounds and depth of an element in the computed element tree.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deref, DerefMut)]
 pub struct InteractiveBounds {
+    #[deref]
+    #[deref_mut]
     /// The 2D bounds of the element
     pub bounds: Bounds<Pixels>,
     /// The 'stacking order', or depth, for this element
@@ -1238,9 +1222,10 @@ impl Interactivity {
         cx.with_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
             |element_state, cx| {
-                let mut element_state = element_state.map(|element_state| {
-                    let mut element_state = element_state.unwrap_or_default();
+                let mut element_state =
+                    element_state.map(|element_state| element_state.unwrap_or_default());
 
+                if let Some(element_state) = element_state.as_ref() {
                     if cx.has_active_drag() {
                         if let Some(pending_mouse_down) = element_state.pending_mouse_down.as_ref()
                         {
@@ -1250,25 +1235,39 @@ impl Interactivity {
                             *clicked_state.borrow_mut() = ElementClickedState::default();
                         }
                     }
+                }
 
-                    // Ensure we store a focus handle in our element state if we're focusable.
-                    // If there's an explicit focus handle we're tracking, use that. Otherwise
-                    // create a new handle and store it in the element state, which lives for as
-                    // as frames contain an element with this id.
-                    if self.focusable {
-                        element_state.focus_handle.get_or_insert_with(|| {
-                            self.tracked_focus_handle
-                                .clone()
-                                .unwrap_or_else(|| cx.focus_handle())
-                        });
+                // Ensure we store a focus handle in our element state if we're focusable.
+                // If there's an explicit focus handle we're tracking, use that. Otherwise
+                // create a new handle and store it in the element state, which lives for as
+                // as frames contain an element with this id.
+                if self.focusable {
+                    if self.tracked_focus_handle.is_none() {
+                        if let Some(element_state) = element_state.as_mut() {
+                            self.tracked_focus_handle = Some(
+                                element_state
+                                    .focus_handle
+                                    .get_or_insert_with(|| cx.focus_handle())
+                                    .clone(),
+                            );
+                        }
                     }
+                }
 
-                    if let Some(scroll_handle) = self.scroll_handle.as_ref() {
-                        element_state.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
+                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                } else if self.base_style.overflow.x == Some(Overflow::Scroll)
+                    || self.base_style.overflow.y == Some(Overflow::Scroll)
+                {
+                    if let Some(element_state) = element_state.as_mut() {
+                        self.scroll_offset = Some(
+                            element_state
+                                .scroll_offset
+                                .get_or_insert_with(|| Rc::default())
+                                .clone(),
+                        );
                     }
-
-                    element_state
-                });
+                }
 
                 let style = self.compute_style_internal(None, element_state.as_mut(), cx);
                 let layout_id = f(style, cx);
@@ -1295,9 +1294,8 @@ impl Interactivity {
         cx.with_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
             |element_state, cx| {
-                let mut element_state = element_state.map(|element_state| {
-                    element_state.unwrap_or_default()
-                });
+                let mut element_state =
+                    element_state.map(|element_state| element_state.unwrap_or_default());
 
                 let style = self.compute_style_internal(Some(bounds), element_state.as_mut(), cx);
                 let z_index = style.z_index.unwrap_or(0);
@@ -1310,26 +1308,8 @@ impl Interactivity {
                         .insert(debug_selector.clone(), bounds);
                 }
 
-                let paint_hover_group_handler = |cx: &mut ElementContext| {
-                    let hover_group_bounds = self
-                        .group_hover_style
-                        .as_ref()
-                        .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
-
-                    if let Some(group_bounds) = hover_group_bounds {
-                        let hovered = group_bounds.contains(&cx.mouse_position());
-                        cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                            if phase == DispatchPhase::Capture
-                                && group_bounds.contains(&event.position) != hovered
-                            {
-                                cx.refresh();
-                            }
-                        });
-                    }
-                };
-
                 if style.visibility == Visibility::Hidden {
-                    cx.with_z_index(z_index, |cx| paint_hover_group_handler(cx));
+                    cx.with_z_index(z_index, |cx| self.paint_hover_group_handler(cx));
                     return ((), element_state);
                 }
 
@@ -1339,115 +1319,7 @@ impl Interactivity {
                             cx.with_content_mask(
                                 style.overflow_mask(bounds, cx.rem_size()),
                                 |cx| {
-                                    #[cfg(debug_assertions)]
-                                    if self.element_id.is_some()
-                                        && (style.debug
-                                            || style.debug_below
-                                            || cx.has_global::<crate::DebugBelow>())
-                                        && bounds.contains(&cx.mouse_position())
-                                    {
-                                        const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
-                                        let element_id =
-                                            format!("{:?}", self.element_id.as_ref().unwrap());
-                                        let str_len = element_id.len();
-
-                                        let render_debug_text = |cx: &mut ElementContext| {
-                                            if let Some(text) = cx
-                                                .text_system()
-                                                .shape_text(
-                                                    element_id.into(),
-                                                    FONT_SIZE,
-                                                    &[cx.text_style().to_run(str_len)],
-                                                    None,
-                                                )
-                                                .ok()
-                                                .and_then(|mut text| text.pop())
-                                            {
-                                                text.paint(bounds.origin, FONT_SIZE, cx).ok();
-
-                                                let text_bounds = crate::Bounds {
-                                                    origin: bounds.origin,
-                                                    size: text.size(FONT_SIZE),
-                                                };
-                                                if self.location.is_some()
-                                                    && text_bounds.contains(&cx.mouse_position())
-                                                    && cx.modifiers().command
-                                                {
-                                                    let command_held = cx.modifiers().command;
-                                                    cx.on_key_event({
-                                                        move |e: &crate::ModifiersChangedEvent, _phase, cx| {
-                                                            if e.modifiers.command != command_held
-                                                                && text_bounds.contains(&cx.mouse_position())
-                                                            {
-                                                                cx.refresh();
-                                                            }
-                                                        }
-                                                    });
-
-                                                    let hovered =
-                                                        bounds.contains(&cx.mouse_position());
-                                                    cx.on_mouse_event(
-                                                        move |event: &MouseMoveEvent, phase, cx| {
-                                                            if phase == DispatchPhase::Capture
-                                                                && bounds.contains(&event.position)
-                                                                    != hovered
-                                                            {
-                                                                cx.refresh();
-                                                            }
-                                                        },
-                                                    );
-
-                                                    cx.on_mouse_event({
-                                                let location = self.location.unwrap();
-                                                move |e: &crate::MouseDownEvent, phase, cx| {
-                                                    if text_bounds.contains(&e.position)
-                                                        && phase.capture()
-                                                    {
-                                                        cx.stop_propagation();
-                                                        let Ok(dir) = std::env::current_dir()
-                                                        else {
-                                                            return;
-                                                        };
-
-                                                        eprintln!(
-                                                        "This element was created at:\n{}:{}:{}",
-                                                        dir.join(location.file()).to_string_lossy(),
-                                                        location.line(),
-                                                        location.column()
-                                                    );
-                                                    }
-                                                }
-                                            });
-                                                    cx.paint_quad(crate::outline(
-                                                        crate::Bounds {
-                                                            origin: bounds.origin
-                                                                + crate::point(
-                                                                    crate::px(0.),
-                                                                    FONT_SIZE - px(2.),
-                                                                ),
-                                                            size: crate::Size {
-                                                                width: text_bounds.size.width,
-                                                                height: crate::px(1.),
-                                                            },
-                                                        },
-                                                        crate::red(),
-                                                    ))
-                                                }
-                                            }
-                                        };
-
-                                        cx.with_z_index(1, |cx| {
-                                            cx.with_text_style(
-                                                Some(crate::TextStyleRefinement {
-                                                    color: Some(crate::red()),
-                                                    line_height: Some(FONT_SIZE.into()),
-                                                    background_color: Some(crate::white()),
-                                                    ..Default::default()
-                                                }),
-                                                render_debug_text,
-                                            )
-                                        });
-                                    }
+                                    self.paint_debug_info(bounds, &style, cx);
 
                                     let interactive_bounds = InteractiveBounds {
                                         bounds: bounds.intersect(&cx.content_mask().bounds),
@@ -1474,532 +1346,24 @@ impl Interactivity {
                                         }
                                     }
 
-                                    if let Some(element_state) = element_state.as_ref() {
-                                        // If this element can be focused, register a mouse down listener
-                                        // that will automatically transfer focus when hitting the element.
-                                        // This behavior can be suppressed by using `cx.prevent_default()`.
-                                        if let Some(focus_handle) =
-                                            element_state.focus_handle.clone()
-                                        {
-                                            cx.on_mouse_event({
-                                                let interactive_bounds = interactive_bounds.clone();
-                                                move |event: &MouseDownEvent, phase, cx| {
-                                                    if phase == DispatchPhase::Bubble
-                                                        && !cx.default_prevented()
-                                                        && interactive_bounds
-                                                            .visibly_contains(&event.position, cx)
-                                                    {
-                                                        cx.focus(&focus_handle);
-                                                        // If there is a parent that is also focusable, prevent it
-                                                        // from transferring focus because we already did so.
-                                                        cx.prevent_default();
-                                                    }
-                                                }
-                                            });
-                                        }
+                                    if let Some(group) = self.group.clone() {
+                                        GroupBounds::push(group, bounds, cx);
                                     }
 
-                                    for listener in self.mouse_down_listeners.drain(..) {
-                                        let interactive_bounds = interactive_bounds.clone();
-                                        cx.on_mouse_event(
-                                            move |event: &MouseDownEvent, phase, cx| {
-                                                listener(event, &interactive_bounds, phase, cx);
-                                            },
-                                        )
-                                    }
-
-                                    for listener in self.mouse_up_listeners.drain(..) {
-                                        let interactive_bounds = interactive_bounds.clone();
-                                        cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                                            listener(event, &interactive_bounds, phase, cx);
-                                        })
-                                    }
-
-                                    for listener in self.mouse_move_listeners.drain(..) {
-                                        let interactive_bounds = interactive_bounds.clone();
-                                        cx.on_mouse_event(
-                                            move |event: &MouseMoveEvent, phase, cx| {
-                                                listener(event, &interactive_bounds, phase, cx);
-                                            },
-                                        )
-                                    }
-
-                                    for listener in self.scroll_wheel_listeners.drain(..) {
-                                        let interactive_bounds = interactive_bounds.clone();
-                                        cx.on_mouse_event(
-                                            move |event: &ScrollWheelEvent, phase, cx| {
-                                                listener(event, &interactive_bounds, phase, cx);
-                                            },
-                                        )
-                                    }
-
-                                    paint_hover_group_handler(cx);
-
-                                    if self.hover_style.is_some()
-                                        || self.base_style.mouse_cursor.is_some()
-                                        || cx.active_drag.is_some()
-                                            && !self.drag_over_styles.is_empty()
-                                    {
-                                        let bounds = bounds.intersect(&cx.content_mask().bounds);
-                                        let hovered = bounds.contains(&cx.mouse_position());
-                                        cx.on_mouse_event(
-                                            move |event: &MouseMoveEvent, phase, cx| {
-                                                if phase == DispatchPhase::Capture
-                                                    && bounds.contains(&event.position) != hovered
-                                                {
-                                                    cx.refresh();
-                                                }
-                                            },
-                                        );
-                                    }
-
-                                    let mut drag_listener = mem::take(&mut self.drag_listener);
-                                    let drop_listeners = mem::take(&mut self.drop_listeners);
-                                    let click_listeners = mem::take(&mut self.click_listeners);
-                                    let can_drop_predicate =
-                                        mem::take(&mut self.can_drop_predicate);
-
-                                    if !drop_listeners.is_empty() {
-                                        cx.on_mouse_event({
-                                            let interactive_bounds = interactive_bounds.clone();
-                                            move |event: &MouseUpEvent, phase, cx| {
-                                                if let Some(drag) = &cx.active_drag {
-                                                    if phase == DispatchPhase::Bubble
-                                                        && interactive_bounds
-                                                            .drag_target_contains(&event.position, cx)
-                                                    {
-                                                        let drag_state_type = drag.value.as_ref().type_id();
-                                                        for (drop_state_type, listener) in &drop_listeners {
-                                                            if *drop_state_type == drag_state_type {
-                                                                let drag = cx.active_drag.take().expect(
-                                                                "checked for type drag state type above",
-                                                            );
-
-                                                                let mut can_drop = true;
-                                                                if let Some(predicate) = &can_drop_predicate
-                                                                {
-                                                                    can_drop = predicate(
-                                                                        drag.value.as_ref(),
-                                                                        cx.deref_mut(),
-                                                                    );
-                                                                }
-
-                                                                if can_drop {
-                                                                    listener(
-                                                                        drag.value.as_ref(),
-                                                                        cx.deref_mut(),
-                                                                    );
-                                                                    cx.refresh();
-                                                                    cx.stop_propagation();
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        });
-                                    }
-
-                                    let scroll_offset = if let Some(element_state) = element_state.as_mut() {
-                                        if !click_listeners.is_empty() || drag_listener.is_some() {
-                                            let pending_mouse_down = element_state
-                                                .pending_mouse_down
-                                                .get_or_insert_with(Default::default)
-                                                .clone();
-
-                                            let clicked_state = element_state
-                                                .clicked_state
-                                                .get_or_insert_with(Default::default)
-                                                .clone();
-
-                                            cx.on_mouse_event({
-                                                let interactive_bounds = interactive_bounds.clone();
-                                                let pending_mouse_down = pending_mouse_down.clone();
-                                                move |event: &MouseDownEvent, phase, cx| {
-                                                    if phase == DispatchPhase::Bubble
-                                                        && event.button == MouseButton::Left
-                                                        && interactive_bounds
-                                                            .visibly_contains(&event.position, cx)
-                                                    {
-                                                        *pending_mouse_down.borrow_mut() =
-                                                            Some(event.clone());
-                                                        cx.refresh();
-                                                    }
-                                                }
-                                            });
-
-                                            cx.on_mouse_event({
-                                                let pending_mouse_down = pending_mouse_down.clone();
-                                                move |event: &MouseMoveEvent, phase, cx| {
-                                                    if phase == DispatchPhase::Capture {
-                                                        return;
-                                                    }
-
-                                                    let mut pending_mouse_down =
-                                                        pending_mouse_down.borrow_mut();
-                                                    if let Some(mouse_down) = pending_mouse_down.clone()
-                                                    {
-                                                        if !cx.has_active_drag()
-                                                            && (event.position - mouse_down.position)
-                                                                .magnitude()
-                                                                > DRAG_THRESHOLD
-                                                        {
-                                                            if let Some((drag_value, drag_listener)) =
-                                                                drag_listener.take()
-                                                            {
-                                                                *clicked_state.borrow_mut() =
-                                                                    ElementClickedState::default();
-                                                                let cursor_offset =
-                                                                    event.position - bounds.origin;
-                                                                let drag = (drag_listener)(
-                                                                    drag_value.as_ref(),
-                                                                    cx,
-                                                                );
-                                                                cx.active_drag = Some(AnyDrag {
-                                                                    view: drag,
-                                                                    value: drag_value,
-                                                                    cursor_offset,
-                                                                });
-                                                                pending_mouse_down.take();
-                                                                cx.refresh();
-                                                                cx.stop_propagation();
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            });
-
-                                            cx.on_mouse_event({
-                                                let interactive_bounds = interactive_bounds.clone();
-                                                let mut captured_mouse_down = None;
-                                                move |event: &MouseUpEvent, phase, cx| match phase {
-                                                    // Clear the pending mouse down during the capture phase,
-                                                    // so that it happens even if another event handler stops
-                                                    // propagation.
-                                                    DispatchPhase::Capture => {
-                                                        let mut pending_mouse_down =
-                                                            pending_mouse_down.borrow_mut();
-                                                        if pending_mouse_down.is_some() {
-                                                            captured_mouse_down =
-                                                                pending_mouse_down.take();
-                                                            cx.refresh();
-                                                        }
-                                                    }
-                                                    // Fire click handlers during the bubble phase.
-                                                    DispatchPhase::Bubble => {
-                                                        if let Some(mouse_down) =
-                                                            captured_mouse_down.take()
-                                                        {
-                                                            if interactive_bounds
-                                                                .visibly_contains(&event.position, cx)
-                                                            {
-                                                                let mouse_click = ClickEvent {
-                                                                    down: mouse_down,
-                                                                    up: event.clone(),
-                                                                };
-                                                                for listener in &click_listeners {
-                                                                    listener(&mouse_click, cx);
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        }
-
-                                        if let Some(hover_listener) = self.hover_listener.take() {
-                                            let was_hovered = element_state
-                                                .hover_state
-                                                .get_or_insert_with(Default::default)
-                                                .clone();
-                                            let has_mouse_down = element_state
-                                                .pending_mouse_down
-                                                .get_or_insert_with(Default::default)
-                                                .clone();
-                                            let interactive_bounds = interactive_bounds.clone();
-
-                                            cx.on_mouse_event(
-                                                move |event: &MouseMoveEvent, phase, cx| {
-                                                    if phase != DispatchPhase::Bubble {
-                                                        return;
-                                                    }
-                                                    let is_hovered = interactive_bounds
-                                                        .visibly_contains(&event.position, cx)
-                                                        && has_mouse_down.borrow().is_none()
-                                                        && !cx.has_active_drag();
-                                                    let mut was_hovered = was_hovered.borrow_mut();
-
-                                                    if is_hovered != *was_hovered {
-                                                        *was_hovered = is_hovered;
-                                                        drop(was_hovered);
-
-                                                        hover_listener(&is_hovered, cx.deref_mut());
-                                                    }
-                                                },
-                                            );
-                                        }
-
-                                        if let Some(tooltip_builder) = self.tooltip_builder.take() {
-                                            let active_tooltip = element_state
-                                                .active_tooltip
-                                                .get_or_insert_with(Default::default)
-                                                .clone();
-                                            let pending_mouse_down = element_state
-                                                .pending_mouse_down
-                                                .get_or_insert_with(Default::default)
-                                                .clone();
-                                            let interactive_bounds = interactive_bounds.clone();
-
-                                            cx.on_mouse_event(
-                                                move |event: &MouseMoveEvent, phase, cx| {
-                                                    let is_hovered = interactive_bounds
-                                                        .visibly_contains(&event.position, cx)
-                                                        && pending_mouse_down.borrow().is_none();
-                                                    if !is_hovered {
-                                                        active_tooltip.borrow_mut().take();
-                                                        return;
-                                                    }
-
-                                                    if phase != DispatchPhase::Bubble {
-                                                        return;
-                                                    }
-
-                                                    if active_tooltip.borrow().is_none() {
-                                                        let task = cx.spawn({
-                                                            let active_tooltip = active_tooltip.clone();
-                                                            let tooltip_builder =
-                                                                tooltip_builder.clone();
-
-                                                            move |mut cx| async move {
-                                                                cx.background_executor()
-                                                                    .timer(TOOLTIP_DELAY)
-                                                                    .await;
-                                                                cx.update(|cx| {
-                                                                    active_tooltip
-                                                                        .borrow_mut()
-                                                                        .replace(ActiveTooltip {
-                                                                            tooltip: Some(AnyTooltip {
-                                                                                view: tooltip_builder(
-                                                                                    cx,
-                                                                                ),
-                                                                                cursor_offset: cx
-                                                                                    .mouse_position(),
-                                                                            }),
-                                                                            _task: None,
-                                                                        });
-                                                                    cx.refresh();
-                                                                })
-                                                                .ok();
-                                                            }
-                                                        });
-                                                        active_tooltip.borrow_mut().replace(
-                                                            ActiveTooltip {
-                                                                tooltip: None,
-                                                                _task: Some(task),
-                                                            },
-                                                        );
-                                                    }
-                                                },
-                                            );
-
-                                            let active_tooltip = element_state
-                                                .active_tooltip
-                                                .get_or_insert_with(Default::default)
-                                                .clone();
-                                            cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
-                                                active_tooltip.borrow_mut().take();
-                                            });
-
-                                            if let Some(active_tooltip) = element_state
-                                                .active_tooltip
-                                                .get_or_insert_with(Default::default)
-                                                .borrow()
-                                                .as_ref()
-                                            {
-                                                if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                                                    cx.set_tooltip(tooltip);
-                                                }
-                                            }
-                                        }
-
-                                        let active_state = element_state
-                                            .clicked_state
-                                            .get_or_insert_with(Default::default)
-                                            .clone();
-                                        if active_state.borrow().is_clicked() {
-                                            cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
-                                                if phase == DispatchPhase::Capture {
-                                                    *active_state.borrow_mut() =
-                                                        ElementClickedState::default();
-                                                    cx.refresh();
-                                                }
-                                            });
-                                        } else {
-                                            let active_group_bounds = self
-                                                .group_active_style
-                                                .as_ref()
-                                                .and_then(|group_active| {
-                                                    GroupBounds::get(&group_active.group, cx)
-                                                });
-                                            let interactive_bounds = interactive_bounds.clone();
-                                            cx.on_mouse_event(
-                                                move |down: &MouseDownEvent, phase, cx| {
-                                                    if phase == DispatchPhase::Bubble
-                                                        && !cx.default_prevented()
-                                                    {
-                                                        let group = active_group_bounds
-                                                            .map_or(false, |bounds| {
-                                                                bounds.contains(&down.position)
-                                                            });
-                                                        let element = interactive_bounds
-                                                            .visibly_contains(&down.position, cx);
-                                                        if group || element {
-                                                            *active_state.borrow_mut() =
-                                                                ElementClickedState { group, element };
-                                                            cx.refresh();
-                                                        }
-                                                    }
-                                                },
-                                            );
-                                        }
-
-                                        let overflow = style.overflow;
-                                        if overflow.x == Overflow::Scroll
-                                            || overflow.y == Overflow::Scroll
-                                        {
-                                            if let Some(scroll_handle) = &self.scroll_handle {
-                                                scroll_handle.0.borrow_mut().overflow = overflow;
-                                            }
-
-                                            let scroll_offset = element_state
-                                                .scroll_offset
-                                                .get_or_insert_with(Rc::default)
-                                                .clone();
-                                            let line_height = cx.line_height();
-                                            let rem_size = cx.rem_size();
-                                            let padding_size = size(
-                                                style
-                                                    .padding
-                                                    .left
-                                                    .to_pixels(bounds.size.width.into(), rem_size)
-                                                    + style
-                                                        .padding
-                                                        .right
-                                                        .to_pixels(bounds.size.width.into(), rem_size),
-                                                style
-                                                    .padding
-                                                    .top
-                                                    .to_pixels(bounds.size.height.into(), rem_size)
-                                                    + style
-                                                        .padding
-                                                        .bottom
-                                                        .to_pixels(bounds.size.height.into(), rem_size),
-                                            );
-                                            let scroll_max = (content_size + padding_size
-                                                - bounds.size)
-                                                .max(&Size::default());
-                                            // Clamp scroll offset in case scroll max is smaller now (e.g., if children
-                                            // were removed or the bounds became larger).
-                                            {
-                                                let mut scroll_offset = scroll_offset.borrow_mut();
-                                                scroll_offset.x =
-                                                    scroll_offset.x.clamp(-scroll_max.width, px(0.));
-                                                scroll_offset.y =
-                                                    scroll_offset.y.clamp(-scroll_max.height, px(0.));
-                                            }
-
-                                            let interactive_bounds = interactive_bounds.clone();
-                                            cx.on_mouse_event(
-                                                move |event: &ScrollWheelEvent, phase, cx| {
-                                                    if phase == DispatchPhase::Bubble
-                                                        && interactive_bounds
-                                                            .visibly_contains(&event.position, cx)
-                                                    {
-                                                        let mut scroll_offset =
-                                                            scroll_offset.borrow_mut();
-                                                        let old_scroll_offset = *scroll_offset;
-                                                        let delta =
-                                                            event.delta.pixel_delta(line_height);
-
-                                                        if overflow.x == Overflow::Scroll {
-                                                            let mut delta_x = Pixels::ZERO;
-                                                            if !delta.x.is_zero() {
-                                                                delta_x = delta.x;
-                                                            } else if overflow.y != Overflow::Scroll {
-                                                                delta_x = delta.y;
-                                                            }
-
-                                                            scroll_offset.x = (scroll_offset.x
-                                                                + delta_x)
-                                                                .clamp(-scroll_max.width, px(0.));
-                                                        }
-
-                                                        if overflow.y == Overflow::Scroll {
-                                                            let mut delta_y = Pixels::ZERO;
-                                                            if !delta.y.is_zero() {
-                                                                delta_y = delta.y;
-                                                            } else if overflow.x != Overflow::Scroll {
-                                                                delta_y = delta.x;
-                                                            }
-
-                                                            scroll_offset.y = (scroll_offset.y
-                                                                + delta_y)
-                                                                .clamp(-scroll_max.height, px(0.));
-                                                        }
-
-                                                        if *scroll_offset != old_scroll_offset {
-                                                            cx.refresh();
-                                                            cx.stop_propagation();
-                                                        }
-                                                    }
-                                                },
-                                            );
-                                        }
-
-                                        if let Some(group) = self.group.clone() {
-                                            GroupBounds::push(group, bounds, cx);
-                                        }
-
-                                        element_state
-                                            .scroll_offset
-                                            .as_ref()
-                                            .map(|scroll_offset| *scroll_offset.borrow())
-                                    } else {
-                                        None
-                                    };
-
-
-                                    let key_down_listeners =
-                                        mem::take(&mut self.key_down_listeners);
-                                    let key_up_listeners = mem::take(&mut self.key_up_listeners);
-                                    let action_listeners = mem::take(&mut self.action_listeners);
-                                    cx.with_key_dispatch(
-                                        self.key_context.clone(),
-                                        element_state.as_ref().and_then(|s| s.focus_handle.clone()),
-                                        |_, cx| {
-                                            for listener in key_down_listeners {
-                                                cx.on_key_event(
-                                                    move |event: &KeyDownEvent, phase, cx| {
-                                                        listener(event, phase, cx);
-                                                    },
-                                                )
-                                            }
-
-                                            for listener in key_up_listeners {
-                                                cx.on_key_event(
-                                                    move |event: &KeyUpEvent, phase, cx| {
-                                                        listener(event, phase, cx);
-                                                    },
-                                                )
-                                            }
-
-                                            for (action_type, listener) in action_listeners {
-                                                cx.on_action(action_type, listener)
-                                            }
-
-                                            f(&style, scroll_offset.unwrap_or_default(), cx)
-                                        },
+                                    self.paint_hover_group_handler(cx);
+                                    self.paint_mouse_listeners(
+                                        &interactive_bounds,
+                                        element_state.as_mut(),
+                                        cx,
                                     );
+                                    self.paint_scroll_listener(
+                                        bounds,
+                                        content_size,
+                                        interactive_bounds,
+                                        &style,
+                                        cx,
+                                    );
+                                    self.paint_keyboard_listeners(&style, cx, f);
 
                                     if let Some(group) = self.group.as_ref() {
                                         GroupBounds::pop(group, cx);
@@ -2013,6 +1377,576 @@ impl Interactivity {
                 ((), element_state)
             },
         );
+    }
+
+    fn paint_debug_info(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        style: &Style,
+        cx: &mut ElementContext<'_>,
+    ) {
+        #[cfg(debug_assertions)]
+        if self.element_id.is_some()
+            && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
+            && bounds.contains(&cx.mouse_position())
+        {
+            const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
+            let element_id = format!("{:?}", self.element_id.as_ref().unwrap());
+            let str_len = element_id.len();
+
+            let render_debug_text = |cx: &mut ElementContext| {
+                if let Some(text) = cx
+                    .text_system()
+                    .shape_text(
+                        element_id.into(),
+                        FONT_SIZE,
+                        &[cx.text_style().to_run(str_len)],
+                        None,
+                    )
+                    .ok()
+                    .and_then(|mut text| text.pop())
+                {
+                    text.paint(bounds.origin, FONT_SIZE, cx).ok();
+
+                    let text_bounds = crate::Bounds {
+                        origin: bounds.origin,
+                        size: text.size(FONT_SIZE),
+                    };
+                    if self.location.is_some()
+                        && text_bounds.contains(&cx.mouse_position())
+                        && cx.modifiers().command
+                    {
+                        let command_held = cx.modifiers().command;
+                        cx.on_key_event({
+                            move |e: &crate::ModifiersChangedEvent, _phase, cx| {
+                                if e.modifiers.command != command_held
+                                    && text_bounds.contains(&cx.mouse_position())
+                                {
+                                    cx.refresh();
+                                }
+                            }
+                        });
+
+                        let hovered = bounds.contains(&cx.mouse_position());
+                        cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                            if phase == DispatchPhase::Capture
+                                && bounds.contains(&event.position) != hovered
+                            {
+                                cx.refresh();
+                            }
+                        });
+
+                        cx.on_mouse_event({
+                            let location = self.location.unwrap();
+                            move |e: &crate::MouseDownEvent, phase, cx| {
+                                if text_bounds.contains(&e.position) && phase.capture() {
+                                    cx.stop_propagation();
+                                    let Ok(dir) = std::env::current_dir() else {
+                                        return;
+                                    };
+
+                                    eprintln!(
+                                        "This element was created at:\n{}:{}:{}",
+                                        dir.join(location.file()).to_string_lossy(),
+                                        location.line(),
+                                        location.column()
+                                    );
+                                }
+                            }
+                        });
+                        cx.paint_quad(crate::outline(
+                            crate::Bounds {
+                                origin: bounds.origin
+                                    + crate::point(crate::px(0.), FONT_SIZE - px(2.)),
+                                size: crate::Size {
+                                    width: text_bounds.size.width,
+                                    height: crate::px(1.),
+                                },
+                            },
+                            crate::red(),
+                        ))
+                    }
+                }
+            };
+
+            cx.with_z_index(1, |cx| {
+                cx.with_text_style(
+                    Some(crate::TextStyleRefinement {
+                        color: Some(crate::red()),
+                        line_height: Some(FONT_SIZE.into()),
+                        background_color: Some(crate::white()),
+                        ..Default::default()
+                    }),
+                    render_debug_text,
+                )
+            });
+        }
+    }
+
+    fn paint_mouse_listeners(
+        &mut self,
+        bounds: &InteractiveBounds,
+        element_state: Option<&mut InteractiveElementState>,
+        cx: &mut ElementContext,
+    ) {
+        // If this element can be focused, register a mouse down listener
+        // that will automatically transfer focus when hitting the element.
+        // This behavior can be suppressed by using `cx.prevent_default()`.
+        if let Some(focus_handle) = self.tracked_focus_handle.clone() {
+            cx.on_mouse_event({
+                let bounds = bounds.clone();
+                move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && !cx.default_prevented()
+                        && bounds.visibly_contains(&event.position, cx)
+                    {
+                        cx.focus(&focus_handle);
+                        // If there is a parent that is also focusable, prevent it
+                        // from transferring focus because we already did so.
+                        cx.prevent_default();
+                    }
+                }
+            });
+        }
+
+        for listener in self.mouse_down_listeners.drain(..) {
+            let bounds = bounds.clone();
+            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                listener(event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in self.mouse_up_listeners.drain(..) {
+            let bounds = bounds.clone();
+            cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
+                listener(event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in self.mouse_move_listeners.drain(..) {
+            let bounds = bounds.clone();
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                listener(event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in self.scroll_wheel_listeners.drain(..) {
+            let bounds = bounds.clone();
+            cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
+                listener(event, &bounds, phase, cx);
+            })
+        }
+
+        if self.hover_style.is_some()
+            || self.base_style.mouse_cursor.is_some()
+            || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
+        {
+            let bounds = bounds.intersect(&cx.content_mask().bounds);
+            let hovered = bounds.contains(&cx.mouse_position());
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture && bounds.contains(&event.position) != hovered {
+                    cx.refresh();
+                }
+            });
+        }
+
+        let mut drag_listener = mem::take(&mut self.drag_listener);
+        let drop_listeners = mem::take(&mut self.drop_listeners);
+        let click_listeners = mem::take(&mut self.click_listeners);
+        let can_drop_predicate = mem::take(&mut self.can_drop_predicate);
+
+        if !drop_listeners.is_empty() {
+            cx.on_mouse_event({
+                let bounds = bounds.clone();
+                move |event: &MouseUpEvent, phase, cx| {
+                    if let Some(drag) = &cx.active_drag {
+                        if phase == DispatchPhase::Bubble
+                            && bounds.drag_target_contains(&event.position, cx)
+                        {
+                            let drag_state_type = drag.value.as_ref().type_id();
+                            for (drop_state_type, listener) in &drop_listeners {
+                                if *drop_state_type == drag_state_type {
+                                    let drag = cx
+                                        .active_drag
+                                        .take()
+                                        .expect("checked for type drag state type above");
+
+                                    let mut can_drop = true;
+                                    if let Some(predicate) = &can_drop_predicate {
+                                        can_drop = predicate(drag.value.as_ref(), cx.deref_mut());
+                                    }
+
+                                    if can_drop {
+                                        listener(drag.value.as_ref(), cx.deref_mut());
+                                        cx.refresh();
+                                        cx.stop_propagation();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        if let Some(element_state) = element_state {
+            if !click_listeners.is_empty() || drag_listener.is_some() {
+                let pending_mouse_down = element_state
+                    .pending_mouse_down
+                    .get_or_insert_with(Default::default)
+                    .clone();
+
+                let clicked_state = element_state
+                    .clicked_state
+                    .get_or_insert_with(Default::default)
+                    .clone();
+
+                cx.on_mouse_event({
+                    let bounds = bounds.clone();
+                    let pending_mouse_down = pending_mouse_down.clone();
+                    move |event: &MouseDownEvent, phase, cx| {
+                        if phase == DispatchPhase::Bubble
+                            && event.button == MouseButton::Left
+                            && bounds.visibly_contains(&event.position, cx)
+                        {
+                            *pending_mouse_down.borrow_mut() = Some(event.clone());
+                            cx.refresh();
+                        }
+                    }
+                });
+
+                cx.on_mouse_event({
+                    let pending_mouse_down = pending_mouse_down.clone();
+                    let bounds = bounds.clone();
+                    move |event: &MouseMoveEvent, phase, cx| {
+                        if phase == DispatchPhase::Capture {
+                            return;
+                        }
+
+                        let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                        if let Some(mouse_down) = pending_mouse_down.clone() {
+                            if !cx.has_active_drag()
+                                && (event.position - mouse_down.position).magnitude()
+                                    > DRAG_THRESHOLD
+                            {
+                                if let Some((drag_value, drag_listener)) = drag_listener.take() {
+                                    *clicked_state.borrow_mut() = ElementClickedState::default();
+                                    let cursor_offset = event.position - bounds.origin;
+                                    let drag = (drag_listener)(drag_value.as_ref(), cx);
+                                    cx.active_drag = Some(AnyDrag {
+                                        view: drag,
+                                        value: drag_value,
+                                        cursor_offset,
+                                    });
+                                    pending_mouse_down.take();
+                                    cx.refresh();
+                                    cx.stop_propagation();
+                                }
+                            }
+                        }
+                    }
+                });
+
+                cx.on_mouse_event({
+                    let bounds = bounds.clone();
+                    let mut captured_mouse_down = None;
+                    move |event: &MouseUpEvent, phase, cx| match phase {
+                        // Clear the pending mouse down during the capture phase,
+                        // so that it happens even if another event handler stops
+                        // propagation.
+                        DispatchPhase::Capture => {
+                            let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                            if pending_mouse_down.is_some() {
+                                captured_mouse_down = pending_mouse_down.take();
+                                cx.refresh();
+                            }
+                        }
+                        // Fire click handlers during the bubble phase.
+                        DispatchPhase::Bubble => {
+                            if let Some(mouse_down) = captured_mouse_down.take() {
+                                if bounds.visibly_contains(&event.position, cx) {
+                                    let mouse_click = ClickEvent {
+                                        down: mouse_down,
+                                        up: event.clone(),
+                                    };
+                                    for listener in &click_listeners {
+                                        listener(&mouse_click, cx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            if let Some(hover_listener) = self.hover_listener.take() {
+                let was_hovered = element_state
+                    .hover_state
+                    .get_or_insert_with(Default::default)
+                    .clone();
+                let has_mouse_down = element_state
+                    .pending_mouse_down
+                    .get_or_insert_with(Default::default)
+                    .clone();
+                let bounds = bounds.clone();
+
+                cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+                    let is_hovered = bounds.visibly_contains(&event.position, cx)
+                        && has_mouse_down.borrow().is_none()
+                        && !cx.has_active_drag();
+                    let mut was_hovered = was_hovered.borrow_mut();
+
+                    if is_hovered != *was_hovered {
+                        *was_hovered = is_hovered;
+                        drop(was_hovered);
+
+                        hover_listener(&is_hovered, cx.deref_mut());
+                    }
+                });
+            }
+
+            if let Some(tooltip_builder) = self.tooltip_builder.take() {
+                let active_tooltip = element_state
+                    .active_tooltip
+                    .get_or_insert_with(Default::default)
+                    .clone();
+                let pending_mouse_down = element_state
+                    .pending_mouse_down
+                    .get_or_insert_with(Default::default)
+                    .clone();
+                let bounds = bounds.clone();
+
+                cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                    let is_hovered = bounds.visibly_contains(&event.position, cx)
+                        && pending_mouse_down.borrow().is_none();
+                    if !is_hovered {
+                        active_tooltip.borrow_mut().take();
+                        return;
+                    }
+
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+
+                    if active_tooltip.borrow().is_none() {
+                        let task = cx.spawn({
+                            let active_tooltip = active_tooltip.clone();
+                            let tooltip_builder = tooltip_builder.clone();
+
+                            move |mut cx| async move {
+                                cx.background_executor().timer(TOOLTIP_DELAY).await;
+                                cx.update(|cx| {
+                                    active_tooltip.borrow_mut().replace(ActiveTooltip {
+                                        tooltip: Some(AnyTooltip {
+                                            view: tooltip_builder(cx),
+                                            cursor_offset: cx.mouse_position(),
+                                        }),
+                                        _task: None,
+                                    });
+                                    cx.refresh();
+                                })
+                                .ok();
+                            }
+                        });
+                        active_tooltip.borrow_mut().replace(ActiveTooltip {
+                            tooltip: None,
+                            _task: Some(task),
+                        });
+                    }
+                });
+
+                let active_tooltip = element_state
+                    .active_tooltip
+                    .get_or_insert_with(Default::default)
+                    .clone();
+                cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
+                    active_tooltip.borrow_mut().take();
+                });
+
+                if let Some(active_tooltip) = element_state
+                    .active_tooltip
+                    .get_or_insert_with(Default::default)
+                    .borrow()
+                    .as_ref()
+                {
+                    if let Some(tooltip) = active_tooltip.tooltip.clone() {
+                        cx.set_tooltip(tooltip);
+                    }
+                }
+            }
+
+            let active_state = element_state
+                .clicked_state
+                .get_or_insert_with(Default::default)
+                .clone();
+            if active_state.borrow().is_clicked() {
+                cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture {
+                        *active_state.borrow_mut() = ElementClickedState::default();
+                        cx.refresh();
+                    }
+                });
+            } else {
+                let active_group_bounds = self
+                    .group_active_style
+                    .as_ref()
+                    .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
+                let bounds = bounds.clone();
+                cx.on_mouse_event(move |down: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble && !cx.default_prevented() {
+                        let group = active_group_bounds
+                            .map_or(false, |bounds| bounds.contains(&down.position));
+                        let element = bounds.visibly_contains(&down.position, cx);
+                        if group || element {
+                            *active_state.borrow_mut() = ElementClickedState { group, element };
+                            cx.refresh();
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    fn paint_keyboard_listeners(
+        &mut self,
+        style: &Style,
+        cx: &mut ElementContext<'_>,
+        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext<'_>),
+    ) {
+        let key_down_listeners = mem::take(&mut self.key_down_listeners);
+        let key_up_listeners = mem::take(&mut self.key_up_listeners);
+        let action_listeners = mem::take(&mut self.action_listeners);
+        cx.with_key_dispatch(
+            self.key_context.clone(),
+            self.tracked_focus_handle.clone(),
+            |_, cx| {
+                for listener in key_down_listeners {
+                    cx.on_key_event(move |event: &KeyDownEvent, phase, cx| {
+                        listener(event, phase, cx);
+                    })
+                }
+
+                for listener in key_up_listeners {
+                    cx.on_key_event(move |event: &KeyUpEvent, phase, cx| {
+                        listener(event, phase, cx);
+                    })
+                }
+
+                for (action_type, listener) in action_listeners {
+                    cx.on_action(action_type, listener)
+                }
+
+                let scroll_offset = self.scroll_offset.as_ref().map(|offset| *offset.borrow());
+                f(style, scroll_offset.unwrap_or_default(), cx)
+            },
+        );
+    }
+
+    fn paint_hover_group_handler(&self, cx: &mut ElementContext) {
+        let hover_group_bounds = self
+            .group_hover_style
+            .as_ref()
+            .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
+
+        if let Some(group_bounds) = hover_group_bounds {
+            let hovered = group_bounds.contains(&cx.mouse_position());
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture
+                    && group_bounds.contains(&event.position) != hovered
+                {
+                    cx.refresh();
+                }
+            });
+        }
+    }
+
+    fn paint_scroll_listener(
+        &self,
+        bounds: Bounds<Pixels>,
+        content_size: Size<Pixels>,
+        interactive_bounds: InteractiveBounds,
+        style: &Style,
+        cx: &mut ElementContext<'_>,
+    ) {
+        if let Some(scroll_offset) = self.scroll_offset.clone() {
+            let overflow = style.overflow;
+
+            if let Some(scroll_handle) = &self.tracked_scroll_handle {
+                scroll_handle.0.borrow_mut().overflow = overflow;
+            }
+
+            let line_height = cx.line_height();
+            let rem_size = cx.rem_size();
+            let padding_size = size(
+                style
+                    .padding
+                    .left
+                    .to_pixels(bounds.size.width.into(), rem_size)
+                    + style
+                        .padding
+                        .right
+                        .to_pixels(bounds.size.width.into(), rem_size),
+                style
+                    .padding
+                    .top
+                    .to_pixels(bounds.size.height.into(), rem_size)
+                    + style
+                        .padding
+                        .bottom
+                        .to_pixels(bounds.size.height.into(), rem_size),
+            );
+            let scroll_max = (content_size + padding_size - bounds.size).max(&Size::default());
+            // Clamp scroll offset in case scroll max is smaller now (e.g., if children
+            // were removed or the bounds became larger).
+            {
+                let mut scroll_offset = scroll_offset.borrow_mut();
+                scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
+                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+            }
+
+            let interactive_bounds = interactive_bounds.clone();
+            cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    let mut scroll_offset = scroll_offset.borrow_mut();
+                    let old_scroll_offset = *scroll_offset;
+                    let delta = event.delta.pixel_delta(line_height);
+
+                    if overflow.x == Overflow::Scroll {
+                        let mut delta_x = Pixels::ZERO;
+                        if !delta.x.is_zero() {
+                            delta_x = delta.x;
+                        } else if overflow.y != Overflow::Scroll {
+                            delta_x = delta.y;
+                        }
+
+                        scroll_offset.x =
+                            (scroll_offset.x + delta_x).clamp(-scroll_max.width, px(0.));
+                    }
+
+                    if overflow.y == Overflow::Scroll {
+                        let mut delta_y = Pixels::ZERO;
+                        if !delta.y.is_zero() {
+                            delta_y = delta.y;
+                        } else if overflow.x != Overflow::Scroll {
+                            delta_y = delta.x;
+                        }
+
+                        scroll_offset.y =
+                            (scroll_offset.y + delta_y).clamp(-scroll_max.height, px(0.));
+                    }
+
+                    if *scroll_offset != old_scroll_offset {
+                        cx.refresh();
+                        cx.stop_propagation();
+                    }
+                }
+            });
+        }
     }
 
     /// Compute the visual style for this element, based on the current bounds and the element's state.

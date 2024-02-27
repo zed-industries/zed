@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::{Bounds, Half, Point};
 use std::{
     cmp,

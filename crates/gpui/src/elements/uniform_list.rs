@@ -145,7 +145,7 @@ impl Element for UniformList {
             height: item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
-        let shared_scroll_offset = self.interactivity.scroll_offset(cx).unwrap();
+        let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
 
         let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;
         let shared_scroll_to_item = self

@@ -81,7 +81,7 @@ pub(crate) struct DispatchNode {
     pub key_listeners: Vec<KeyListener>,
     pub action_listeners: Vec<DispatchActionListener>,
     pub context: Option<KeyContext>,
-    focus_id: Option<FocusId>,
+    pub focus_id: Option<FocusId>,
     view_id: Option<EntityId>,
     parent: Option<DispatchNodeId>,
 }
@@ -125,6 +125,7 @@ impl DispatchTree {
     ) {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
+
         self.nodes.push(DispatchNode {
             parent,
             focus_id,
