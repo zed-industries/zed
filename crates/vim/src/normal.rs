@@ -917,13 +917,13 @@ mod test {
         cx.assert_binding(
             ["f", "l"],
             indoc! {"
-            ˇfunction test() {
+            ˇfunction print() {
                 console.log('ok')
             }
             "},
             Mode::Normal,
             indoc! {"
-            function test() {
+            function print() {
                 consoˇle.log('ok')
             }
             "},
@@ -933,13 +933,13 @@ mod test {
         cx.assert_binding(
             ["t", "l"],
             indoc! {"
-            ˇfunction test() {
+            ˇfunction print() {
                 console.log('ok')
             }
             "},
             Mode::Normal,
             indoc! {"
-            function test() {
+            function print() {
                 consˇole.log('ok')
             }
             "},
@@ -957,15 +957,15 @@ mod test {
         });
 
         cx.assert_binding(
-            ["F", "f"],
+            ["F", "p"],
             indoc! {"
-            function test() {
+            function print() {
                 console.ˇlog('ok')
             }
             "},
             Mode::Normal,
             indoc! {"
-            ˇfunction test() {
+            function ˇprint() {
                 console.log('ok')
             }
             "},
@@ -973,15 +973,15 @@ mod test {
         );
 
         cx.assert_binding(
-            ["T", "f"],
+            ["T", "p"],
             indoc! {"
-            function test() {
+            function print() {
                 console.ˇlog('ok')
             }
             "},
             Mode::Normal,
             indoc! {"
-            fˇunction test() {
+            function pˇrint() {
                 console.log('ok')
             }
             "},
