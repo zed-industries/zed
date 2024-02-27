@@ -2,7 +2,7 @@ use crate::{collab_panel, ChatPanelSettings};
 use anyhow::Result;
 use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};
-use client::Client;
+use client::{ChannelId, Client};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -169,7 +169,7 @@ impl ChatPanel {
         })
     }
 
-    pub fn channel_id(&self, cx: &AppContext) -> Option<u64> {
+    pub fn channel_id(&self, cx: &AppContext) -> Option<ChannelId> {
         self.active_chat
             .as_ref()
             .map(|(chat, _)| chat.read(cx).channel_id)
@@ -710,7 +710,7 @@ impl ChatPanel {
 
     pub fn select_channel(
         &mut self,
-        selected_channel_id: u64,
+        selected_channel_id: ChannelId,
         scroll_to_message_id: Option<u64>,
         cx: &mut ViewContext<ChatPanel>,
     ) -> Task<Result<()>> {

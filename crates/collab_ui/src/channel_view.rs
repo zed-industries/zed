@@ -1,9 +1,9 @@
 use anyhow::Result;
 use call::report_call_event_for_channel;
-use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId, ChannelStore};
+use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelStore};
 use client::{
     proto::{self, PeerId},
-    Collaborator, ParticipantIndex,
+    ChannelId, Collaborator, ParticipantIndex,
 };
 use collections::HashMap;
 use editor::{
@@ -454,7 +454,7 @@ impl FollowableItem for ChannelView {
 
         Some(proto::view::Variant::ChannelView(
             proto::view::ChannelView {
-                channel_id: channel_buffer.channel_id,
+                channel_id: channel_buffer.channel_id.0,
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
                     self.editor.read(cx).to_state_proto(cx)
                 {
@@ -480,7 +480,8 @@ impl FollowableItem for ChannelView {
             unreachable!()
         };
 
-        let open = ChannelView::open_in_pane(state.channel_id, None, pane, workspace, cx);
+        let open =
+            ChannelView::open_in_pane(ChannelId(state.channel_id), None, pane, workspace, cx);
 
         Some(cx.spawn(|mut cx| async move {
             let this = open.await?;

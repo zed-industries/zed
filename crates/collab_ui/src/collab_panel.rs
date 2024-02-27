@@ -7,8 +7,8 @@ use crate::{
     CollaborationPanelSettings,
 };
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
-use client::{Client, Contact, User, UserStore};
+use channel::{Channel, ChannelEvent, ChannelStore, HostedProjectId};
+use client::{ChannelId, Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -184,6 +184,10 @@ enum ListEntry {
     ChannelEditor {
         depth: usize,
     },
+    HostedProject {
+        id: HostedProjectId,
+        name: SharedString,
+    },
     Contact {
         contact: Arc<Contact>,
         calling: bool,
@@ -326,7 +330,10 @@ impl CollabPanel {
                     panel.width = serialized_panel.width;
                     panel.collapsed_channels = serialized_panel
                         .collapsed_channels
-                        .unwrap_or_else(|| Vec::new());
+                        .unwrap_or_else(|| Vec::new())
+                        .iter()
+                        .map(|cid| ChannelId(*cid))
+                        .collect();
                     cx.notify();
                 });
             }
@@ -344,7 +351,9 @@ impl CollabPanel {
                         COLLABORATION_PANEL_KEY.into(),
                         serde_json::to_string(&SerializedCollabPanel {
                             width,
-                            collapsed_channels: Some(collapsed_channels),
+                            collapsed_channels: Some(
+                                collapsed_channels.iter().map(|cid| cid.0).collect(),
+                            ),
                         })?,
                     )
                     .await?;
@@ -563,6 +572,7 @@ impl CollabPanel {
                     }
                 }
 
+                let hosted_projects = channel_store.projects_for_id(channel.id);
                 let has_children = channel_store
                     .channel_at_index(mat.candidate_id + 1)
                     .map_or(false, |next_channel| {
@@ -595,6 +605,10 @@ impl CollabPanel {
                             has_children,
                         });
                     }
+                }
+
+                for (name, id) in hosted_projects {
+                    self.entries.push(ListEntry::HostedProject { id, name })
                 }
             }
         }
@@ -1021,6 +1035,33 @@ impl CollabPanel {
             )
             .child(Label::new("chat"))
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
+    }
+
+    fn render_channel_project(
+        &self,
+        id: HostedProjectId,
+        name: &SharedString,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        ListItem::new(ElementId::NamedInteger(
+            "channel-project".into(),
+            id.0 as usize,
+        ))
+        .indent_level(2)
+        .indent_step_size(px(20.))
+        .selected(is_selected)
+        .on_click(cx.listener(move |_this, _, _cx| {
+            // todo!()
+        }))
+        .start_slot(
+            h_flex()
+                .relative()
+                .gap_1()
+                .child(IconButton::new(0, IconName::FileTree)),
+        )
+        .child(Label::new(name.clone()))
+        .tooltip(move |cx| Tooltip::text("Open Project", cx))
     }
 
     fn has_subchannels(&self, ix: usize) -> bool {
@@ -1486,6 +1527,12 @@ impl CollabPanel {
                     ListEntry::ChannelChat { channel_id } => {
                         self.join_channel_chat(*channel_id, cx)
                     }
+                    ListEntry::HostedProject {
+                        id: _id,
+                        name: _name,
+                    } => {
+                        // todo!()
+                    }
 
                     ListEntry::OutgoingRequest(_) => {}
                     ListEntry::ChannelEditor { .. } => {}
@@ -1923,7 +1970,7 @@ impl CollabPanel {
 
     fn respond_to_channel_invite(
         &mut self,
-        channel_id: u64,
+        channel_id: ChannelId,
         accept: bool,
         cx: &mut ViewContext<Self>,
     ) {
@@ -1942,7 +1989,7 @@ impl CollabPanel {
             .detach_and_prompt_err("Call failed", cx, |_, _| None);
     }
 
-    fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+    fn join_channel(&self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -2088,6 +2135,10 @@ impl CollabPanel {
                 .into_any_element(),
             ListEntry::ChannelChat { channel_id } => self
                 .render_channel_chat(*channel_id, is_selected, cx)
+                .into_any_element(),
+
+            ListEntry::HostedProject { id, name } => self
+                .render_channel_project(*id, name, is_selected, cx)
                 .into_any_element(),
         }
     }
@@ -2405,7 +2456,7 @@ impl CollabPanel {
                 .tooltip(|cx| Tooltip::text("Accept invite", cx)),
         ];
 
-        ListItem::new(("channel-invite", channel.id as usize))
+        ListItem::new(("channel-invite", channel.id.0 as usize))
             .selected(is_selected)
             .child(
                 h_flex()
@@ -2497,7 +2548,7 @@ impl CollabPanel {
 
         div()
             .h_6()
-            .id(channel_id as usize)
+            .id(channel_id.0 as usize)
             .group("")
             .flex()
             .w_full()
@@ -2525,7 +2576,7 @@ impl CollabPanel {
                 this.move_channel(dragged_channel.id, channel_id, cx);
             }))
             .child(
-                ListItem::new(channel_id as usize)
+                ListItem::new(channel_id.0 as usize)
                     // Add one level of depth for the disclosure arrow.
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
@@ -2572,7 +2623,7 @@ impl CollabPanel {
                     )
                     .child(
                         h_flex()
-                            .id(channel_id as usize)
+                            .id(channel_id.0 as usize)
                             .child(Label::new(channel.name.clone()))
                             .children(face_pile.map(|face_pile| face_pile.p_1())),
                     ),
@@ -2824,6 +2875,11 @@ impl PartialEq for ListEntry {
                 } = other
                 {
                     return channel_1.id == channel_2.id;
+                }
+            }
+            ListEntry::HostedProject { id, .. } => {
+                if let ListEntry::HostedProject { id: other_id, .. } = other {
+                    return id == other_id;
                 }
             }
             ListEntry::ChannelNotes { channel_id } => {

@@ -2341,38 +2341,48 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.take_rename(false, cx).is_some() {
-            return;
-        }
-
-        if hide_hover(self, cx) {
-            return;
-        }
-
-        if self.hide_context_menu(cx).is_some() {
-            return;
-        }
-
-        if self.discard_copilot_suggestion(cx) {
-            return;
-        }
-
-        if self.snippet_stack.pop().is_some() {
+        if self.dismiss_menus_and_popups(cx) {
             return;
         }
 
         if self.mode == EditorMode::Full {
-            if self.active_diagnostics.is_some() {
-                self.dismiss_diagnostics(cx);
-                return;
-            }
-
             if self.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel()) {
                 return;
             }
         }
 
         cx.propagate();
+    }
+
+    pub fn dismiss_menus_and_popups(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if self.take_rename(false, cx).is_some() {
+            return true;
+        }
+
+        if hide_hover(self, cx) {
+            return true;
+        }
+
+        if self.hide_context_menu(cx).is_some() {
+            return true;
+        }
+
+        if self.discard_copilot_suggestion(cx) {
+            return true;
+        }
+
+        if self.snippet_stack.pop().is_some() {
+            return true;
+        }
+
+        if self.mode == EditorMode::Full {
+            if self.active_diagnostics.is_some() {
+                self.dismiss_diagnostics(cx);
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {

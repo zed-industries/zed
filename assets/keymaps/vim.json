@@ -383,6 +383,7 @@
           "ignorePunctuation": true
         }
       ],
+      "t": "vim::Tag",
       "s": "vim::Sentence",
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
