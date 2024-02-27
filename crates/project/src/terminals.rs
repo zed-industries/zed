@@ -33,6 +33,17 @@ impl Project {
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
         let mut env = settings.env.clone();
+
+        // if we are creating a task, activate minimal python virtual environment
+        if !is_terminal {
+            if let Some(python_settings) = &python_settings.as_option() {
+                self.set_python_venv_path_for_tasks(
+                    python_settings,
+                    working_directory.clone(),
+                    &mut env,
+                );
+            }
+        }
         let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
             env.extend(spawn_task.env);
             (
@@ -83,7 +94,7 @@ impl Project {
             })
             .detach();
 
-            // only apply venv settings if the terminal, not a task, is being created (#8334)
+            // if the terminal is not a task, activate full python virtual environment
             if is_terminal {
                 if let Some(python_settings) = &python_settings.as_option() {
                     let activate_command = Project::get_activate_command(python_settings);
@@ -130,6 +141,41 @@ impl Project {
         }
 
         None
+    }
+
+    pub fn set_python_venv_path_for_tasks(
+        &mut self,
+        settings: &VenvSettingsContent,
+        working_directory: Option<PathBuf>,
+        env: &mut std::collections::HashMap<String, String>,
+    ) {
+        let working_directory = working_directory.unwrap_or_else(|| Path::new("/").to_path_buf());
+        for virtual_environment_name in settings.directories {
+            let path = working_directory.join(virtual_environment_name);
+            if path.exists() {
+                // Some tools use VIRTUAL_ENV to detect the virtual environment
+                env.insert(
+                    "VIRTUAL_ENV".to_string(),
+                    path.to_string_lossy().to_string(),
+                );
+
+                let path_bin = path.join("bin");
+                // We need to set the PATH to include the virtual environment's bin directory
+                if let Some(paths) = std::env::var_os("PATH") {
+                    let mut paths = std::env::split_paths(&paths)
+                        .filter(|p| p != &path_bin) // so we don't add the same path twice
+                        .collect::<Vec<_>>();
+                    paths.insert(0, path_bin);
+                    let new_path = std::env::join_paths(paths).unwrap();
+                    env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
+                } else {
+                    env.insert(
+                        "PATH".to_string(),
+                        path.join("bin").to_string_lossy().to_string(),
+                    );
+                }
+            }
+        }
     }
 
     fn get_activate_command(settings: &VenvSettingsContent) -> &'static str {
