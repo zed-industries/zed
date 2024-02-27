@@ -21,11 +21,11 @@ use windows::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
         Graphics::Gdi::HBRUSH,
         UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, RegisterClassW, SetWindowLongPtrW,
-            SetWindowTextW, ShowWindow, CREATESTRUCTW, CW_USEDEFAULT, GWLP_WNDPROC, HCURSOR, HICON,
-            HMENU, SW_MAXIMIZE, SW_SHOW, WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CLOSE,
-            WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSW,
-            WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+            CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, PostQuitMessage, RegisterClassW,
+            SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW, CW_USEDEFAULT,
+            GWLP_WNDPROC, HCURSOR, HICON, HMENU, SW_MAXIMIZE, SW_SHOW, WINDOW_EX_STYLE,
+            WINDOW_LONG_PTR_INDEX, WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY,
+            WM_PAINT, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
         },
     },
 };
@@ -34,6 +34,7 @@ use crate::{
     platform::blade::BladeRenderer, AnyWindowHandle, Bounds, GlobalPixels, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptLevel, Scene, Size, WindowAppearance, WindowBounds, WindowOptions, WindowsDisplay,
+    WindowsPlatformInner,
 };
 
 struct WindowsWindowInner {
@@ -44,10 +45,17 @@ struct WindowsWindowInner {
     input_handler: Cell<Option<PlatformInputHandler>>,
     renderer: RefCell<BladeRenderer>,
     callbacks: RefCell<Callbacks>,
+    platform_inner: Rc<WindowsPlatformInner>,
+    handle: AnyWindowHandle,
 }
 
 impl WindowsWindowInner {
-    fn new(hwnd: HWND, cs: &CREATESTRUCTW) -> Self {
+    fn new(
+        hwnd: HWND,
+        cs: &CREATESTRUCTW,
+        platform_inner: Rc<WindowsPlatformInner>,
+        handle: AnyWindowHandle,
+    ) -> Self {
         let origin = Cell::new(Point::new((cs.x as f64).into(), (cs.y as f64).into()));
         let size = Cell::new(Size {
             width: (cs.cx as f64).into(),
@@ -98,6 +106,8 @@ impl WindowsWindowInner {
             input_handler,
             renderer,
             callbacks,
+            platform_inner,
+            handle,
         }
     }
 
@@ -155,6 +165,16 @@ impl WindowsWindowInner {
                 if let Some(callback) = callbacks.close.take() {
                     callback()
                 }
+                let mut window_handles = self.platform_inner.window_handles.borrow_mut();
+                window_handles.remove(&self.handle);
+                if window_handles.is_empty() {
+                    self.platform_inner
+                        .foreground_executor
+                        .spawn(async {
+                            unsafe { PostQuitMessage(0) };
+                        })
+                        .detach();
+                }
                 return LRESULT(1);
             }
             _ => return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
@@ -182,10 +202,16 @@ pub(crate) struct WindowsWindow {
 
 struct WindowCreateContext {
     inner: Option<Rc<WindowsWindowInner>>,
+    platform_inner: Rc<WindowsPlatformInner>,
+    handle: AnyWindowHandle,
 }
 
 impl WindowsWindow {
-    pub(crate) fn new(_handle: AnyWindowHandle, options: WindowOptions) -> Self {
+    pub(crate) fn new(
+        platform_inner: Rc<WindowsPlatformInner>,
+        handle: AnyWindowHandle,
+        options: WindowOptions,
+    ) -> Self {
         let dwexstyle = WINDOW_EX_STYLE::default();
         let classname = register_wnd_class();
         let windowname = OsStr::new(
@@ -217,7 +243,11 @@ impl WindowsWindow {
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
         let hinstance = HINSTANCE::default();
-        let mut context = WindowCreateContext { inner: None };
+        let mut context = WindowCreateContext {
+            inner: None,
+            platform_inner: platform_inner.clone(),
+            handle,
+        };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
             CreateWindowExW(
@@ -238,12 +268,12 @@ impl WindowsWindow {
         let wnd = Self {
             inner: context.inner.unwrap(),
         };
+        platform_inner.window_handles.borrow_mut().insert(handle);
         match options.bounds {
             WindowBounds::Fullscreen => wnd.toggle_full_screen(),
             WindowBounds::Maximized => wnd.maximize(),
             WindowBounds::Fixed(_) => {}
         }
-        unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
         unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
         wnd
     }
@@ -492,7 +522,12 @@ unsafe extern "system" fn wnd_proc_start(
         let cs = unsafe { &*cs };
         let ctx = cs.lpCreateParams as *mut WindowCreateContext;
         let ctx = unsafe { &mut *ctx };
-        let inner = Rc::new(WindowsWindowInner::new(hwnd, cs));
+        let inner = Rc::new(WindowsWindowInner::new(
+            hwnd,
+            cs,
+            ctx.platform_inner.clone(),
+            ctx.handle,
+        ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { SetWindowLongPtrW(hwnd, WINDOW_LONG_PTR_INDEX(0), Box::into_raw(weak) as isize) };
         unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, wnd_proc as *const c_void as isize) };

@@ -2,6 +2,8 @@
 #![allow(unused_variables)]
 
 use std::{
+    cell::RefCell,
+    collections::HashSet,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -32,12 +34,13 @@ pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
 }
 
-struct WindowsPlatformInner {
+pub(crate) struct WindowsPlatformInner {
     background_executor: BackgroundExecutor,
-    foreground_executor: ForegroundExecutor,
+    pub(crate) foreground_executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
     text_system: Arc<CosmicTextSystem>,
     callbacks: Mutex<Callbacks>,
+    pub(crate) window_handles: RefCell<HashSet<AnyWindowHandle>>,
 }
 
 #[derive(Default)]
@@ -61,12 +64,14 @@ impl WindowsPlatform {
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
+        let window_handles = RefCell::new(HashSet::new());
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
             foreground_executor,
             main_receiver,
             text_system,
             callbacks,
+            window_handles,
         });
         Self { inner }
     }
@@ -156,7 +161,7 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(WindowsWindow::new(handle, options))
+        Box::new(WindowsWindow::new(self.inner.clone(), handle, options))
     }
 
     // todo!("windows")
