@@ -8,6 +8,7 @@ use std::{
 
 use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
+use project_core::worktree::WorktreeId;
 use itertools::Itertools;
 use task::{Task, TaskId, TaskSource};
 use util::{post_inc, NumericPrefixWithSuffix};
@@ -23,6 +24,7 @@ struct SourceInInventory {
     _subscription: Subscription,
     type_id: TypeId,
     local_abs_path: Option<PathBuf>,
+    worktree: Option<WorktreeId>,
 }
 
 impl Inventory {
@@ -39,6 +41,7 @@ impl Inventory {
     pub fn add_static_source(
         &mut self,
         abs_path: Option<&Path>,
+        worktree: Option<WorktreeId>,
         create_static_source: impl FnOnce(&mut ModelContext<Self>) -> Model<Box<dyn TaskSource>>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -62,6 +65,7 @@ impl Inventory {
             source,
             type_id,
             local_abs_path: abs_path.map(Path::to_path_buf),
+            worktree,
         };
         self.sources.push(source);
         cx.notify();
@@ -74,6 +78,14 @@ impl Inventory {
     pub fn remove_local_static_source(&mut self, abs_path: &Path) {
         self.sources
             .retain(|s| s.local_abs_path.as_deref() != Some(abs_path));
+    }
+
+    /// If present, removes the worktree source entry that has the given worktree id,
+    /// making corresponding task definitions unavailable in the fetch results.
+    ///
+    /// Now, entry for this path can be re-added again.
+    pub fn remove_worktree_sources(&mut self, worktree: WorktreeId) {
+        self.sources.retain(|s| s.worktree != Some(worktree));
     }
 
     pub fn source<T: TaskSource>(&self) -> Option<Model<Box<dyn TaskSource>>> {

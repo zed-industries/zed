@@ -6619,7 +6619,9 @@ impl Project {
         })
         .detach();
 
-        // TODO kb remove tasks from the worktree's config
+        self.task_inventory().update(cx, |inventory, _| {
+            inventory.remove_worktree_sources(id_to_remove);
+        });
 
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
@@ -7023,6 +7025,7 @@ impl Project {
                         let task_abs_path = abs_path.clone();
                         task_inventory.add_static_source(
                             Some(&abs_path),
+                            Some(remote_worktree_id),
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);

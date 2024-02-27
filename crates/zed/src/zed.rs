@@ -159,9 +159,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
-                    inventory.add_static_source(None, |cx| OneshotSource::new(cx), cx);
+                    inventory.add_static_source(None, None, |cx| OneshotSource::new(cx), cx);
                     inventory.add_static_source(
                         Some(&paths::TASKS),
+                        None,
                         |cx| {
                             let tasks_file_rx = watch_config_file(
                                 &cx.background_executor(),
