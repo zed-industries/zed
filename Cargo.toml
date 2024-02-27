@@ -299,13 +299,6 @@ wasmtime = "18.0"
 which = "6.0.0"
 sys-locale = "0.3.1"
 
-[workspace.dependencies.windows]
-version = "0.53.0"
-features = [
-    "Win32_Graphics_Gdi",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_System_Threading",
-]
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "e4a23971ec3071a09c1e84816954c98f96e98e52" }
