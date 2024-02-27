@@ -957,7 +957,7 @@ mod test {
         });
 
         cx.assert_binding(
-            ["F", "l", "F", "p"],
+            ["shift-f", "p"],
             indoc! {"
             function print() {
                 console.ˇlog('ok')
@@ -973,7 +973,7 @@ mod test {
         );
 
         cx.assert_binding(
-            ["T", "p"],
+            ["shift-t", "p"],
             indoc! {"
             function print() {
                 console.ˇlog('ok')
