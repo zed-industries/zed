@@ -190,8 +190,10 @@ impl NeovimBackedTestContext {
         self.is_dirty = false;
         let marked_text = marked_text.replace("•", " ");
         let neovim = self.neovim_state().await;
+        let neovim_mode = self.neovim_mode().await;
         let editor = self.editor_state();
-        if neovim == marked_text && neovim == editor {
+        let editor_mode = self.mode();
+        if neovim == marked_text && neovim == editor && neovim_mode == editor_mode {
             return;
         }
         let initial_state = self
@@ -213,16 +215,18 @@ impl NeovimBackedTestContext {
                 {}
                 # currently expected:
                 {}
-                # neovim state:
+                # neovim ({}):
                 {}
-                # zed state:
+                # zed ({}):
                 {}"},
             message,
             initial_state,
             self.recent_keystrokes.join(" "),
             marked_text.replace(" \n", "•\n"),
+            neovim_mode,
             neovim.replace(" \n", "•\n"),
-            editor.replace(" \n", "•\n")
+            editor_mode,
+            editor.replace(" \n", "•\n"),
         )
     }
 
@@ -296,27 +300,31 @@ impl NeovimBackedTestContext {
     pub async fn assert_state_matches(&mut self) {
         self.is_dirty = false;
         let neovim = self.neovim_state().await;
+        let neovim_mode = self.neovim_mode().await;
         let editor = self.editor_state();
+        let editor_mode = self.mode();
         let initial_state = self
             .last_set_state
             .as_ref()
             .unwrap_or(&"N/A".to_string())
             .clone();
 
-        if neovim != editor {
+        if neovim != editor || neovim_mode != editor_mode {
             panic!(
                 indoc! {"Test failed (zed does not match nvim behaviour)
                     # initial state:
                     {}
                     # keystrokes:
                     {}
-                    # neovim state:
+                    # neovim ({}):
                     {}
-                    # zed state:
+                    # zed ({}):
                     {}"},
                 initial_state,
                 self.recent_keystrokes.join(" "),
+                neovim_mode,
                 neovim,
+                editor_mode,
                 editor,
             )
         }
