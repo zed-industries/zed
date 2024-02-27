@@ -913,13 +913,49 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
-                        let completion = &completions_guard[candidate_id];
+                        let mut completion = completions_guard[candidate_id].clone();
 
                         let documentation = if show_completion_documentation {
                             &completion.documentation
                         } else {
                             &None
                         };
+
+                        // let completion_label = StyledText::new(completion.label.text.clone())
+                        // .with_highlights(&style.text, highlights);
+
+                        {
+                            let mut completion_label_text = completion.label.text.clone();
+
+                            //TODO: scale max_label_length based on font/popup size
+                            let max_label_length = 45;
+                            if completion_label_text.len() > max_label_length {
+                                println!("{}", completion_label_text);
+
+                                let label_parts: Vec<&str> =
+                                    completion_label_text.splitn(2, ':').collect();
+
+                                let mut truncated_label = String::new();
+
+                                if let Some(first_part) = label_parts.get(0) {
+                                    if first_part.len() > max_label_length {
+                                        truncated_label
+                                            .push_str(&first_part[..max_label_length - 3]);
+                                        truncated_label.push_str("...");
+                                    } else {
+                                        truncated_label.push_str(first_part);
+                                    }
+                                }
+
+                                if let Some(second_part) = label_parts.get(1) {
+                                    truncated_label.push(':');
+                                    truncated_label.push_str(second_part);
+                                }
+
+                                completion_label_text = truncated_label;
+                            }
+                            completion.label.text = completion_label_text;
+                        }
 
                         let highlights = gpui::combine_highlights(
                             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
@@ -932,8 +968,15 @@ impl CompletionsMenu {
                                 },
                             ),
                         );
+
                         let completion_label = StyledText::new(completion.label.text.clone())
                             .with_highlights(&style.text, highlights);
+
+                        // for run in completion_label.runs.unwrap(){
+                        //     println!("{}", run.)
+                        // }
+                        // println!("Text: {}", completion_label.text);
+
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
                                 if text.trim().is_empty() {
@@ -10296,6 +10339,7 @@ pub fn styled_runs_for_code_label<'a>(
                 }
                 runs.push((range.clone(), muted_style));
             } else if range.end <= label.filter_range.end {
+                println!("Start: {}, End: {}", range.start, range.end);
                 runs.push((range.clone(), style));
             } else {
                 runs.push((range.start..label.filter_range.end, style));
