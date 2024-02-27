@@ -110,6 +110,18 @@ blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.10.0"
 
+[target.'cfg(windows)'.dependencies]
+blade-graphics.workspace = true
+blade-macros.workspace = true
+blade-rwh.workspace = true
+bytemuck = "1"
+cosmic-text = "0.10.0"
+flume = "0.11"
+windows.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+cc = "1"
+
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
