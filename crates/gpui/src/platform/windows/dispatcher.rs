@@ -1,10 +1,9 @@
-use std::thread::JoinHandle;
+use std::thread::{current, JoinHandle, ThreadId};
 
 use async_task::Runnable;
 use flume::Sender;
 use parking::Parker;
 use parking_lot::Mutex;
-use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use crate::{PlatformDispatcher, TaskLabel};
 
@@ -13,6 +12,7 @@ pub(crate) struct WindowsDispatcher {
     main_sender: Sender<Runnable>,
     background_threads: Vec<JoinHandle<()>>,
     parker: Mutex<Parker>,
+    main_thread_id: ThreadId,
 }
 
 impl WindowsDispatcher {
@@ -35,22 +35,20 @@ impl WindowsDispatcher {
                 })
             })
             .collect::<Vec<_>>();
+        let main_thread_id = current().id();
         Self {
             background_sender,
             main_sender,
             background_threads,
             parker,
+            main_thread_id,
         }
     }
 }
 
-extern "C" {
-    static MAIN_THREAD_ID: u32;
-}
-
 impl PlatformDispatcher for WindowsDispatcher {
     fn is_main_thread(&self) -> bool {
-        unsafe { GetCurrentThreadId() == MAIN_THREAD_ID }
+        current().id() == self.main_thread_id
     }
 
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {

@@ -21,8 +21,6 @@ fn main() {
     #[cfg(all(target_os = "macos", not(feature = "macos-blade")))]
     #[cfg(not(feature = "runtime_shaders"))]
     compile_metal_shaders(&header_path);
-    #[cfg(windows)]
-    compile_windows_c_files();
 }
 
 fn generate_dispatch_bindings() {
@@ -184,12 +182,4 @@ fn compile_metal_shaders(header_path: &Path) {
         );
         process::exit(1);
     }
-}
-
-#[cfg(windows)]
-fn compile_windows_c_files() {
-    cc::Build::new()
-        .file("src/platform/windows/main_thread_id.cpp")
-        .compile("main_thread_id");
-    println!("cargo:rerun-if-changed=src/platform/windows/main_thread_id.cpp");
 }

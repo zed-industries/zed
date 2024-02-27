@@ -4044,7 +4044,6 @@ dependencies = [
  "block",
  "bytemuck",
  "cbindgen",
- "cc",
  "cocoa",
  "collections",
  "core-foundation",
