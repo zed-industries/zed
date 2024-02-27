@@ -10,11 +10,8 @@ mkdir -p .blob_store/the-extensions-bucket
 echo "creating database..."
 script/sqlx database create
 
-# echo "migrating database..."
-# cargo run -p collab -- migrate
+echo "migrating database..."
+cargo run -p collab -- migrate
 
 echo "seeding database..."
 script/seed-db
-
-# echo "Linux dependencies..."
-# script/linux

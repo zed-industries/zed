@@ -147,24 +147,10 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
-        let action_binding_text = |action: &dyn gpui::Action| {
-            cx.bindings_for_action(action)
-                .into_iter()
-                .next()
-                .map(|binding| {
-                    binding
-                        .keystrokes()
-                        .into_iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
-                .unwrap_or_else(|| format!("{action:?}"))
-        };
         Arc::from(format!(
             "{} reuses the window, {} opens a new one",
-            action_binding_text(&menu::Confirm),
-            action_binding_text(&menu::SecondaryConfirm),
+            cx.keystroke_text_for(&menu::Confirm),
+            cx.keystroke_text_for(&menu::SecondaryConfirm),
         ))
     }
 

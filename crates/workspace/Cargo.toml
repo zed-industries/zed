@@ -13,6 +13,7 @@ doctest = false
 test-support = [
     "call/test-support",
     "client/test-support",
+    "db/test-support",
     "project/test-support",
     "settings/test-support",
     "gpui/test-support",
@@ -32,7 +33,7 @@ derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-itertools = "0.10"
+itertools.workspace = true
 language.workspace = true
 lazy_static.workspace = true
 log.workspace = true

@@ -65,8 +65,8 @@ pub(crate) struct WaylandClientStateInner {
 pub(crate) struct WaylandClientState(Rc<RefCell<WaylandClientStateInner>>);
 
 pub(crate) struct KeyRepeat {
-    rate: i32,
-    delay: i32,
+    characters_per_second: u32,
+    delay: Duration,
     current_id: u64,
     current_keysym: Option<xkb::Keysym>,
 }
@@ -93,8 +93,8 @@ impl WaylandClient {
             wl_seat: None,
             keymap_state: None,
             repeat: KeyRepeat {
-                rate: 16,
-                delay: 500,
+                characters_per_second: 16,
+                delay: Duration::from_millis(500),
                 current_id: 0,
                 current_keysym: None,
             },
@@ -242,7 +242,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
                     state.wm_base = Some(wm_base);
                 }
                 "wl_seat" => {
-                    let seat = registry.bind::<wl_seat::WlSeat, _, _>(name, 1, qh, ());
+                    let seat = registry.bind::<wl_seat::WlSeat, _, _>(name, 4, qh, ());
                     state.wl_seat = Some(seat);
                 }
                 "wp_fractional_scale_manager_v1" => {
@@ -412,18 +412,18 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientState {
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
     fn event(
-        state_container: &mut Self,
+        this: &mut Self,
         keyboard: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event,
         data: &(),
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state_container.0.borrow_mut();
+        let mut state = this.0.borrow_mut();
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
-                state.repeat.rate = rate;
-                state.repeat.delay = delay;
+                state.repeat.characters_per_second = rate as u32;
+                state.repeat.delay = Duration::from_millis(delay as u64);
             }
             wl_keyboard::Event::Keymap {
                 format: WEnum::Value(format),
@@ -524,25 +524,25 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             state.repeat.current_id += 1;
                             state.repeat.current_keysym = Some(keysym);
 
-                            let rate = state.repeat.rate;
+                            let rate = state.repeat.characters_per_second;
                             let delay = state.repeat.delay;
                             let id = state.repeat.current_id;
-                            let keysym = state.repeat.current_keysym;
-                            let state_container = state_container.clone();
+                            let this = this.clone();
 
                             state
                                 .platform_inner
                                 .foreground_executor
                                 .spawn(async move {
-                                    let mut wait_time = Duration::from_millis(delay as u64);
+                                    let mut wait_time = delay;
 
                                     loop {
                                         Timer::after(wait_time).await;
 
-                                        let state = state_container.0.borrow_mut();
+                                        let state = this.0.borrow_mut();
                                         let is_repeating = id == state.repeat.current_id
                                             && state.repeat.current_keysym.is_some()
                                             && state.keyboard_focused_window.is_some();
+
                                         if !is_repeating {
                                             return;
                                         }
@@ -553,7 +553,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                             .unwrap()
                                             .handle_input(input.clone());
 
-                                        wait_time = Duration::from_millis(1000 / rate as u64);
+                                        wait_time = Duration::from_secs(1) / rate;
                                     }
                                 })
                                 .detach();

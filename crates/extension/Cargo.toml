@@ -16,7 +16,6 @@ path = "src/extension_json_schemas.rs"
 anyhow.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
-client.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -33,7 +32,6 @@ toml.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

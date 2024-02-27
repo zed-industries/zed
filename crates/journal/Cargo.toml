@@ -11,7 +11,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-chrono = "0.4"
+chrono.workspace = true
 dirs = "4.0"
 editor.workspace = true
 gpui.workspace = true

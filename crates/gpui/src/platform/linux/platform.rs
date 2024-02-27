@@ -227,7 +227,8 @@ impl Platform for LinuxPlatform {
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
-        self.foreground_executor()
+        self.inner
+            .foreground_executor
             .spawn(async move {
                 let title = if options.multiple {
                     if !options.files {
@@ -270,7 +271,8 @@ impl Platform for LinuxPlatform {
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         let (done_tx, done_rx) = oneshot::channel();
         let directory = directory.to_owned();
-        self.foreground_executor()
+        self.inner
+            .foreground_executor
             .spawn(async move {
                 let result = SaveFileRequest::default()
                     .modal(true)
