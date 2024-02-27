@@ -477,25 +477,42 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             cx.spawn(|workspace, mut cx| async move {
                 let (old_log, new_log) =
                     futures::join!(fs.load(&paths::OLD_LOG), fs.load(&paths::LOG));
-
-                let mut lines = VecDeque::with_capacity(MAX_LINES);
-                for line in old_log
-                    .iter()
-                    .flat_map(|log| log.lines())
-                    .chain(new_log.iter().flat_map(|log| log.lines()))
-                {
-                    if lines.len() == MAX_LINES {
-                        lines.pop_front();
+                let log = match (old_log, new_log) {
+                    (Err(_), Err(_)) => None,
+                    (old_log, new_log) => {
+                        let mut lines = VecDeque::with_capacity(MAX_LINES);
+                        for line in old_log
+                            .iter()
+                            .flat_map(|log| log.lines())
+                            .chain(new_log.iter().flat_map(|log| log.lines()))
+                        {
+                            if lines.len() == MAX_LINES {
+                                lines.pop_front();
+                            }
+                            lines.push_back(line);
+                        }
+                        Some(
+                            lines
+                                .into_iter()
+                                .flat_map(|line| [line, "\n"])
+                                .collect::<String>(),
+                        )
                     }
-                    lines.push_back(line);
-                }
-                let log = lines
-                    .into_iter()
-                    .flat_map(|line| [line, "\n"])
-                    .collect::<String>();
+                };
 
                 workspace
                     .update(&mut cx, |workspace, cx| {
+                        let Some(log) = log else {
+                            workspace.show_notification(29, cx, |cx| {
+                                cx.new_view(|_| {
+                                    MessageNotification::new(format!(
+                                        "Unable to access/open log file at path {:?}",
+                                        paths::LOG.as_path()
+                                    ))
+                                })
+                            });
+                            return;
+                        };
                         let project = workspace.project().clone();
                         let buffer = project
                             .update(cx, |project, cx| project.create_buffer("", None, cx))
