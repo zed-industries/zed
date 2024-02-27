@@ -22,27 +22,57 @@ use crate::{
 pub enum Motion {
     Left,
     Backspace,
-    Down { display_lines: bool },
-    Up { display_lines: bool },
+    Down {
+        display_lines: bool,
+    },
+    Up {
+        display_lines: bool,
+    },
     Right,
     Space,
-    NextWordStart { ignore_punctuation: bool },
-    NextWordEnd { ignore_punctuation: bool },
-    PreviousWordStart { ignore_punctuation: bool },
-    PreviousWordEnd { ignore_punctuation: bool },
-    FirstNonWhitespace { display_lines: bool },
+    NextWordStart {
+        ignore_punctuation: bool,
+    },
+    NextWordEnd {
+        ignore_punctuation: bool,
+    },
+    PreviousWordStart {
+        ignore_punctuation: bool,
+    },
+    PreviousWordEnd {
+        ignore_punctuation: bool,
+    },
+    FirstNonWhitespace {
+        display_lines: bool,
+    },
     CurrentLine,
-    StartOfLine { display_lines: bool },
-    EndOfLine { display_lines: bool },
+    StartOfLine {
+        display_lines: bool,
+    },
+    EndOfLine {
+        display_lines: bool,
+    },
     StartOfParagraph,
     EndOfParagraph,
     StartOfDocument,
     EndOfDocument,
     Matching,
-    FindForward { before: bool, char: char, mode: FindRange },
-    FindBackward { after: bool, char: char, mode: FindRange },
-    RepeatFind { last_find: Box<Motion> },
-    RepeatFindReversed { last_find: Box<Motion> },
+    FindForward {
+        before: bool,
+        char: char,
+        mode: FindRange,
+    },
+    FindBackward {
+        after: bool,
+        char: char,
+        mode: FindRange,
+    },
+    RepeatFind {
+        last_find: Box<Motion>,
+    },
+    RepeatFindReversed {
+        last_find: Box<Motion>,
+    },
     NextLineStart,
     StartOfLineDownward,
     EndOfLineDownward,
@@ -1052,9 +1082,7 @@ fn find_backward(
 
     for _ in 0..times {
         let new_to =
-            find_preceding_boundary_display_point(map, to, mode, |_, right| {
-                right == target
-            });
+            find_preceding_boundary_display_point(map, to, mode, |_, right| right == target);
         if to == new_to {
             break;
         }
