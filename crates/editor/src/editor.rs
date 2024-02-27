@@ -928,33 +928,28 @@ impl CompletionsMenu {
                             let mut completion_label_text = completion.label.text.clone();
 
                             //TODO: scale max_label_length based on font/popup size
-                            let max_label_length = 45;
-                            if completion_label_text.len() > max_label_length {
-                                println!("{}", completion_label_text);
+                            let max_label_length = 10;
+                            println!("-------");
+                            if completion.label.filter_range.end > max_label_length {
+                                println!("Truncating: {}", completion.label.text);
+                                let length_truncated = completion.label.filter_range.end as i32
+                                    - max_label_length as i32
+                                    - 3;
 
-                                let label_parts: Vec<&str> =
-                                    completion_label_text.splitn(2, ':').collect();
-
-                                let mut truncated_label = String::new();
-
-                                if let Some(first_part) = label_parts.get(0) {
-                                    if first_part.len() > max_label_length {
-                                        truncated_label
-                                            .push_str(&first_part[..max_label_length - 3]);
-                                        truncated_label.push_str("...");
-                                    } else {
-                                        truncated_label.push_str(first_part);
-                                    }
+                                if max_label_length < completion_label_text.len()
+                                    && completion.label.filter_range.end
+                                        <= completion_label_text.len()
+                                    && max_label_length <= completion.label.filter_range.end
+                                {
+                                    // Remove characters from start_index to end_index
+                                    completion_label_text.replace_range(
+                                        max_label_length..completion.label.filter_range.end,
+                                        "...",
+                                    );
                                 }
 
-                                if let Some(second_part) = label_parts.get(1) {
-                                    truncated_label.push(':');
-                                    truncated_label.push_str(second_part);
-                                }
-
-                                completion_label_text = truncated_label;
+                                completion.label.text = completion_label_text;
                             }
-                            completion.label.text = completion_label_text;
                         }
 
                         let highlights = gpui::combine_highlights(
@@ -971,11 +966,6 @@ impl CompletionsMenu {
 
                         let completion_label = StyledText::new(completion.label.text.clone())
                             .with_highlights(&style.text, highlights);
-
-                        // for run in completion_label.runs.unwrap(){
-                        //     println!("{}", run.)
-                        // }
-                        // println!("Text: {}", completion_label.text);
 
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
