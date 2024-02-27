@@ -17,9 +17,9 @@ use pathfinder_geometry::{
 use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
 
-pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
+pub(crate) struct WindowsTextSystem(RwLock<WindowsTextSystemState>);
 
-struct CosmicTextSystemState {
+struct WindowsTextSystemState {
     swash_cache: SwashCache,
     font_system: FontSystem,
     fonts: Vec<Arc<CosmicTextFont>>,
@@ -28,14 +28,14 @@ struct CosmicTextSystemState {
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
-impl CosmicTextSystem {
+impl WindowsTextSystem {
     pub(crate) fn new() -> Self {
         let mut font_system = FontSystem::new();
 
         // todo!(linux) make font loading non-blocking
         font_system.db_mut().load_system_fonts();
 
-        Self(RwLock::new(CosmicTextSystemState {
+        Self(RwLock::new(WindowsTextSystemState {
             font_system,
             swash_cache: SwashCache::new(),
             fonts: Vec::new(),
@@ -47,14 +47,14 @@ impl CosmicTextSystem {
     }
 }
 
-impl Default for CosmicTextSystem {
+impl Default for WindowsTextSystem {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[allow(unused)]
-impl PlatformTextSystem for CosmicTextSystem {
+impl PlatformTextSystem for WindowsTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
     }
@@ -193,7 +193,7 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 }
 
-impl CosmicTextSystemState {
+impl WindowsTextSystemState {
     #[profiling::function]
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         let db = self.font_system.db_mut();

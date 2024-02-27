@@ -24,10 +24,10 @@ use windows::Win32::{
 };
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
-    ForegroundExecutor, Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher,
-    WindowsDisplay, WindowsWindow,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
+    PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher, WindowsDisplay,
+    WindowsTextSystem, WindowsWindow,
 };
 
 pub(crate) struct WindowsPlatform {
@@ -38,7 +38,7 @@ pub(crate) struct WindowsPlatformInner {
     background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
-    text_system: Arc<CosmicTextSystem>,
+    text_system: Arc<WindowsTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub(crate) window_handles: RefCell<HashSet<AnyWindowHandle>>,
 }
@@ -62,7 +62,7 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new(main_sender));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = Arc::new(CosmicTextSystem::new());
+        let text_system = Arc::new(WindowsTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
         let window_handles = RefCell::new(HashSet::new());
         let inner = Rc::new(WindowsPlatformInner {

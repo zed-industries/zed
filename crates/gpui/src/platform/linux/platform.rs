@@ -21,10 +21,10 @@ use crate::platform::linux::client_dispatcher::ClientDispatcher;
 use crate::platform::linux::wayland::{WaylandClient, WaylandClientDispatcher};
 use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, Menu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion,
-    Task, WindowOptions,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, Task, WindowOptions,
 };
 
 #[derive(Default)]
@@ -44,7 +44,7 @@ pub(crate) struct LinuxPlatformInner {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
-    pub(crate) text_system: Arc<CosmicTextSystem>,
+    pub(crate) text_system: Arc<LinuxTextSystem>,
     pub(crate) callbacks: Mutex<Callbacks>,
     pub(crate) state: Mutex<LinuxPlatformState>,
 }
@@ -70,7 +70,7 @@ impl LinuxPlatform {
         let use_wayland = wayland_display.is_some() && !wayland_display.unwrap().is_empty();
 
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let text_system = Arc::new(CosmicTextSystem::new());
+        let text_system = Arc::new(LinuxTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
         let state = Mutex::new(LinuxPlatformState {
             quit_requested: false,
@@ -86,7 +86,7 @@ impl LinuxPlatform {
     fn new_wayland(
         main_sender: Sender<Runnable>,
         main_receiver: Receiver<Runnable>,
-        text_system: Arc<CosmicTextSystem>,
+        text_system: Arc<LinuxTextSystem>,
         callbacks: Mutex<Callbacks>,
         state: Mutex<LinuxPlatformState>,
     ) -> Self {
@@ -112,7 +112,7 @@ impl LinuxPlatform {
     fn new_x11(
         main_sender: Sender<Runnable>,
         main_receiver: Receiver<Runnable>,
-        text_system: Arc<CosmicTextSystem>,
+        text_system: Arc<LinuxTextSystem>,
         callbacks: Mutex<Callbacks>,
         state: Mutex<LinuxPlatformState>,
     ) -> Self {
