@@ -332,16 +332,27 @@ pub struct InlayHintSettings {
     /// Set to 0 to disable debouncing.
     ///
     /// Default: 700
-    #[serde(default = "default_debounce_ms")]
-    pub debounce_ms: u64,
+    #[serde(default = "edit_debounce_ms")]
+    pub edit_debounce_ms: u64,
+    /// Whether or not to debounce inlay hints updates after buffer scrolls.
+    ///
+    /// Set to 0 to disable debouncing.
+    ///
+    /// Default: 50
+    #[serde(default = "scroll_debounce_ms")]
+    pub scroll_debounce_ms: u64,
 }
 
 fn default_true() -> bool {
     true
 }
 
-fn default_debounce_ms() -> u64 {
+fn edit_debounce_ms() -> u64 {
     700
+}
+
+fn scroll_debounce_ms() -> u64 {
+    50
 }
 
 impl InlayHintSettings {
