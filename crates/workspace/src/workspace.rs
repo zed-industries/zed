@@ -103,7 +103,6 @@ actions!(
         NewFile,
         NewWindow,
         CloseWindow,
-        CloseInactiveTabsAndPanes,
         AddFolderToProject,
         Unfollow,
         SaveAs,
@@ -161,6 +160,12 @@ pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseInactiveTabsAndPanes {
+    pub save_intent: Option<SaveIntent>,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SendKeystrokes(pub String);
 
@@ -170,6 +175,7 @@ impl_actions!(
         ActivatePane,
         ActivatePaneInDirection,
         CloseAllItemsAndPanes,
+        CloseInactiveTabsAndPanes,
         NewFileInDirection,
         OpenTerminal,
         Save,
@@ -1620,10 +1626,10 @@ impl Workspace {
 
     pub fn close_inactive_items_and_panes(
         &mut self,
-        _: &CloseInactiveTabsAndPanes,
+        action: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) {
-        self.close_all_internal(true, SaveIntent::Close, cx)
+        self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
             .map(|task| task.detach_and_log_err(cx));
     }
 
@@ -1648,7 +1654,7 @@ impl Workspace {
 
         if retain_active_pane {
             if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
-                pane.close_inactive_items(&CloseInactiveItems, cx)
+                pane.close_inactive_items(&CloseInactiveItems { save_intent: None }, cx)
             }) {
                 tasks.push(current_pane_close);
             };

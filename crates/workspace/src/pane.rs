@@ -68,6 +68,12 @@ pub struct CloseActiveItem {
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct CloseInactiveItems {
+    pub save_intent: Option<SaveIntent>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
 }
@@ -83,6 +89,7 @@ impl_actions!(
     [
         CloseAllItems,
         CloseActiveItem,
+        CloseInactiveItems,
         ActivateItem,
         RevealInProjectPanel
     ]
@@ -94,7 +101,6 @@ actions!(
         ActivatePrevItem,
         ActivateNextItem,
         ActivateLastItem,
-        CloseInactiveItems,
         CloseCleanItems,
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
@@ -767,7 +773,7 @@ impl Pane {
 
     pub fn close_inactive_items(
         &mut self,
-        _: &CloseInactiveItems,
+        action: &CloseInactiveItems,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
@@ -775,9 +781,11 @@ impl Pane {
         }
 
         let active_item_id = self.items[self.active_item_index].item_id();
-        Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
-            item_id != active_item_id
-        }))
+        Some(self.close_items(
+            cx,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            move |item_id| item_id != active_item_id,
+        ))
     }
 
     pub fn close_clean_items(
@@ -1397,7 +1405,7 @@ impl Pane {
                         )
                         .entry(
                             "Close Others",
-                            Some(Box::new(CloseInactiveItems)),
+                            Some(Box::new(CloseInactiveItems { save_intent: None })),
                             cx.handler_for(&pane, move |pane, cx| {
                                 pane.close_items(cx, SaveIntent::Close, |id| id != item_id)
                                     .detach_and_log_err(cx);
@@ -2432,7 +2440,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_inactive_items(&CloseInactiveItems, cx)
+            pane.close_inactive_items(&CloseInactiveItems { save_intent: None }, cx)
         })
         .unwrap()
         .await
