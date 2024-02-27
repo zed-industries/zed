@@ -924,17 +924,21 @@ impl CompletionsMenu {
                         // let completion_label = StyledText::new(completion.label.text.clone())
                         // .with_highlights(&style.text, highlights);
 
+                        let max_width: f32 = 540.;
+
                         {
+                            let font_size = &style.text.font_size.to_pixels(Pixels(1.0)).0;
+
                             let mut completion_label_text = completion.label.text.clone();
 
-                            //TODO: scale max_label_length based on font/popup size
-                            let max_label_length = 10;
-                            println!("-------");
+                            let max_label_length = (max_width / *font_size) as usize;
+                            println!("-----");
+                            println!("Max Label Length: {}", max_label_length);
+                            println!("Font Size: {}", font_size);
+
                             if completion.label.filter_range.end > max_label_length {
-                                println!("Truncating: {}", completion.label.text);
                                 let length_truncated = completion.label.filter_range.end as i32
-                                    - max_label_length as i32
-                                    - 3;
+                                    - max_label_length as i32;
 
                                 if max_label_length < completion_label_text.len()
                                     && completion.label.filter_range.end
@@ -943,7 +947,7 @@ impl CompletionsMenu {
                                 {
                                     // Remove characters from start_index to end_index
                                     completion_label_text.replace_range(
-                                        max_label_length..completion.label.filter_range.end,
+                                        max_label_length - 3..completion.label.filter_range.end,
                                         "...",
                                     );
                                 }
@@ -999,7 +1003,7 @@ impl CompletionsMenu {
                                 None
                             };
 
-                        div().min_w(px(220.)).max_w(px(540.)).child(
+                        div().min_w(px(220.)).max_w(px(max_width)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
                                 .selected(item_ix == selected_item)
@@ -1014,8 +1018,7 @@ impl CompletionsMenu {
                                         )
                                         .map(|task| task.detach_and_log_err(cx));
                                 }))
-                                .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot::<Div>(documentation_label),
+                                .child(h_flex().overflow_hidden().child(completion_label)), // .end_slot::<Div>(documentation_label),
                         )
                     })
                     .collect()
