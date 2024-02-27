@@ -1,6 +1,10 @@
 //! Project-wide storage of the tasks available, capable of updating itself from the sources set.
 
-use std::{any::TypeId, path::Path, sync::Arc};
+use std::{
+    any::TypeId,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
@@ -18,6 +22,7 @@ struct SourceInInventory {
     source: Model<Box<dyn TaskSource>>,
     _subscription: Subscription,
     type_id: TypeId,
+    local_abs_path: Option<PathBuf>,
 }
 
 impl Inventory {
@@ -28,19 +33,47 @@ impl Inventory {
         })
     }
 
-    /// Registers a new tasks source, that would be fetched for available tasks.
-    pub fn add_source(&mut self, source: Model<Box<dyn TaskSource>>, cx: &mut ModelContext<Self>) {
-        let _subscription = cx.observe(&source, |_, _, cx| {
-            cx.notify();
-        });
+    /// If the task with the same path was not added yet,
+    /// registers a new tasks source to fetch for available tasks later.
+    /// Unless a source is removed, ignores future additions for the same path.
+    pub fn add_static_source(
+        &mut self,
+        abs_path: Option<&Path>,
+        create_static_source: impl FnOnce(&mut ModelContext<Self>) -> Model<Box<dyn TaskSource>>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if abs_path.is_some() {
+            if self
+                .sources
+                .iter()
+                .any(|s| s.local_abs_path.as_deref() == abs_path)
+            {
+                log::debug!("Static source {abs_path:?} already exists, not adding");
+                return;
+            }
+        }
+
+        let source = create_static_source(cx);
         let type_id = source.read(cx).type_id();
         let source = SourceInInventory {
+            _subscription: cx.observe(&source, |_, _, cx| {
+                cx.notify();
+            }),
             source,
-            _subscription,
             type_id,
+            local_abs_path: abs_path.map(Path::to_path_buf),
         };
         self.sources.push(source);
         cx.notify();
+    }
+
+    /// If present, removes the local static source entry that has the given path,
+    /// making corresponding task definitions unavailable in the fetch results.
+    ///
+    /// Now, entry for this path can be re-added again.
+    pub fn remove_local_static_source(&mut self, abs_path: &Path) {
+        self.sources
+            .retain(|s| s.local_abs_path.as_deref() != Some(abs_path));
     }
 
     pub fn source<T: TaskSource>(&self) -> Option<Model<Box<dyn TaskSource>>> {
