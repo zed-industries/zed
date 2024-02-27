@@ -3,6 +3,7 @@ use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use collections::{HashMap, HashSet};
+use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
@@ -32,17 +33,6 @@ use util::{
     ResultExt,
 };
 
-// HACK: This type is only defined in `copilot` since it is the earliest ancestor
-// of the crates that use it.
-//
-// This is not great. Let's find a better place for it to live.
-#[derive(Default)]
-pub struct CommandPaletteFilter {
-    pub hidden_namespaces: HashSet<&'static str>,
-    pub hidden_action_types: HashSet<TypeId>,
-}
-
-impl Global for CommandPaletteFilter {}
 actions!(
     copilot,
     [

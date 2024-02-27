@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use audio::{Audio, Sound};
 use client::{
     proto::{self, PeerId},
-    Client, ParticipantIndex, TypedEnvelope, User, UserStore,
+    ChannelId, Client, ParticipantIndex, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -27,7 +27,7 @@ pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     RoomJoined {
-        channel_id: Option<u64>,
+        channel_id: Option<ChannelId>,
     },
     ParticipantLocationChanged {
         participant_id: proto::PeerId,
@@ -53,13 +53,13 @@ pub enum Event {
         project_id: u64,
     },
     Left {
-        channel_id: Option<u64>,
+        channel_id: Option<ChannelId>,
     },
 }
 
 pub struct Room {
     id: u64,
-    channel_id: Option<u64>,
+    channel_id: Option<ChannelId>,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     shared_projects: HashSet<WeakModel<Project>>,
@@ -84,7 +84,7 @@ pub struct Room {
 impl EventEmitter<Event> for Room {}
 
 impl Room {
-    pub fn channel_id(&self) -> Option<u64> {
+    pub fn channel_id(&self) -> Option<ChannelId> {
         self.channel_id
     }
 
@@ -106,7 +106,7 @@ impl Room {
 
     fn new(
         id: u64,
-        channel_id: Option<u64>,
+        channel_id: Option<ChannelId>,
         live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
         user_store: Model<UserStore>,
@@ -273,13 +273,17 @@ impl Room {
     }
 
     pub(crate) async fn join_channel(
-        channel_id: u64,
+        channel_id: ChannelId,
         client: Arc<Client>,
         user_store: Model<UserStore>,
         cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         Self::from_join_response(
-            client.request(proto::JoinChannel { channel_id }).await?,
+            client
+                .request(proto::JoinChannel {
+                    channel_id: channel_id.0,
+                })
+                .await?,
             client,
             user_store,
             cx,
@@ -337,7 +341,7 @@ impl Room {
         let room = cx.new_model(|cx| {
             Self::new(
                 room_proto.id,
-                response.channel_id,
+                response.channel_id.map(ChannelId),
                 response.live_kit_connection_info,
                 client,
                 user_store,

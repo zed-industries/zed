@@ -42,7 +42,7 @@ use std::{
 use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
-use util::http::{HttpClient, ZedHttpClient};
+use util::http::{HttpClient, HttpClientWithUrl};
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
@@ -153,7 +153,7 @@ impl Global for GlobalClient {}
 pub struct Client {
     id: AtomicU64,
     peer: Arc<Peer>,
-    http: Arc<ZedHttpClient>,
+    http: Arc<HttpClientWithUrl>,
     telemetry: Arc<Telemetry>,
     state: RwLock<ClientState>,
 
@@ -424,7 +424,7 @@ impl settings::Settings for TelemetrySettings {
 impl Client {
     pub fn new(
         clock: Arc<dyn SystemClock>,
-        http: Arc<ZedHttpClient>,
+        http: Arc<HttpClientWithUrl>,
         cx: &mut AppContext,
     ) -> Arc<Self> {
         let client = Arc::new(Self {
@@ -447,7 +447,7 @@ impl Client {
         self.id.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn http_client(&self) -> Arc<ZedHttpClient> {
+    pub fn http_client(&self) -> Arc<HttpClientWithUrl> {
         self.http.clone()
     }
 
@@ -970,14 +970,14 @@ impl Client {
     }
 
     async fn get_rpc_url(
-        http: Arc<ZedHttpClient>,
+        http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
     ) -> Result<Url> {
         if let Some(url) = &*ZED_RPC_URL {
             return Url::parse(url).context("invalid rpc url");
         }
 
-        let mut url = http.zed_url("/rpc");
+        let mut url = http.build_url("/rpc");
         if let Some(preview_param) =
             release_channel.and_then(|channel| channel.release_query_param())
         {
@@ -1110,7 +1110,7 @@ impl Client {
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
-                    let mut url = http.zed_url(&format!(
+                    let mut url = http.build_url(&format!(
                         "/native_app_signin?native_app_port={}&native_app_public_key={}",
                         port, public_key_string
                     ));
@@ -1145,7 +1145,7 @@ impl Client {
                                     }
 
                                     let post_auth_url =
-                                        http.zed_url("/native_app_signin_succeeded");
+                                        http.build_url("/native_app_signin_succeeded");
                                     req.respond(
                                         tiny_http::Response::empty(302).with_header(
                                             tiny_http::Header::from_bytes(
@@ -1187,7 +1187,7 @@ impl Client {
     }
 
     async fn authenticate_as_admin(
-        http: Arc<ZedHttpClient>,
+        http: Arc<HttpClientWithUrl>,
         login: String,
         mut api_token: String,
     ) -> Result<Credentials> {

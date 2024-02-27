@@ -548,32 +548,28 @@ impl Element for List {
 
                     let summary = state.items.summary();
                     let total_height = summary.height;
-                    let all_rendered = summary.unrendered_count == 0;
 
-                    if all_rendered {
-                        cx.request_measured_layout(
-                            style,
-                            move |known_dimensions, available_space, _cx| {
-                                let width = known_dimensions.width.unwrap_or(match available_space
+                    cx.request_measured_layout(
+                        style,
+                        move |known_dimensions, available_space, _cx| {
+                            let width =
+                                known_dimensions
                                     .width
-                                {
-                                    AvailableSpace::Definite(x) => x,
-                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                        max_element_width
-                                    }
-                                });
-                                let height = match available_space.height {
-                                    AvailableSpace::Definite(height) => total_height.min(height),
-                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                        total_height
-                                    }
-                                };
-                                size(width, height)
-                            },
-                        )
-                    } else {
-                        cx.request_layout(&style, None)
-                    }
+                                    .unwrap_or(match available_space.width {
+                                        AvailableSpace::Definite(x) => x,
+                                        AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                            max_element_width
+                                        }
+                                    });
+                            let height = match available_space.height {
+                                AvailableSpace::Definite(height) => total_height.min(height),
+                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                    total_height
+                                }
+                            };
+                            size(width, height)
+                        },
+                    )
                 })
             }
             ListSizingBehavior::Auto => {

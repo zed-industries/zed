@@ -16,15 +16,11 @@ fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
-parking_lot.workspace = true
 picker.workspace = true
-postage.workspace = true
 settings.workspace = true
-smol.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-editor = { workspace = true, features = ["test-support"] }

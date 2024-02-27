@@ -16,7 +16,6 @@ test-support = ["rand"]
 anyhow.workspace = true
 clock.workspace = true
 collections.workspace = true
-digest = { version = "0.9", features = ["std"] }
 lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true

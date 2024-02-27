@@ -1,4 +1,5 @@
 use call::Room;
+use client::ChannelId;
 use gpui::{Model, TestAppContext};
 
 mod channel_buffer_tests;
@@ -43,6 +44,6 @@ fn room_participants(room: &Model<Room>, cx: &mut TestAppContext) -> RoomPartici
     })
 }
 
-fn channel_id(room: &Model<Room>, cx: &mut TestAppContext) -> Option<u64> {
+fn channel_id(room: &Model<Room>, cx: &mut TestAppContext) -> Option<ChannelId> {
     cx.read(|cx| room.read(cx).channel_id())
 }

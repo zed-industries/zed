@@ -1,4 +1,6 @@
-use gpui::{px, FontStyle, FontWeight, HighlightStyle, SharedString, UnderlineStyle};
+use gpui::{
+    px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle,
+};
 use language::HighlightId;
 use std::{ops::Range, path::PathBuf};
 
@@ -170,6 +172,13 @@ impl MarkdownHighlight {
                     });
                 }
 
+                if style.strikethrough {
+                    highlight.strikethrough = Some(StrikethroughStyle {
+                        thickness: px(1.),
+                        ..Default::default()
+                    });
+                }
+
                 if style.weight != FontWeight::default() {
                     highlight.font_weight = Some(style.weight);
                 }
@@ -189,6 +198,8 @@ pub struct MarkdownHighlightStyle {
     pub italic: bool,
     /// Whether the text should be underlined.
     pub underline: bool,
+    /// Whether the text should be struck through.
+    pub strikethrough: bool,
     /// The weight of the text.
     pub weight: FontWeight,
 }

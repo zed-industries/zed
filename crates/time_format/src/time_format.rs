@@ -1,4 +1,3 @@
-use anyhow::Result;
 use lazy_static::lazy_static;
 use time::{OffsetDateTime, UtcOffset};
 
@@ -129,7 +128,7 @@ fn is_12_hour_time_by_locale(locale: &str) -> bool {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::*;
+    use anyhow::Result;
     use core_foundation::base::TCFType;
     use core_foundation::date::CFAbsoluteTime;
     use core_foundation::string::CFString;

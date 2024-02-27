@@ -8,7 +8,8 @@ use anyhow::anyhow;
 use call::ActiveCall;
 use channel::{ChannelBuffer, ChannelStore};
 use client::{
-    self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
+    self, proto::PeerId, ChannelId, Client, Connection, Credentials, EstablishConnectionError,
+    UserStore,
 };
 use clock::FakeSystemClock;
 use collab_ui::channel_view::ChannelView;
@@ -120,7 +121,7 @@ impl TestServer {
     pub async fn start2(
         cx_a: &mut TestAppContext,
         cx_b: &mut TestAppContext,
-    ) -> (TestServer, TestClient, TestClient, u64) {
+    ) -> (TestServer, TestClient, TestClient, ChannelId) {
         let mut server = Self::start(cx_a.executor()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
@@ -353,10 +354,10 @@ impl TestServer {
     pub async fn make_channel(
         &self,
         channel: &str,
-        parent: Option<u64>,
+        parent: Option<ChannelId>,
         admin: (&TestClient, &mut TestAppContext),
         members: &mut [(&TestClient, &mut TestAppContext)],
-    ) -> u64 {
+    ) -> ChannelId {
         let (_, admin_cx) = admin;
         let channel_id = admin_cx
             .read(ChannelStore::global)
@@ -399,7 +400,7 @@ impl TestServer {
         channel: &str,
         client: &TestClient,
         cx: &mut TestAppContext,
-    ) -> u64 {
+    ) -> ChannelId {
         let channel_id = self
             .make_channel(channel, None, (client, cx), &mut [])
             .await;
@@ -423,7 +424,7 @@ impl TestServer {
         &self,
         channels: &[(&str, Option<&str>)],
         creator: (&TestClient, &mut TestAppContext),
-    ) -> Vec<u64> {
+    ) -> Vec<ChannelId> {
         let mut observed_channels = HashMap::default();
         let mut result = Vec::new();
         for (channel, parent) in channels {
@@ -677,7 +678,7 @@ impl TestClient {
     pub async fn host_workspace(
         &self,
         workspace: &View<Workspace>,
-        channel_id: u64,
+        channel_id: ChannelId,
         cx: &mut VisualTestContext,
     ) {
         cx.update(|cx| {
@@ -698,7 +699,7 @@ impl TestClient {
 
     pub async fn join_workspace<'a>(
         &'a self,
-        channel_id: u64,
+        channel_id: ChannelId,
         cx: &'a mut TestAppContext,
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
         cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
@@ -777,7 +778,7 @@ impl TestClient {
 }
 
 pub fn open_channel_notes(
-    channel_id: u64,
+    channel_id: ChannelId,
     cx: &mut VisualTestContext,
 ) -> Task<anyhow::Result<View<ChannelView>>> {
     let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());

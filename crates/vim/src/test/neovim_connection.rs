@@ -419,7 +419,7 @@ impl NeovimConnection {
                 }
             }
             Some(Mode::Visual) | Some(Mode::VisualLine) | Some(Mode::VisualBlock) => {
-                if selection_col > cursor_col {
+                if (selection_row, selection_col) > (cursor_row, cursor_col) {
                     let selection_line_length =
                         self.read_position("echo strlen(getline(line('v')))").await;
                     if selection_line_length > selection_col {

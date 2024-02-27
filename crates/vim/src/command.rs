@@ -1,4 +1,4 @@
-use command_palette::CommandInterceptResult;
+use command_palette_hooks::CommandInterceptResult;
 use editor::actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive};
 use gpui::{impl_actions, Action, AppContext, ViewContext};
 use serde_derive::Deserialize;
@@ -198,6 +198,34 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
             "tabclose",
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+            }
+            .boxed_clone(),
+        ),
+        "tabo" | "tabon" | "tabonl" | "tabonly" => (
+            "tabonly",
+            workspace::CloseInactiveItems {
+                save_intent: Some(SaveIntent::Close),
+            }
+            .boxed_clone(),
+        ),
+        "tabo!" | "tabon!" | "tabonl!" | "tabonly!" => (
+            "tabonly!",
+            workspace::CloseInactiveItems {
+                save_intent: Some(SaveIntent::Skip),
+            }
+            .boxed_clone(),
+        ),
+        "on" | "onl" | "only" => (
+            "only",
+            workspace::CloseInactiveTabsAndPanes {
+                save_intent: Some(SaveIntent::Close),
+            }
+            .boxed_clone(),
+        ),
+        "on!" | "onl!" | "only!" => (
+            "only!",
+            workspace::CloseInactiveTabsAndPanes {
+                save_intent: Some(SaveIntent::Skip),
             }
             .boxed_clone(),
         ),

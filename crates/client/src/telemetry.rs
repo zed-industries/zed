@@ -1,6 +1,6 @@
 mod event_coalescer;
 
-use crate::TelemetrySettings;
+use crate::{ChannelId, TelemetrySettings};
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use futures::Future;
@@ -20,7 +20,7 @@ use telemetry_events::{
     EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, MemoryEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
-use util::http::{self, HttpClient, Method, ZedHttpClient};
+use util::http::{self, HttpClient, HttpClientWithUrl, Method};
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
@@ -29,7 +29,7 @@ use self::event_coalescer::EventCoalescer;
 
 pub struct Telemetry {
     clock: Arc<dyn SystemClock>,
-    http_client: Arc<ZedHttpClient>,
+    http_client: Arc<HttpClientWithUrl>,
     executor: BackgroundExecutor,
     state: Arc<Mutex<TelemetryState>>,
 }
@@ -75,7 +75,7 @@ static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
 impl Telemetry {
     pub fn new(
         clock: Arc<dyn SystemClock>,
-        client: Arc<ZedHttpClient>,
+        client: Arc<HttpClientWithUrl>,
         cx: &mut AppContext,
     ) -> Arc<Self> {
         let release_channel =
@@ -278,12 +278,12 @@ impl Telemetry {
         self: &Arc<Self>,
         operation: &'static str,
         room_id: Option<u64>,
-        channel_id: Option<u64>,
+        channel_id: Option<ChannelId>,
     ) {
         let event = Event::Call(CallEvent {
             operation: operation.to_string(),
             room_id,
-            channel_id,
+            channel_id: channel_id.map(|cid| cid.0),
         });
 
         self.report_event(event)
@@ -474,7 +474,7 @@ impl Telemetry {
 
                     let request = http::Request::builder()
                         .method(Method::POST)
-                        .uri(this.http_client.zed_api_url("/telemetry/events"))
+                        .uri(this.http_client.build_zed_api_url("/telemetry/events"))
                         .header("Content-Type", "text/plain")
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());
