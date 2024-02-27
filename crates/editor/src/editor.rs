@@ -921,20 +921,25 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        // let completion_label = StyledText::new(completion.label.text.clone())
-                        // .with_highlights(&style.text, highlights);
-
-                        let max_width: f32 = 540.;
+                        let max_width = 510.;
 
                         {
-                            let font_size = &style.text.font_size.to_pixels(Pixels(1.0)).0;
+                            let font_size = &style.text.font_size.to_pixels(cx.rem_size()).0;
+
+                            // 60% (3:5) is a common aspect ratio for a wide-mono font. It would be better to use the exact aspect ratio or width however that functionality isn't in GPUI yet
+                            //Zed-Mono uses an
+                            let aspect_ratio = 0.6;
+                            let font_width = font_size * aspect_ratio;
 
                             let mut completion_label_text = completion.label.text.clone();
 
-                            let max_label_length = (max_width / *font_size) as usize;
+                            let max_label_length = (max_width / font_width) as usize;
                             println!("-----");
+                            println!("Max Width: {}", max_width);
+
+                            println!("Font Width: {}", font_width);
+
                             println!("Max Label Length: {}", max_label_length);
-                            println!("Font Size: {}", font_size);
 
                             if completion.label.filter_range.end > max_label_length {
                                 let length_truncated = completion.label.filter_range.end as i32
@@ -1003,7 +1008,7 @@ impl CompletionsMenu {
                                 None
                             };
 
-                        div().min_w(px(220.)).max_w(px(max_width)).child(
+                        div().min_w(px(220.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
                                 .selected(item_ix == selected_item)
@@ -1018,7 +1023,8 @@ impl CompletionsMenu {
                                         )
                                         .map(|task| task.detach_and_log_err(cx));
                                 }))
-                                .child(h_flex().overflow_hidden().child(completion_label)), // .end_slot::<Div>(documentation_label),
+                                .child(h_flex().overflow_hidden().child(completion_label))
+                                .end_slot::<Div>(documentation_label),
                         )
                     })
                     .collect()
