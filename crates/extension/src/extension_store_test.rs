@@ -124,6 +124,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     authors: Vec::new(),
                     repository: None,
                     themes: Vec::new(),
+                    lib: None,
                     languages: vec!["languages/ruby".into(), "languages/erb".into()],
                     grammars: [
                         ("ruby".into(), GrammarManifestEntry::default()),
@@ -148,6 +149,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         "themes/monokai.json".into(),
                         "themes/monokai-pro.json".into(),
                     ],
+                    lib: None,
                     languages: Vec::new(),
                     grammars: BTreeMap::default(),
                     language_servers: BTreeMap::default(),
@@ -237,7 +239,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {
-        let index = store.extension_index.read();
+        let index = &store.extension_index;
         assert_eq!(index.extensions, expected_index.extensions);
         assert_eq!(index.languages, expected_index.languages);
         assert_eq!(index.themes, expected_index.themes);
@@ -295,7 +297,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {
-        let index = store.extension_index.read();
+        let index = &store.extension_index;
         assert_eq!(index.extensions, expected_index.extensions);
         assert_eq!(index.languages, expected_index.languages);
         assert_eq!(index.themes, expected_index.themes);
@@ -332,11 +334,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {
-        let manifest = store.extension_index.read();
-        assert_eq!(manifest.extensions, expected_index.extensions);
-        assert_eq!(manifest.languages, expected_index.languages);
-        assert_eq!(manifest.themes, expected_index.themes);
-
+        assert_eq!(store.extension_index, expected_index);
         assert_eq!(
             language_registry.language_names(),
             ["ERB", "Plain Text", "Ruby"]
@@ -373,9 +371,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     expected_index.languages.remove("ERB");
 
     store.read_with(cx, |store, _| {
-        let index = store.extension_index.read();
-        assert_eq!(*index, expected_index);
-
+        assert_eq!(store.extension_index, expected_index);
         assert_eq!(language_registry.language_names(), ["Plain Text"]);
         assert_eq!(language_registry.grammar_names(), []);
     });
@@ -413,19 +409,19 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
             "installed": {
                 "language_server_example": {
                     "extension.json": r#"{
-                        "id": "rust-analyzer",
-                        "name": "Zed Rust Analyzer",
-                        "version": "2.0.0"
-                    }"#,
-                    "language_servers": {
-                        "example": {
-                            "language_server.toml": r#"
-                                name = "language"
-                                language = "Rust"
-                            "#,
-                            "language_server.wasm": "",
+                        "id": "language_server_example",
+                        "name": "An Extension With Language Servers",
+                        "version": "2.0.0",
+                        "lib": {
+                            "path": "extension.wasm"
+                        },
+                        "language_servers": {
+                            "example": {
+                                "name": "the-language-server",
+                                "language": "Rust"
+                            }
                         }
-                    },
+                    }"#,
                 }
             }
         }),
@@ -433,7 +429,7 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
     .await;
 
     fs.insert_file(
-        "/the-extension-dir/installed/language_server_example/language_servers/example/language_server.wasm",
+        "/the-extension-dir/installed/language_server_example/extension.wasm",
         compile_example_extension("language_server_example"),
     )
     .await;
@@ -470,6 +466,13 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
         project.worktrees().next().unwrap().read(cx).snapshot()
     });
 
+    let config = extension
+        .0
+        .language_servers
+        .values()
+        .next()
+        .unwrap()
+        .clone();
     let command = extension
         .1
         .call(
@@ -480,8 +483,8 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
                         .call_get_language_server_command(
                             store,
                             &wit::LanguageServerConfig {
-                                name: todo!(),
-                                language_name: "".into(),
+                                name: config.name,
+                                language_name: config.language,
                             },
                             resource,
                         )

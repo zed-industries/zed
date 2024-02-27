@@ -8,7 +8,10 @@ mod wit {
 struct Component;
 
 impl wit::Guest for Component {
-    fn get_language_server_command(worktree: &wit::Worktree) -> Result<wit::Command, String> {
+    fn get_language_server_command(
+        config: wit::LanguageServerConfig,
+        worktree: &wit::Worktree,
+    ) -> Result<wit::Command, String> {
         let tool_versions = worktree.read_text_file(".tool-versions")?;
 
         println!("tool versions: {tool_versions}");

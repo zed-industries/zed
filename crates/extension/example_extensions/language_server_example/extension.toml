@@ -12,6 +12,9 @@ authors = ["some person"]
 #   "themes/one.json"
 # ]
 
+[lib]
+path = "extension.wasm"
+
 [language-servers.deno-lsp]
 name = "Deno LSP"
 language = "TypeScript"

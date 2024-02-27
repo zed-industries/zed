@@ -14,7 +14,6 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -52,14 +51,29 @@ pub struct ExtensionManifest {
     pub id: Arc<str>,
     pub name: String,
     pub version: Arc<str>,
-    pub description: Option<String>,
-    pub authors: Vec<String>,
-    pub repository: Option<String>,
 
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub authors: Vec<String>,
+    #[serde(default)]
+    pub lib: Option<LibManifestEntry>,
+
+    #[serde(default)]
     pub themes: Vec<PathBuf>,
+    #[serde(default)]
     pub languages: Vec<PathBuf>,
+    #[serde(default)]
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
+    #[serde(default)]
     pub language_servers: BTreeMap<Arc<str>, LanguageServerManifestEntry>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LibManifestEntry {
+    path: String,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -99,7 +113,7 @@ impl ExtensionStatus {
 }
 
 pub struct ExtensionStore {
-    extension_index: Arc<RwLock<ExtensionIndex>>,
+    extension_index: ExtensionIndex,
     fs: Arc<dyn Fs>,
     http_client: Arc<HttpClientWithUrl>,
     extensions_dir: PathBuf,
@@ -249,7 +263,6 @@ impl ExtensionStore {
 
         let installed_version = self
             .extension_index
-            .read()
             .extensions
             .get(extension_id)
             .map(|manifest| manifest.version.clone());
@@ -414,7 +427,7 @@ impl ExtensionStore {
             }
         }
 
-        let old_index = self.extension_index.read();
+        let old_index = &self.extension_index;
         let (extensions_to_unload, extensions_to_load) = diff(
             old_index.extensions.iter(),
             new_index.extensions.iter(),
@@ -456,7 +469,6 @@ impl ExtensionStore {
                     .cloned()
             })
             .collect::<Vec<_>>();
-        drop(old_index);
 
         let themes_to_remove = &themes_to_remove
             .into_iter()
@@ -525,7 +537,7 @@ impl ExtensionStore {
             .filter_map(|name| new_index.extensions.get(name).cloned())
             .collect::<Vec<_>>();
 
-        *self.extension_index.write() = new_index;
+        self.extension_index = new_index;
         cx.notify();
 
         cx.spawn(|this, mut cx| async move {
@@ -545,8 +557,12 @@ impl ExtensionStore {
 
             let mut wasm_extensions = Vec::new();
             for extension_manifest in extension_manifests {
+                let Some(lib) = &extension_manifest.lib else {
+                    continue;
+                };
+
                 let mut path = root_dir.clone();
-                path.extend([extension_manifest.id.as_ref(), "extension.wasm"]);
+                path.extend([extension_manifest.id.as_ref(), lib.path.as_ref()]);
                 let mut wasm_file = fs.open_sync(&path).await.expect("failed to open wasm file");
                 let mut wasm_bytes = Vec::new();
                 wasm_file
