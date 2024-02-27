@@ -233,12 +233,11 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 name,
                 interface,
                 version: _,
-            } => match interface.as_str() {
-                "wl_seat" => {
+            } => {
+                if interface.as_str() == "wl_seat" {
                     registry.bind::<wl_seat::WlSeat, _, _>(name, 4, qh, ());
                 }
-                _ => {}
-            },
+            }
             wl_registry::Event::GlobalRemove { name: _ } => {}
             _ => {}
         }
