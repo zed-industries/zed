@@ -167,8 +167,7 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
                 | Operator::FindBackward { .. }
                 | Operator::Replace
                 | Operator::MultiReplace,
-            ) => {
-            }
+            ) => {}
             Some(_) => {
                 vim.clear_operator(cx);
             }

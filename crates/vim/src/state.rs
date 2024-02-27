@@ -230,6 +230,7 @@ impl Operator {
             Operator::Delete => "d",
             Operator::Yank => "y",
             Operator::Replace => "r",
+            Operator::MultiReplace => "R",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
             Operator::FindBackward { after: false } => "F",
