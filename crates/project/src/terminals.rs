@@ -34,8 +34,9 @@ impl Project {
         let (completion_tx, completion_rx) = bounded(1);
         let mut env = settings.env.clone();
 
-        // if we are creating a task, activate minimal python virtual environment
-        if !is_terminal {
+        let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
+            env.extend(spawn_task.env);
+            // Activate minimal python virtual environment
             if let Some(python_settings) = &python_settings.as_option() {
                 self.set_python_venv_path_for_tasks(
                     python_settings,
@@ -43,9 +44,6 @@ impl Project {
                     &mut env,
                 );
             }
-        }
-        let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
-            env.extend(spawn_task.env);
             (
                 Some(TaskState {
                     id: spawn_task.id,
