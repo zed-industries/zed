@@ -327,7 +327,7 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
     })
 }
 
-pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
+pub(crate) fn normal_replace(text: Arc<str>, is_continue: bool, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
         vim.update_active_editor(cx, |_, editor, cx| {
@@ -342,7 +342,11 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
                     .disjoint_anchors()
                     .into_iter()
                     .map(|selection| {
-                        let start = selection.start.bias_left(&map.buffer_snapshot);
+                        let start = if is_continue {
+                            selection.start.bias_right(&map.buffer_snapshot)
+                        } else {
+                            selection.start.bias_left(&map.buffer_snapshot)
+                        };
                         start..start
                     })
                     .collect::<Vec<_>>();
@@ -371,7 +375,9 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
                 });
             });
         });
-        vim.pop_operator(cx)
+        if !is_continue {
+            vim.pop_operator(cx);
+        }
     });
 }
 

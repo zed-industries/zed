@@ -163,8 +163,12 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
 
         Vim::update(cx, |vim, cx| match vim.active_operator() {
             Some(
-                Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace,
-            ) => {}
+                Operator::FindForward { .. }
+                | Operator::FindBackward { .. }
+                | Operator::Replace
+                | Operator::MultiReplace,
+            ) => {
+            }
             Some(_) => {
                 vim.clear_operator(cx);
             }
@@ -444,7 +448,7 @@ impl Vim {
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
         if matches!(
             operator,
-            Operator::Change | Operator::Delete | Operator::Replace
+            Operator::Change | Operator::Delete | Operator::Replace | Operator::MultiReplace
         ) {
             self.start_recording(cx)
         };
@@ -499,7 +503,12 @@ impl Vim {
                 motion::motion(find, cx)
             }
             Some(Operator::Replace) => match Vim::read(cx).state().mode {
-                Mode::Normal => normal_replace(text, cx),
+                Mode::Normal => normal_replace(text, false, cx),
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::MultiReplace) => match Vim::read(cx).state().mode {
+                Mode::Normal => normal_replace(text, true, cx),
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },

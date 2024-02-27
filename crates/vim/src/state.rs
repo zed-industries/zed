@@ -50,6 +50,7 @@ pub enum Operator {
     Delete,
     Yank,
     Replace,
+    MultiReplace,
     Object { around: bool },
     FindForward { before: bool },
     FindBackward { after: bool },
