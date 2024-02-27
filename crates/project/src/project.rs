@@ -5756,7 +5756,6 @@ impl Project {
         let range_start = range.start;
         let range_end = range.end;
         let buffer_id = buffer.remote_id().into();
-        let buffer_version = buffer.version().clone();
         let lsp_request = InlayHints { range };
 
         if self.is_local() {
@@ -5782,23 +5781,22 @@ impl Project {
                 buffer_id,
                 start: Some(serialize_anchor(&range_start)),
                 end: Some(serialize_anchor(&range_end)),
-                version: serialize_version(&buffer_version),
+                version: serialize_version(&buffer_handle.read(cx).version()),
             };
             cx.spawn(move |project, cx| async move {
                 let response = client
                     .request(request)
                     .await
                     .context("inlay hints proto request")?;
-                let hints_request_result = LspCommand::response_from_proto(
+                LspCommand::response_from_proto(
                     lsp_request,
                     response,
                     project.upgrade().ok_or_else(|| anyhow!("No project"))?,
                     buffer_handle.clone(),
-                    cx,
+                    cx.clone(),
                 )
-                .await;
-
-                hints_request_result.context("inlay hints proto response conversion")
+                .await
+                .context("inlay hints proto response conversion")
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -8074,20 +8072,12 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })??;
-        let buffer_version = deserialize_version(&envelope.payload.version);
-
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(buffer_version.clone())
+                buffer.wait_for_version(deserialize_version(&envelope.payload.version))
             })?
             .await
-            .with_context(|| {
-                format!(
-                    "waiting for version {:?} for buffer {}",
-                    buffer_version,
-                    buffer.entity_id()
-                )
-            })?;
+            .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
 
         let start = envelope
             .payload
@@ -8101,13 +8091,19 @@ impl Project {
             .context("missing range end")?;
         let buffer_hints = this
             .update(&mut cx, |project, cx| {
-                project.inlay_hints(buffer, start..end, cx)
+                project.inlay_hints(buffer.clone(), start..end, cx)
             })?
             .await
             .context("inlay hints fetch")?;
 
         Ok(this.update(&mut cx, |project, cx| {
-            InlayHints::response_to_proto(buffer_hints, project, sender_id, &buffer_version, cx)
+            InlayHints::response_to_proto(
+                buffer_hints,
+                project,
+                sender_id,
+                &buffer.read(cx).version(),
+                cx,
+            )
         })?)
     }
 
@@ -8183,10 +8179,14 @@ impl Project {
             cx.clone(),
         )
         .await?;
-        let buffer_version = buffer_handle.update(&mut cx, |buffer, _| buffer.version())?;
         let response = this
             .update(&mut cx, |this, cx| {
-                this.request_lsp(buffer_handle, LanguageServerToQuery::Primary, request, cx)
+                this.request_lsp(
+                    buffer_handle.clone(),
+                    LanguageServerToQuery::Primary,
+                    request,
+                    cx,
+                )
             })?
             .await?;
         this.update(&mut cx, |this, cx| {
@@ -8194,7 +8194,7 @@ impl Project {
                 response,
                 this,
                 sender_id,
-                &buffer_version,
+                &buffer_handle.read(cx).version(),
                 cx,
             ))
         })?
