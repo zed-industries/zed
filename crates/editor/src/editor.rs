@@ -1360,6 +1360,7 @@ enum InlayHintRefreshReason {
     RefreshRequested,
     ExcerptsRemoved(Vec<ExcerptId>),
 }
+
 impl InlayHintRefreshReason {
     fn description(&self) -> &'static str {
         match self {
@@ -3029,6 +3030,12 @@ impl Editor {
         }
 
         let reason_description = reason.description();
+        let ignore_debounce = matches!(
+            reason,
+            InlayHintRefreshReason::SettingsChange(_)
+                | InlayHintRefreshReason::Toggle(_)
+                | InlayHintRefreshReason::ExcerptsRemoved(_)
+        );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
@@ -3091,6 +3098,7 @@ impl Editor {
             reason_description,
             self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
             invalidate_cache,
+            ignore_debounce,
             cx,
         ) {
             self.splice_inlay_hints(to_remove, to_insert, cx);
