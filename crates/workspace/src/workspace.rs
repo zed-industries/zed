@@ -4641,10 +4641,6 @@ impl Element for DisconnectedOverlay {
 impl IntoElement for DisconnectedOverlay {
     type Element = Self;
 
-    fn element_id(&self) -> Option<ui::prelude::ElementId> {
-        None
-    }
-
     fn into_element(self) -> Self::Element {
         self
     }

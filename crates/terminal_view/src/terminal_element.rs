@@ -1,11 +1,11 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     div, fill, point, px, relative, AnyElement, AvailableSpace, Bounds, DispatchPhase, Element,
-    ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InputHandler, InteractiveBounds, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point,
-    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    ElementContext, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler,
+    InteractiveBounds, InteractiveElement, Interactivity, IntoElement, LayoutId, Model,
+    ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
+    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -857,10 +857,6 @@ impl Element for TerminalElement {
 
 impl IntoElement for TerminalElement {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        Some("terminal".into())
-    }
 
     fn into_element(self) -> Self::Element {
         self

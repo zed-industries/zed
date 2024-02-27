@@ -15,9 +15,6 @@
 //!
 //! But some state is too simple and voluminous to store in every view that needs it, e.g.
 //! whether a hover has been started or not. For this, GPUI provides the [`Element::State`], associated type.
-//! If an element returns an [`ElementId`] from [`IntoElement::element_id()`], and that element id
-//! appears in the same place relative to other views and ElementIds in the frame, then the previous
-//! frame's state will be passed to the element's layout and paint methods.
 //!
 //! # Implementing your own elements
 //!
@@ -75,10 +72,6 @@ pub trait IntoElement: Sized {
     /// The specific type of element into which the implementing type is converted.
     /// Useful for converting other types into elements automatically, like Strings
     type Element: Element;
-
-    /// The [`ElementId`] of self once converted into an [`Element`].
-    /// If present, the resulting element's state will be carried across frames.
-    fn element_id(&self) -> Option<ElementId>;
 
     /// Convert self into a type that implements [`Element`].
     fn into_element(self) -> Self::Element;
@@ -199,10 +192,6 @@ impl<C: RenderOnce> Element for Component<C> {
 impl<C: RenderOnce> IntoElement for Component<C> {
     type Element = Self;
 
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
-
     fn into_element(self) -> Self::Element {
         self
     }
@@ -213,8 +202,6 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 pub(crate) struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
 trait ElementObject {
-    fn element_id(&self) -> Option<ElementId>;
-
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
 
     fn paint(&mut self, cx: &mut ElementContext);
@@ -262,10 +249,6 @@ impl<E: Element> DrawableElement<E> {
             element: Some(element),
             phase: ElementDrawPhase::Start,
         }
-    }
-
-    fn element_id(&self) -> Option<ElementId> {
-        self.element.as_ref()?.element_id()
     }
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
@@ -365,10 +348,6 @@ where
     E: Element,
     E::FrameState: 'static,
 {
-    fn element_id(&self) -> Option<ElementId> {
-        self.element_id()
-    }
-
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         DrawableElement::request_layout(self, cx)
     }
@@ -439,11 +418,6 @@ impl AnyElement {
     ) {
         self.0.draw(origin, available_space, cx)
     }
-
-    /// Returns the element ID of the element stored in this `AnyElement`, if any.
-    pub fn inner_id(&self) -> Option<ElementId> {
-        self.0.element_id()
-    }
 }
 
 impl Element for AnyElement {
@@ -461,10 +435,6 @@ impl Element for AnyElement {
 
 impl IntoElement for AnyElement {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self
@@ -496,10 +466,6 @@ pub type Empty = ();
 
 impl IntoElement for () {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self

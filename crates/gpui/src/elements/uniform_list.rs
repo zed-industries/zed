@@ -42,7 +42,6 @@ where
     };
 
     UniformList {
-        id: id.clone(),
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
@@ -61,7 +60,6 @@ where
 
 /// A list element for efficiently laying out and displaying a list of uniform-height elements.
 pub struct UniformList {
-    id: ElementId,
     item_count: usize,
     item_to_measure_index: usize,
     render_items:
@@ -221,10 +219,6 @@ impl Element for UniformList {
 
 impl IntoElement for UniformList {
     type Element = Self;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        Some(self.id.clone())
-    }
 
     fn into_element(self) -> Self::Element {
         self

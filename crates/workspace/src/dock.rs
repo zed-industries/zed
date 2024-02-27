@@ -709,10 +709,7 @@ impl Render for PanelButtons {
                                 .selected(is_active_button)
                                 .on_click({
                                     let action = action.boxed_clone();
-                                    move |_, cx| {
-                                        dbg!(cx.focused());
-                                        cx.dispatch_action(action.boxed_clone())
-                                    }
+                                    move |_, cx| cx.dispatch_action(action.boxed_clone())
                                 })
                                 .tooltip(move |cx| {
                                     Tooltip::for_action(tooltip.clone(), &*action, cx)

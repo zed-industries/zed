@@ -883,11 +883,8 @@ fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{
-        display_map::{BlockContext, TransformBlock},
-        DisplayPoint, GutterDimensions,
-    };
-    use gpui::{px, TestAppContext, VisualTestContext, WindowContext};
+    use editor::{display_map::TransformBlock, DisplayPoint};
+    use gpui::{TestAppContext, VisualTestContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
@@ -1583,40 +1580,21 @@ mod tests {
         });
     }
 
-    fn editor_blocks(editor: &View<Editor>, cx: &mut WindowContext) -> Vec<(u32, SharedString)> {
+    fn editor_blocks(editor: &View<Editor>, cx: &mut WindowContext) -> Vec<(u32, &'static str)> {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             snapshot
                 .blocks_in_range(0..snapshot.max_point().row())
-                .enumerate()
-                .filter_map(|(ix, (row, block))| {
-                    let name: SharedString = match block {
-                        TransformBlock::Custom(block) => cx.with_element_context({
-                            |cx| -> Option<SharedString> {
-                                block
-                                    .render(&mut BlockContext {
-                                        context: cx,
-                                        anchor_x: px(0.),
-                                        gutter_dimensions: &GutterDimensions::default(),
-                                        line_height: px(0.),
-                                        em_width: px(0.),
-                                        max_width: px(0.),
-                                        block_id: ix,
-                                        editor_style: &editor::EditorStyle::default(),
-                                    })
-                                    .inner_id()?
-                                    .try_into()
-                                    .ok()
-                            }
-                        })?,
-
+                .filter_map(|(row, block)| {
+                    let name = match block {
+                        TransformBlock::Custom(_) => "diagnostic header",
                         TransformBlock::ExcerptHeader {
                             starts_new_buffer, ..
                         } => {
                             if *starts_new_buffer {
-                                "path header block".into()
+                                "path header block"
                             } else {
-                                "collapsed context".into()
+                                "collapsed context"
                             }
                         }
                     };

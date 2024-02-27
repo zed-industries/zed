@@ -650,10 +650,6 @@ impl Element for List {
 impl IntoElement for List {
     type Element = Self;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
-    }
-
     fn into_element(self) -> Self::Element {
         self
     }

@@ -33,10 +33,6 @@ impl Element for &'static str {
 impl IntoElement for &'static str {
     type Element = Self;
 
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
-
     fn into_element(self) -> Self::Element {
         self
     }
@@ -44,10 +40,6 @@ impl IntoElement for &'static str {
 
 impl IntoElement for String {
     type Element = SharedString;
-
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self.into()
@@ -71,10 +63,6 @@ impl Element for SharedString {
 
 impl IntoElement for SharedString {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self
@@ -150,10 +138,6 @@ impl Element for StyledText {
 
 impl IntoElement for StyledText {
     type Element = Self;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self
@@ -534,10 +518,6 @@ impl Element for InteractiveText {
 
 impl IntoElement for InteractiveText {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        Some(self.element_id.clone())
-    }
 
     fn into_element(self) -> Self::Element {
         self

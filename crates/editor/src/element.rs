@@ -3157,10 +3157,6 @@ impl Element for EditorElement {
 impl IntoElement for EditorElement {
     type Element = Self;
 
-    fn element_id(&self) -> Option<gpui::ElementId> {
-        self.editor.element_id()
-    }
-
     fn into_element(self) -> Self::Element {
         self
     }

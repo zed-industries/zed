@@ -1481,10 +1481,6 @@ impl<'a> WindowContext<'a> {
         // Capture phase
         for node_id in &dispatch_path {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            println!(
-                "Capture phase: visiting node {node_id:?}, context: {:?}, focus: {:?}",
-                node.context, node.focus_id
-            );
             for DispatchActionListener {
                 action_type,
                 listener,
@@ -1505,10 +1501,6 @@ impl<'a> WindowContext<'a> {
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            println!(
-                "Bubble phase: visiting node {node_id:?}, context: {:?}, focus: {:?}",
-                node.context, node.focus_id
-            );
             for DispatchActionListener {
                 action_type,
                 listener,
@@ -2699,12 +2691,6 @@ impl Display for ElementId {
         }
 
         Ok(())
-    }
-}
-
-impl ElementId {
-    pub(crate) fn from_entity_id(entity_id: EntityId) -> Self {
-        ElementId::View(entity_id)
     }
 }
 

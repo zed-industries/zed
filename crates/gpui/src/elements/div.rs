@@ -1130,10 +1130,6 @@ impl Element for Div {
 impl IntoElement for Div {
     type Element = Self;
 
-    fn element_id(&self) -> Option<ElementId> {
-        self.interactivity.element_id.clone()
-    }
-
     fn into_element(self) -> Self::Element {
         self
     }
@@ -2186,10 +2182,6 @@ where
 {
     type Element = E::Element;
 
-    fn element_id(&self) -> Option<ElementId> {
-        self.element.element_id()
-    }
-
     fn into_element(self) -> Self::Element {
         self.element.into_element()
     }
@@ -2261,10 +2253,6 @@ where
     E: Element,
 {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        self.element.element_id()
-    }
 
     fn into_element(self) -> Self::Element {
         self

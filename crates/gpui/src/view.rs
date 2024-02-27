@@ -369,10 +369,6 @@ impl Element for AnyView {
 impl<V: 'static + Render> IntoElement for View<V> {
     type Element = View<V>;
 
-    fn element_id(&self) -> Option<ElementId> {
-        Some(ElementId::from_entity_id(self.model.entity_id))
-    }
-
     fn into_element(self) -> Self::Element {
         self
     }
@@ -380,10 +376,6 @@ impl<V: 'static + Render> IntoElement for View<V> {
 
 impl IntoElement for AnyView {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        Some(ElementId::from_entity_id(self.model.entity_id))
-    }
 
     fn into_element(self) -> Self::Element {
         self

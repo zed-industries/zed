@@ -814,10 +814,6 @@ mod element {
     impl IntoElement for PaneAxisElement {
         type Element = Self;
 
-        fn element_id(&self) -> Option<ui::prelude::ElementId> {
-            Some(self.basis.into())
-        }
-
         fn into_element(self) -> Self::Element {
             self
         }
@@ -846,7 +842,7 @@ mod element {
             cx: &mut ui::prelude::ElementContext,
         ) {
             let state = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
-                self.element_id(),
+                Some(self.basis.into()),
                 |state, _cx| {
                     let state = state
                         .unwrap()

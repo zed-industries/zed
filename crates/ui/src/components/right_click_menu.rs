@@ -44,7 +44,7 @@ impl<M: ManagedView> RightClickMenu<M> {
         f: impl FnOnce(&mut Self, &mut MenuHandleElementState<M>, &mut ElementContext) -> R,
     ) -> R {
         cx.with_element_state::<MenuHandleElementState<M>, _>(
-            self.element_id(),
+            Some(self.id.clone()),
             |element_state, cx| {
                 let mut element_state = element_state.unwrap().unwrap_or_default();
                 let result = f(self, &mut element_state, cx);
@@ -206,10 +206,6 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
 impl<M: ManagedView> IntoElement for RightClickMenu<M> {
     type Element = Self;
-
-    fn element_id(&self) -> Option<gpui::ElementId> {
-        Some(self.id.clone())
-    }
 
     fn into_element(self) -> Self::Element {
         self

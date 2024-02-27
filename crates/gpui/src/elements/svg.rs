@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Element, ElementContext, ElementId, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Pixels, SharedString, StyleRefinement, Styled,
+    Bounds, Element, ElementContext, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    Pixels, SharedString, StyleRefinement, Styled,
 };
 use util::ResultExt;
 
@@ -55,10 +55,6 @@ impl Element for Svg {
 
 impl IntoElement for Svg {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        self.interactivity.element_id.clone()
-    }
 
     fn into_element(self) -> Self::Element {
         self
