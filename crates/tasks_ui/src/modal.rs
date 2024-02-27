@@ -145,10 +145,14 @@ impl PickerDelegate for TasksModalDelegate {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
-                    picker.delegate.candidates = picker
-                        .delegate
-                        .inventory
-                        .update(cx, |inventory, cx| inventory.list_tasks(None, true, cx));
+                    let (path, worktree) = match picker.delegate.active_item_path(cx) {
+                        Some((abs_path, project_path)) => (Some(abs_path), Some(project_path.worktree_id)),
+                        None => (None, None),
+                    };
+                    picker.delegate.candidates =
+                        picker.delegate.inventory.update(cx, |inventory, cx| {
+                            inventory.list_tasks(path.as_deref(), worktree, true, cx)
+                        });
                     picker
                         .delegate
                         .candidates
@@ -193,11 +197,6 @@ impl PickerDelegate for TasksModalDelegate {
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        // TODO: this only takes paths for active items in the project, not for any item in the pane
-        // for now it works, since all local configs are worktree-related
-        // TODO kb filter out non-workree related tasks
-        let active_item_path = self.active_item_path(cx);
-
         let task = if secondary {
             if !self.prompt.trim().is_empty() {
                 self.spawn_oneshot(cx)

@@ -107,6 +107,7 @@ impl Inventory {
     pub fn list_tasks(
         &self,
         path: Option<&Path>,
+        worktree: Option<WorktreeId>,
         lru: bool,
         cx: &mut AppContext,
     ) -> Vec<Arc<dyn Task>> {
@@ -126,6 +127,9 @@ impl Inventory {
 
         self.sources
             .iter()
+            .filter(|source| {
+                worktree.is_none() || source.worktree.is_none() || source.worktree == worktree
+            })
             .flat_map(|source| {
                 source
                     .source
@@ -159,7 +163,7 @@ impl Inventory {
     pub fn last_scheduled_task(&self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
         self.last_scheduled_tasks.back().and_then(|id| {
             // TODO straighten the `Path` story to understand what has to be passed here: or it will break in the future.
-            self.list_tasks(None, false, cx)
+            self.list_tasks(None, None, false, cx)
                 .into_iter()
                 .find(|task| task.id() == id)
         })
