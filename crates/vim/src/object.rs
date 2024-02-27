@@ -11,7 +11,6 @@ use editor::{
 };
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
 use language::{char_kind, BufferSnapshot, CharKind, Selection};
-use regex::Regex;
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -248,18 +247,22 @@ fn surrounding_html_tag(
     relative_to: DisplayPoint,
     surround: bool,
 ) -> Option<Range<DisplayPoint>> {
-    /// Checks if a pair of HTML tags is valid. A valid pair should be an opening tag and a corresponding closing tag.
-    fn is_valid_html_tag_pair(opening: &str, closing: &str) -> bool {
-        let re_opening = Regex::new(r"^<(\w+)[^>]*>$").unwrap();
-        let re_closing = Regex::new(r"^</(\w+)[^>]*>$").unwrap();
-        if let Some(opening_captures) = re_opening.captures(opening) {
-            if let Some(closing_captures) = re_closing.captures(closing) {
-                let opening_tag = opening_captures.get(1).map_or("", |m| m.as_str());
-                let closing_tag = closing_captures.get(1).map_or("", |m| m.as_str());
-                return opening_tag == closing_tag;
-            }
+    fn read_tag(chars: impl Iterator<Item = char>) -> String {
+        chars
+            .take_while(|c| c.is_alphanumeric() || *c == ':' || *c == '-' || *c == '_' || *c == '.')
+            .collect()
+    }
+    fn open_tag(mut chars: impl Iterator<Item = char>) -> Option<String> {
+        if Some('<') != chars.next() {
+            return None;
         }
-        false
+        Some(read_tag(chars))
+    }
+    fn close_tag(mut chars: impl Iterator<Item = char>) -> Option<String> {
+        if (Some('<'), Some('/')) != (chars.next(), chars.next()) {
+            return None;
+        }
+        Some(read_tag(chars))
     }
 
     let snapshot = &map.buffer_snapshot;
@@ -280,13 +283,12 @@ fn surrounding_html_tag(
             let first_child = cur_node.child(0);
             let last_child = cur_node.child(cur_node.child_count() - 1);
             if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
-                let open_tag = buffer
-                    .text_for_range(first_child.byte_range())
-                    .collect::<String>();
-                let close_tag = buffer
-                    .text_for_range(last_child.byte_range())
-                    .collect::<String>();
-                if is_valid_html_tag_pair(&open_tag, &close_tag) {
+                let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
+                let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
+                if open_tag.is_some()
+                    && open_tag == close_tag
+                    && (first_child.end_byte() + 1..last_child.start_byte()).contains(&offset)
+                {
                     let range = if surround {
                         first_child.byte_range().start..last_child.byte_range().end
                     } else {
@@ -1309,5 +1311,27 @@ mod test {
             cx.assert_binding_matches_all(["d", "a", &end.to_string()], &marked_string)
                 .await;
         }
+    }
+
+    #[gpui::test]
+    async fn test_tags(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_html(cx).await;
+
+        cx.set_state("<html><head></head><body><b>hˇi!</b></body>", Mode::Normal);
+        cx.simulate_keystrokes(["v", "i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body><b>«hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head>«<body><b>hi!</b></body>ˇ»",
+            Mode::Visual,
+        );
     }
 }
