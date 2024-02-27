@@ -43,7 +43,7 @@ pub(crate) struct Callbacks {
 
 pub(crate) struct LinuxPlatformInner {
     pub(crate) event_loop: Mutex<EventLoop<'static, ()>>,
-    pub(crate) loop_handle: LoopHandle<'static, ()>,
+    pub(crate) loop_handle: Rc<LoopHandle<'static, ()>>,
     pub(crate) loop_signal: LoopSignal,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
@@ -84,7 +84,7 @@ impl LinuxPlatform {
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
 
         let inner = Rc::new(LinuxPlatformInner {
-            loop_handle: event_loop.handle(),
+            loop_handle: Rc::new(event_loop.handle()),
             loop_signal: event_loop.get_signal(),
             event_loop: Mutex::new(event_loop),
             background_executor: BackgroundExecutor::new(dispatcher.clone()),

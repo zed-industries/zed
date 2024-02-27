@@ -3,9 +3,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use calloop::timer::{TimeoutAction, Timer};
+use calloop::LoopHandle;
 use calloop_wayland_source::WaylandSource;
-use parking_lot::Mutex;
-use smol::Timer;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
@@ -60,6 +60,7 @@ pub(crate) struct WaylandClientStateInner {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<Rc<WaylandWindowState>>,
     keyboard_focused_window: Option<Rc<WaylandWindowState>>,
+    loop_handle: Rc<LoopHandle<'static, ()>>,
 }
 
 #[derive(Clone)]
@@ -95,7 +96,7 @@ impl WaylandClient {
             }
         });
 
-        let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner{
+        let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
             compositor: globals.bind(&qh, 1..=1, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
@@ -122,6 +123,7 @@ impl WaylandClient {
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
+            loop_handle: Rc::clone(&linux_platform_inner.loop_handle),
         }));
 
         let source = WaylandSource::new(conn, event_queue);
@@ -495,34 +497,29 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             let id = state.repeat.current_id;
                             let this = this.clone();
 
+                            let timer = Timer::from_duration(delay);
+                            let state_ = Rc::clone(&this.0);
                             state
-                                .platform_inner
-                                .foreground_executor
-                                .spawn(async move {
-                                    let mut wait_time = delay;
+                                .loop_handle
+                                .insert_source(timer, move |event, _metadata, shared_data| {
+                                    let state_ = state_.borrow_mut();
+                                    let is_repeating = id == state_.repeat.current_id
+                                        && state_.repeat.current_keysym.is_some()
+                                        && state_.keyboard_focused_window.is_some();
 
-                                    loop {
-                                        Timer::after(wait_time).await;
-
-                                        let state = this.0.borrow_mut();
-                                        let is_repeating = id == state.repeat.current_id
-                                            && state.repeat.current_keysym.is_some()
-                                            && state.keyboard_focused_window.is_some();
-
-                                        if !is_repeating {
-                                            return;
-                                        }
-
-                                        state
-                                            .keyboard_focused_window
-                                            .as_ref()
-                                            .unwrap()
-                                            .handle_input(input.clone());
-
-                                        wait_time = Duration::from_secs(1) / rate;
+                                    if !is_repeating {
+                                        return TimeoutAction::Drop;
                                     }
+
+                                    state_
+                                        .keyboard_focused_window
+                                        .as_ref()
+                                        .unwrap()
+                                        .handle_input(input.clone());
+
+                                    TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
                                 })
-                                .detach();
+                                .unwrap();
                         }
                     }
                     wl_keyboard::KeyState::Released => {
