@@ -10,7 +10,7 @@ use calloop::channel::Sender;
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use std::{
-    panic, thread,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -29,6 +29,7 @@ impl LinuxDispatcher {
         let thread_count = std::thread::available_parallelism()
             .map(|i| i.get())
             .unwrap_or(1);
+
         let background_threads = (0..thread_count)
             .map(|_| {
                 let receiver = background_receiver.clone();

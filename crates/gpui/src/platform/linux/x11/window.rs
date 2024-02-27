@@ -285,8 +285,11 @@ impl X11WindowState {
 
     pub fn refresh(&self) {
         let mut cb = self.callbacks.lock();
-        if let Some(ref mut fun) = cb.request_frame {
+        if let Some(mut fun) = cb.request_frame.take() {
+            drop(cb);
             fun();
+            let mut cb = self.callbacks.lock();
+            cb.request_frame = Some(fun);
         }
     }
 

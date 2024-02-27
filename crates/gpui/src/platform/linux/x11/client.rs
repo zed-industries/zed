@@ -102,6 +102,7 @@ impl X11Client {
 
     fn get_window(&self, win: x::Window) -> Rc<X11WindowState> {
         let state = self.state.lock();
+        // todo!(linux): This might be called when the windows are empty.
         Rc::clone(&state.windows[&win])
     }
 
@@ -122,7 +123,7 @@ impl X11Client {
                 }
             }
             xcb::Event::X(x::Event::Expose(ev)) => {
-                self.state.lock().windows_to_refresh.insert(ev.window());
+                self.get_window(ev.window()).refresh();
             }
             xcb::Event::X(x::Event::ConfigureNotify(ev)) => {
                 let bounds = Bounds {
@@ -137,10 +138,6 @@ impl X11Client {
                 };
                 self.get_window(ev.window()).configure(bounds)
             }
-            xcb::Event::Present(xcb::present::Event::CompleteNotify(ev)) => {
-                self.state.lock().windows_to_refresh.insert(ev.window());
-            }
-            xcb::Event::Present(xcb::present::Event::IdleNotify(_ev)) => {}
             xcb::Event::X(x::Event::FocusIn(ev)) => {
                 let window = self.get_window(ev.event());
                 window.set_focused(true);
@@ -247,35 +244,6 @@ impl X11Client {
 }
 
 impl Client for X11Client {
-    fn event_loop_will_wait(&self) {
-        // Just in case, check if we've received any more events before we draw.
-        while let Some(event) = self.xcb_connection.poll_for_queued_event().unwrap() {
-            self.handle_event(event);
-        }
-
-        // Drawing is done here to make sure we process all other event loop tasks first.
-        loop {
-            let mut state = self.state.lock();
-            if let Some(x_window) = state.windows_to_refresh.iter().next().cloned() {
-                state.windows_to_refresh.remove(&x_window);
-                drop(state);
-                let window = self.get_window(x_window);
-                window.refresh();
-                window.request_refresh();
-            } else {
-                break;
-            }
-        }
-
-        // Before the event loop will go to sleep, we have to make sure no more X11 events arrived
-        // and are waiting in libxcb's internal buffer.
-        while let Some(event) = self.xcb_connection.poll_for_queued_event().unwrap() {
-            self.handle_event(event);
-        }
-
-        self.xcb_connection.flush().unwrap();
-    }
-
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let setup = self.xcb_connection.get_setup();
         setup

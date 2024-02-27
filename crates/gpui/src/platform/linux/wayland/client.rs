@@ -79,6 +79,8 @@ pub(crate) struct WaylandClient {
     qh: Arc<QueueHandle<WaylandClientState>>,
 }
 
+const WL_SEAT_VERSION: u32 = 4;
+
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
         let conn = Connection::connect_to_env().unwrap();
@@ -89,9 +91,12 @@ impl WaylandClient {
         globals.contents().with_list(|list| {
             for global in list {
                 if global.interface == "wl_seat" {
-                    globals
-                        .registry()
-                        .bind::<wl_seat::WlSeat, _, _>(global.name, 4, &qh, ());
+                    globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                        global.name,
+                        WL_SEAT_VERSION,
+                        &qh,
+                        (),
+                    );
                 }
             }
         });
@@ -148,8 +153,6 @@ impl WaylandClient {
 }
 
 impl Client for WaylandClient {
-    fn event_loop_will_wait(&self) {}
-
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         Vec::new()
     }

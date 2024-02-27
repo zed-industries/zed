@@ -122,13 +122,10 @@ impl Platform for LinuxPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
-        self.client.event_loop_will_wait();
         self.inner
             .event_loop
             .lock()
-            .run(None, &mut (), |data| {
-                self.client.event_loop_will_wait();
-            })
+            .run(None, &mut (), |data| {})
             .unwrap();
         if let Some(ref mut fun) = self.inner.callbacks.lock().quit {
             fun();
