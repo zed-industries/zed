@@ -819,7 +819,7 @@ mod element {
     impl Element for PaneAxisElement {
         type FrameState = ();
 
-        fn request_layout(
+        fn before_layout(
             &mut self,
             cx: &mut ui::prelude::ElementContext,
         ) -> (gpui::LayoutId, Self::FrameState) {
@@ -829,10 +829,10 @@ mod element {
             style.flex_basis = relative(0.).into();
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
-            (cx.request_layout(&style, None), ())
+            (cx.before_layout(&style, None), ())
         }
 
-        fn commit_bounds(
+        fn after_layout(
             &mut self,
             bounds: Bounds<Pixels>,
             state: &mut Self::FrameState,

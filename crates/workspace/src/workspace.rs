@@ -4604,7 +4604,7 @@ struct DisconnectedOverlay;
 impl Element for DisconnectedOverlay {
     type FrameState = AnyElement;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -4622,17 +4622,17 @@ impl Element for DisconnectedOverlay {
                 "Your connection to the remote project has been lost.",
             ))
             .into_any();
-        (overlay.request_layout(cx), overlay)
+        (overlay.before_layout(cx), overlay)
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         overlay: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         cx.add_opaque_layer(bounds);
-        overlay.commit_bounds(cx);
+        overlay.after_layout(cx);
     }
 
     fn paint(

@@ -756,11 +756,11 @@ impl TerminalElement {
 impl Element for TerminalElement {
     type FrameState = ();
 
-    fn request_layout(&mut self, cx: &mut ElementContext<'_>) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext<'_>) -> (LayoutId, Self::FrameState) {
         let layout_id = self.interactivity.layout(cx, |mut style, cx| {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
-            let layout_id = cx.request_layout(&style, None);
+            let layout_id = cx.before_layout(&style, None);
 
             layout_id
         });
@@ -768,7 +768,7 @@ impl Element for TerminalElement {
         (layout_id, ())
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::FrameState,

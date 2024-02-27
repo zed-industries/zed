@@ -72,11 +72,11 @@ impl ParentElement for Overlay {
 impl Element for Overlay {
     type FrameState = OverlayState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::FrameState) {
         let child_layout_ids = self
             .children
             .iter_mut()
-            .map(|child| child.request_layout(cx))
+            .map(|child| child.before_layout(cx))
             .collect::<SmallVec<_>>();
 
         let overlay_style = Style {
@@ -85,7 +85,7 @@ impl Element for Overlay {
             ..Style::default()
         };
 
-        let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
+        let layout_id = cx.before_layout(&overlay_style, child_layout_ids.iter().copied());
 
         (
             layout_id,
@@ -96,7 +96,7 @@ impl Element for Overlay {
         )
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::FrameState,
@@ -174,7 +174,7 @@ impl Element for Overlay {
         cx.with_absolute_element_offset(frame_state.offset, |cx| {
             cx.break_content_mask(|cx| {
                 for child in &mut self.children {
-                    child.commit_bounds(cx);
+                    child.after_layout(cx);
                 }
             })
         })

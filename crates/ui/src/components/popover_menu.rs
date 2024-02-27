@@ -168,7 +168,7 @@ pub struct PopoverMenuFrameState {
 impl<M: ManagedView> Element for PopoverMenu<M> {
     type FrameState = PopoverMenuFrameState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::FrameState) {
         self.with_element_state(cx, |this, element_state, cx| {
             let mut menu_layout_id = None;
 
@@ -182,7 +182,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 }
 
                 let mut element = overlay.child(menu.clone()).into_any();
-                menu_layout_id = Some(element.request_layout(cx));
+                menu_layout_id = Some(element.before_layout(cx));
                 element
             });
 
@@ -192,9 +192,9 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
 
             let child_layout_id = child_element
                 .as_mut()
-                .map(|child_element| child_element.request_layout(cx));
+                .map(|child_element| child_element.before_layout(cx));
 
-            let layout_id = cx.request_layout(
+            let layout_id = cx.before_layout(
                 &gpui::Style::default(),
                 menu_layout_id.into_iter().chain(child_layout_id),
             );
@@ -210,7 +210,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         })
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
         frame_state: &mut Self::FrameState,
@@ -218,7 +218,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     ) {
         self.with_element_state(cx, |_this, element_state, cx| {
             if let Some(child) = frame_state.child_element.as_mut() {
-                child.commit_bounds(cx);
+                child.after_layout(cx);
             }
 
             if let Some(child_layout_id) = frame_state.child_layout_id.as_ref() {
@@ -226,7 +226,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             }
 
             if let Some(menu) = frame_state.menu_element.as_mut() {
-                menu.commit_bounds(cx);
+                menu.after_layout(cx);
             }
         })
     }

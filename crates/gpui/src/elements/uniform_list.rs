@@ -104,7 +104,7 @@ impl Styled for UniformList {
 impl Element for UniformList {
     type FrameState = UniformListFrameState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let max_items = self.item_count;
         let item_size = self.measure_item(None, cx);
         let layout_id = self.interactivity.layout(cx, |style, cx| {
@@ -134,7 +134,7 @@ impl Element for UniformList {
         )
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::FrameState,
@@ -163,11 +163,8 @@ impl Element for UniformList {
             .as_mut()
             .and_then(|handle| handle.deferred_scroll_to_item.take());
 
-        self.interactivity.commit_bounds(
-            bounds,
-            content_size,
-            cx,
-            |style, mut scroll_offset, cx| {
+        self.interactivity
+            .after_layout(bounds, content_size, cx, |style, mut scroll_offset, cx| {
                 let border = style.border_widths.to_pixels(cx.rem_size());
                 let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -224,8 +221,7 @@ impl Element for UniformList {
                         }
                     });
                 }
-            },
-        )
+            })
     }
 
     fn paint(

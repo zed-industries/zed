@@ -51,7 +51,7 @@ impl TaffyLayoutEngine {
         self.styles.get(&layout_id)
     }
 
-    pub fn request_layout(
+    pub fn before_layout(
         &mut self,
         style: &Style,
         rem_size: Pixels,

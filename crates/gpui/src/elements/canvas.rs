@@ -29,14 +29,14 @@ impl IntoElement for Canvas {
 impl Element for Canvas {
     type FrameState = Style;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::FrameState) {
         let mut style = Style::default();
         style.refine(&self.style);
-        let layout_id = cx.request_layout(&style, []);
+        let layout_id = cx.before_layout(&style, []);
         (layout_id, style)
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
         _style: &mut Style,

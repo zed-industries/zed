@@ -97,22 +97,22 @@ impl<V: 'static> View<V> {
 impl<V: Render> Element for View<V> {
     type FrameState = AnyElement;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         cx.with_view_id(self.entity_id(), |cx| {
             // TODO! Implement caching for these views as well?
             let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
-            let layout_id = element.request_layout(cx);
+            let layout_id = element.before_layout(cx);
             (layout_id, element)
         })
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         _: Bounds<Pixels>,
         element: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        cx.with_view_id(self.entity_id(), |cx| element.commit_bounds(cx));
+        cx.with_view_id(self.entity_id(), |cx| element.after_layout(cx));
     }
 
     fn paint(
@@ -219,7 +219,7 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    request_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
+    before_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
     cache: bool,
 }
 
@@ -236,7 +236,7 @@ impl AnyView {
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
             model: self.model.downgrade(),
-            layout: self.request_layout,
+            layout: self.before_layout,
         }
     }
 
@@ -247,7 +247,7 @@ impl AnyView {
             Ok(model) => Ok(View { model }),
             Err(model) => Err(Self {
                 model,
-                request_layout: self.request_layout,
+                before_layout: self.before_layout,
                 cache: self.cache,
             }),
         }
@@ -268,7 +268,7 @@ impl<V: Render> From<View<V>> for AnyView {
     fn from(value: View<V>) -> Self {
         AnyView {
             model: value.model.into_any(),
-            request_layout: any_view::request_layout::<V>,
+            before_layout: any_view::before_layout::<V>,
             cache: false,
         }
     }
@@ -277,7 +277,7 @@ impl<V: Render> From<View<V>> for AnyView {
 impl Element for AnyView {
     type FrameState = AnyViewFrameState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         cx.with_view_id(self.entity_id(), |cx| {
             cx.with_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
@@ -293,12 +293,12 @@ impl Element for AnyView {
                             .as_ref()
                             .map(|element_state| &element_state.root_style)
                         {
-                            let layout_id = cx.request_layout(root_style, None);
+                            let layout_id = cx.before_layout(root_style, None);
                             return ((layout_id, frame_state), element_state);
                         }
                     }
 
-                    let (layout_id, element) = (self.request_layout)(self, cx);
+                    let (layout_id, element) = (self.before_layout)(self, cx);
                     frame_state.element = Some(element);
                     frame_state.root_style = cx.layout_style(layout_id).unwrap().clone();
 
@@ -308,7 +308,7 @@ impl Element for AnyView {
         })
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::FrameState,
@@ -321,7 +321,7 @@ impl Element for AnyView {
                     let element_state = element_state.unwrap();
 
                     if !self.cache {
-                        frame_state.element.as_mut().unwrap().commit_bounds(cx);
+                        frame_state.element.as_mut().unwrap().after_layout(cx);
                         return ((), element_state);
                     }
 
@@ -340,10 +340,10 @@ impl Element for AnyView {
                     }
 
                     if let Some(element) = frame_state.element.as_mut() {
-                        element.commit_bounds(cx);
+                        element.after_layout(cx);
                     } else {
-                        let mut element = (self.request_layout)(self, cx).1;
-                        element.commit_bounds(cx);
+                        let mut element = (self.before_layout)(self, cx).1;
+                        element.after_layout(cx);
                         frame_state.element = Some(element);
                     }
 
@@ -423,7 +423,7 @@ impl AnyWeakView {
         let model = self.model.upgrade()?;
         Some(AnyView {
             model,
-            request_layout: self.layout,
+            before_layout: self.layout,
             cache: false,
         })
     }
@@ -433,7 +433,7 @@ impl<V: 'static + Render> From<WeakView<V>> for AnyWeakView {
     fn from(view: WeakView<V>) -> Self {
         Self {
             model: view.model.into(),
-            layout: any_view::request_layout::<V>,
+            layout: any_view::before_layout::<V>,
         }
     }
 }
@@ -455,13 +455,13 @@ impl std::fmt::Debug for AnyWeakView {
 mod any_view {
     use crate::{AnyElement, AnyView, ElementContext, IntoElement, LayoutId, Render};
 
-    pub(crate) fn request_layout<V: 'static + Render>(
+    pub(crate) fn before_layout<V: 'static + Render>(
         view: &AnyView,
         cx: &mut ElementContext,
     ) -> (LayoutId, AnyElement) {
         let view = view.clone().downcast::<V>().unwrap();
         let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());
-        let layout_id = element.request_layout(cx);
+        let layout_id = element.before_layout(cx);
         (layout_id, element)
     }
 }

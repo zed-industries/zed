@@ -90,21 +90,21 @@ impl Img {
 impl Element for Img {
     type FrameState = ();
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let layout_id = self
             .interactivity
-            .layout(cx, |style, cx| cx.request_layout(&style, []));
+            .layout(cx, |style, cx| cx.before_layout(&style, []));
         (layout_id, ())
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         _frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         self.interactivity()
-            .commit_bounds(bounds, bounds.size, cx, |_, _, _| {})
+            .after_layout(bounds, bounds.size, cx, |_, _, _| {})
     }
 
     fn paint(

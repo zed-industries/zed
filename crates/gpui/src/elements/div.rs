@@ -1062,22 +1062,22 @@ impl ParentElement for Div {
 impl Element for Div {
     type FrameState = DivFrameState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut child_layout_ids = SmallVec::new();
         let layout_id = self.interactivity.layout(cx, |style, cx| {
             cx.with_text_style(style.text_style().cloned(), |cx| {
                 child_layout_ids = self
                     .children
                     .iter_mut()
-                    .map(|child| child.request_layout(cx))
+                    .map(|child| child.before_layout(cx))
                     .collect::<SmallVec<_>>();
-                cx.request_layout(&style, child_layout_ids.iter().copied())
+                cx.before_layout(&style, child_layout_ids.iter().copied())
             })
         });
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::FrameState,
@@ -1117,10 +1117,10 @@ impl Element for Div {
         };
 
         self.interactivity
-            .commit_bounds(bounds, content_size, cx, |_style, scroll_offset, cx| {
+            .after_layout(bounds, content_size, cx, |_style, scroll_offset, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
-                        child.commit_bounds(cx);
+                        child.after_layout(cx);
                     }
                 })
             })
@@ -1287,7 +1287,7 @@ impl Interactivity {
     }
 
     /// Commit the bounds of this element according to this interactivity state's configured styles.
-    pub fn commit_bounds(
+    pub fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
@@ -2182,17 +2182,17 @@ where
 {
     type FrameState = E::FrameState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
-        self.element.request_layout(cx)
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+        self.element.before_layout(cx)
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        self.element.commit_bounds(bounds, state, cx)
+        self.element.after_layout(bounds, state, cx)
     }
 
     fn paint(
@@ -2263,17 +2263,17 @@ where
 {
     type FrameState = E::FrameState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
-        self.element.request_layout(cx)
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+        self.element.before_layout(cx)
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        self.element.commit_bounds(bounds, state, cx)
+        self.element.after_layout(bounds, state, cx)
     }
 
     fn paint(

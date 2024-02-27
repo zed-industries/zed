@@ -19,13 +19,13 @@ use util::ResultExt;
 impl Element for &'static str {
     type FrameState = TextState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(SharedString::from(*self), None, cx);
         (layout_id, state)
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
         _state: &mut Self::FrameState,
@@ -57,13 +57,13 @@ impl IntoElement for String {
 impl Element for SharedString {
     type FrameState = TextState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.clone(), None, cx);
         (layout_id, state)
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
         _state: &mut Self::FrameState,
@@ -136,13 +136,13 @@ impl StyledText {
 impl Element for StyledText {
     type FrameState = TextState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.text.clone(), self.runs.take(), cx);
         (layout_id, state)
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
         _state: &mut Self::FrameState,
@@ -388,17 +388,17 @@ impl InteractiveText {
 impl Element for InteractiveText {
     type FrameState = TextState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
-        self.text.request_layout(cx)
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+        self.text.before_layout(cx)
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        self.text.commit_bounds(bounds, state, cx)
+        self.text.after_layout(bounds, state, cx)
     }
 
     fn paint(

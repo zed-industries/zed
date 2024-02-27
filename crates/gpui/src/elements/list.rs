@@ -526,7 +526,7 @@ pub struct ListOffset {
 impl Element for List {
     type FrameState = ListFrameState;
 
-    fn request_layout(
+    fn before_layout(
         &mut self,
         cx: &mut crate::ElementContext,
     ) -> (crate::LayoutId, Self::FrameState) {
@@ -583,14 +583,14 @@ impl Element for List {
                 let mut style = Style::default();
                 style.refine(&self.style);
                 cx.with_text_style(style.text_style().cloned(), |cx| {
-                    cx.request_layout(&style, None)
+                    cx.before_layout(&style, None)
                 })
             }
         };
         (layout_id, ListFrameState::default())
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::FrameState,

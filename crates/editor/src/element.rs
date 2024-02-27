@@ -767,7 +767,7 @@ impl EditorElement {
 
         if let Some(indicator) = layout.code_actions_indicator.take() {
             debug_assert!(gutter_settings.code_actions);
-            let mut button = indicator.button.into_any_element();
+            let mut button = indicator.button;
             let available_space = size(
                 AvailableSpace::MinContent,
                 AvailableSpace::Definite(line_height),
@@ -3025,7 +3025,7 @@ enum Invisible {
 impl Element for EditorElement {
     type FrameState = ();
 
-    fn request_layout(
+    fn before_layout(
         &mut self,
         cx: &mut gpui::ElementContext,
     ) -> (gpui::LayoutId, Self::FrameState) {
@@ -3039,7 +3039,7 @@ impl Element for EditorElement {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
-                        cx.with_element_context(|cx| cx.request_layout(&style, None))
+                        cx.with_element_context(|cx| cx.before_layout(&style, None))
                     }
                     EditorMode::AutoHeight { max_lines } => {
                         let editor_handle = cx.view().clone();
@@ -3068,7 +3068,7 @@ impl Element for EditorElement {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = relative(1.).into();
-                        cx.with_element_context(|cx| cx.request_layout(&style, None))
+                        cx.with_element_context(|cx| cx.before_layout(&style, None))
                     }
                 };
 
@@ -3077,13 +3077,13 @@ impl Element for EditorElement {
         })
     }
 
-    fn commit_bounds(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        todo!("implement commit_bounds on editor")
+        todo!("implement after_layout on editor")
     }
 
     fn paint(
@@ -3185,7 +3185,7 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, AnyElement)>,
     code_actions_indicator: Option<CodeActionsIndicator>,
     hover_popovers: Option<(DisplayPoint, Vec<AnyElement>)>,
-    fold_indicators: Vec<Option<IconButton>>,
+    fold_indicators: Vec<Option<AnyElement>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
 }
