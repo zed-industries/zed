@@ -957,7 +957,7 @@ mod test {
         });
 
         cx.assert_binding(
-            ["F", "p"],
+            ["F", "l", "F", "p"],
             indoc! {"
             function print() {
                 console.ˇlog('ok')
