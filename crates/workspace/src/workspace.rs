@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    Client, ErrorExt, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -4117,7 +4117,7 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 actions!(collab, [OpenChannelNotes]);
 
 async fn join_channel_internal(
-    channel_id: u64,
+    channel_id: ChannelId,
     app_state: &Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
     active_call: &Model<ActiveCall>,
@@ -4257,7 +4257,7 @@ async fn join_channel_internal(
 }
 
 pub fn join_channel(
-    channel_id: u64,
+    channel_id: ChannelId,
     app_state: Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
     cx: &mut AppContext,
