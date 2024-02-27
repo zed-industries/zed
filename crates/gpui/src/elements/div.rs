@@ -492,16 +492,15 @@ impl Interactivity {
         cx.with_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
             |element_state, _cx| {
-                if self.element_id.is_some() {
-                    let mut element_state = element_state.unwrap().unwrap_or_default();
-                    let scroll_offset = element_state
+                let mut element_state =
+                    element_state.map(|element_state| element_state.unwrap_or_default());
+                let scroll_offset = element_state.as_mut().map(|element_state| {
+                    element_state
                         .scroll_offset
                         .get_or_insert_with(|| Rc::default())
-                        .clone();
-                    (Some(scroll_offset), Some(element_state))
-                } else {
-                    (None, None)
-                }
+                        .clone()
+                });
+                (scroll_offset, element_state)
             },
         )
     }
@@ -2019,14 +2018,10 @@ impl Interactivity {
     /// Compute the visual style for this element, based on the current bounds and the element's state.
     pub fn compute_style(&self, bounds: Option<Bounds<Pixels>>, cx: &mut ElementContext) -> Style {
         cx.with_element_state(self.element_id.clone(), |element_state, cx| {
-            if self.element_id.is_some() {
-                let mut element_state = element_state.unwrap().unwrap_or_default();
-                let style = self.compute_style_internal(bounds, Some(&mut element_state), cx);
-                (style, Some(element_state))
-            } else {
-                let style = self.compute_style_internal(bounds, None, cx);
-                (style, None)
-            }
+            let mut element_state =
+                element_state.map(|element_state| element_state.unwrap_or_default());
+            let style = self.compute_style_internal(bounds, element_state.as_mut(), cx);
+            (style, element_state)
         })
     }
 

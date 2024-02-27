@@ -38,12 +38,17 @@ impl<M: ManagedView> RightClickMenu<M> {
         self
     }
 
-    fn element_state(&self, cx: &mut ElementContext) -> MenuHandleElementState<M> {
+    fn with_element_state<R>(
+        &mut self,
+        cx: &mut ElementContext,
+        f: impl FnOnce(&mut Self, &mut MenuHandleElementState<M>, &mut ElementContext) -> R,
+    ) -> R {
         cx.with_element_state::<MenuHandleElementState<M>, _>(
             self.element_id(),
-            |element_state, _cx| {
-                let element_state = element_state.unwrap().unwrap_or_default();
-                (element_state.clone(), Some(element_state))
+            |element_state, cx| {
+                let mut element_state = element_state.unwrap().unwrap_or_default();
+                let result = f(self, &mut element_state, cx);
+                (result, Some(element_state))
             },
         )
     }
@@ -93,44 +98,44 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     type FrameState = MenuHandleFrameState;
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::FrameState) {
-        let element_state = self.element_state(cx);
+        self.with_element_state(cx, |this, element_state, cx| {
+            let mut menu_layout_id = None;
 
-        let mut menu_layout_id = None;
+            let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
+                let mut overlay = overlay().snap_to_window();
+                if let Some(anchor) = this.anchor {
+                    overlay = overlay.anchor(anchor);
+                }
+                overlay = overlay.position(*element_state.position.borrow());
 
-        let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
-            let mut overlay = overlay().snap_to_window();
-            if let Some(anchor) = self.anchor {
-                overlay = overlay.anchor(anchor);
-            }
-            overlay = overlay.position(*element_state.position.borrow());
+                let mut element = overlay.child(menu.clone()).into_any();
+                menu_layout_id = Some(element.request_layout(cx));
+                element
+            });
 
-            let mut element = overlay.child(menu.clone()).into_any();
-            menu_layout_id = Some(element.request_layout(cx));
-            element
-        });
+            let mut child_element = this
+                .child_builder
+                .take()
+                .map(|child_builder| (child_builder)(element_state.menu.borrow().is_some()));
 
-        let mut child_element = self
-            .child_builder
-            .take()
-            .map(|child_builder| (child_builder)(element_state.menu.borrow().is_some()));
+            let child_layout_id = child_element
+                .as_mut()
+                .map(|child_element| child_element.request_layout(cx));
 
-        let child_layout_id = child_element
-            .as_mut()
-            .map(|child_element| child_element.request_layout(cx));
+            let layout_id = cx.request_layout(
+                &gpui::Style::default(),
+                menu_layout_id.into_iter().chain(child_layout_id),
+            );
 
-        let layout_id = cx.request_layout(
-            &gpui::Style::default(),
-            menu_layout_id.into_iter().chain(child_layout_id),
-        );
-
-        (
-            layout_id,
-            MenuHandleFrameState {
-                child_element,
-                child_layout_id,
-                menu_element,
-            },
-        )
+            (
+                layout_id,
+                MenuHandleFrameState {
+                    child_element,
+                    child_layout_id,
+                    menu_element,
+                },
+            )
+        })
     }
 
     fn paint(
@@ -139,61 +144,63 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        if let Some(mut child) = frame_state.child_element.take() {
-            child.paint(cx);
-        }
+        self.with_element_state(cx, |this, element_state, cx| {
+            if let Some(mut child) = frame_state.child_element.take() {
+                child.paint(cx);
+            }
 
-        if let Some(mut menu) = frame_state.menu_element.take() {
-            menu.paint(cx);
-            return;
-        }
+            if let Some(mut menu) = frame_state.menu_element.take() {
+                menu.paint(cx);
+                return;
+            }
 
-        let Some(builder) = self.menu_builder.take() else {
-            return;
-        };
+            let Some(builder) = this.menu_builder.take() else {
+                return;
+            };
 
-        let element_state = self.element_state(cx);
-        let attach = self.attach.clone();
-        let child_layout_id = frame_state.child_layout_id.clone();
-        let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
+            let attach = this.attach.clone();
+            let menu = element_state.menu.clone();
+            let position = element_state.position.clone();
+            let child_layout_id = frame_state.child_layout_id.clone();
+            let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
 
-        let interactive_bounds = InteractiveBounds {
-            bounds: bounds.intersect(&cx.content_mask().bounds),
-            stacking_order: cx.stacking_order().clone(),
-        };
-        cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-            if phase == DispatchPhase::Bubble
-                && event.button == MouseButton::Right
-                && interactive_bounds.visibly_contains(&event.position, cx)
-            {
-                cx.stop_propagation();
-                cx.prevent_default();
+            let interactive_bounds = InteractiveBounds {
+                bounds: bounds.intersect(&cx.content_mask().bounds),
+                stacking_order: cx.stacking_order().clone(),
+            };
+            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.button == MouseButton::Right
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    cx.stop_propagation();
+                    cx.prevent_default();
 
-                let new_menu = (builder)(cx);
-                let menu2 = element_state.menu.clone();
-                let previous_focus_handle = cx.focused();
+                    let new_menu = (builder)(cx);
+                    let menu2 = menu.clone();
+                    let previous_focus_handle = cx.focused();
 
-                cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
-                    if modal.focus_handle(cx).contains_focused(cx) {
-                        if previous_focus_handle.is_some() {
-                            cx.focus(previous_focus_handle.as_ref().unwrap())
+                    cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
+                        if modal.focus_handle(cx).contains_focused(cx) {
+                            if previous_focus_handle.is_some() {
+                                cx.focus(previous_focus_handle.as_ref().unwrap())
+                            }
                         }
-                    }
-                    *menu2.borrow_mut() = None;
-                    cx.refresh();
-                })
-                .detach();
-                cx.focus_view(&new_menu);
-                *element_state.menu.borrow_mut() = Some(new_menu);
-                *element_state.position.borrow_mut() =
-                    if attach.is_some() && child_layout_id.is_some() {
+                        *menu2.borrow_mut() = None;
+                        cx.refresh();
+                    })
+                    .detach();
+                    cx.focus_view(&new_menu);
+                    *menu.borrow_mut() = Some(new_menu);
+                    *position.borrow_mut() = if attach.is_some() && child_layout_id.is_some() {
                         attach.unwrap().corner(child_bounds)
                     } else {
                         cx.mouse_position()
                     };
-                cx.refresh();
-            }
-        });
+                    cx.refresh();
+                }
+            });
+        })
     }
 }
 
