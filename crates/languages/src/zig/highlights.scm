@@ -13,7 +13,7 @@
   variable_type_function: (IDENTIFIER)
 ] @variable
 
-;; func parametr
+;; func parameter
 parameter: (IDENTIFIER) @property
 
 [
