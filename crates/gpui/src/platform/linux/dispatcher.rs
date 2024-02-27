@@ -19,25 +19,32 @@ pub(crate) struct LinuxDispatcher {
     timed_tasks: Mutex<Vec<(Instant, Runnable)>>,
     main_sender: Sender<Runnable>,
     background_sender: flume::Sender<Runnable>,
-    _background_thread: thread::JoinHandle<()>,
+    _background_threads: Vec<thread::JoinHandle<()>>,
     main_thread_id: thread::ThreadId,
 }
 
 impl LinuxDispatcher {
     pub fn new(main_sender: Sender<Runnable>) -> Self {
         let (background_sender, background_receiver) = flume::unbounded::<Runnable>();
-        let background_thread = thread::spawn(move || {
-            profiling::register_thread!("background");
-            for runnable in background_receiver {
-                let _ignore_panic = panic::catch_unwind(|| runnable.run());
-            }
-        });
+        let thread_count = std::thread::available_parallelism()
+            .map(|i| i.get())
+            .unwrap_or(1);
+        let background_threads = (0..thread_count)
+            .map(|_| {
+                let receiver = background_receiver.clone();
+                std::thread::spawn(move || {
+                    for runnable in receiver {
+                        runnable.run();
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
         Self {
             parker: Mutex::new(Parker::new()),
             timed_tasks: Mutex::new(Vec::new()),
             main_sender,
             background_sender,
-            _background_thread: background_thread,
+            _background_threads: background_threads,
             main_thread_id: thread::current().id(),
         }
     }
