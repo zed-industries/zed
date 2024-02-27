@@ -95,10 +95,9 @@ pub trait IntoElement: Sized {
         T: Clone + Default + Debug + Into<AvailableSpace>,
     {
         let mut element = DrawableElement {
-            element: Some(self.into_element()),
+            element: self.into_element(),
             phase: ElementDrawPhase::Start,
         };
-
         DrawableElement::draw(&mut element, origin, available_space.map(Into::into), cx)
     }
 }
@@ -202,6 +201,8 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 pub(crate) struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
 trait ElementObject {
+    fn inner_element(&mut self) -> &mut dyn Any;
+
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
 
     fn paint(&mut self, cx: &mut ElementContext);
@@ -222,7 +223,7 @@ trait ElementObject {
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
 pub(crate) struct DrawableElement<E: Element> {
-    element: Option<E>,
+    element: E,
     phase: ElementDrawPhase<E::FrameState>,
 }
 
@@ -246,7 +247,7 @@ enum ElementDrawPhase<S> {
 impl<E: Element> DrawableElement<E> {
     fn new(element: E) -> Self {
         DrawableElement {
-            element: Some(element),
+            element,
             phase: ElementDrawPhase::Start,
         }
     }
@@ -254,7 +255,7 @@ impl<E: Element> DrawableElement<E> {
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Start => {
-                let (layout_id, frame_state) = self.element.as_mut().unwrap().request_layout(cx);
+                let (layout_id, frame_state) = self.element.request_layout(cx);
                 self.phase = ElementDrawPhase::LayoutRequested {
                     layout_id,
                     frame_state,
@@ -278,10 +279,7 @@ impl<E: Element> DrawableElement<E> {
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
-                self.element
-                    .take()
-                    .unwrap()
-                    .paint(bounds, &mut frame_state, cx);
+                self.element.paint(bounds, &mut frame_state, cx);
                 self.phase = ElementDrawPhase::Painted;
                 frame_state
             }
@@ -348,6 +346,10 @@ where
     E: Element,
     E::FrameState: 'static,
 {
+    fn inner_element(&mut self) -> &mut dyn Any {
+        &mut self.element
+    }
+
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         DrawableElement::request_layout(self, cx)
     }
@@ -387,6 +389,11 @@ impl AnyElement {
             .with_borrow_mut(|arena| arena.alloc(|| DrawableElement::new(element)))
             .map(|element| element as &mut dyn ElementObject);
         AnyElement(element)
+    }
+
+    /// Attempt to downcast a reference to the boxed element to a specific type.
+    pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.0.inner_element().downcast_mut()
     }
 
     /// Request the layout ID of the element stored in this `AnyElement`.
