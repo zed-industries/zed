@@ -465,7 +465,7 @@ impl CollabTitlebarItem {
                 m.trigger(
                     Button::new("project_branch_trigger", branch_name)
                         .when(CollaborationPanelSettings::get_global(cx).git_icon, |b| {
-                            b.icon(IconName::Git)
+                            b.icon(IconName::FileGit)
                                 .icon_position(IconPosition::Start)
                                 .icon_color(Color::Muted)
                                 .icon_size(IconSize::Small)
