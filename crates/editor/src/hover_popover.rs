@@ -199,9 +199,10 @@ fn show_hover(
             if symbol_range
                 .as_text_range()
                 .map(|range| {
-                    range
-                        .to_offset(&snapshot.buffer_snapshot)
-                        .contains(&multibuffer_offset)
+                    let hover_range = range.to_offset(&snapshot.buffer_snapshot);
+                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+                    // use an inclusive range here to check if we should dismiss the popover
+                    (hover_range.start..=hover_range.end).contains(&multibuffer_offset)
                 })
                 .unwrap_or(false)
             {
@@ -1065,6 +1066,8 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,

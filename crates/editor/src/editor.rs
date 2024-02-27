@@ -122,7 +122,7 @@ use ui::{
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
-use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
+use workspace::{searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace};
 
 use crate::hover_links::find_url;
 
@@ -356,7 +356,6 @@ type InlayBackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<InlayHighlight>);
 ///
 /// See the [module level documentation](self) for more information.
 pub struct Editor {
-    handle: WeakView<Self>,
     focus_handle: FocusHandle,
     /// The text buffer being edited
     buffer: Model<MultiBuffer>,
@@ -1361,6 +1360,7 @@ enum InlayHintRefreshReason {
     RefreshRequested,
     ExcerptsRemoved(Vec<ExcerptId>),
 }
+
 impl InlayHintRefreshReason {
     fn description(&self) -> &'static str {
         match self {
@@ -1488,7 +1488,6 @@ impl Editor {
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let mut this = Self {
-            handle: cx.view().downgrade(),
             focus_handle,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
@@ -1686,10 +1685,6 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
-    pub fn pane(&self, cx: &AppContext) -> Option<View<Pane>> {
-        self.workspace()?.read(cx).pane_for(&self.handle.upgrade()?)
-    }
-
     pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
         self.buffer().read(cx).title(cx)
     }
@@ -1755,7 +1750,7 @@ impl Editor {
         self.completion_provider = Some(hub);
     }
 
-    pub fn placeholder_text(&self) -> Option<&str> {
+    pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&str> {
         self.placeholder_text.as_deref()
     }
 
@@ -2347,38 +2342,48 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.take_rename(false, cx).is_some() {
-            return;
-        }
-
-        if hide_hover(self, cx) {
-            return;
-        }
-
-        if self.hide_context_menu(cx).is_some() {
-            return;
-        }
-
-        if self.discard_copilot_suggestion(cx) {
-            return;
-        }
-
-        if self.snippet_stack.pop().is_some() {
+        if self.dismiss_menus_and_popups(cx) {
             return;
         }
 
         if self.mode == EditorMode::Full {
-            if self.active_diagnostics.is_some() {
-                self.dismiss_diagnostics(cx);
-                return;
-            }
-
             if self.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel()) {
                 return;
             }
         }
 
         cx.propagate();
+    }
+
+    pub fn dismiss_menus_and_popups(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if self.take_rename(false, cx).is_some() {
+            return true;
+        }
+
+        if hide_hover(self, cx) {
+            return true;
+        }
+
+        if self.hide_context_menu(cx).is_some() {
+            return true;
+        }
+
+        if self.discard_copilot_suggestion(cx) {
+            return true;
+        }
+
+        if self.snippet_stack.pop().is_some() {
+            return true;
+        }
+
+        if self.mode == EditorMode::Full {
+            if self.active_diagnostics.is_some() {
+                self.dismiss_diagnostics(cx);
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
@@ -3025,6 +3030,12 @@ impl Editor {
         }
 
         let reason_description = reason.description();
+        let ignore_debounce = matches!(
+            reason,
+            InlayHintRefreshReason::SettingsChange(_)
+                | InlayHintRefreshReason::Toggle(_)
+                | InlayHintRefreshReason::ExcerptsRemoved(_)
+        );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
@@ -3087,6 +3098,7 @@ impl Editor {
             reason_description,
             self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
             invalidate_cache,
+            ignore_debounce,
             cx,
         ) {
             self.splice_inlay_hints(to_remove, to_insert, cx);
@@ -9624,7 +9636,7 @@ impl EditorSnapshot {
         self.is_focused
     }
 
-    pub fn placeholder_text(&self) -> Option<&Arc<str>> {
+    pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&Arc<str>> {
         self.placeholder_text.as_ref()
     }
 
@@ -9790,7 +9802,6 @@ impl Render for Editor {
                 status: cx.theme().status().clone(),
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
-                    font_weight: Some(FontWeight::BOLD),
                     ..HighlightStyle::default()
                 },
                 suggestions_style: HighlightStyle {

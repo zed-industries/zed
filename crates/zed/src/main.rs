@@ -46,7 +46,7 @@ use std::{
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
-    http::{self, HttpClient, ZedHttpClient},
+    http::{HttpClient, HttpClientWithUrl},
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt,
 };
@@ -55,8 +55,7 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
-    OpenRequest,
+    handle_keymap_file_changes, initialize_workspace, IsOnlyInstance, OpenListener, OpenRequest,
 };
 
 #[global_allocator]
@@ -141,7 +140,9 @@ fn main() {
         client::init_settings(cx);
 
         let clock = Arc::new(clock::RealSystemClock);
-        let http = http::zed_client(&client::ClientSettings::get_global(cx).server_url);
+        let http = Arc::new(HttpClientWithUrl::new(
+            &client::ClientSettings::get_global(cx).server_url,
+        ));
 
         let client = client::Client::new(clock, http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
@@ -199,9 +200,8 @@ fn main() {
             move |cx| {
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
-                let mut host = http.zed_host.lock();
-                if &*host != new_host {
-                    *host = new_host.clone();
+                if &http.base_url() != new_host {
+                    http.set_base_url(new_host);
                     if client.status().borrow().is_connected() {
                         client.reconnect(&cx.to_async());
                     }
@@ -323,8 +323,10 @@ fn main() {
                 cx.spawn(|cx| async move {
                     // ignore errors here, we'll show a generic "not signed in"
                     let _ = authenticate(client, &cx).await;
-                    cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))?
-                        .await?;
+                    cx.update(|cx| {
+                        workspace::join_channel(client::ChannelId(channel_id), app_state, None, cx)
+                    })?
+                    .await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -343,7 +345,7 @@ fn main() {
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     let workspace = workspace_window.root_view(&cx)?;
                     cx.update_window(workspace_window.into(), |_, cx| {
-                        ChannelView::open(channel_id, heading, workspace, cx)
+                        ChannelView::open(client::ChannelId(channel_id), heading, workspace, cx)
                     })?
                     .await?;
                     anyhow::Ok(())
@@ -378,7 +380,12 @@ fn main() {
                         cx.update(|mut cx| {
                             cx.spawn(|cx| async move {
                                 cx.update(|cx| {
-                                    workspace::join_channel(channel_id, app_state, None, cx)
+                                    workspace::join_channel(
+                                        client::ChannelId(channel_id),
+                                        app_state,
+                                        None,
+                                        cx,
+                                    )
                                 })?
                                 .await?;
                                 anyhow::Ok(())
@@ -397,7 +404,12 @@ fn main() {
                                 workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                             let workspace = workspace_window.root_view(&cx)?;
                             cx.update_window(workspace_window.into(), |_, cx| {
-                                ChannelView::open(channel_id, heading, workspace, cx)
+                                ChannelView::open(
+                                    client::ChannelId(channel_id),
+                                    heading,
+                                    workspace,
+                                    cx,
+                                )
                             })?
                             .await?;
                             anyhow::Ok(())
@@ -485,30 +497,7 @@ fn init_paths() {
 
 fn init_logger() {
     if stdout_is_a_pty() {
-        Builder::new()
-            .parse_default_env()
-            .format(|buf, record| {
-                use env_logger::fmt::Color;
-
-                let subtle = buf
-                    .style()
-                    .set_color(Color::Black)
-                    .set_intense(true)
-                    .clone();
-                write!(buf, "{}", subtle.value("["))?;
-                write!(
-                    buf,
-                    "{} ",
-                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
-                )?;
-                write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
-                if let Some(path) = record.module_path() {
-                    write!(buf, " {}", path)?;
-                }
-                write!(buf, "{}", subtle.value("]"))?;
-                writeln!(buf, " {}", record.args())
-            })
-            .init();
+        init_stdout_logger();
     } else {
         let level = LevelFilter::Info;
 
@@ -521,19 +510,56 @@ fn init_logger() {
             let _ = std::fs::rename(&*paths::LOG, &*paths::OLD_LOG);
         }
 
-        let log_file = OpenOptions::new()
+        match OpenOptions::new()
             .create(true)
             .append(true)
             .open(&*paths::LOG)
-            .expect("could not open logfile");
+        {
+            Ok(log_file) => {
+                let config = ConfigBuilder::new()
+                    .set_time_format_str("%Y-%m-%dT%T%:z")
+                    .set_time_to_local(true)
+                    .build();
 
-        let config = ConfigBuilder::new()
-            .set_time_format_str("%Y-%m-%dT%T%:z")
-            .set_time_to_local(true)
-            .build();
-
-        simplelog::WriteLogger::init(level, config, log_file).expect("could not initialize logger");
+                simplelog::WriteLogger::init(level, config, log_file)
+                    .expect("could not initialize logger");
+            }
+            Err(err) => {
+                init_stdout_logger();
+                log::error!(
+                    "could not open log file, defaulting to stdout logging: {}",
+                    err
+                );
+            }
+        }
     }
+}
+
+fn init_stdout_logger() {
+    Builder::new()
+        .parse_default_env()
+        .format(|buf, record| {
+            use env_logger::fmt::Color;
+
+            let subtle = buf
+                .style()
+                .set_color(Color::Black)
+                .set_intense(true)
+                .clone();
+            write!(buf, "{}", subtle.value("["))?;
+            write!(
+                buf,
+                "{} ",
+                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
+            )?;
+            write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
+            if let Some(path) = record.module_path() {
+                write!(buf, " {}", path)?;
+            }
+            write!(buf, "{}", subtle.value("]"))?;
+            writeln!(buf, " {}", record.args())
+        })
+        .init();
 }
 
 #[derive(Serialize, Deserialize)]
@@ -678,7 +704,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
     }));
 }
 
-fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
+fn upload_panics_and_crashes(http: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
         .spawn(async move {
@@ -693,12 +719,12 @@ fn upload_panics_and_crashes(http: Arc<ZedHttpClient>, cx: &mut AppContext) {
         .detach()
 }
 
-/// upload panics to us (via zed.dev)
+/// Uploads panics via `zed.dev`.
 async fn upload_previous_panics(
-    http: Arc<ZedHttpClient>,
+    http: Arc<HttpClientWithUrl>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<Option<(i64, String)>> {
-    let panic_report_url = http.zed_url("/api/panic");
+    let panic_report_url = http.build_url("/api/panic");
     let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
 
     let mut most_recent_panic = None;
@@ -767,7 +793,7 @@ static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)
 async fn upload_previous_crashes(
-    http: Arc<ZedHttpClient>,
+    http: Arc<HttpClientWithUrl>,
     most_recent_panic: Option<(i64, String)>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
@@ -779,7 +805,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = http.zed_url("/api/crash");
+    let crash_report_url = http.build_url("/api/crash");
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
@@ -839,8 +865,29 @@ async fn load_login_shell_environment() -> Result<()> {
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
+
+    // If possible, we want to `cd` in the user's `$HOME` to trigger programs
+    // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
+    // into shell's `cd` command (and hooks) to manipulate env.
+    // We do this so that we get the env a user would have when spawning a shell
+    // in home directory.
+    let shell_cmd_prefix = std::env::var_os("HOME")
+        .and_then(|home| home.into_string().ok())
+        .map(|home| format!("cd {home};"));
+
+    // The `exit 0` is the result of hours of debugging, trying to find out
+    // why running this command here, without `exit 0`, would mess
+    // up signal process for our process so that `ctrl-c` doesn't work
+    // anymore.
+    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+    // do that, but it does, and `exit 0` helps.
+    let shell_cmd = format!(
+        "{}echo {marker}; /usr/bin/env -0; exit 0;",
+        shell_cmd_prefix.as_deref().unwrap_or("")
+    );
+
     let output = Command::new(&shell)
-        .args(["-l", "-i", "-c", &format!("echo {marker}; /usr/bin/env -0")])
+        .args(["-l", "-i", "-c", &shell_cmd])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;

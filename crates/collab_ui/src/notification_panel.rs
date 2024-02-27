@@ -1,7 +1,7 @@
 use crate::{chat_panel::ChatPanel, NotificationPanelSettings};
 use anyhow::Result;
 use channel::ChannelStore;
-use client::{Client, Notification, User, UserStore};
+use client::{ChannelId, Client, Notification, User, UserStore};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
@@ -357,7 +357,7 @@ impl NotificationPanel {
                         "{} invited you to join the #{channel_name} channel",
                         inviter.github_login
                     ),
-                    needs_response: channel_store.has_channel_invitation(channel_id),
+                    needs_response: channel_store.has_channel_invitation(ChannelId(channel_id)),
                     actor: Some(inviter),
                     can_navigate: false,
                 })
@@ -368,7 +368,7 @@ impl NotificationPanel {
                 message_id,
             } => {
                 let sender = user_store.get_cached_user(sender_id)?;
-                let channel = channel_store.channel_for_id(channel_id)?;
+                let channel = channel_store.channel_for_id(ChannelId(channel_id))?;
                 let message = self
                     .notification_store
                     .read(cx)
@@ -432,7 +432,7 @@ impl NotificationPanel {
                         if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
                             panel.update(cx, |panel, cx| {
                                 panel
-                                    .select_channel(channel_id, Some(message_id), cx)
+                                    .select_channel(ChannelId(channel_id), Some(message_id), cx)
                                     .detach_and_log_err(cx);
                             });
                         }
@@ -454,7 +454,7 @@ impl NotificationPanel {
                     panel.is_scrolled_to_bottom()
                         && panel
                             .active_chat()
-                            .map_or(false, |chat| chat.read(cx).channel_id == *channel_id)
+                            .map_or(false, |chat| chat.read(cx).channel_id.0 == *channel_id)
                 } else {
                     false
                 };

@@ -1,19 +1,18 @@
 use std::ops::Range;
 
+use crate::{
+    motion::right, normal::normal_object, state::Mode, utils::coerce_punctuation,
+    visual::visual_object, Vim,
+};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
     Bias, DisplayPoint,
 };
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
-use language::{char_kind, CharKind, Selection};
+use language::{char_kind, BufferSnapshot, CharKind, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
-
-use crate::{
-    motion::right, normal::normal_object, state::Mode, utils::coerce_punctuation,
-    visual::visual_object, Vim,
-};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Object {
@@ -27,6 +26,8 @@ pub enum Object {
     SquareBrackets,
     CurlyBrackets,
     AngleBrackets,
+    Argument,
+    Tag,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -49,7 +50,9 @@ actions!(
         Parentheses,
         SquareBrackets,
         CurlyBrackets,
-        AngleBrackets
+        AngleBrackets,
+        Argument,
+        Tag
     ]
 );
 
@@ -59,6 +62,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             object(Object::Word { ignore_punctuation }, cx)
         },
     );
+    workspace.register_action(|_: &mut Workspace, _: &Tag, cx: _| object(Object::Tag, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
     workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
@@ -82,6 +86,8 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, _: &VerticalBars, cx: _| {
         object(Object::VerticalBars, cx)
     });
+    workspace
+        .register_action(|_: &mut Workspace, _: &Argument, cx: _| object(Object::Argument, cx));
 }
 
 fn object(object: Object, cx: &mut WindowContext) {
@@ -104,21 +110,24 @@ impl Object {
             | Object::DoubleQuotes => false,
             Object::Sentence
             | Object::Parentheses
+            | Object::Tag
             | Object::AngleBrackets
             | Object::CurlyBrackets
-            | Object::SquareBrackets => true,
+            | Object::SquareBrackets
+            | Object::Argument => true,
         }
     }
 
     pub fn always_expands_both_ways(self) -> bool {
         match self {
-            Object::Word { .. } | Object::Sentence => false,
+            Object::Word { .. } | Object::Sentence | Object::Argument => false,
             Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
             | Object::VerticalBars
             | Object::Parentheses
             | Object::SquareBrackets
+            | Object::Tag
             | Object::CurlyBrackets
             | Object::AngleBrackets => true,
         }
@@ -126,17 +135,24 @@ impl Object {
 
     pub fn target_visual_mode(self, current_mode: Mode) -> Mode {
         match self {
-            Object::Word { .. } if current_mode == Mode::VisualLine => Mode::Visual,
-            Object::Word { .. } => current_mode,
-            Object::Sentence
+            Object::Word { .. }
+            | Object::Sentence
             | Object::Quotes
             | Object::BackQuotes
-            | Object::DoubleQuotes
-            | Object::VerticalBars
-            | Object::Parentheses
+            | Object::DoubleQuotes => {
+                if current_mode == Mode::VisualBlock {
+                    Mode::VisualBlock
+                } else {
+                    Mode::Visual
+                }
+            }
+            Object::Parentheses
             | Object::SquareBrackets
             | Object::CurlyBrackets
-            | Object::AngleBrackets => Mode::Visual,
+            | Object::AngleBrackets
+            | Object::VerticalBars
+            | Object::Tag
+            | Object::Argument => Mode::Visual,
         }
     }
 
@@ -170,6 +186,7 @@ impl Object {
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
             }
+            Object::Tag => surrounding_html_tag(map, relative_to, around),
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -179,6 +196,7 @@ impl Object {
             Object::AngleBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '<', '>')
             }
+            Object::Argument => argument(map, relative_to, around),
         }
     }
 
@@ -229,6 +247,72 @@ fn in_word(
     Some(start..end)
 }
 
+fn surrounding_html_tag(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    surround: bool,
+) -> Option<Range<DisplayPoint>> {
+    fn read_tag(chars: impl Iterator<Item = char>) -> String {
+        chars
+            .take_while(|c| c.is_alphanumeric() || *c == ':' || *c == '-' || *c == '_' || *c == '.')
+            .collect()
+    }
+    fn open_tag(mut chars: impl Iterator<Item = char>) -> Option<String> {
+        if Some('<') != chars.next() {
+            return None;
+        }
+        Some(read_tag(chars))
+    }
+    fn close_tag(mut chars: impl Iterator<Item = char>) -> Option<String> {
+        if (Some('<'), Some('/')) != (chars.next(), chars.next()) {
+            return None;
+        }
+        Some(read_tag(chars))
+    }
+
+    let snapshot = &map.buffer_snapshot;
+    let offset = relative_to.to_offset(map, Bias::Left);
+    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let buffer = excerpt.buffer();
+    let offset = excerpt.map_offset_to_buffer(offset);
+
+    // Find the most closest to current offset
+    let mut cursor = buffer.syntax_layer_at(offset)?.node().walk();
+    let mut last_child_node = cursor.node();
+    while cursor.goto_first_child_for_byte(offset).is_some() {
+        last_child_node = cursor.node();
+    }
+
+    let mut last_child_node = Some(last_child_node);
+    while let Some(cur_node) = last_child_node {
+        if cur_node.child_count() >= 2 {
+            let first_child = cur_node.child(0);
+            let last_child = cur_node.child(cur_node.child_count() - 1);
+            if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
+                let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
+                let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
+                if open_tag.is_some()
+                    && open_tag == close_tag
+                    && (first_child.end_byte() + 1..last_child.start_byte()).contains(&offset)
+                {
+                    let range = if surround {
+                        first_child.byte_range().start..last_child.byte_range().end
+                    } else {
+                        first_child.byte_range().end..last_child.byte_range().start
+                    };
+                    if excerpt.contains_buffer_range(range.clone()) {
+                        let result = excerpt.map_range_from_buffer(range);
+                        return Some(
+                            result.start.to_display_point(map)..result.end.to_display_point(map),
+                        );
+                    }
+                }
+            }
+        }
+        last_child_node = cur_node.parent();
+    }
+    None
+}
 /// Returns a range that surrounds the word and following whitespace
 /// relative_to is in.
 ///
@@ -306,6 +390,157 @@ fn around_next_word(
     });
 
     Some(start..end)
+}
+
+fn argument(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    around: bool,
+) -> Option<Range<DisplayPoint>> {
+    let snapshot = &map.buffer_snapshot;
+    let offset = relative_to.to_offset(map, Bias::Left);
+
+    // The `argument` vim text object uses the syntax tree, so we operate at the buffer level and map back to the display level
+    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let buffer = excerpt.buffer();
+
+    fn comma_delimited_range_at(
+        buffer: &BufferSnapshot,
+        mut offset: usize,
+        include_comma: bool,
+    ) -> Option<Range<usize>> {
+        // Seek to the first non-whitespace character
+        offset += buffer
+            .chars_at(offset)
+            .take_while(|c| c.is_whitespace())
+            .map(char::len_utf8)
+            .sum::<usize>();
+
+        let bracket_filter = |open: Range<usize>, close: Range<usize>| {
+            // Filter out empty ranges
+            if open.end == close.start {
+                return false;
+            }
+
+            // If the cursor is outside the brackets, ignore them
+            if open.start == offset || close.end == offset {
+                return false;
+            }
+
+            // TODO: Is there any better way to filter out string brackets?
+            // Used to filter out string brackets
+            return matches!(
+                buffer.chars_at(open.start).next(),
+                Some('(' | '[' | '{' | '<' | '|')
+            );
+        };
+
+        // Find the brackets containing the cursor
+        let (open_bracket, close_bracket) =
+            buffer.innermost_enclosing_bracket_ranges(offset..offset, Some(&bracket_filter))?;
+
+        let inner_bracket_range = open_bracket.end..close_bracket.start;
+
+        let layer = buffer.syntax_layer_at(offset)?;
+        let node = layer.node();
+        let mut cursor = node.walk();
+
+        // Loop until we find the smallest node whose parent covers the bracket range. This node is the argument in the parent argument list
+        let mut parent_covers_bracket_range = false;
+        loop {
+            let node = cursor.node();
+            let range = node.byte_range();
+            let covers_bracket_range =
+                range.start == open_bracket.start && range.end == close_bracket.end;
+            if parent_covers_bracket_range && !covers_bracket_range {
+                break;
+            }
+            parent_covers_bracket_range = covers_bracket_range;
+
+            // Unable to find a child node with a parent that covers the bracket range, so no argument to select
+            if !cursor.goto_first_child_for_byte(offset).is_some() {
+                return None;
+            }
+        }
+
+        let mut argument_node = cursor.node();
+
+        // If the child node is the open bracket, move to the next sibling.
+        if argument_node.byte_range() == open_bracket {
+            if !cursor.goto_next_sibling() {
+                return Some(inner_bracket_range);
+            }
+            argument_node = cursor.node();
+        }
+        // While the child node is the close bracket or a comma, move to the previous sibling
+        while argument_node.byte_range() == close_bracket || argument_node.kind() == "," {
+            if !cursor.goto_previous_sibling() {
+                return Some(inner_bracket_range);
+            }
+            argument_node = cursor.node();
+            if argument_node.byte_range() == open_bracket {
+                return Some(inner_bracket_range);
+            }
+        }
+
+        // The start and end of the argument range, defaulting to the start and end of the argument node
+        let mut start = argument_node.start_byte();
+        let mut end = argument_node.end_byte();
+
+        let mut needs_surrounding_comma = include_comma;
+
+        // Seek backwards to find the start of the argument - either the previous comma or the opening bracket.
+        // We do this because multiple nodes can represent a single argument, such as with rust `vec![a.b.c, d.e.f]`
+        while cursor.goto_previous_sibling() {
+            let prev = cursor.node();
+
+            if prev.start_byte() < open_bracket.end {
+                start = open_bracket.end;
+                break;
+            } else if prev.kind() == "," {
+                if needs_surrounding_comma {
+                    start = prev.start_byte();
+                    needs_surrounding_comma = false;
+                }
+                break;
+            } else if prev.start_byte() < start {
+                start = prev.start_byte();
+            }
+        }
+
+        // Do the same for the end of the argument, extending to next comma or the end of the argument list
+        while cursor.goto_next_sibling() {
+            let next = cursor.node();
+
+            if next.end_byte() > close_bracket.start {
+                end = close_bracket.start;
+                break;
+            } else if next.kind() == "," {
+                if needs_surrounding_comma {
+                    // Select up to the beginning of the next argument if there is one, otherwise to the end of the comma
+                    if let Some(next_arg) = next.next_sibling() {
+                        end = next_arg.start_byte();
+                    } else {
+                        end = next.end_byte();
+                    }
+                }
+                break;
+            } else if next.end_byte() > end {
+                end = next.end_byte();
+            }
+        }
+
+        Some(start..end)
+    }
+
+    let result = comma_delimited_range_at(buffer, excerpt.map_offset_to_buffer(offset), around)?;
+
+    if excerpt.contains_buffer_range(result.clone()) {
+        let result = excerpt.map_range_from_buffer(result);
+        Some(result.start.to_display_point(map)..result.end.to_display_point(map))
+    } else {
+        None
+    }
 }
 
 fn sentence(
@@ -1008,6 +1243,63 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_argument_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Generic arguments
+        cx.set_state("fn boop<A: ˇDebug, B>() {}", Mode::Normal);
+        cx.simulate_keystrokes(["v", "i", "a"]);
+        cx.assert_state("fn boop<«A: Debugˇ», B>() {}", Mode::Visual);
+
+        // Function arguments
+        cx.set_state(
+            "fn boop(ˇarg_a: (Tuple, Of, Types), arg_b: String) {}",
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["d", "a", "a"]);
+        cx.assert_state("fn boop(ˇarg_b: String) {}", Mode::Normal);
+
+        cx.set_state("std::namespace::test(\"strinˇg\", a.b.c())", Mode::Normal);
+        cx.simulate_keystrokes(["v", "a", "a"]);
+        cx.assert_state("std::namespace::test(«\"string\", ˇ»a.b.c())", Mode::Visual);
+
+        // Tuple, vec, and array arguments
+        cx.set_state(
+            "fn boop(arg_a: (Tuple, Ofˇ, Types), arg_b: String) {}",
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["c", "i", "a"]);
+        cx.assert_state(
+            "fn boop(arg_a: (Tuple, ˇ, Types), arg_b: String) {}",
+            Mode::Insert,
+        );
+
+        cx.set_state("let a = (test::call(), 'p', my_macro!{ˇ});", Mode::Normal);
+        cx.simulate_keystrokes(["c", "a", "a"]);
+        cx.assert_state("let a = (test::call(), 'p'ˇ);", Mode::Insert);
+
+        cx.set_state("let a = [test::call(ˇ), 300];", Mode::Normal);
+        cx.simulate_keystrokes(["c", "i", "a"]);
+        cx.assert_state("let a = [ˇ, 300];", Mode::Insert);
+
+        cx.set_state(
+            "let a = vec![Vec::new(), vecˇ![test::call(), 300]];",
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["c", "a", "a"]);
+        cx.assert_state("let a = vec![Vec::new()ˇ];", Mode::Insert);
+
+        // Cursor immediately before / after brackets
+        cx.set_state("let a = [test::call(first_arg)ˇ]", Mode::Normal);
+        cx.simulate_keystrokes(["v", "i", "a"]);
+        cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
+
+        cx.set_state("let a = [test::callˇ(first_arg)]", Mode::Normal);
+        cx.simulate_keystrokes(["v", "i", "a"]);
+        cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
+    }
+
+    #[gpui::test]
     async fn test_delete_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1025,5 +1317,27 @@ mod test {
             cx.assert_binding_matches_all(["d", "a", &end.to_string()], &marked_string)
                 .await;
         }
+    }
+
+    #[gpui::test]
+    async fn test_tags(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_html(cx).await;
+
+        cx.set_state("<html><head></head><body><b>hˇi!</b></body>", Mode::Normal);
+        cx.simulate_keystrokes(["v", "i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body><b>«hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head>«<body><b>hi!</b></body>ˇ»",
+            Mode::Visual,
+        );
     }
 }

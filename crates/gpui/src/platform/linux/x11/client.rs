@@ -265,6 +265,7 @@ impl Client for X11Client {
             } else {
                 break;
             }
+
         }
 
         // Before the event loop will go to sleep, we have to make sure no more X11 events arrived

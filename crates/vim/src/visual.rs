@@ -1005,7 +1005,6 @@ mod test {
         cx.simulate_shared_keystrokes(["ctrl-v", "l"]).await;
         cx.simulate_shared_keystrokes(["a", "]"]).await;
         cx.assert_shared_state("hello (in «[parens]ˇ» o)").await;
-        assert_eq!(cx.mode(), Mode::Visual);
         cx.simulate_shared_keystrokes(["i", "("]).await;
         cx.assert_shared_state("hello («in [parens] oˇ»)").await;
 
@@ -1016,7 +1015,6 @@ mod test {
         assert_eq!(cx.mode(), Mode::VisualBlock);
         cx.simulate_shared_keystrokes(["o", "a", "s"]).await;
         cx.assert_shared_state("«ˇhello in a word» again.").await;
-        assert_eq!(cx.mode(), Mode::Visual);
     }
 
     #[gpui::test]

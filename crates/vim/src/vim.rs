@@ -16,8 +16,7 @@ mod visual;
 
 use anyhow::Result;
 use collections::HashMap;
-use command_palette::CommandPaletteInterceptor;
-use copilot::CommandPaletteFilter;
+use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{movement, Editor, EditorEvent, EditorMode};
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, Global, Subscription, View, ViewContext,

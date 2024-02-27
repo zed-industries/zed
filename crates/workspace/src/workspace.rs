@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    Client, ErrorExt, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -59,7 +59,10 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cell::RefCell,
-    cmp, env,
+    cmp,
+    collections::hash_map::DefaultHasher,
+    env,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     rc::Rc,
     sync::{atomic::AtomicUsize, Arc, Weak},
@@ -100,7 +103,6 @@ actions!(
         NewFile,
         NewWindow,
         CloseWindow,
-        CloseInactiveTabsAndPanes,
         AddFolderToProject,
         Unfollow,
         SaveAs,
@@ -158,6 +160,12 @@ pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseInactiveTabsAndPanes {
+    pub save_intent: Option<SaveIntent>,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SendKeystrokes(pub String);
 
@@ -167,6 +175,7 @@ impl_actions!(
         ActivatePane,
         ActivatePaneInDirection,
         CloseAllItemsAndPanes,
+        CloseInactiveTabsAndPanes,
         NewFileInDirection,
         OpenTerminal,
         Save,
@@ -579,24 +588,13 @@ impl Workspace {
                 }),
 
                 project::Event::LanguageServerPrompt(request) => {
-                    let request = request.clone();
+                    let mut hasher = DefaultHasher::new();
+                    request.message.as_str().hash(&mut hasher);
+                    let id = hasher.finish();
 
-                    cx.spawn(|_, mut cx| async move {
-                        let messages = request
-                            .actions
-                            .iter()
-                            .map(|action| action.title.as_str())
-                            .collect::<Vec<_>>();
-                        let index = cx
-                            .update(|cx| {
-                                cx.prompt(request.level, "", Some(&request.message), &messages)
-                            })?
-                            .await?;
-                        request.respond(index).await;
-
-                        Result::<(), anyhow::Error>::Ok(())
-                    })
-                    .detach()
+                    this.show_notification(id as usize, cx, |cx| {
+                        cx.new_view(|_| notifications::LanguageServerPrompt::new(request.clone()))
+                    });
                 }
 
                 _ => {}
@@ -1387,7 +1385,9 @@ impl Workspace {
             };
 
             if let Some(task) = this
-                .update(&mut cx, |this, cx| this.open_workspace_for_paths(paths, cx))
+                .update(&mut cx, |this, cx| {
+                    this.open_workspace_for_paths(false, paths, cx)
+                })
                 .log_err()
             {
                 task.await.log_err();
@@ -1398,6 +1398,7 @@ impl Workspace {
 
     pub fn open_workspace_for_paths(
         &mut self,
+        replace_current_window: bool,
         paths: Vec<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -1405,7 +1406,10 @@ impl Workspace {
         let is_remote = self.project.read(cx).is_remote();
         let has_worktree = self.project.read(cx).worktrees().next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-        let window_to_replace = if is_remote || has_worktree || has_dirty_items {
+
+        let window_to_replace = if replace_current_window {
+            window
+        } else if is_remote || has_worktree || has_dirty_items {
             None
         } else {
             window
@@ -1622,10 +1626,10 @@ impl Workspace {
 
     pub fn close_inactive_items_and_panes(
         &mut self,
-        _: &CloseInactiveTabsAndPanes,
+        action: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) {
-        self.close_all_internal(true, SaveIntent::Close, cx)
+        self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
             .map(|task| task.detach_and_log_err(cx));
     }
 
@@ -1650,7 +1654,7 @@ impl Workspace {
 
         if retain_active_pane {
             if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
-                pane.close_inactive_items(&CloseInactiveItems, cx)
+                pane.close_inactive_items(&CloseInactiveItems { save_intent: None }, cx)
             }) {
                 tasks.push(current_pane_close);
             };
@@ -2760,7 +2764,7 @@ impl Workspace {
                     .z_index(100)
                     .right_3()
                     .bottom_3()
-                    .w_96()
+                    .w_112()
                     .h_full()
                     .flex()
                     .flex_col()
@@ -4119,7 +4123,7 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 actions!(collab, [OpenChannelNotes]);
 
 async fn join_channel_internal(
-    channel_id: u64,
+    channel_id: ChannelId,
     app_state: &Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
     active_call: &Model<ActiveCall>,
@@ -4259,7 +4263,7 @@ async fn join_channel_internal(
 }
 
 pub fn join_channel(
-    channel_id: u64,
+    channel_id: ChannelId,
     app_state: Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
     cx: &mut AppContext,

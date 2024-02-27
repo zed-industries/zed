@@ -10,11 +10,11 @@ path = "src/recent_projects.rs"
 doctest = false
 
 [dependencies]
-editor.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
+menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
 postage.workspace = true
@@ -25,6 +25,3 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-
-[dev-dependencies]
-editor = { workspace = true, features = ["test-support"] }

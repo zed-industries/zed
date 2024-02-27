@@ -13,6 +13,13 @@ pub enum UiTextSize {
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     #[default]
     Default,
+    /// The large size for UI text.
+    ///
+    /// `1rem` or `16px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
+    Large,
+
     /// The small size for UI text.
     ///
     /// `0.75rem` or `12px` at the default scale of `1rem` = `16px`.
@@ -31,6 +38,7 @@ pub enum UiTextSize {
 impl UiTextSize {
     pub fn rems(self) -> Rems {
         match self {
+            Self::Large => rems(16. / 16.),
             Self::Default => rems(14. / 16.),
             Self::Small => rems(12. / 16.),
             Self::XSmall => rems(10. / 16.),
