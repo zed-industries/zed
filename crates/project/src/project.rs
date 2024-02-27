@@ -10,7 +10,7 @@ pub mod terminals;
 mod project_tests;
 
 use anyhow::{anyhow, bail, Context as _, Result};
-use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
+use client::{proto, Client, Collaborator, HostedProjectId, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
@@ -56,7 +56,7 @@ use project_core::project_settings::{LspSettings, ProjectSettings};
 pub use project_core::{DiagnosticSummary, ProjectEntryId};
 use rand::prelude::*;
 
-use rpc::{ErrorCode, ErrorExt as _};
+use rpc::{proto::ChannelRole, ErrorCode, ErrorExt as _};
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
@@ -614,16 +614,38 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         role: proto::ChannelRole,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
-        let subscription = client.subscribe_to_entity(remote_id)?;
         let response = client
             .request_envelope(proto::JoinProject {
                 project_id: remote_id,
             })
             .await?;
+        Self::from_join_project_response(
+            response,
+            Some(role),
+            client,
+            user_store,
+            languages,
+            fs,
+            cx,
+        )
+        .await
+    }
+    async fn from_join_project_response(
+        response: TypedEnvelope<proto::JoinProjectResponse>,
+        role: Option<ChannelRole>, // todo calculate this on the server.
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        let remote_id = response.payload.project_id;
+        let role = role.unwrap_or(response.payload.role());
+        let subscription = client.subscribe_to_entity(remote_id)?;
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
@@ -738,6 +760,23 @@ impl Project {
         })??;
 
         Ok(this)
+    }
+
+    pub async fn hosted(
+        hosted_project_id: HostedProjectId,
+        user_store: Model<UserStore>,
+        client: Arc<Client>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        let response = client
+            .request_envelope(proto::JoinHostedProject {
+                id: hosted_project_id.0,
+            })
+            .await?;
+        Self::from_join_project_response(response, None, client, user_store, languages, fs, cx)
+            .await
     }
 
     fn release(&mut self, cx: &mut AppContext) {

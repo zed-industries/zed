@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, HostedProjectId, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -4452,6 +4452,33 @@ pub fn create_and_open_local_file(
 
         let item = items.pop().flatten();
         item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
+    })
+}
+
+pub fn join_hosted_project(
+    project_id: HostedProjectId,
+    app_state: Arc<AppState>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    cx.spawn(|cx| async move {
+        let project = Project::hosted(
+            project_id,
+            app_state.user_store.clone(),
+            app_state.client.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx.clone(),
+        )
+        .await?;
+
+        let window_bounds_override = window_bounds_env_override(&cx);
+        cx.update(|cx| {
+            let options = (app_state.build_window_options)(window_bounds_override, None, cx);
+            cx.open_window(options, |cx| {
+                cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+            })
+        })?;
+        Ok(())
     })
 }
 

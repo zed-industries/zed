@@ -4,8 +4,9 @@ use crate::{
     auth::{self, Impersonator},
     db::{
         self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
-        InviteMemberResult, MembershipUpdated, MessageId, NotificationId, ProjectId,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
+        HostedProjectId, InviteMemberResult, MembershipUpdated, MessageId, NotificationId,
+        ProjectId, RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User,
+        UserId,
     },
     executor::Executor,
     AppState, Error, Result,
@@ -208,6 +209,7 @@ impl Server {
             .add_request_handler(share_project)
             .add_message_handler(unshare_project)
             .add_request_handler(join_project)
+            .add_request_handler(join_hosted_project)
             .add_message_handler(leave_project)
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -1628,10 +1630,12 @@ async fn join_project(
 
     // First, we send the metadata associated with each worktree.
     response.send(proto::JoinProjectResponse {
+        project_id: project_id.0 as u64,
         worktrees: worktrees.clone(),
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
+        role: ChannelRole::Member.into(), // todo
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -1719,6 +1723,132 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
 
     project_left(&project, &session);
     room_updated(&room, &session.peer);
+
+    Ok(())
+}
+
+async fn join_hosted_project(
+    request: proto::JoinHostedProject,
+    response: Response<proto::JoinHostedProject>,
+    session: Session,
+) -> Result<()> {
+    let (project, replica_id) = &mut *session
+        .db()
+        .await
+        .join_hosted_project(
+            HostedProjectId(request.id as i32),
+            session.user_id,
+            session.connection_id,
+        )
+        .await?;
+
+    let collaborators = project
+        .collaborators
+        .iter()
+        .filter(|collaborator| collaborator.connection_id != session.connection_id)
+        .map(|collaborator| collaborator.to_proto())
+        .collect::<Vec<_>>();
+
+    let worktrees = project
+        .worktrees
+        .iter()
+        .map(|(id, worktree)| proto::WorktreeMetadata {
+            id: *id,
+            root_name: worktree.root_name.clone(),
+            visible: worktree.visible,
+            abs_path: worktree.abs_path.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    for collaborator in &collaborators {
+        session
+            .peer
+            .send(
+                collaborator.peer_id.unwrap().into(),
+                proto::AddProjectCollaborator {
+                    project_id: project_id.to_proto(),
+                    collaborator: Some(proto::Collaborator {
+                        peer_id: Some(session.connection_id.into()),
+                        replica_id: replica_id.0 as u32,
+                        user_id: guest_user_id.to_proto(),
+                    }),
+                },
+            )
+            .trace_err();
+    }
+
+    // First, we send the metadata associated with each worktree.
+    response.send(proto::JoinProjectResponse {
+        project_id: project_id.0 as u64,
+        worktrees: worktrees.clone(),
+        replica_id: replica_id.0 as u32,
+        collaborators: collaborators.clone(),
+        language_servers: project.language_servers.clone(),
+        role: ChannelRole::Member.into(), // todo
+    })?;
+
+    for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
+        #[cfg(any(test, feature = "test-support"))]
+        const MAX_CHUNK_SIZE: usize = 2;
+        #[cfg(not(any(test, feature = "test-support")))]
+        const MAX_CHUNK_SIZE: usize = 256;
+
+        // Stream this worktree's entries.
+        let message = proto::UpdateWorktree {
+            project_id: project_id.to_proto(),
+            worktree_id,
+            abs_path: worktree.abs_path.clone(),
+            root_name: worktree.root_name,
+            updated_entries: worktree.entries,
+            removed_entries: Default::default(),
+            scan_id: worktree.scan_id,
+            is_last_update: worktree.scan_id == worktree.completed_scan_id,
+            updated_repositories: worktree.repository_entries.into_values().collect(),
+            removed_repositories: Default::default(),
+        };
+        for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
+            session.peer.send(session.connection_id, update.clone())?;
+        }
+
+        // Stream this worktree's diagnostics.
+        for summary in worktree.diagnostic_summaries {
+            session.peer.send(
+                session.connection_id,
+                proto::UpdateDiagnosticSummary {
+                    project_id: project_id.to_proto(),
+                    worktree_id: worktree.id,
+                    summary: Some(summary),
+                },
+            )?;
+        }
+
+        for settings_file in worktree.settings_files {
+            session.peer.send(
+                session.connection_id,
+                proto::UpdateWorktreeSettings {
+                    project_id: project_id.to_proto(),
+                    worktree_id: worktree.id,
+                    path: settings_file.path,
+                    content: Some(settings_file.content),
+                },
+            )?;
+        }
+    }
+
+    for language_server in &project.language_servers {
+        session.peer.send(
+            session.connection_id,
+            proto::UpdateLanguageServer {
+                project_id: project_id.to_proto(),
+                language_server_id: language_server.id,
+                variant: Some(
+                    proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                        proto::LspDiskBasedDiagnosticsUpdated {},
+                    ),
+                ),
+            },
+        )?;
+    }
 
     Ok(())
 }

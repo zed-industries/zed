@@ -506,6 +506,23 @@ impl Database {
         .await
     }
 
+    pub async fn join_hosted_project(
+        &self,
+        id: HostedProjectId,
+        user_id: UserId,
+        connection_id: ConnectionId,
+    ) -> Result<(Project, ReplicaId)> {
+        self.transaction(|tx| async move {
+            let (hosted_project, role) = self.get_hosted_project(id, user_id, &*tx).await?;
+            let project = project::Entity::find()
+                .filter(project::Column::HostedProjectId)
+                .eq(id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+        })
+    }
+
     /// Adds the given connection to the specified project.
     pub async fn join_project(
         &self,
