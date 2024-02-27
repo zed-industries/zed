@@ -38,11 +38,11 @@ impl Element for Canvas {
 
     fn commit_bounds(
         &mut self,
-        bounds: Bounds<Pixels>,
-        style: &mut Style,
-        cx: &mut ElementContext,
+        _bounds: Bounds<Pixels>,
+        _style: &mut Style,
+        _cx: &mut ElementContext,
     ) {
-        todo!()
+        // TODO: what do we want to do here?
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, style: &mut Style, cx: &mut ElementContext) {

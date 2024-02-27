@@ -4625,7 +4625,7 @@ impl Element for DisconnectedOverlay {
         (overlay.request_layout(cx), overlay)
     }
 
-    fn paint(
+    fn commit_bounds(
         &mut self,
         bounds: Bounds<Pixels>,
         overlay: &mut Self::FrameState,
@@ -4633,8 +4633,17 @@ impl Element for DisconnectedOverlay {
     ) {
         cx.with_z_index(u16::MAX, |cx| {
             cx.add_opaque_layer(bounds);
-            overlay.paint(cx);
+            overlay.commit_bounds(cx);
         })
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        overlay: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        cx.with_z_index(u16::MAX, |cx| overlay.paint(cx))
     }
 }
 

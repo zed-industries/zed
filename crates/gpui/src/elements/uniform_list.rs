@@ -224,7 +224,9 @@ impl Element for UniformList {
                                     AvailableSpace::Definite(item_height),
                                 );
                                 item.measure(available_space, cx);
-                                item.commit_bounds(cx);
+                                cx.with_absolute_element_offset(item_origin, |cx| {
+                                    item.commit_bounds(cx)
+                                });
                                 frame_state.items.push((item_origin, item));
                             }
                         });

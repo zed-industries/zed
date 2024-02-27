@@ -626,7 +626,9 @@ impl Element for List {
                     let item_height = item_element
                         .measure(layout_response.available_item_space, cx)
                         .height;
-                    item_element.commit_bounds(cx);
+                    cx.with_absolute_element_offset(item_origin, |cx| {
+                        item_element.commit_bounds(cx)
+                    });
                     frame_state.items.push((item_origin, item_element));
                     item_origin.y += item_height;
                 }

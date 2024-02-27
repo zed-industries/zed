@@ -100,7 +100,7 @@ impl Element for Img {
     fn commit_bounds(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::FrameState,
+        _frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         self.interactivity()

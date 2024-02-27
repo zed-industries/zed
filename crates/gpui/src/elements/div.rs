@@ -1129,7 +1129,7 @@ impl Element for Div {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        frame_state: &mut Self::FrameState,
+        _frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         self.interactivity
@@ -1342,7 +1342,6 @@ impl Interactivity {
                 scroll_handle.0.borrow_mut().overflow = style.overflow;
             }
 
-            let line_height = cx.line_height();
             let rem_size = cx.rem_size();
             let padding_size = size(
                 style

@@ -138,6 +138,23 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         })
     }
 
+    fn commit_bounds(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        cx.with_element_id(Some(self.id.clone()), |cx| {
+            if let Some(child) = frame_state.child_element.as_mut() {
+                child.commit_bounds(cx);
+            }
+
+            if let Some(menu) = frame_state.menu_element.as_mut() {
+                menu.commit_bounds(cx);
+            }
+        })
+    }
+
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,

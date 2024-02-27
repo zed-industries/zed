@@ -210,6 +210,27 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         })
     }
 
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.with_element_state(cx, |_this, element_state, cx| {
+            if let Some(child) = frame_state.child_element.as_mut() {
+                child.commit_bounds(cx);
+            }
+
+            if let Some(child_layout_id) = frame_state.child_layout_id.as_ref() {
+                element_state.child_bounds = Some(cx.layout_bounds(*child_layout_id));
+            }
+
+            if let Some(menu) = frame_state.menu_element.as_mut() {
+                menu.commit_bounds(cx);
+            }
+        })
+    }
+
     fn paint(
         &mut self,
         _: Bounds<gpui::Pixels>,
@@ -219,10 +240,6 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         self.with_element_state(cx, |_this, element_state, cx| {
             if let Some(mut child) = frame_state.child_element.take() {
                 child.paint(cx);
-            }
-
-            if let Some(child_layout_id) = frame_state.child_layout_id.take() {
-                element_state.child_bounds = Some(cx.layout_bounds(child_layout_id));
             }
 
             if let Some(mut menu) = frame_state.menu_element.take() {

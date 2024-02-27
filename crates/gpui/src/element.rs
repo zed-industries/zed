@@ -89,26 +89,6 @@ pub trait IntoElement: Sized {
     fn into_any_element(self) -> AnyElement {
         self.into_element().into_any()
     }
-
-    /// Convert into an element, then draw in the current window at the given origin.
-    /// The available space argument is provided to the layout engine to determine the size of the
-    // root element.  Once the element is drawn, its associated element state is yielded to the
-    // given callback.
-    fn draw<T>(
-        self,
-        origin: Point<Pixels>,
-        available_space: Size<T>,
-        cx: &mut ElementContext,
-    ) -> <Self::Element as Element>::FrameState
-    where
-        T: Clone + Default + Debug + Into<AvailableSpace>,
-    {
-        let mut element = DrawableElement {
-            element: self.into_element(),
-            phase: ElementDrawPhase::Start,
-        };
-        DrawableElement::draw(&mut element, origin, available_space.map(Into::into), cx)
-    }
 }
 
 impl<T: IntoElement> FluentBuilder for T {}
@@ -232,13 +212,6 @@ trait ElementObject {
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> Size<Pixels>;
-
-    fn draw(
-        &mut self,
-        origin: Point<Pixels>,
-        available_space: Size<AvailableSpace>,
-        cx: &mut ElementContext,
-    );
 }
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
@@ -407,15 +380,6 @@ where
     ) -> Size<Pixels> {
         DrawableElement::measure(self, available_space, cx)
     }
-
-    fn draw(
-        &mut self,
-        origin: Point<Pixels>,
-        available_space: Size<AvailableSpace>,
-        cx: &mut ElementContext,
-    ) {
-        DrawableElement::draw(self, origin, available_space, cx);
-    }
 }
 
 /// A dynamically typed element that can be used to store any element type.
@@ -462,16 +426,6 @@ impl AnyElement {
     ) -> Size<Pixels> {
         self.0.measure(available_space, cx)
     }
-
-    /// Initializes this element and performs layout in the available space, then paints it at the given origin.
-    pub fn draw(
-        &mut self,
-        origin: Point<Pixels>,
-        available_space: Size<AvailableSpace>,
-        cx: &mut ElementContext,
-    ) {
-        self.0.draw(origin, available_space, cx)
-    }
 }
 
 impl Element for AnyElement {
@@ -505,22 +459,6 @@ impl IntoElement for AnyElement {
 
     fn into_any_element(self) -> AnyElement {
         self
-    }
-
-    /// Convert into an element, then draw in the current window at the given origin.
-    /// The available space argument is provided to the layout engine to determine the size of the
-    // root element.  Once the element is drawn, its associated element state is yielded to the
-    // given callback.
-    fn draw<T>(
-        mut self,
-        origin: Point<Pixels>,
-        available_space: Size<T>,
-        cx: &mut ElementContext,
-    ) -> <Self::Element as Element>::FrameState
-    where
-        T: Clone + Default + Debug + Into<AvailableSpace>,
-    {
-        AnyElement::draw(&mut self, origin, available_space.map(Into::into), cx)
     }
 }
 
