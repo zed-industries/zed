@@ -51,6 +51,9 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
+      - name: Check unused dependencies
+        uses: bnjbvr/cargo-machete@main
+
       - name: Ensure fresh merge
         shell: bash -euxo pipefail {0}
         run: |
