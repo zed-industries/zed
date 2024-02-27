@@ -965,7 +965,7 @@ impl EditorElement {
                         };
 
                         let fold_background = cx.with_z_index(1, |cx| {
-                            div()
+                            let fold_element_state = div()
                                 .id(fold.id)
                                 .size_full()
                                 .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
@@ -981,20 +981,15 @@ impl EditorElement {
                                         cx.stop_propagation();
                                     },
                                 ))
-                                .draw_and_update_state(
-                                    fold_bounds.origin,
-                                    fold_bounds.size,
-                                    cx,
-                                    |fold_element_state, cx| {
-                                        if fold_element_state.is_active() {
-                                            cx.theme().colors().ghost_element_active
-                                        } else if fold_bounds.contains(&cx.mouse_position()) {
-                                            cx.theme().colors().ghost_element_hover
-                                        } else {
-                                            cx.theme().colors().ghost_element_background
-                                        }
-                                    },
-                                )
+                                .draw(fold_bounds.origin, fold_bounds.size, cx);
+
+                            if fold_element_state.is_active() {
+                                cx.theme().colors().ghost_element_active
+                            } else if fold_bounds.contains(&cx.mouse_position()) {
+                                cx.theme().colors().ghost_element_hover
+                            } else {
+                                cx.theme().colors().ghost_element_background
+                            }
                         });
 
                         self.paint_highlighted_range(

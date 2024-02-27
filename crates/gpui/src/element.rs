@@ -40,7 +40,7 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, ops::DerefMut};
+use std::{any::Any, fmt::Debug, mem, ops::DerefMut};
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -91,35 +91,21 @@ pub trait IntoElement: Sized {
     /// The available space argument is provided to the layout engine to determine the size of the
     // root element.  Once the element is drawn, its associated element state is yielded to the
     // given callback.
-    fn draw_and_update_state<T, R>(
+    fn draw<T>(
         self,
         origin: Point<Pixels>,
         available_space: Size<T>,
         cx: &mut ElementContext,
-        f: impl FnOnce(&mut <Self::Element as Element>::State, &mut ElementContext) -> R,
-    ) -> R
+    ) -> <Self::Element as Element>::State
     where
         T: Clone + Default + Debug + Into<AvailableSpace>,
     {
-        let element = self.into_element();
-        let element_id = element.element_id();
-        let element = DrawableElement {
-            element: Some(element),
+        let mut element = DrawableElement {
+            element: Some(self.into_element()),
             phase: ElementDrawPhase::Start,
         };
 
-        let frame_state =
-            DrawableElement::draw(element, origin, available_space.map(Into::into), cx);
-
-        if let Some(mut frame_state) = frame_state {
-            f(&mut frame_state, cx)
-        } else {
-            cx.with_element_state(element_id.unwrap(), |element_state, cx| {
-                let mut element_state = element_state.unwrap();
-                let result = f(&mut element_state, cx);
-                (result, element_state)
-            })
-        }
+        DrawableElement::draw(&mut element, origin, available_space.map(Into::into), cx)
     }
 }
 
@@ -257,13 +243,14 @@ enum ElementDrawPhase<S> {
     Start,
     LayoutRequested {
         layout_id: LayoutId,
-        frame_state: Option<S>,
+        frame_state: S,
     },
     LayoutComputed {
         layout_id: LayoutId,
         available_space: Size<AvailableSpace>,
-        frame_state: Option<S>,
+        frame_state: S,
     },
+    Painted,
 }
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
@@ -280,20 +267,7 @@ impl<E: Element> DrawableElement<E> {
     }
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
-        let (layout_id, frame_state) = if let Some(id) = self.element.as_ref().unwrap().element_id()
-        {
-            let layout_id = cx.with_element_state(id, |element_state, cx| {
-                self.element
-                    .as_mut()
-                    .unwrap()
-                    .request_layout(element_state, cx)
-            });
-            (layout_id, None)
-        } else {
-            let (layout_id, frame_state) = self.element.as_mut().unwrap().request_layout(None, cx);
-            (layout_id, Some(frame_state))
-        };
-
+        let (layout_id, frame_state) = self.element.as_mut().unwrap().request_layout(None, cx);
         self.phase = ElementDrawPhase::LayoutRequested {
             layout_id,
             frame_state,
@@ -301,45 +275,27 @@ impl<E: Element> DrawableElement<E> {
         layout_id
     }
 
-    fn paint(mut self, cx: &mut ElementContext) -> Option<E::State> {
-        match self.phase {
+    fn paint(&mut self, cx: &mut ElementContext) -> E::State {
+        match mem::take(&mut self.phase) {
+            ElementDrawPhase::Start => panic!("must call layout before paint"),
             ElementDrawPhase::LayoutRequested {
                 layout_id,
-                frame_state,
+                mut frame_state,
             }
             | ElementDrawPhase::LayoutComputed {
                 layout_id,
-                frame_state,
+                mut frame_state,
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
-
-                if let Some(mut frame_state) = frame_state {
-                    self.element
-                        .take()
-                        .unwrap()
-                        .paint(bounds, &mut frame_state, cx);
-                    Some(frame_state)
-                } else {
-                    let element_id = self
-                        .element
-                        .as_ref()
-                        .unwrap()
-                        .element_id()
-                        .expect("if we don't have frame state, we should have element state");
-                    cx.with_element_state(element_id, |element_state, cx| {
-                        let mut element_state = element_state.unwrap();
-                        self.element
-                            .take()
-                            .unwrap()
-                            .paint(bounds, &mut element_state, cx);
-                        ((), element_state)
-                    });
-                    None
-                }
+                self.element
+                    .take()
+                    .unwrap()
+                    .paint(bounds, &mut frame_state, cx);
+                self.phase = ElementDrawPhase::Painted;
+                frame_state
             }
-
-            _ => panic!("must call layout before paint"),
+            ElementDrawPhase::Painted => panic!("elements can only be painted once"),
         }
     }
 
@@ -352,30 +308,33 @@ impl<E: Element> DrawableElement<E> {
             self.request_layout(cx);
         }
 
-        let layout_id = match &mut self.phase {
+        let layout_id = match mem::take(&mut self.phase) {
             ElementDrawPhase::LayoutRequested {
                 layout_id,
                 frame_state,
             } => {
-                cx.compute_layout(*layout_id, available_space);
-                let layout_id = *layout_id;
+                cx.compute_layout(layout_id, available_space);
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
                     available_space,
-                    frame_state: frame_state.take(),
+                    frame_state,
                 };
                 layout_id
             }
             ElementDrawPhase::LayoutComputed {
                 layout_id,
                 available_space: prev_available_space,
-                ..
+                frame_state,
             } => {
-                if available_space != *prev_available_space {
-                    cx.compute_layout(*layout_id, available_space);
-                    *prev_available_space = available_space;
+                if available_space != prev_available_space {
+                    cx.compute_layout(layout_id, available_space);
                 }
-                *layout_id
+                self.phase = ElementDrawPhase::LayoutComputed {
+                    layout_id,
+                    available_space,
+                    frame_state,
+                };
+                layout_id
             }
             _ => panic!("cannot measure after painting"),
         };
@@ -384,31 +343,31 @@ impl<E: Element> DrawableElement<E> {
     }
 
     fn draw(
-        mut self,
+        &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) -> Option<E::State> {
+    ) -> E::State {
         self.measure(available_space, cx);
         cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
     }
 }
 
-impl<E> ElementObject for Option<DrawableElement<E>>
+impl<E> ElementObject for DrawableElement<E>
 where
     E: Element,
     E::State: 'static,
 {
     fn element_id(&self) -> Option<ElementId> {
-        self.as_ref().unwrap().element_id()
+        self.element_id()
     }
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
-        DrawableElement::request_layout(self.as_mut().unwrap(), cx)
+        DrawableElement::request_layout(self, cx)
     }
 
     fn paint(&mut self, cx: &mut ElementContext) {
-        DrawableElement::paint(self.take().unwrap(), cx);
+        DrawableElement::paint(self, cx);
     }
 
     fn measure(
@@ -416,7 +375,7 @@ where
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> Size<Pixels> {
-        DrawableElement::measure(self.as_mut().unwrap(), available_space, cx)
+        DrawableElement::measure(self, available_space, cx)
     }
 
     fn draw(
@@ -425,7 +384,7 @@ where
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) {
-        DrawableElement::draw(self.take().unwrap(), origin, available_space, cx);
+        DrawableElement::draw(self, origin, available_space, cx);
     }
 }
 
@@ -439,7 +398,7 @@ impl AnyElement {
         E::State: Any,
     {
         let element = ELEMENT_ARENA
-            .with_borrow_mut(|arena| arena.alloc(|| Some(DrawableElement::new(element))))
+            .with_borrow_mut(|arena| arena.alloc(|| DrawableElement::new(element)))
             .map(|element| element as &mut dyn ElementObject);
         AnyElement(element)
     }

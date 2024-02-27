@@ -326,7 +326,7 @@ impl Element for AnyView {
                 element.paint(cx);
             } else {
                 let mut element = (self.request_layout)(self, cx).1;
-                element.draw(bounds.origin, bounds.size.into(), cx);
+                element.draw(bounds.origin, bounds.size, cx);
             }
 
             state.next_stacking_order_id = cx
