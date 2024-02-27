@@ -1,10 +1,6 @@
 {
   "stems": {
     "Podfile": "ruby",
-    "LICENSE": "license",
-    "LICENSE-AGPL": "license",
-    "LICENSE-APACHE": "license",
-    "LICENSE-BSD": "license",
     "Procfile": "heroku",
     "Dockerfile": "docker"
   },
@@ -245,9 +241,6 @@
     },
     "kotlin": {
       "icon": "icons/file_icons/kotlin.svg"
-    },
-    "license": {
-      "icon": "icons/file_icons/license.svg"
     },
     "lock": {
       "icon": "icons/file_icons/lock.svg"
