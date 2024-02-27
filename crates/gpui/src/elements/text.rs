@@ -25,6 +25,14 @@ impl Element for &'static str {
         (layout_id, state)
     }
 
+    fn commit_bounds(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _state: &mut Self::FrameState,
+        _cx: &mut ElementContext,
+    ) {
+    }
+
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut ElementContext) {
         state.paint(bounds, self, cx)
     }
@@ -53,6 +61,14 @@ impl Element for SharedString {
         let mut state = TextState::default();
         let layout_id = state.layout(self.clone(), None, cx);
         (layout_id, state)
+    }
+
+    fn commit_bounds(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _state: &mut Self::FrameState,
+        _cx: &mut ElementContext,
+    ) {
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut ElementContext) {
@@ -124,6 +140,14 @@ impl Element for StyledText {
         let mut state = TextState::default();
         let layout_id = state.layout(self.text.clone(), self.runs.take(), cx);
         (layout_id, state)
+    }
+
+    fn commit_bounds(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _state: &mut Self::FrameState,
+        _cx: &mut ElementContext,
+    ) {
     }
 
     fn paint(
@@ -366,6 +390,15 @@ impl Element for InteractiveText {
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         self.text.request_layout(cx)
+    }
+
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.text.commit_bounds(bounds, state, cx)
     }
 
     fn paint(

@@ -52,6 +52,15 @@ pub trait Element: 'static + IntoElement {
     /// Use this method to request a layout from Taffy and initialize the element's state.
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState);
 
+    /// After laying out an element, we need to commit its bounds to the current frame for occlusion
+    /// purposes. The state argument is the same state that was returned from [`Element::request_layout()`].
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    );
+
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
     fn paint(
@@ -178,6 +187,15 @@ impl<C: RenderOnce> Element for Component<C> {
         (layout_id, element)
     }
 
+    fn commit_bounds(
+        &mut self,
+        _: Bounds<Pixels>,
+        element: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        element.commit_bounds(cx)
+    }
+
     fn paint(
         &mut self,
         _: Bounds<Pixels>,
@@ -204,6 +222,8 @@ trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
+
+    fn commit_bounds(&mut self, cx: &mut ElementContext);
 
     fn paint(&mut self, cx: &mut ElementContext);
 
@@ -263,6 +283,24 @@ impl<E: Element> DrawableElement<E> {
                 layout_id
             }
             _ => panic!("must call request_layout only once"),
+        }
+    }
+
+    fn commit_bounds(&mut self, cx: &mut ElementContext) {
+        match &mut self.phase {
+            ElementDrawPhase::LayoutRequested {
+                layout_id,
+                frame_state,
+            }
+            | ElementDrawPhase::LayoutComputed {
+                layout_id,
+                frame_state,
+                ..
+            } => {
+                let bounds = cx.layout_bounds(*layout_id);
+                self.element.commit_bounds(bounds, frame_state, cx);
+            }
+            _ => panic!("must call request_layout before commit_bounds"),
         }
     }
 
@@ -354,6 +392,10 @@ where
         DrawableElement::request_layout(self, cx)
     }
 
+    fn commit_bounds(&mut self, cx: &mut ElementContext) {
+        DrawableElement::commit_bounds(self, cx);
+    }
+
     fn paint(&mut self, cx: &mut ElementContext) {
         DrawableElement::paint(self, cx);
     }
@@ -402,6 +444,11 @@ impl AnyElement {
         self.0.request_layout(cx)
     }
 
+    /// Commits the element bounds of this [AnyElement] for occlusion purposes.
+    pub fn commit_bounds(&mut self, cx: &mut ElementContext) {
+        self.0.commit_bounds(cx)
+    }
+
     /// Paints the element stored in this `AnyElement`.
     pub fn paint(&mut self, cx: &mut ElementContext) {
         self.0.paint(cx)
@@ -433,6 +480,15 @@ impl Element for AnyElement {
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let layout_id = self.request_layout(cx);
         (layout_id, ())
+    }
+
+    fn commit_bounds(
+        &mut self,
+        _: Bounds<Pixels>,
+        _: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.commit_bounds(cx)
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::FrameState, cx: &mut ElementContext) {
@@ -484,6 +540,14 @@ impl Element for () {
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         (cx.request_layout(&crate::Style::default(), None), ())
+    }
+
+    fn commit_bounds(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _state: &mut Self::FrameState,
+        _cx: &mut ElementContext,
+    ) {
     }
 
     fn paint(

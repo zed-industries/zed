@@ -13,6 +13,7 @@ use crate::{
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
+use smallvec::SmallVec;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 use taffy::style::Overflow;
@@ -94,6 +95,13 @@ struct LayoutItemsResponse {
     scroll_top: ListOffset,
     available_item_space: Size<AvailableSpace>,
     item_elements: VecDeque<AnyElement>,
+}
+
+/// Frame state used by the [List] element.
+#[derive(Default)]
+pub struct ListFrameState {
+    scroll_top: ListOffset,
+    items: SmallVec<[(Point<Pixels>, AnyElement); 32]>,
 }
 
 #[derive(Clone)]
@@ -302,7 +310,6 @@ impl StateInner {
         height: Pixels,
         delta: Point<Pixels>,
         cx: &mut WindowContext,
-        padding: Edges<Pixels>,
     ) {
         // Drop scroll events after a reset, since we can't calculate
         // the new logical scroll top without the item heights
@@ -310,6 +317,7 @@ impl StateInner {
             return;
         }
 
+        let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
         let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
@@ -516,7 +524,7 @@ pub struct ListOffset {
 }
 
 impl Element for List {
-    type FrameState = ();
+    type FrameState = ListFrameState;
 
     fn request_layout(
         &mut self,
@@ -579,14 +587,14 @@ impl Element for List {
                 })
             }
         };
-        (layout_id, ())
+        (layout_id, ListFrameState::default())
     }
 
-    fn paint(
+    fn commit_bounds(
         &mut self,
-        bounds: Bounds<crate::Pixels>,
-        _state: &mut Self::FrameState,
-        cx: &mut crate::ElementContext,
+        bounds: Bounds<Pixels>,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ElementContext,
     ) {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
@@ -614,11 +622,12 @@ impl Element for List {
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
-                for item_element in &mut layout_response.item_elements {
+                for mut item_element in layout_response.item_elements {
                     let item_height = item_element
                         .measure(layout_response.available_item_space, cx)
                         .height;
-                    item_element.draw(item_origin, layout_response.available_item_space, cx);
+                    item_element.commit_bounds(cx);
+                    frame_state.items.push((item_origin, item_element));
                     item_origin.y += item_height;
                 }
             });
@@ -626,21 +635,33 @@ impl Element for List {
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<crate::Pixels>,
+        frame_state: &mut Self::FrameState,
+        cx: &mut crate::ElementContext,
+    ) {
+        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+            for (item_origin, item) in &mut frame_state.items {
+                cx.with_absolute_element_offset(*item_origin, |cx| item.paint(cx));
+            }
+        });
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
-
+        let scroll_top = frame_state.scroll_top;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
                 && bounds.contains(&event.position)
                 && cx.was_top_layer(&event.position, cx.stacking_order())
             {
                 list_state.0.borrow_mut().scroll(
-                    &layout_response.scroll_top,
+                    &scroll_top,
                     height,
                     event.delta.pixel_delta(px(20.)),
                     cx,
-                    padding,
                 )
             }
         });

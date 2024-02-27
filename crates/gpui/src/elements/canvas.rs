@@ -36,6 +36,15 @@ impl Element for Canvas {
         (layout_id, style)
     }
 
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        style: &mut Style,
+        cx: &mut ElementContext,
+    ) {
+        todo!()
+    }
+
     fn paint(&mut self, bounds: Bounds<Pixels>, style: &mut Style, cx: &mut ElementContext) {
         style.paint(bounds, cx, |cx| {
             (self.paint_callback.take().unwrap())(&bounds, cx)

@@ -6,8 +6,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
-    ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Render, Size,
-    StyleRefinement, Styled, View, ViewContext, WindowContext,
+    ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Render,
+    Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -68,6 +68,12 @@ pub struct UniformList {
     scroll_handle: Option<UniformListScrollHandle>,
 }
 
+/// Frame state used by the [UniformList].
+pub struct UniformListFrameState {
+    item_size: Size<Pixels>,
+    items: SmallVec<[(Point<Pixels>, AnyElement); 32]>,
+}
+
 /// A handle for controlling the scroll position of a uniform list.
 /// This should be stored in your view and passed to the uniform_list on each frame.
 #[derive(Clone, Default)]
@@ -96,7 +102,7 @@ impl Styled for UniformList {
 }
 
 impl Element for UniformList {
-    type FrameState = Size<Pixels>;
+    type FrameState = UniformListFrameState;
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let max_items = self.item_count;
@@ -119,16 +125,22 @@ impl Element for UniformList {
             })
         });
 
-        (layout_id, item_size)
+        (
+            layout_id,
+            UniformListFrameState {
+                item_size,
+                items: SmallVec::new(),
+            },
+        )
     }
 
-    fn paint(
+    fn commit_bounds(
         &mut self,
-        bounds: Bounds<crate::Pixels>,
-        item_size: &mut Self::FrameState,
+        bounds: Bounds<Pixels>,
+        frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        let style = self.interactivity.compute_style(Some(bounds), cx);
+        let style = self.interactivity.compute_style(None, cx);
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -140,7 +152,7 @@ impl Element for UniformList {
 
         let content_size = Size {
             width: padded_bounds.size.width,
-            height: item_size.height * self.item_count + padding.top + padding.bottom,
+            height: frame_state.item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
@@ -151,8 +163,11 @@ impl Element for UniformList {
             .as_mut()
             .and_then(|handle| handle.deferred_scroll_to_item.take());
 
-        self.interactivity
-            .paint(bounds, content_size, cx, |style, mut scroll_offset, cx| {
+        self.interactivity.commit_bounds(
+            bounds,
+            content_size,
+            cx,
+            |style, mut scroll_offset, cx| {
                 let border = style.border_widths.to_pixels(cx.rem_size());
                 let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -198,7 +213,7 @@ impl Element for UniformList {
                     cx.with_z_index(1, |cx| {
                         let content_mask = ContentMask { bounds };
                         cx.with_content_mask(Some(content_mask), |cx| {
-                            for (item, ix) in items.iter_mut().zip(visible_range) {
+                            for (mut item, ix) in items.into_iter().zip(visible_range) {
                                 let item_origin = padded_bounds.origin
                                     + point(
                                         px(0.),
@@ -208,12 +223,33 @@ impl Element for UniformList {
                                     AvailableSpace::Definite(padded_bounds.size.width),
                                     AvailableSpace::Definite(item_height),
                                 );
-                                item.draw(item_origin, available_space, cx);
+                                item.measure(available_space, cx);
+                                item.commit_bounds(cx);
+                                frame_state.items.push((item_origin, item));
                             }
                         });
                     });
                 }
-            })
+            },
+        )
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<crate::Pixels>,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.interactivity.paint(bounds, cx, |_, _, cx| {
+            cx.with_z_index(1, |cx| {
+                let content_mask = ContentMask { bounds };
+                cx.with_content_mask(Some(content_mask), |cx| {
+                    for (item_origin, item) in &mut frame_state.items {
+                        cx.with_absolute_element_offset(*item_origin, |cx| item.paint(cx));
+                    }
+                });
+            });
+        })
     }
 }
 

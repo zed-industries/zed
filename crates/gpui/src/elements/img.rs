@@ -97,6 +97,16 @@ impl Element for Img {
         (layout_id, ())
     }
 
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.interactivity()
+            .commit_bounds(bounds, bounds.size, cx, |_, _, _| {})
+    }
+
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -105,7 +115,7 @@ impl Element for Img {
     ) {
         let source = self.source.clone();
         self.interactivity
-            .paint(bounds, bounds.size, cx, |style, _scroll_offset, cx| {
+            .paint(bounds, cx, |style, _scroll_offset, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.with_z_index(1, |cx| {
                     match source {

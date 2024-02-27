@@ -23,13 +23,14 @@ impl<V> Sealed for View<V> {}
 #[doc(hidden)]
 #[derive(Default)]
 pub struct AnyViewFrameState {
-    next_stacking_order_id: u16,
-    cache_key: Option<ViewCacheKey>,
     element: Option<AnyElement>,
+    root_style: Style,
 }
 
 struct AnyViewState {
     root_style: Style,
+    cache_key: ViewCacheKey,
+    next_stacking_order_id: u16,
 }
 
 struct ViewCacheKey {
@@ -94,15 +95,24 @@ impl<V: 'static> View<V> {
 }
 
 impl<V: Render> Element for View<V> {
-    type FrameState = Option<AnyElement>;
+    type FrameState = AnyElement;
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         cx.with_view_id(self.entity_id(), |cx| {
             // TODO! Implement caching for these views as well?
             let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
             let layout_id = element.request_layout(cx);
-            (layout_id, Some(element))
+            (layout_id, element)
         })
+    }
+
+    fn commit_bounds(
+        &mut self,
+        _: Bounds<Pixels>,
+        element: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        cx.with_view_id(self.entity_id(), |cx| element.commit_bounds(cx));
     }
 
     fn paint(
@@ -111,7 +121,7 @@ impl<V: Render> Element for View<V> {
         element: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
+        cx.paint_view(self.entity_id(), |cx| element.paint(cx));
     }
 }
 
@@ -305,15 +315,72 @@ impl Element for AnyView {
 
                     let (layout_id, element) = (self.request_layout)(self, cx);
                     frame_state.element = Some(element);
-
-                    let root_style = cx.layout_style(layout_id).unwrap().clone();
-                    if let Some(element_state) = element_state.as_mut() {
-                        element_state.root_style = root_style;
-                    } else {
-                        element_state = Some(AnyViewState { root_style });
-                    }
+                    frame_state.root_style = cx.layout_style(layout_id).unwrap().clone();
 
                     ((layout_id, frame_state), element_state)
+                },
+            )
+        })
+    }
+
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        cx.with_view_id(self.entity_id(), |cx| {
+            cx.with_element_state::<AnyViewState, _>(
+                Some(ElementId::View(self.entity_id())),
+                |element_state, cx| {
+                    let element_state = element_state.unwrap();
+
+                    if !self.cache {
+                        frame_state.element.as_mut().unwrap().commit_bounds(cx);
+                        return ((), element_state);
+                    }
+
+                    if let Some(cache_key) = element_state
+                        .as_ref()
+                        .map(|element_state| &element_state.cache_key)
+                    {
+                        if cache_key.bounds == bounds
+                            && cache_key.content_mask == cx.content_mask()
+                            && cache_key.stacking_order == *cx.stacking_order()
+                            && cache_key.text_style == cx.text_style()
+                        {
+                            todo!("reuse entries in the depth map");
+                            return ((), element_state);
+                        }
+                    }
+
+                    if let Some(element) = frame_state.element.as_mut() {
+                        element.commit_bounds(cx);
+                    } else {
+                        let mut element = (self.request_layout)(self, cx).1;
+                        element.commit_bounds(cx);
+                        frame_state.element = Some(element);
+                    }
+
+                    (
+                        (),
+                        Some(AnyViewState {
+                            root_style: frame_state.root_style.clone(),
+                            cache_key: ViewCacheKey {
+                                bounds,
+                                stacking_order: cx.stacking_order().clone(),
+                                content_mask: cx.content_mask(),
+                                text_style: cx.text_style(),
+                            },
+                            next_stacking_order_id: cx
+                                .window
+                                .next_frame
+                                .next_stacking_order_ids
+                                .last()
+                                .copied()
+                                .unwrap(),
+                        }),
+                    )
                 },
             )
         })
@@ -326,42 +393,19 @@ impl Element for AnyView {
         cx: &mut ElementContext,
     ) {
         cx.paint_view(self.entity_id(), |cx| {
-            if !self.cache {
-                state.element.take().unwrap().paint(cx);
-                return;
-            }
-
-            if let Some(cache_key) = state.cache_key.as_mut() {
-                if cache_key.bounds == bounds
-                    && cache_key.content_mask == cx.content_mask()
-                    && cache_key.stacking_order == *cx.stacking_order()
-                    && cache_key.text_style == cx.text_style()
-                {
-                    cx.reuse_view(state.next_stacking_order_id);
-                    return;
-                }
-            }
-
-            if let Some(mut element) = state.element.take() {
-                element.paint(cx);
-            } else {
-                let mut element = (self.request_layout)(self, cx).1;
-                element.draw(bounds.origin, bounds.size, cx);
-            }
-
-            state.next_stacking_order_id = cx
-                .window
-                .next_frame
-                .next_stacking_order_ids
-                .last()
-                .copied()
-                .unwrap();
-            state.cache_key = Some(ViewCacheKey {
-                bounds,
-                stacking_order: cx.stacking_order().clone(),
-                content_mask: cx.content_mask(),
-                text_style: cx.text_style(),
-            });
+            cx.with_element_state::<AnyViewState, _>(
+                Some(ElementId::View(self.entity_id())),
+                |element_state, cx| {
+                    let element_state = element_state.unwrap();
+                    if let Some(element) = state.element.as_mut() {
+                        element.paint(cx);
+                    } else {
+                        let element_state = element_state.as_ref().unwrap();
+                        cx.reuse_view(element_state.next_stacking_order_id);
+                    }
+                    ((), element_state)
+                },
+            )
         })
     }
 }

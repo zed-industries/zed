@@ -36,6 +36,16 @@ impl Element for Svg {
         (layout_id, ())
     }
 
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.interactivity
+            .commit_bounds(bounds, bounds.size, cx, |_, _, _| {})
+    }
+
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -44,12 +54,11 @@ impl Element for Svg {
     ) where
         Self: Sized,
     {
-        self.interactivity
-            .paint(bounds, bounds.size, cx, |style, _, cx| {
-                if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
-                    cx.paint_svg(bounds, path.clone(), color).log_err();
-                }
-            })
+        self.interactivity.paint(bounds, cx, |style, _, cx| {
+            if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
+                cx.paint_svg(bounds, path.clone(), color).log_err();
+            }
+        })
     }
 }
 

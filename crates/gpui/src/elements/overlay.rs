@@ -9,6 +9,7 @@ use crate::{
 /// The state that the overlay element uses to track its children.
 pub struct OverlayState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
+    offset: Point<Pixels>,
 }
 
 /// An overlay element that can be used to display UI that
@@ -86,22 +87,28 @@ impl Element for Overlay {
 
         let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
 
-        (layout_id, OverlayState { child_layout_ids })
+        (
+            layout_id,
+            OverlayState {
+                child_layout_ids,
+                offset: Point::default(),
+            },
+        )
     }
 
-    fn paint(
+    fn commit_bounds(
         &mut self,
-        bounds: crate::Bounds<crate::Pixels>,
-        element_state: &mut Self::FrameState,
+        bounds: Bounds<Pixels>,
+        frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        if element_state.child_layout_ids.is_empty() {
+        if frame_state.child_layout_ids.is_empty() {
             return;
         }
 
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
-        for child_layout_id in &element_state.child_layout_ids {
+        for child_layout_id in &frame_state.child_layout_ids {
             let child_bounds = cx.layout_bounds(*child_layout_id);
             child_min = child_min.min(&child_bounds.origin);
             child_max = child_max.max(&child_bounds.lower_right());
@@ -161,9 +168,25 @@ impl Element for Overlay {
             desired.origin.y = limits.origin.y;
         }
 
-        let mut offset = cx.element_offset() + desired.origin - bounds.origin;
-        offset = point(offset.x.round(), offset.y.round());
-        cx.with_absolute_element_offset(offset, |cx| {
+        frame_state.offset = cx.element_offset() + desired.origin - bounds.origin;
+        frame_state.offset = point(frame_state.offset.x.round(), frame_state.offset.y.round());
+
+        cx.with_absolute_element_offset(frame_state.offset, |cx| {
+            cx.break_content_mask(|cx| {
+                for child in &mut self.children {
+                    child.commit_bounds(cx);
+                }
+            })
+        })
+    }
+
+    fn paint(
+        &mut self,
+        bounds: crate::Bounds<crate::Pixels>,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        cx.with_absolute_element_offset(frame_state.offset, |cx| {
             cx.break_content_mask(|cx| {
                 for child in &mut self.children {
                     child.paint(cx);

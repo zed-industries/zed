@@ -1077,7 +1077,7 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    fn paint(
+    fn commit_bounds(
         &mut self,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::FrameState,
@@ -1117,7 +1117,23 @@ impl Element for Div {
         };
 
         self.interactivity
-            .paint(bounds, content_size, cx, |_style, scroll_offset, cx| {
+            .commit_bounds(bounds, content_size, cx, |_style, scroll_offset, cx| {
+                cx.with_element_offset(scroll_offset, |cx| {
+                    for child in &mut self.children {
+                        child.commit_bounds(cx);
+                    }
+                })
+            })
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.interactivity
+            .paint(bounds, cx, |_style, scroll_offset, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
                         child.paint(cx);
@@ -1141,6 +1157,7 @@ impl IntoElement for Div {
 pub struct Interactivity {
     /// The element ID of the element
     pub element_id: Option<ElementId>,
+    pub(crate) content_size: Size<Pixels>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
@@ -1272,6 +1289,91 @@ impl Interactivity {
         )
     }
 
+    /// Commit the bounds of this element according to this interactivity state's configured styles.
+    pub fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        content_size: Size<Pixels>,
+        cx: &mut ElementContext,
+        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
+    ) {
+        self.content_size = content_size;
+        cx.with_element_state::<InteractiveElementState, _>(
+            self.element_id.clone(),
+            |element_state, cx| {
+                let mut element_state =
+                    element_state.map(|element_state| element_state.unwrap_or_default());
+                let style = self.compute_style_internal(None, element_state.as_mut(), cx);
+
+                cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
+                    // TODO: this is ensuring we have the same z-index stack. We should ditch this as soon as we get rid of z-index.
+                    cx.with_z_index(2, |cx| {
+                        cx.with_text_style(style.text_style().cloned(), |cx| {
+                            cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
+                                if self.block_mouse
+                                    || style.background.as_ref().is_some_and(|fill| {
+                                        fill.color().is_some_and(|color| !color.is_transparent())
+                                    })
+                                {
+                                    let clipped_bounds =
+                                        bounds.intersect(&cx.content_mask().bounds);
+                                    cx.add_opaque_layer(clipped_bounds);
+                                }
+
+                                let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
+                                f(&style, scroll_offset, cx);
+                                ((), element_state)
+                            })
+                        })
+                    })
+                })
+            },
+        );
+    }
+
+    fn clamp_scroll_position(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        style: &Style,
+        cx: &mut ElementContext,
+    ) -> Point<Pixels> {
+        if let Some(scroll_offset) = self.scroll_offset.as_ref() {
+            if let Some(scroll_handle) = &self.tracked_scroll_handle {
+                scroll_handle.0.borrow_mut().overflow = style.overflow;
+            }
+
+            let line_height = cx.line_height();
+            let rem_size = cx.rem_size();
+            let padding_size = size(
+                style
+                    .padding
+                    .left
+                    .to_pixels(bounds.size.width.into(), rem_size)
+                    + style
+                        .padding
+                        .right
+                        .to_pixels(bounds.size.width.into(), rem_size),
+                style
+                    .padding
+                    .top
+                    .to_pixels(bounds.size.height.into(), rem_size)
+                    + style
+                        .padding
+                        .bottom
+                        .to_pixels(bounds.size.height.into(), rem_size),
+            );
+            let scroll_max = (self.content_size + padding_size - bounds.size).max(&Size::default());
+            // Clamp scroll offset in case scroll max is smaller now (e.g., if children
+            // were removed or the bounds became larger).
+            let mut scroll_offset = scroll_offset.borrow_mut();
+            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
+            scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+            *scroll_offset
+        } else {
+            Point::default()
+        }
+    }
+
     /// Paint this element according to this interactivity state's configured styles
     /// and bind the element's mouse and keyboard events.
     ///
@@ -1283,7 +1385,6 @@ impl Interactivity {
     pub fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        content_size: Size<Pixels>,
         cx: &mut ElementContext,
         f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
     ) {
@@ -1304,12 +1405,12 @@ impl Interactivity {
                         .insert(debug_selector.clone(), bounds);
                 }
 
-                if style.visibility == Visibility::Hidden {
-                    cx.with_z_index(z_index, |cx| self.paint_hover_group_handler(cx));
-                    return ((), element_state);
-                }
-
                 cx.with_z_index(z_index, |cx| {
+                    if style.visibility == Visibility::Hidden {
+                        self.paint_hover_group_handler(cx);
+                        return ((), element_state);
+                    }
+
                     style.paint(bounds, cx, |cx: &mut ElementContext| {
                         cx.with_text_style(style.text_style().cloned(), |cx| {
                             cx.with_content_mask(
@@ -1321,15 +1422,6 @@ impl Interactivity {
                                         bounds: bounds.intersect(&cx.content_mask().bounds),
                                         stacking_order: cx.stacking_order().clone(),
                                     };
-
-                                    if self.block_mouse
-                                        || style.background.as_ref().is_some_and(|fill| {
-                                            fill.color()
-                                                .is_some_and(|color| !color.is_transparent())
-                                        })
-                                    {
-                                        cx.add_opaque_layer(interactive_bounds.bounds);
-                                    }
 
                                     if !cx.has_active_drag() {
                                         if let Some(mouse_cursor) = style.mouse_cursor {
@@ -1352,13 +1444,7 @@ impl Interactivity {
                                         element_state.as_mut(),
                                         cx,
                                     );
-                                    self.paint_scroll_listener(
-                                        bounds,
-                                        content_size,
-                                        interactive_bounds,
-                                        &style,
-                                        cx,
-                                    );
+                                    self.paint_scroll_listener(&interactive_bounds, &style, cx);
                                     self.paint_keyboard_listeners(&style, cx, f);
 
                                     if let Some(group) = self.group.as_ref() {
@@ -1368,19 +1454,14 @@ impl Interactivity {
                             );
                         });
                     });
-                });
 
-                ((), element_state)
+                    ((), element_state)
+                })
             },
         );
     }
 
-    fn paint_debug_info(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        style: &Style,
-        cx: &mut ElementContext<'_>,
-    ) {
+    fn paint_debug_info(&mut self, bounds: Bounds<Pixels>, style: &Style, cx: &mut ElementContext) {
         #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
@@ -1809,8 +1890,8 @@ impl Interactivity {
     fn paint_keyboard_listeners(
         &mut self,
         style: &Style,
-        cx: &mut ElementContext<'_>,
-        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext<'_>),
+        cx: &mut ElementContext,
+        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
     ) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
@@ -1861,53 +1942,16 @@ impl Interactivity {
 
     fn paint_scroll_listener(
         &self,
-        bounds: Bounds<Pixels>,
-        content_size: Size<Pixels>,
-        interactive_bounds: InteractiveBounds,
+        bounds: &InteractiveBounds,
         style: &Style,
-        cx: &mut ElementContext<'_>,
+        cx: &mut ElementContext,
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
-
-            if let Some(scroll_handle) = &self.tracked_scroll_handle {
-                scroll_handle.0.borrow_mut().overflow = overflow;
-            }
-
             let line_height = cx.line_height();
-            let rem_size = cx.rem_size();
-            let padding_size = size(
-                style
-                    .padding
-                    .left
-                    .to_pixels(bounds.size.width.into(), rem_size)
-                    + style
-                        .padding
-                        .right
-                        .to_pixels(bounds.size.width.into(), rem_size),
-                style
-                    .padding
-                    .top
-                    .to_pixels(bounds.size.height.into(), rem_size)
-                    + style
-                        .padding
-                        .bottom
-                        .to_pixels(bounds.size.height.into(), rem_size),
-            );
-            let scroll_max = (content_size + padding_size - bounds.size).max(&Size::default());
-            // Clamp scroll offset in case scroll max is smaller now (e.g., if children
-            // were removed or the bounds became larger).
-            {
-                let mut scroll_offset = scroll_offset.borrow_mut();
-                scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
-                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
-            }
-
-            let interactive_bounds = interactive_bounds.clone();
+            let bounds = bounds.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
-                {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
@@ -1920,8 +1964,7 @@ impl Interactivity {
                             delta_x = delta.y;
                         }
 
-                        scroll_offset.x =
-                            (scroll_offset.x + delta_x).clamp(-scroll_max.width, px(0.));
+                        scroll_offset.x += delta_x;
                     }
 
                     if overflow.y == Overflow::Scroll {
@@ -1932,8 +1975,7 @@ impl Interactivity {
                             delta_y = delta.x;
                         }
 
-                        scroll_offset.y =
-                            (scroll_offset.y + delta_y).clamp(-scroll_max.height, px(0.));
+                        scroll_offset.y += delta_y;
                     }
 
                     if *scroll_offset != old_scroll_offset {
@@ -2166,6 +2208,15 @@ where
         self.element.request_layout(cx)
     }
 
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.element.commit_bounds(bounds, state, cx)
+    }
+
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -2236,6 +2287,15 @@ where
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         self.element.request_layout(cx)
+    }
+
+    fn commit_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
+        self.element.commit_bounds(bounds, state, cx)
     }
 
     fn paint(
