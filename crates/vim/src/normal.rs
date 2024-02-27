@@ -907,7 +907,7 @@ mod test {
 
     #[gpui::test]
     async fn test_f_and_t_multiline(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, false).await;
+        let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
                 s.use_multiline_find = Some(true);
@@ -949,7 +949,7 @@ mod test {
 
     #[gpui::test]
     async fn test_capital_f_and_capital_t_multiline(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, false).await;
+        let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
                 s.use_multiline_find = Some(true);
