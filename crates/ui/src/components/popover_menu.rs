@@ -130,13 +130,13 @@ pub struct PopoverMenuState<M> {
 }
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
-    type State = PopoverMenuState<M>;
+    type FrameState = PopoverMenuState<M>;
 
     fn request_layout(
         &mut self,
-        element_state: Option<Self::State>,
+        element_state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (gpui::LayoutId, Self::State) {
+    ) -> (gpui::LayoutId, Self::FrameState) {
         let mut menu_layout_id = None;
 
         let (menu, child_bounds) = if let Some(element_state) = element_state {
@@ -188,7 +188,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn paint(
         &mut self,
         _: Bounds<gpui::Pixels>,
-        element_state: &mut Self::State,
+        element_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         if let Some(mut child) = element_state.child_element.take() {

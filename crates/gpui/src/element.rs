@@ -49,19 +49,24 @@ use std::{any::Any, fmt::Debug, mem, ops::DerefMut};
 pub trait Element: 'static + IntoElement {
     /// The type of state to store for this element between frames. See the module-level documentation
     /// for details.
-    type State: 'static;
+    type FrameState: 'static;
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.
     /// Use this method to request a layout from Taffy and initialize the element's state.
     fn request_layout(
         &mut self,
-        state: Option<Self::State>,
+        state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State);
+    ) -> (LayoutId, Self::FrameState);
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext);
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    );
 
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
@@ -96,7 +101,7 @@ pub trait IntoElement: Sized {
         origin: Point<Pixels>,
         available_space: Size<T>,
         cx: &mut ElementContext,
-    ) -> <Self::Element as Element>::State
+    ) -> <Self::Element as Element>::FrameState
     where
         T: Clone + Default + Debug + Into<AvailableSpace>,
     {
@@ -172,13 +177,13 @@ impl<C: RenderOnce> Component<C> {
 }
 
 impl<C: RenderOnce> Element for Component<C> {
-    type State = AnyElement;
+    type FrameState = AnyElement;
 
     fn request_layout(
         &mut self,
-        _: Option<Self::State>,
+        _: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let mut element = self
             .0
             .take()
@@ -189,7 +194,12 @@ impl<C: RenderOnce> Element for Component<C> {
         (layout_id, element)
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        element: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
         element.paint(cx)
     }
 }
@@ -234,7 +244,7 @@ trait ElementObject {
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
 pub(crate) struct DrawableElement<E: Element> {
     element: Option<E>,
-    phase: ElementDrawPhase<E::State>,
+    phase: ElementDrawPhase<E::FrameState>,
 }
 
 #[derive(Default)]
@@ -275,7 +285,7 @@ impl<E: Element> DrawableElement<E> {
         layout_id
     }
 
-    fn paint(&mut self, cx: &mut ElementContext) -> E::State {
+    fn paint(&mut self, cx: &mut ElementContext) -> E::FrameState {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Start => panic!("must call layout before paint"),
             ElementDrawPhase::LayoutRequested {
@@ -347,7 +357,7 @@ impl<E: Element> DrawableElement<E> {
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) -> E::State {
+    ) -> E::FrameState {
         self.measure(available_space, cx);
         cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
     }
@@ -356,7 +366,7 @@ impl<E: Element> DrawableElement<E> {
 impl<E> ElementObject for DrawableElement<E>
 where
     E: Element,
-    E::State: 'static,
+    E::FrameState: 'static,
 {
     fn element_id(&self) -> Option<ElementId> {
         self.element_id()
@@ -395,7 +405,7 @@ impl AnyElement {
     pub(crate) fn new<E>(element: E) -> Self
     where
         E: 'static + Element,
-        E::State: Any,
+        E::FrameState: Any,
     {
         let element = ELEMENT_ARENA
             .with_borrow_mut(|arena| arena.alloc(|| DrawableElement::new(element)))
@@ -440,18 +450,18 @@ impl AnyElement {
 }
 
 impl Element for AnyElement {
-    type State = ();
+    type FrameState = ();
 
     fn request_layout(
         &mut self,
-        _: Option<Self::State>,
+        _: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let layout_id = self.request_layout(cx);
         (layout_id, ())
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::FrameState, cx: &mut ElementContext) {
         self.paint(cx)
     }
 }
@@ -488,20 +498,20 @@ impl IntoElement for () {
 }
 
 impl Element for () {
-    type State = ();
+    type FrameState = ();
 
     fn request_layout(
         &mut self,
-        _state: Option<Self::State>,
+        _state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         (cx.request_layout(&crate::Style::default(), None), ())
     }
 
     fn paint(
         &mut self,
         _bounds: Bounds<Pixels>,
-        _state: &mut Self::State,
+        _state: &mut Self::FrameState,
         _cx: &mut ElementContext,
     ) {
     }

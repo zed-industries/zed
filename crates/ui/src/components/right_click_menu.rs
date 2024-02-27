@@ -59,13 +59,13 @@ pub struct MenuHandleState<M> {
 }
 
 impl<M: ManagedView> Element for RightClickMenu<M> {
-    type State = MenuHandleState<M>;
+    type FrameState = MenuHandleState<M>;
 
     fn request_layout(
         &mut self,
-        element_state: Option<Self::State>,
+        element_state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (gpui::LayoutId, Self::State) {
+    ) -> (gpui::LayoutId, Self::FrameState) {
         let (menu, position) = if let Some(element_state) = element_state {
             (element_state.menu, element_state.position)
         } else {
@@ -115,7 +115,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
-        element_state: &mut Self::State,
+        element_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         if let Some(mut child) = element_state.child_element.take() {

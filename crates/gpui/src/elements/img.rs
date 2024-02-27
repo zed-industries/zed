@@ -88,13 +88,13 @@ impl Img {
 }
 
 impl Element for Img {
-    type State = InteractiveElementState;
+    type FrameState = InteractiveElementState;
 
     fn request_layout(
         &mut self,
-        element_state: Option<Self::State>,
+        element_state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         self.interactivity
             .layout(element_state, cx, |style, cx| cx.request_layout(&style, []))
     }
@@ -102,7 +102,7 @@ impl Element for Img {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        element_state: &mut Self::State,
+        element_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         let source = self.source.clone();

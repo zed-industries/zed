@@ -90,13 +90,13 @@ impl<V: 'static> View<V> {
 }
 
 impl<V: Render> Element for View<V> {
-    type State = Option<AnyElement>;
+    type FrameState = Option<AnyElement>;
 
     fn request_layout(
         &mut self,
-        _state: Option<Self::State>,
+        _state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         cx.with_view_id(self.entity_id(), |cx| {
             let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
             let layout_id = element.request_layout(cx);
@@ -104,7 +104,12 @@ impl<V: Render> Element for View<V> {
         })
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        element: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
         cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
     }
 }
@@ -274,13 +279,13 @@ impl<V: Render> From<View<V>> for AnyView {
 }
 
 impl Element for AnyView {
-    type State = AnyViewState;
+    type FrameState = AnyViewState;
 
     fn request_layout(
         &mut self,
-        state: Option<Self::State>,
+        state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         cx.with_view_id(self.entity_id(), |cx| {
             if self.cache
                 && !cx.window.dirty_views.contains(&self.entity_id())
@@ -304,7 +309,12 @@ impl Element for AnyView {
         })
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
         cx.paint_view(self.entity_id(), |cx| {
             if !self.cache {
                 state.element.take().unwrap().paint(cx);

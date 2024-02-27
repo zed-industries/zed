@@ -824,13 +824,13 @@ mod element {
     }
 
     impl Element for PaneAxisElement {
-        type State = Rc<RefCell<Option<usize>>>;
+        type FrameState = Rc<RefCell<Option<usize>>>;
 
         fn request_layout(
             &mut self,
-            state: Option<Self::State>,
+            state: Option<Self::FrameState>,
             cx: &mut ui::prelude::ElementContext,
-        ) -> (gpui::LayoutId, Self::State) {
+        ) -> (gpui::LayoutId, Self::FrameState) {
             let mut style = Style::default();
             style.flex_grow = 1.;
             style.flex_shrink = 1.;
@@ -845,7 +845,7 @@ mod element {
         fn paint(
             &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
-            state: &mut Self::State,
+            state: &mut Self::FrameState,
             cx: &mut ui::prelude::ElementContext,
         ) {
             let flexes = self.flexes.lock().clone();

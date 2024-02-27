@@ -4601,13 +4601,13 @@ pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
-    type State = AnyElement;
+    type FrameState = AnyElement;
 
     fn request_layout(
         &mut self,
-        _: Option<Self::State>,
+        _: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -4631,7 +4631,7 @@ impl Element for DisconnectedOverlay {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        overlay: &mut Self::State,
+        overlay: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         cx.with_z_index(u16::MAX, |cx| {

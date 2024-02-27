@@ -3025,13 +3025,13 @@ enum Invisible {
 }
 
 impl Element for EditorElement {
-    type State = ();
+    type FrameState = ();
 
     fn request_layout(
         &mut self,
-        _element_state: Option<Self::State>,
+        _element_state: Option<Self::FrameState>,
         cx: &mut gpui::ElementContext,
-    ) -> (gpui::LayoutId, Self::State) {
+    ) -> (gpui::LayoutId, Self::FrameState) {
         cx.with_view_id(self.editor.entity_id(), |cx| {
             self.editor.update(cx, |editor, cx| {
                 editor.set_style(self.style.clone(), cx);
@@ -3083,7 +3083,7 @@ impl Element for EditorElement {
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
-        _element_state: &mut Self::State,
+        _element_state: &mut Self::FrameState,
         cx: &mut gpui::ElementContext,
     ) {
         let editor = self.editor.clone();

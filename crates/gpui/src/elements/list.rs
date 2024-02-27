@@ -516,13 +516,13 @@ pub struct ListOffset {
 }
 
 impl Element for List {
-    type State = ();
+    type FrameState = ();
 
     fn request_layout(
         &mut self,
-        _state: Option<Self::State>,
+        _state: Option<Self::FrameState>,
         cx: &mut crate::ElementContext,
-    ) -> (crate::LayoutId, Self::State) {
+    ) -> (crate::LayoutId, Self::FrameState) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
                 let mut style = Style::default();
@@ -586,7 +586,7 @@ impl Element for List {
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        _state: &mut Self::State,
+        _state: &mut Self::FrameState,
         cx: &mut crate::ElementContext,
     ) {
         let state = &mut *self.state.0.borrow_mut();

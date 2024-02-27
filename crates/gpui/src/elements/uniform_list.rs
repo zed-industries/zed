@@ -105,13 +105,13 @@ pub struct UniformListState {
 }
 
 impl Element for UniformList {
-    type State = UniformListState;
+    type FrameState = UniformListState;
 
     fn request_layout(
         &mut self,
-        state: Option<Self::State>,
+        state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let max_items = self.item_count;
         let item_size = state
             .as_ref()
@@ -157,7 +157,7 @@ impl Element for UniformList {
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        element_state: &mut Self::State,
+        element_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         let style =

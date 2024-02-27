@@ -1050,13 +1050,13 @@ impl ParentElement for Div {
 }
 
 impl Element for Div {
-    type State = DivState;
+    type FrameState = DivState;
 
     fn request_layout(
         &mut self,
-        element_state: Option<Self::State>,
+        element_state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let mut child_layout_ids = SmallVec::new();
         let (layout_id, interactive_state) = self.interactivity.layout(
             element_state.map(|s| s.interactive_state),
@@ -1084,7 +1084,7 @@ impl Element for Div {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        element_state: &mut Self::State,
+        element_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
@@ -2126,17 +2126,22 @@ impl<E> Element for Focusable<E>
 where
     E: Element,
 {
-    type State = E::State;
+    type FrameState = E::FrameState;
 
     fn request_layout(
         &mut self,
-        state: Option<Self::State>,
+        state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         self.element.request_layout(state, cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
         self.element.paint(bounds, state, cx)
     }
 }
@@ -2201,17 +2206,22 @@ impl<E> Element for Stateful<E>
 where
     E: Element,
 {
-    type State = E::State;
+    type FrameState = E::FrameState;
 
     fn request_layout(
         &mut self,
-        state: Option<Self::State>,
+        state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         self.element.request_layout(state, cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
         self.element.paint(bounds, state, cx)
     }
 }

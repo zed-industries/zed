@@ -69,13 +69,13 @@ impl ParentElement for Overlay {
 }
 
 impl Element for Overlay {
-    type State = OverlayState;
+    type FrameState = OverlayState;
 
     fn request_layout(
         &mut self,
-        _: Option<Self::State>,
+        _: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (crate::LayoutId, Self::State) {
+    ) -> (crate::LayoutId, Self::FrameState) {
         let child_layout_ids = self
             .children
             .iter_mut()
@@ -96,7 +96,7 @@ impl Element for Overlay {
     fn paint(
         &mut self,
         bounds: crate::Bounds<crate::Pixels>,
-        element_state: &mut Self::State,
+        element_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         if element_state.child_layout_ids.is_empty() {

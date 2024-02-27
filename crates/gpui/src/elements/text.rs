@@ -17,13 +17,13 @@ use std::{
 use util::ResultExt;
 
 impl Element for &'static str {
-    type State = TextState;
+    type FrameState = TextState;
 
     fn request_layout(
         &mut self,
-        _: Option<Self::State>,
+        _: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(SharedString::from(*self), None, cx);
         (layout_id, state)
@@ -59,13 +59,13 @@ impl IntoElement for String {
 }
 
 impl Element for SharedString {
-    type State = TextState;
+    type FrameState = TextState;
 
     fn request_layout(
         &mut self,
-        _: Option<Self::State>,
+        _: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.clone(), None, cx);
         (layout_id, state)
@@ -138,19 +138,24 @@ impl StyledText {
 }
 
 impl Element for StyledText {
-    type State = TextState;
+    type FrameState = TextState;
 
     fn request_layout(
         &mut self,
-        _: Option<Self::State>,
+        _: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.text.clone(), self.runs.take(), cx);
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
         state.paint(bounds, &self.text, cx)
     }
 }
@@ -385,13 +390,13 @@ impl InteractiveText {
 }
 
 impl Element for InteractiveText {
-    type State = InteractiveTextState;
+    type FrameState = InteractiveTextState;
 
     fn request_layout(
         &mut self,
-        state: Option<Self::State>,
+        state: Option<Self::FrameState>,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         if let Some(InteractiveTextState {
             mouse_down_index,
             hovered_index,
@@ -419,7 +424,12 @@ impl Element for InteractiveText {
         }
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut ElementContext,
+    ) {
         if let Some(click_listener) = self.click_listener.take() {
             let mouse_position = cx.mouse_position();
             if let Some(ix) = state.text_state.index_for_position(bounds, mouse_position) {

@@ -754,13 +754,13 @@ impl TerminalElement {
 }
 
 impl Element for TerminalElement {
-    type State = InteractiveElementState;
+    type FrameState = InteractiveElementState;
 
     fn request_layout(
         &mut self,
-        element_state: Option<Self::State>,
+        element_state: Option<Self::FrameState>,
         cx: &mut ElementContext<'_>,
-    ) -> (LayoutId, Self::State) {
+    ) -> (LayoutId, Self::FrameState) {
         let (layout_id, interactive_state) =
             self.interactivity
                 .layout(element_state, cx, |mut style, cx| {
@@ -777,7 +777,7 @@ impl Element for TerminalElement {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::State,
+        state: &mut Self::FrameState,
         cx: &mut ElementContext<'_>,
     ) {
         let mut layout = self.compute_layout(bounds, cx);
