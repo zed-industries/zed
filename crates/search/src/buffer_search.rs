@@ -127,7 +127,9 @@ impl Render for BufferSearchBar {
 
         let supported_options = self.supported_options();
 
-        if self.query_editor.read(cx).placeholder_text().is_none() {
+        if self.query_editor.update(cx, |query_editor, cx| {
+            query_editor.placeholder_text(cx).is_none()
+        }) {
             let query_focus_handle = self.query_editor.focus_handle(cx);
             let up_keystrokes = cx
                 .bindings_for_action_in(&PreviousHistoryQuery {}, &query_focus_handle)

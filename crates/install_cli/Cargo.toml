@@ -14,6 +14,5 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-log.workspace = true
 smol.workspace = true
 util.workspace = true

@@ -8,7 +8,8 @@
 
 [(class_name) (class_type_name) (type_constructor)] @type
 
-[(constructor_name) (tag)] @constructor
+(tag) @variant ;; Polymorphic Variants
+(constructor_name) @constructor ;; Exceptions, variants and the like
 
 ; Functions
 ;----------
