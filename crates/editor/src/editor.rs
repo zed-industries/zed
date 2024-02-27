@@ -947,6 +947,21 @@ impl CompletionsMenu {
                                         "...",
                                     );
                                 }
+                                for run in completion.label.runs.iter_mut() {
+                                    if run.0.start > max_label_length {
+                                        run.0.start =
+                                            (run.0.start as i32 - length_truncated) as usize;
+                                    }
+                                    if run.0.end > max_label_length {
+                                        run.0.end = (run.0.end as i32 - length_truncated) as usize;
+                                    }
+                                }
+                                if completion.label.filter_range.end > max_label_length {
+                                    completion.label.filter_range.end =
+                                        (completion.label.filter_range.end as i32
+                                            - length_truncated)
+                                            as usize;
+                                }
 
                                 completion.label.text = completion_label_text;
                             }
