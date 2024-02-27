@@ -16,6 +16,7 @@ test-support = [
     "settings/test-support",
     "text/test-support",
     "prettier/test-support",
+    "project_core/test-support",
     "gpui/test-support",
 ]
 
