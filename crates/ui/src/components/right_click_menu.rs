@@ -37,6 +37,16 @@ impl<M: ManagedView> RightClickMenu<M> {
         self.attach = Some(attach);
         self
     }
+
+    fn element_state(&self, cx: &mut ElementContext) -> MenuHandleElementState<M> {
+        cx.with_element_state::<MenuHandleElementState<M>, _>(
+            self.element_id(),
+            |element_state, _cx| {
+                let element_state = element_state.unwrap().unwrap_or_default();
+                (element_state.clone(), Some(element_state))
+            },
+        )
+    }
 }
 
 /// Creates a [`RightClickMenu`]
@@ -50,36 +60,49 @@ pub fn right_click_menu<M: ManagedView>(id: impl Into<ElementId>) -> RightClickM
     }
 }
 
-pub struct MenuHandleState<M> {
+pub struct MenuHandleElementState<M> {
     menu: Rc<RefCell<Option<View<M>>>>,
     position: Rc<RefCell<Point<Pixels>>>,
+}
+
+impl<M> Clone for MenuHandleElementState<M> {
+    fn clone(&self) -> Self {
+        Self {
+            menu: Rc::clone(&self.menu),
+            position: Rc::clone(&self.position),
+        }
+    }
+}
+
+impl<M> Default for MenuHandleElementState<M> {
+    fn default() -> Self {
+        Self {
+            menu: Rc::default(),
+            position: Rc::default(),
+        }
+    }
+}
+
+pub struct MenuHandleFrameState {
     child_layout_id: Option<LayoutId>,
     child_element: Option<AnyElement>,
     menu_element: Option<AnyElement>,
 }
 
 impl<M: ManagedView> Element for RightClickMenu<M> {
-    type FrameState = MenuHandleState<M>;
+    type FrameState = MenuHandleFrameState;
 
-    fn request_layout(
-        &mut self,
-        element_state: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (gpui::LayoutId, Self::FrameState) {
-        let (menu, position) = if let Some(element_state) = element_state {
-            (element_state.menu, element_state.position)
-        } else {
-            (Rc::default(), Rc::default())
-        };
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::FrameState) {
+        let element_state = self.element_state(cx);
 
         let mut menu_layout_id = None;
 
-        let menu_element = menu.borrow_mut().as_mut().map(|menu| {
+        let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
             let mut overlay = overlay().snap_to_window();
             if let Some(anchor) = self.anchor {
                 overlay = overlay.anchor(anchor);
             }
-            overlay = overlay.position(*position.borrow());
+            overlay = overlay.position(*element_state.position.borrow());
 
             let mut element = overlay.child(menu.clone()).into_any();
             menu_layout_id = Some(element.request_layout(cx));
@@ -89,7 +112,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         let mut child_element = self
             .child_builder
             .take()
-            .map(|child_builder| (child_builder)(menu.borrow().is_some()));
+            .map(|child_builder| (child_builder)(element_state.menu.borrow().is_some()));
 
         let child_layout_id = child_element
             .as_mut()
@@ -102,9 +125,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
         (
             layout_id,
-            MenuHandleState {
-                menu,
-                position,
+            MenuHandleFrameState {
                 child_element,
                 child_layout_id,
                 menu_element,
@@ -115,14 +136,14 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
-        element_state: &mut Self::FrameState,
+        frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        if let Some(mut child) = element_state.child_element.take() {
+        if let Some(mut child) = frame_state.child_element.take() {
             child.paint(cx);
         }
 
-        if let Some(mut menu) = element_state.menu_element.take() {
+        if let Some(mut menu) = frame_state.menu_element.take() {
             menu.paint(cx);
             return;
         }
@@ -130,10 +151,10 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         let Some(builder) = self.menu_builder.take() else {
             return;
         };
-        let menu = element_state.menu.clone();
-        let position = element_state.position.clone();
+
+        let element_state = self.element_state(cx);
         let attach = self.attach.clone();
-        let child_layout_id = element_state.child_layout_id.clone();
+        let child_layout_id = frame_state.child_layout_id.clone();
         let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
 
         let interactive_bounds = InteractiveBounds {
@@ -149,7 +170,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 cx.prevent_default();
 
                 let new_menu = (builder)(cx);
-                let menu2 = menu.clone();
+                let menu2 = element_state.menu.clone();
                 let previous_focus_handle = cx.focused();
 
                 cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
@@ -163,13 +184,13 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 })
                 .detach();
                 cx.focus_view(&new_menu);
-                *menu.borrow_mut() = Some(new_menu);
-
-                *position.borrow_mut() = if attach.is_some() && child_layout_id.is_some() {
-                    attach.unwrap().corner(child_bounds)
-                } else {
-                    cx.mouse_position()
-                };
+                *element_state.menu.borrow_mut() = Some(new_menu);
+                *element_state.position.borrow_mut() =
+                    if attach.is_some() && child_layout_id.is_some() {
+                        attach.unwrap().corner(child_bounds)
+                    } else {
+                        cx.mouse_position()
+                    };
                 cx.refresh();
             }
         });

@@ -492,10 +492,13 @@ impl Interactivity {
         cx.with_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
             |element_state, _cx| {
-                if let Some(element_state) = element_state {
-                    let scroll_offset =
-                        element_state.as_ref().and_then(|s| s.scroll_offset.clone());
-                    (scroll_offset, element_state)
+                if self.element_id.is_some() {
+                    let mut element_state = element_state.unwrap().unwrap_or_default();
+                    let scroll_offset = element_state
+                        .scroll_offset
+                        .get_or_insert_with(|| Rc::default())
+                        .clone();
+                    (Some(scroll_offset), Some(element_state))
                 } else {
                     (None, None)
                 }
@@ -1048,6 +1051,16 @@ pub struct Div {
     children: SmallVec<[AnyElement; 2]>,
 }
 
+/// A frame state for a `Div` element, which contains layout IDs for its children.
+///
+/// This struct is used internally by the `Div` element to manage the layout state of its children
+/// during the UI update cycle. It holds a small vector of `LayoutId` values, each corresponding to
+/// a child element of the `Div`. These IDs are used to query the layout engine for the computed
+/// bounds of the children after the layout phase is complete.
+pub struct DivFrameState {
+    child_layout_ids: SmallVec<[LayoutId; 2]>,
+}
+
 impl Styled for Div {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
@@ -1067,7 +1080,7 @@ impl ParentElement for Div {
 }
 
 impl Element for Div {
-    type FrameState = SmallVec<[LayoutId; 2]>;
+    type FrameState = DivFrameState;
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut child_layout_ids = SmallVec::new();
@@ -1081,26 +1094,26 @@ impl Element for Div {
                 cx.request_layout(&style, child_layout_ids.iter().copied())
             })
         });
-        (layout_id, child_layout_ids)
+        (layout_id, DivFrameState { child_layout_ids })
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        child_layout_ids: &mut Self::FrameState,
+        frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
-        let content_size = if child_layout_ids.is_empty() {
+        let content_size = if frame_state.child_layout_ids.is_empty() {
             bounds.size
         } else if let Some(scroll_handle) = self.interactivity.scroll_handle.as_ref() {
             let mut state = scroll_handle.0.borrow_mut();
-            state.child_bounds = Vec::with_capacity(child_layout_ids.len());
+            state.child_bounds = Vec::with_capacity(frame_state.child_layout_ids.len());
             state.bounds = bounds;
             let requested = state.requested_scroll_top.take();
 
-            for (ix, child_layout_id) in child_layout_ids.iter().enumerate() {
+            for (ix, child_layout_id) in frame_state.child_layout_ids.iter().enumerate() {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.lower_right());
@@ -1115,7 +1128,7 @@ impl Element for Div {
             }
             (child_max - child_min).into()
         } else {
-            for child_layout_id in child_layout_ids {
+            for child_layout_id in &frame_state.child_layout_ids {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.lower_right());
@@ -2006,9 +2019,10 @@ impl Interactivity {
     /// Compute the visual style for this element, based on the current bounds and the element's state.
     pub fn compute_style(&self, bounds: Option<Bounds<Pixels>>, cx: &mut ElementContext) -> Style {
         cx.with_element_state(self.element_id.clone(), |element_state, cx| {
-            if let Some(mut element_state) = element_state {
-                let style = self.compute_style_internal(bounds, element_state.as_mut(), cx);
-                (style, element_state)
+            if self.element_id.is_some() {
+                let mut element_state = element_state.unwrap().unwrap_or_default();
+                let style = self.compute_style_internal(bounds, Some(&mut element_state), cx);
+                (style, Some(element_state))
             } else {
                 let style = self.compute_style_internal(bounds, None, cx);
                 (style, None)

@@ -269,17 +269,22 @@ impl<E: Element> DrawableElement<E> {
     }
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
-        let (layout_id, frame_state) = self.element.as_mut().unwrap().request_layout(cx);
-        self.phase = ElementDrawPhase::LayoutRequested {
-            layout_id,
-            frame_state,
-        };
-        layout_id
+        match mem::take(&mut self.phase) {
+            ElementDrawPhase::Start => {
+                let (layout_id, frame_state) = self.element.as_mut().unwrap().request_layout(cx);
+                self.phase = ElementDrawPhase::LayoutRequested {
+                    layout_id,
+                    frame_state,
+                };
+                layout_id
+            }
+            _ => panic!("must call request_layout only once"),
+        }
     }
 
     fn paint(&mut self, cx: &mut ElementContext) -> E::FrameState {
         match mem::take(&mut self.phase) {
-            ElementDrawPhase::Start => panic!("must call layout before paint"),
+            ElementDrawPhase::Start => panic!("must call request_layout before paint"),
             ElementDrawPhase::LayoutRequested {
                 layout_id,
                 mut frame_state,
@@ -467,6 +472,22 @@ impl IntoElement for AnyElement {
 
     fn into_any_element(self) -> AnyElement {
         self
+    }
+
+    /// Convert into an element, then draw in the current window at the given origin.
+    /// The available space argument is provided to the layout engine to determine the size of the
+    // root element.  Once the element is drawn, its associated element state is yielded to the
+    // given callback.
+    fn draw<T>(
+        mut self,
+        origin: Point<Pixels>,
+        available_space: Size<T>,
+        cx: &mut ElementContext,
+    ) -> <Self::Element as Element>::FrameState
+    where
+        T: Clone + Default + Debug + Into<AvailableSpace>,
+    {
+        AnyElement::draw(&mut self, origin, available_space.map(Into::into), cx)
     }
 }
 

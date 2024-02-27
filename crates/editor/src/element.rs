@@ -965,7 +965,7 @@ impl EditorElement {
                         };
 
                         let fold_background = cx.with_z_index(1, |cx| {
-                            let fold_element_state = div()
+                            let fold_frame_state = div()
                                 .id(fold.id)
                                 .size_full()
                                 .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
@@ -983,13 +983,14 @@ impl EditorElement {
                                 ))
                                 .draw(fold_bounds.origin, fold_bounds.size, cx);
 
-                            if fold_element_state.is_active() {
-                                cx.theme().colors().ghost_element_active
-                            } else if fold_bounds.contains(&cx.mouse_position()) {
-                                cx.theme().colors().ghost_element_hover
-                            } else {
-                                cx.theme().colors().ghost_element_background
-                            }
+                            todo!("FOLD FRAME STATE, RE-ENABLE ME!!!")
+                            // if fold_frame_state.is_active() {
+                            //     cx.theme().colors().ghost_element_active
+                            // } else if fold_bounds.contains(&cx.mouse_position()) {
+                            //     cx.theme().colors().ghost_element_hover
+                            // } else {
+                            //     cx.theme().colors().ghost_element_background
+                            // }
                         });
 
                         self.paint_highlighted_range(
@@ -3029,10 +3030,9 @@ impl Element for EditorElement {
 
     fn request_layout(
         &mut self,
-        _element_state: Option<Self::FrameState>,
         cx: &mut gpui::ElementContext,
     ) -> (gpui::LayoutId, Self::FrameState) {
-        cx.with_view(self.editor.entity_id(), |cx| {
+        cx.with_view_id(self.editor.entity_id(), |cx| {
             self.editor.update(cx, |editor, cx| {
                 editor.set_style(self.style.clone(), cx);
 
@@ -3083,7 +3083,7 @@ impl Element for EditorElement {
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
-        _element_state: &mut Self::FrameState,
+        _frame_state: &mut Self::FrameState,
         cx: &mut gpui::ElementContext,
     ) {
         let editor = self.editor.clone();
@@ -3681,7 +3681,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view(view.entity_id(), |cx| {
+                    cx.with_view_id(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
                                 origin: point(px(500.), px(500.)),
@@ -3777,7 +3777,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view(view.entity_id(), |cx| {
+                    cx.with_view_id(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
                                 origin: point(px(500.), px(500.)),
@@ -3843,7 +3843,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view(view.entity_id(), |cx| {
+                    cx.with_view_id(view.entity_id(), |cx| {
                         element.compute_layout(
                             Bounds {
                                 origin: point(px(500.), px(500.)),

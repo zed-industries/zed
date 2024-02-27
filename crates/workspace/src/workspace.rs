@@ -4603,11 +4603,7 @@ struct DisconnectedOverlay;
 impl Element for DisconnectedOverlay {
     type FrameState = AnyElement;
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::FrameState>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()

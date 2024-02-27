@@ -756,11 +756,7 @@ impl TerminalElement {
 impl Element for TerminalElement {
     type FrameState = ();
 
-    fn request_layout(
-        &mut self,
-        element_state: Option<Self::FrameState>,
-        cx: &mut ElementContext<'_>,
-    ) -> (LayoutId, Self::FrameState) {
+    fn request_layout(&mut self, cx: &mut ElementContext<'_>) -> (LayoutId, Self::FrameState) {
         let layout_id = self.interactivity.layout(cx, |mut style, cx| {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
@@ -775,7 +771,7 @@ impl Element for TerminalElement {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::FrameState,
+        _state: &mut Self::FrameState,
         cx: &mut ElementContext<'_>,
     ) {
         let mut layout = self.compute_layout(bounds, cx);
@@ -852,7 +848,7 @@ impl Element for TerminalElement {
                     });
                 }
 
-                if let Some(mut element) = layout.hyperlink_tooltip.take() {
+                if let Some(element) = layout.hyperlink_tooltip.take() {
                     element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
                 }
             });

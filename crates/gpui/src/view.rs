@@ -28,7 +28,7 @@ pub struct AnyViewFrameState {
     element: Option<AnyElement>,
 }
 
-pub(crate) struct AnyViewState {
+struct AnyViewState {
     root_style: Style,
 }
 
@@ -97,7 +97,7 @@ impl<V: Render> Element for View<V> {
     type FrameState = Option<AnyElement>;
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
-        cx.with_view(self.entity_id(), |_view_state, cx| {
+        cx.with_view_id(self.entity_id(), |cx| {
             // TODO! Implement caching for these views as well?
             let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
             let layout_id = element.request_layout(cx);
@@ -283,30 +283,39 @@ impl Element for AnyView {
     type FrameState = AnyViewFrameState;
 
     fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
-        cx.with_view(self.entity_id(), |mut view_state, cx| {
-            let mut frame_state = AnyViewFrameState::default();
+        cx.with_view_id(self.entity_id(), |cx| {
+            cx.with_element_state::<AnyViewState, _>(
+                Some(ElementId::View(self.entity_id())),
+                |element_state, cx| {
+                    let mut element_state = element_state.unwrap();
+                    let mut frame_state = AnyViewFrameState::default();
 
-            if self.cache
-                && !cx.window.dirty_views.contains(&self.entity_id())
-                && !cx.window.refreshing
-            {
-                if let Some(view_state) = view_state {
-                    let layout_id = cx.request_layout(&view_state.root_style, None);
-                    return (layout_id, frame_state);
-                }
-            }
+                    if self.cache
+                        && !cx.window.dirty_views.contains(&self.entity_id())
+                        && !cx.window.refreshing
+                    {
+                        if let Some(root_style) = element_state
+                            .as_ref()
+                            .map(|element_state| &element_state.root_style)
+                        {
+                            let layout_id = cx.request_layout(root_style, None);
+                            return ((layout_id, frame_state), element_state);
+                        }
+                    }
 
-            let (layout_id, element) = (self.request_layout)(self, cx);
-            frame_state.element = Some(element);
+                    let (layout_id, element) = (self.request_layout)(self, cx);
+                    frame_state.element = Some(element);
 
-            let root_style = cx.layout_style(layout_id).unwrap().clone();
-            if let Some(view_state) = view_state {
-                view_state.root_style = root_style;
-            } else {
-                *view_state = Some(AnyViewState { root_style });
-            }
+                    let root_style = cx.layout_style(layout_id).unwrap().clone();
+                    if let Some(element_state) = element_state.as_mut() {
+                        element_state.root_style = root_style;
+                    } else {
+                        element_state = Some(AnyViewState { root_style });
+                    }
 
-            (layout_id, frame_state)
+                    ((layout_id, frame_state), element_state)
+                },
+            )
         })
     }
 

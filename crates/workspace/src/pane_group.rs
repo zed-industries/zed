@@ -824,11 +824,10 @@ mod element {
     }
 
     impl Element for PaneAxisElement {
-        type FrameState = Rc<RefCell<Option<usize>>>;
+        type FrameState = ();
 
         fn request_layout(
             &mut self,
-            state: Option<Self::FrameState>,
             cx: &mut ui::prelude::ElementContext,
         ) -> (gpui::LayoutId, Self::FrameState) {
             let mut style = Style::default();
@@ -837,17 +836,24 @@ mod element {
             style.flex_basis = relative(0.).into();
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
-            let layout_id = cx.request_layout(&style, None);
-            let dragged_pane = state.unwrap_or_else(|| Rc::new(RefCell::new(None)));
-            (layout_id, dragged_pane)
+            (cx.request_layout(&style, None), ())
         }
 
         fn paint(
             &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
-            state: &mut Self::FrameState,
+            _frame_state: &mut Self::FrameState,
             cx: &mut ui::prelude::ElementContext,
         ) {
+            let state = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
+                self.element_id(),
+                |state, _cx| {
+                    let state = state
+                        .unwrap()
+                        .unwrap_or_else(|| Rc::new(RefCell::new(None)));
+                    (state.clone(), Some(state))
+                },
+            );
             let flexes = self.flexes.lock().clone();
             let len = self.children.len();
             debug_assert!(flexes.len() == len);

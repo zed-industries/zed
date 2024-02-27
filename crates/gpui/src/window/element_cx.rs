@@ -29,14 +29,14 @@ use smallvec::SmallVec;
 use util::post_inc;
 
 use crate::{
-    prelude::*, size, AnyTooltip, AnyViewState, AppContext, AvailableSpace, Bounds, BoxShadow,
-    ContentMask, Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId,
-    ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent,
-    PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
-    StackingContext, StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline,
-    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
+    prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
+    Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
+    EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
+    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
+    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
+    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
+    Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -1135,31 +1135,18 @@ impl<'a> ElementContext<'a> {
 
     /// Invoke the given function with the given view id present on the view stack.
     /// This is a fairly low-level method used to implement views as elements.
-    pub fn with_view<R>(
-        &mut self,
-        view_id: EntityId,
-        f: impl FnOnce(&mut Option<AnyViewState>, &mut Self) -> R,
-    ) -> R {
+    pub fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
         let text_system = self.text_system().clone();
-        self.with_element_state::<AnyViewState, _>(
-            Some(ElementId::View(view_id)),
-            |view_state, cx| {
-                let mut view_state = view_state.unwrap();
-                let result = text_system.with_view(view_id, || {
-                    debug_assert!(
-                        !cx.window.next_frame.view_stack.contains(&view_id),
-                        "don't nest with_view calls for the same view id"
-                    );
-
-                    cx.window.next_frame.view_stack.push(view_id);
-                    let result = f(&mut view_state, cx);
-                    cx.window.next_frame.view_stack.pop();
-                    result
-                });
-
-                (result, view_state)
-            },
-        )
+        text_system.with_view(view_id, || {
+            if self.window.next_frame.view_stack.last() == Some(&view_id) {
+                f(self)
+            } else {
+                self.window.next_frame.view_stack.push(view_id);
+                let result = f(self);
+                self.window.next_frame.view_stack.pop();
+                result
+            }
+        })
     }
 
     /// Invoke the given function with the given view id present on the view stack.
