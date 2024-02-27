@@ -515,7 +515,7 @@ fn init_logger() {
             Err(err) => {
                 init_stdout_logger();
                 log::error!(
-                    "could not open log file: {}. defaulting to stdout logging.",
+                    "could not open log file, defaulting to stdout logging: {}",
                     err
                 );
             }
