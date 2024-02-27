@@ -274,6 +274,7 @@ fn surrounding_html_tag(
     let offset = relative_to.to_offset(map, Bias::Left);
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
+    let offset = excerpt.map_offset_to_buffer(offset);
 
     // Find the most closest to current offset
     let mut cursor = buffer.syntax_layer_at(offset)?.node().walk();
