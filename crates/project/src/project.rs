@@ -4960,6 +4960,7 @@ impl Project {
                         completions.extend_from_slice(&new_completions);
                     }
                 }
+
                 Ok(completions)
             })
         } else if let Some(project_id) = self.remote_id() {
@@ -4990,9 +4991,6 @@ impl Project {
         let is_remote = self.is_remote();
         let project_id = self.remote_id();
 
-        let settings = ProjectSettings::get_global(cx);
-        let buffer_font_size = settings.buffer_font_size;
-        let ui_font_size = settings.ui_font_size;
         cx.spawn(move |this, mut cx| async move {
             let mut did_resolve = false;
             if is_remote {
@@ -5051,8 +5049,6 @@ impl Project {
                         completion_index,
                         completion,
                         language_registry.clone(),
-                        buffer_font_size,
-                        ui_font_size,
                     )
                     .await;
                 }
@@ -5068,8 +5064,6 @@ impl Project {
         completion_index: usize,
         completion: lsp::CompletionItem,
         language_registry: Arc<LanguageRegistry>,
-        buffer_font_size: i32,
-        ui_font_size: i32,
     ) {
         let can_resolve = server
             .capabilities()
@@ -5087,20 +5081,10 @@ impl Project {
         };
 
         if let Some(lsp_documentation) = completion_item.documentation {
-            let base_width =
-                (10.max((-2.8333 * buffer_font_size as f32 + 87.0) as i32) as f32) as i32;
-
-            let remaining_width = base_width - (completion_item.label.len() as f32 - 30.0) as i32;
-
-            let max_documentation_length: usize = 10.max(
-                (remaining_width as f32 * buffer_font_size as f32 / (ui_font_size as f32)) as usize,
-            );
-
             let documentation = language::prepare_completion_documentation(
                 &lsp_documentation,
                 &language_registry,
                 None, // TODO: Try to reasonably work out which language the completion is for
-                max_documentation_length,
             )
             .await;
 

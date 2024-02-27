@@ -209,17 +209,11 @@ pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    maximum_documentation_length: usize,
 ) -> Documentation {
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
-                let mut text = text.clone();
-                if text.len() > maximum_documentation_length {
-                    text.truncate(maximum_documentation_length - 3);
-                    text.push_str("...");
-                }
-                Documentation::SingleLine(text)
+                Documentation::SingleLine(text.clone())
             } else {
                 Documentation::MultiLinePlainText(text.clone())
             }
@@ -228,13 +222,7 @@ pub async fn prepare_completion_documentation(
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
-                    let mut text = value.clone();
-                    if text.len() > maximum_documentation_length {
-                        text.truncate(maximum_documentation_length);
-                        text.push_str("...");
-                    }
-
-                    Documentation::SingleLine(text)
+                    Documentation::SingleLine(value.clone())
                 } else {
                     Documentation::MultiLinePlainText(value.clone())
                 }
