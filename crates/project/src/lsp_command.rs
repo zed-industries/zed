@@ -1562,10 +1562,6 @@ impl LspCommand for GetCompletions {
                     Some(async move {
                         let mut label = None;
                         if let Some(language) = language.as_ref() {
-                            // let max_completion_len = 45
-                            //     .min(10.max((-2.8333 * buffer_font_size as f32 + 87.0) as i32))
-                            //     as usize;
-
                             let max_completion_len =
                                 10.max((-2.8333 * buffer_font_size as f32 + 87.0) as i32) as usize;
                             if lsp_completion.label.len() > max_completion_len {
@@ -1587,7 +1583,6 @@ impl LspCommand for GetCompletions {
                                     lsp_docs,
                                     &language_registry,
                                     language.clone(),
-                                    // lsp_completion.label.len(),
                                     0,
                                 )
                                 .await,
