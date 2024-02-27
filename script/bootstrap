@@ -11,10 +11,7 @@ echo "creating database..."
 script/sqlx database create
 
 echo "migrating database..."
-(cd crates/collab && cargo run -- migrate)
+cargo run -p collab -- migrate
 
 echo "seeding database..."
 script/seed-db
-
-echo "Linux dependencies..."
-script/linux

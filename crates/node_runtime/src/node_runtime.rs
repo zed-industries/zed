@@ -60,13 +60,20 @@ impl RealNodeRuntime {
         let _lock = self.installation_lock.lock().await;
         log::info!("Node runtime install_if_needed");
 
+        let os = match consts::OS {
+            "macos" => "darwin",
+            "linux" => "linux",
+            "windows" => "win",
+            other => bail!("Running on unsupported os: {other}"),
+        };
+
         let arch = match consts::ARCH {
             "x86_64" => "x64",
             "aarch64" => "arm64",
-            other => bail!("Running on unsupported platform: {other}"),
+            other => bail!("Running on unsupported architecture: {other}"),
         };
 
-        let folder_name = format!("node-{VERSION}-darwin-{arch}");
+        let folder_name = format!("node-{VERSION}-{os}-{arch}");
         let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join("bin/node");
@@ -92,7 +99,7 @@ impl RealNodeRuntime {
                 .await
                 .context("error creating node containing dir")?;
 
-            let file_name = format!("node-{VERSION}-darwin-{arch}.tar.gz");
+            let file_name = format!("node-{VERSION}-{os}-{arch}.tar.gz");
             let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
             let mut response = self
                 .http

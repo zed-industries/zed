@@ -94,14 +94,17 @@ impl<'a> Drop for ChannelPathsInsertGuard<'a> {
 fn channel_path_sorting_key<'a>(
     id: ChannelId,
     channels_by_id: &'a BTreeMap<ChannelId, Arc<Channel>>,
-) -> impl Iterator<Item = &str> {
+) -> impl Iterator<Item = (&str, u64)> {
     let (parent_path, name) = channels_by_id
         .get(&id)
         .map_or((&[] as &[_], None), |channel| {
-            (channel.parent_path.as_slice(), Some(channel.name.as_ref()))
+            (
+                channel.parent_path.as_slice(),
+                Some((channel.name.as_ref(), channel.id)),
+            )
         });
     parent_path
         .iter()
-        .filter_map(|id| Some(channels_by_id.get(id)?.name.as_ref()))
+        .filter_map(|id| Some((channels_by_id.get(id)?.name.as_ref(), *id)))
         .chain(name)
 }

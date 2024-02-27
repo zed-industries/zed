@@ -1,3 +1,6 @@
+// todo!("windows"): remove
+#![cfg_attr(windows, allow(dead_code))]
+
 use crate::{
     point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, EntityId, Hsla, Pixels,
     Point, ScaledPixels, StackingOrder,

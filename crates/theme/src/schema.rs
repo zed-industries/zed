@@ -290,7 +290,10 @@ pub struct ThemeColorsContent {
     pub pane_focused_border: Option<String>,
 
     /// The color of the scrollbar thumb.
-    #[serde(rename = "scrollbar_thumb.background")]
+    #[serde(
+        rename = "scrollbar.thumb.background",
+        alias = "scrollbar_thumb.background"
+    )]
     pub scrollbar_thumb_background: Option<String>,
 
     /// The color of the scrollbar thumb when hovered over.

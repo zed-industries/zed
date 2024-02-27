@@ -41,7 +41,7 @@ impl PickerDelegate for Delegate {
         self.candidates.len()
     }
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Test".into()
     }
 
@@ -190,7 +190,7 @@ impl PickerStory {
                     ]);
                     delegate.update_matches("".into(), cx).detach();
 
-                    let picker = Picker::new(delegate, cx);
+                    let picker = Picker::uniform_list(delegate, cx);
                     picker.focus(cx);
                     picker
                 }),

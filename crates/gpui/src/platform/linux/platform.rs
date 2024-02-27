@@ -227,7 +227,8 @@ impl Platform for LinuxPlatform {
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
-        self.foreground_executor()
+        self.inner
+            .foreground_executor
             .spawn(async move {
                 let title = if options.multiple {
                     if !options.files {
@@ -270,7 +271,8 @@ impl Platform for LinuxPlatform {
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         let (done_tx, done_rx) = oneshot::channel();
         let directory = directory.to_owned();
-        self.foreground_executor()
+        self.inner
+            .foreground_executor
             .spawn(async move {
                 let result = SaveFileRequest::default()
                     .modal(true)
@@ -294,7 +296,13 @@ impl Platform for LinuxPlatform {
     }
 
     fn reveal_path(&self, path: &Path) {
-        open::that(path);
+        if path.is_dir() {
+            open::that(path);
+            return;
+        }
+        // If `path` is a file, the system may try to open it in a text editor
+        let dir = path.parent().unwrap_or(Path::new(""));
+        open::that(dir);
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {

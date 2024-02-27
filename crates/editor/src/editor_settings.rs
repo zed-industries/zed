@@ -12,6 +12,7 @@ pub struct EditorSettings {
     pub use_on_type_format: bool,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
+    pub gutter: Gutter,
     pub vertical_scroll_margin: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
@@ -43,6 +44,13 @@ pub struct Scrollbar {
     pub selections: bool,
     pub symbols_selections: bool,
     pub diagnostics: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct Gutter {
+    pub line_numbers: bool,
+    pub code_actions: bool,
+    pub folds: bool,
 }
 
 /// When to show the scrollbar in the editor.
@@ -97,6 +105,8 @@ pub struct EditorSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
     pub scrollbar: Option<ScrollbarContent>,
+    /// Gutter related settings
+    pub gutter: Option<GutterContent>,
 
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
@@ -155,6 +165,23 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub diagnostics: Option<bool>,
+}
+
+/// Gutter related settings
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct GutterContent {
+    /// Whether to show line numbers in the gutter.
+    ///
+    /// Default: true
+    pub line_numbers: Option<bool>,
+    /// Whether to show code action buttons in the gutter.
+    ///
+    /// Default: true
+    pub code_actions: Option<bool>,
+    /// Whether to show fold buttons in the gutter.
+    ///
+    /// Default: true
+    pub folds: Option<bool>,
 }
 
 impl Settings for EditorSettings {

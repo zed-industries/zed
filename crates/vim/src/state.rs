@@ -1,5 +1,6 @@
-use std::{ops::Range, sync::Arc};
+use std::{fmt::Display, ops::Range, sync::Arc};
 
+use collections::HashMap;
 use gpui::{Action, KeyContext};
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,18 @@ pub enum Mode {
     Visual,
     VisualLine,
     VisualBlock,
+}
+
+impl Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Mode::Normal => write!(f, "NORMAL"),
+            Mode::Insert => write!(f, "INSERT"),
+            Mode::Visual => write!(f, "VISUAL"),
+            Mode::VisualLine => write!(f, "VISUAL LINE"),
+            Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
+        }
+    }
 }
 
 impl Mode {
@@ -86,6 +99,8 @@ pub struct WorkspaceState {
     pub recorded_count: Option<usize>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
+
+    pub registers: HashMap<String, String>,
 }
 
 #[derive(Debug)]

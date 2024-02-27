@@ -397,7 +397,8 @@
       "}": "vim::CurlyBrackets",
       "shift-b": "vim::CurlyBrackets",
       "<": "vim::AngleBrackets",
-      ">": "vim::AngleBrackets"
+      ">": "vim::AngleBrackets",
+      "a": "vim::Argument"
     }
   },
   {

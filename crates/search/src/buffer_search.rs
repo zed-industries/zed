@@ -38,7 +38,7 @@ pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MIN_INPUT_WIDTH_REMS: f32 = 15.;
-const MAX_INPUT_WIDTH_REMS: f32 = 25.;
+const MAX_INPUT_WIDTH_REMS: f32 = 30.;
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
@@ -127,7 +127,9 @@ impl Render for BufferSearchBar {
 
         let supported_options = self.supported_options();
 
-        if self.query_editor.read(cx).placeholder_text().is_none() {
+        if self.query_editor.update(cx, |query_editor, cx| {
+            query_editor.placeholder_text(cx).is_none()
+        }) {
             let query_focus_handle = self.query_editor.focus_handle(cx);
             let up_keystrokes = cx
                 .bindings_for_action_in(&PreviousHistoryQuery {}, &query_focus_handle)
@@ -217,7 +219,6 @@ impl Render for BufferSearchBar {
                     .flex_1()
                     .px_2()
                     .py_1()
-                    .gap_2()
                     .border_1()
                     .border_color(editor_border)
                     .min_w(rems(MIN_INPUT_WIDTH_REMS))

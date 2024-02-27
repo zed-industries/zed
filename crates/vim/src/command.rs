@@ -1,4 +1,4 @@
-use command_palette::CommandInterceptResult;
+use command_palette_hooks::CommandInterceptResult;
 use editor::actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive};
 use gpui::{impl_actions, Action, AppContext, ViewContext};
 use serde_derive::Deserialize;

@@ -21,7 +21,8 @@ brew install zed
 
 ## Developing Zed
 
-- [Building Zed](./docs/src/developing_zed__building_zed.md)
+- [Building Zed for macOS](./docs/src/developing_zed__building_zed_macos.md)
+- [Building Zed for Linux](./docs/src/developing_zed__building_zed_linux.md)
 - [Running Collaboration Locally](./docs/src/developing_zed__local_collaboration.md)
 
 ## Contributing
