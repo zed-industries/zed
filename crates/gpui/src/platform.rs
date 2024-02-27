@@ -15,6 +15,9 @@ mod mac;
 #[cfg(any(target_os = "linux", target_os = "windows", feature = "macos-blade"))]
 mod blade;
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod cosmic_text_system;
+
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
@@ -48,6 +51,8 @@ use std::{
 use uuid::Uuid;
 
 pub use app_menu::*;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) use cosmic_text_system::*;
 pub use keystroke::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;

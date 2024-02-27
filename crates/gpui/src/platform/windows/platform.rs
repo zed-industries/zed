@@ -22,10 +22,10 @@ use windows::Win32::{
 };
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher, WindowsDisplay,
-    WindowsTextSystem, WindowsWindow,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
+    ForegroundExecutor, Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
+    PlatformTextSystem, PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher,
+    WindowsDisplay, WindowsWindow,
 };
 
 pub(crate) struct WindowsPlatform {
@@ -36,7 +36,7 @@ struct WindowsPlatformInner {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
-    text_system: Arc<WindowsTextSystem>,
+    text_system: Arc<CosmicTextSystem>,
     callbacks: Mutex<Callbacks>,
 }
 
@@ -59,7 +59,7 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new(main_sender));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = Arc::new(WindowsTextSystem::new());
+        let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
