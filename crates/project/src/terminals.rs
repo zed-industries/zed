@@ -147,7 +147,7 @@ impl Project {
         &mut self,
         settings: &VenvSettingsContent,
         working_directory: Option<PathBuf>,
-        env: &mut std::collections::HashMap<String, String>,
+        env: &mut collections::HashMap<String, String>,
     ) {
         let working_directory = working_directory.unwrap_or_else(|| Path::new("/").to_path_buf());
         for virtual_environment_name in settings.directories {
