@@ -5157,20 +5157,15 @@ impl Project {
         };
 
         if let Some(lsp_documentation) = completion_item.documentation {
-            println!("-----");
-            println!("Label: {}", completion_item.label);
             let base_width =
                 (10.max((-2.8333 * buffer_font_size as f32 + 87.0) as i32) as f32) as i32;
-            println!("Base Width: {}", base_width);
 
             let remaining_width = base_width - (completion_item.label.len() as f32 - 30.0) as i32;
-            println!("Remaining Width: {}", remaining_width);
 
             let max_documentation_length: usize = 10.max(
                 (remaining_width as f32 * buffer_font_size as f32 / (ui_font_size as f32)) as usize,
             );
 
-            println!("Max doc length: {}", max_documentation_length);
             let documentation = language::prepare_completion_documentation(
                 &lsp_documentation,
                 &language_registry,
