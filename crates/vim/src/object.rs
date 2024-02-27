@@ -131,17 +131,22 @@ impl Object {
 
     pub fn target_visual_mode(self, current_mode: Mode) -> Mode {
         match self {
-            Object::Word { .. } if current_mode == Mode::VisualLine => Mode::Visual,
-            Object::Word { .. } => current_mode,
-            Object::Sentence
+            Object::Word { .. }
+            | Object::Sentence
             | Object::Quotes
             | Object::BackQuotes
-            | Object::DoubleQuotes
-            | Object::VerticalBars
-            | Object::Parentheses
+            | Object::DoubleQuotes => {
+                if current_mode == Mode::VisualBlock {
+                    Mode::VisualBlock
+                } else {
+                    Mode::Visual
+                }
+            }
+            Object::Parentheses
             | Object::SquareBrackets
             | Object::CurlyBrackets
             | Object::AngleBrackets
+            | Object::VerticalBars
             | Object::Argument => Mode::Visual,
         }
     }
