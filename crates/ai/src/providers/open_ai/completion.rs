@@ -13,6 +13,7 @@ use std::{
     io,
     sync::Arc,
 };
+use serde_json::{json, Value};
 use util::ResultExt;
 
 use crate::{
@@ -117,14 +118,32 @@ pub async fn stream_completion(
 
     let (tx, rx) = futures::channel::mpsc::unbounded::<Result<OpenAiResponseStreamEvent>>();
 
-    let json_data = request.data()?;
-    let mut response = Request::post(format!("{api_url}/chat/completions"))
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .body(json_data)?
-        .send_async()
-        .await?;
+    let common_request = Request::post(api_url.clone()).header("Content-Type", "application/json");
+    let specific_request = if api_url.to_ascii_lowercase().contains("azure") {
+        // FIXME: this is a nasty hack to get access to non-pub fields
+        let openai_request: Value = serde_json::from_str(&request.data()?)?;
+        let (latest_message, previous_messages) = openai_request.get("messages")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .split_last()
+            .unwrap();
 
+        let azure_request = json!({
+            "role": latest_message.get("role").unwrap().as_str().unwrap(),
+            "content": latest_message.get("content").unwrap().as_str().unwrap(),
+            "messages": previous_messages
+        });
+        common_request
+            .header("Api-Key", api_key)
+            .body(serde_json::to_string(&azure_request)?)?
+    } else {
+        common_request
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(request.data()?)?
+    };
+
+    let mut response = specific_request.send_async().await?;
     let status = response.status();
     if status == StatusCode::OK {
         executor

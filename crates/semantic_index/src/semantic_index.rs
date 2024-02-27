@@ -91,9 +91,18 @@ pub fn init(
     .detach();
 
     cx.spawn(move |cx| async move {
+
+        let (api_url, model_name) = cx.update(|cx| {
+            let settings = SemanticIndexSettings::get_global(cx);
+            (
+                settings.openai_embedding_api_url.clone(),
+                settings.default_openai_embedding_model.clone(),
+            )
+        })?;
+
         let embedding_provider = OpenAiEmbeddingProvider::new(
-            // TODO: We should read it from config, but I'm not sure whether to reuse `openai_api_url` in assistant settings or not
-            OPEN_AI_API_URL.to_string(),
+            api_url,
+            model_name,
             http_client,
             cx.background_executor().clone(),
         )

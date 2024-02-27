@@ -37,6 +37,7 @@ lazy_static! {
 pub struct OpenAiEmbeddingProvider {
     api_url: String,
     model: OpenAiLanguageModel,
+    pub cloud_model_name: String,
     credential: Arc<RwLock<ProviderCredential>>,
     pub client: Arc<dyn HttpClient>,
     pub executor: BackgroundExecutor,
@@ -72,6 +73,7 @@ struct OpenAiEmbeddingUsage {
 impl OpenAiEmbeddingProvider {
     pub async fn new(
         api_url: String,
+        model_name: String,
         client: Arc<dyn HttpClient>,
         executor: BackgroundExecutor,
     ) -> Self {
@@ -87,6 +89,7 @@ impl OpenAiEmbeddingProvider {
         OpenAiEmbeddingProvider {
             api_url,
             model,
+            cloud_model_name: model_name,
             credential,
             client,
             executor,
@@ -141,15 +144,22 @@ impl OpenAiEmbeddingProvider {
         spans: Vec<&str>,
         request_timeout: u64,
     ) -> Result<Response<AsyncBody>> {
-        let request = Request::post(format!("{api_url}/embeddings"))
+        let common_request = Request::post(api_url)
             .redirect_policy(isahc::config::RedirectPolicy::Follow)
             .timeout(Duration::from_secs(request_timeout))
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", api_key))
-            .body(
+            .header("Content-Type", "application/json");
+        let specific_request = if api_url.to_ascii_lowercase().contains("azure") {
+            common_request.header("Api-Key", api_key)
+        } else {
+            common_request.header("Authorization", format!("Bearer {}", api_key))
+        };
+
+        let cloud_model_name = self.cloud_model_name.clone();
+        let request = specific_request.body(
                 serde_json::to_string(&OpenAiEmbeddingRequest {
                     input: spans.clone(),
-                    model: "text-embedding-ada-002",
+                    // FIXME: this creates a memory leak to hack around required 'static &str
+                    model: Box::leak(Box::new(cloud_model_name)),
                 })
                 .unwrap()
                 .into(),

@@ -229,7 +229,7 @@
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
     // The default OpenAI API endpoint to use when starting new conversations.
-    "openai_api_url": "https://api.openai.com/v1",
+    "openai_api_url": "https://api.openai.com/v1/chat/completions",
     // The default OpenAI model to use when starting new conversations. This
     // setting can take three values:
     //
@@ -479,7 +479,9 @@
   },
   // Difference settings for semantic_index
   "semantic_index": {
-    "enabled": true
+    "enabled": true,
+    "openai_embedding_api_url": "https://YOUR_RESOURCE_NAME.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT_NAME/chat/completions?api-version=2023-12-01-preview",
+    "default_openai_embedding_model": "text-embedding-ada-002"
   },
   // Settings specific to our elixir integration
   "elixir": {

@@ -6,6 +6,8 @@ use settings::Settings;
 #[derive(Deserialize, Debug)]
 pub struct SemanticIndexSettings {
     pub enabled: bool,
+    pub openai_embedding_api_url: String,
+    pub default_openai_embedding_model: String,
 }
 
 /// Configuration of semantic index, an alternate search engine available in
@@ -16,6 +18,16 @@ pub struct SemanticIndexSettingsContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
+
+    /// openai_embedding_api_url
+    ///
+    /// Default: https://YOUR_RESOURCE_NAME.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT_NAME/chat/completions?api-version=2023-12-01-preview
+    pub openai_embedding_api_url: Option<String>,
+
+    /// default_openai_embedding_model
+    ///
+    /// Default: text-embedding-ada-002
+    pub default_openai_embedding_model: Option<String>,
 }
 
 impl Settings for SemanticIndexSettings {
