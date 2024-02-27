@@ -1476,8 +1476,6 @@ impl LspCommand for GetCompletions {
             let settings = ProjectSettings::get_global(cx);
 
             let buffer_font_size = settings.buffer_font_size;
-            println!("THE BUFFER TEXT SIZE IS {}", settings.buffer_font_size);
-            // println!("THE UI TEXT SIZE IS {}", settings.ui_font_size);
 
             completions
                 .into_iter()
@@ -1577,7 +1575,7 @@ impl LspCommand for GetCompletions {
 
                             // Python justifies its LSP text strangely so this workaround is required. I'm not a huge fan either.
                             if language.name().to_string().as_str() == "Python" {
-                                lsp_completion.label.push_str("               ");
+                                lsp_completion.label.push_str(" ".repeat(30).as_str());
                             }
                             language.process_completion(&mut lsp_completion).await;
                             label = language.label_for_completion(&lsp_completion).await;
@@ -1589,7 +1587,8 @@ impl LspCommand for GetCompletions {
                                     lsp_docs,
                                     &language_registry,
                                     language.clone(),
-                                    lsp_completion.label.len(),
+                                    // lsp_completion.label.len(),
+                                    0,
                                 )
                                 .await,
                             )
