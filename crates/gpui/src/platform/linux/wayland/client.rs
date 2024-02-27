@@ -76,7 +76,7 @@ impl WaylandClient {
                 if global.interface == "wl_seat" {
                     globals
                         .registry()
-                        .bind::<wl_seat::WlSeat, _, _>(global.name, 1, &qh, ());
+                        .bind::<wl_seat::WlSeat, _, _>(global.name, 4, &qh, ());
                 }
             }
         });
@@ -84,12 +84,11 @@ impl WaylandClient {
         let mut state: WaylandClientState = WaylandClientState {
             compositor: globals.bind(&qh, 1..=1, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
-            viewporter: None,
+            viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
-            // wl_seat: None,
             keymap_state: None,
             modifiers: Modifiers {
                 shift: false,
