@@ -5,9 +5,8 @@
 use std::{
     any::Any,
     cell::{Cell, RefCell},
-    ffi::{c_void, OsStr},
+    ffi::c_void,
     num::NonZeroIsize,
-    os::windows::ffi::OsStrExt,
     rc::{Rc, Weak},
     sync::{Arc, Once},
 };
@@ -16,7 +15,7 @@ use blade_graphics as gpu;
 use futures::channel::oneshot::Receiver;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use windows::{
-    core::PCWSTR,
+    core::{w, HSTRING, PCWSTR},
     Win32::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
         Graphics::Gdi::HBRUSH,
@@ -214,17 +213,14 @@ impl WindowsWindow {
     ) -> Self {
         let dwexstyle = WINDOW_EX_STYLE::default();
         let classname = register_wnd_class();
-        let windowname = OsStr::new(
+        let windowname = HSTRING::from(
             options
                 .titlebar
                 .as_ref()
                 .and_then(|titlebar| titlebar.title.as_ref())
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
-        )
-        .encode_wide()
-        .chain([0])
-        .collect::<Vec<_>>();
+        );
         let dwstyle = WS_OVERLAPPEDWINDOW & !WS_VISIBLE;
         let mut x = CW_USEDEFAULT;
         let mut y = CW_USEDEFAULT;
@@ -252,8 +248,8 @@ impl WindowsWindow {
         unsafe {
             CreateWindowExW(
                 dwexstyle,
-                PCWSTR(classname.as_ptr()),
-                PCWSTR(windowname.as_ptr()),
+                classname,
+                &windowname,
                 dwstyle,
                 x,
                 y,
@@ -381,20 +377,9 @@ impl PlatformWindow for WindowsWindow {
 
     // todo!("windows")
     fn set_title(&mut self, title: &str) {
-        unsafe {
-            SetWindowTextW(
-                self.inner.hwnd,
-                PCWSTR(
-                    OsStr::new(title)
-                        .encode_wide()
-                        .chain([0])
-                        .collect::<Vec<_>>()
-                        .as_ptr(),
-                ),
-            )
-        }
-        .inspect_err(|e| log::error!("Set title failed: {e}"))
-        .ok();
+        unsafe { SetWindowTextW(self.inner.hwnd, &HSTRING::from(title)) }
+            .inspect_err(|e| log::error!("Set title failed: {e}"))
+            .ok();
     }
 
     // todo!("windows")
@@ -476,20 +461,8 @@ impl PlatformWindow for WindowsWindow {
     fn set_graphics_profiler_enabled(&self, enabled: bool) {}
 }
 
-fn register_wnd_class() -> &'static [u16] {
-    const CLASS_NAME: &[u16] = &[
-        b'Z' as u16,
-        b'e' as u16,
-        b'd' as u16,
-        b'-' as u16,
-        b'w' as u16,
-        b'i' as u16,
-        b'n' as u16,
-        b'd' as u16,
-        b'o' as u16,
-        b'w' as u16,
-        0,
-    ];
+fn register_wnd_class() -> PCWSTR {
+    const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -529,8 +502,8 @@ unsafe extern "system" fn wnd_proc_start(
             ctx.handle,
         ));
         let weak = Box::new(Rc::downgrade(&inner));
-        unsafe { SetWindowLongPtrW(hwnd, WINDOW_LONG_PTR_INDEX(0), Box::into_raw(weak) as isize) };
-        unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, wnd_proc as *const c_void as isize) };
+        unsafe { set_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0), Box::into_raw(weak) as isize) };
+        unsafe { set_window_long(hwnd, GWLP_WNDPROC, wnd_proc as *const c_void as isize) };
         ctx.inner = Some(inner);
         return LRESULT(1);
     }
@@ -543,8 +516,8 @@ unsafe extern "system" fn wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    let ptr = unsafe { GetWindowLongPtrW(hwnd, WINDOW_LONG_PTR_INDEX(0)) }
-        as *mut Weak<WindowsWindowInner>;
+    let ptr =
+        unsafe { get_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0)) } as *mut Weak<WindowsWindowInner>;
     if ptr.is_null() {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
@@ -555,8 +528,30 @@ unsafe extern "system" fn wnd_proc(
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
     if msg == WM_NCDESTROY {
-        unsafe { SetWindowLongPtrW(hwnd, WINDOW_LONG_PTR_INDEX(0), 0) };
+        unsafe { set_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0), 0) };
         unsafe { std::mem::drop(Box::from_raw(ptr)) };
     }
     r
+}
+
+unsafe fn get_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX) -> isize {
+    #[cfg(target_pointer_width = "64")]
+    unsafe {
+        GetWindowLongPtrW(hwnd, nindex)
+    }
+    #[cfg(target_pointer_width = "32")]
+    unsafe {
+        GetWindowLongW(hwnd, nindex) as isize
+    }
+}
+
+unsafe fn set_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX, dwnewlong: isize) -> isize {
+    #[cfg(target_pointer_width = "64")]
+    unsafe {
+        SetWindowLongPtrW(hwnd, nindex, dwnewlong)
+    }
+    #[cfg(target_pointer_width = "32")]
+    unsafe {
+        SetWindowLongW(hwnd, nindex, dwnewlong as i32) as isize
+    }
 }
