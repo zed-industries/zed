@@ -908,7 +908,8 @@ impl ProjectPanel {
                 .to_os_string();
 
             let mut new_path = entry.path.to_path_buf();
-            if entry.is_file() {
+            // If we're pasting into a file, or a directory into itself, go up one level.
+            if entry.is_file() || (entry.is_dir() && entry.id == clipboard_entry.entry_id()) {
                 new_path.pop();
             }
 
