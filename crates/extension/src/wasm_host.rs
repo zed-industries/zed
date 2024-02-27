@@ -20,6 +20,7 @@ use wasmtime_wasi::preview2::{command as wasi_command, WasiCtx, WasiCtxBuilder, 
 pub mod wit {
     wasmtime::component::bindgen!({
         async: true,
+        path: "../extension_api/wit",
         with: {
              "worktree": project::worktree::Snapshot,
         },
@@ -93,6 +94,18 @@ impl WasmHost {
             let (tx, mut rx) = futures::channel::mpsc::unbounded::<ExtensionCall>();
             executor
                 .spawn(async move {
+                    let mut exports = instance.exports(&mut store);
+
+                    eprintln!("modules {}", exports.root().modules().count());
+                    // instance.get_module(store, name)
+                    for i in exports.root().modules() {
+                        dbg!(&i);
+                    }
+
+                    drop(exports);
+
+                    // dbg!(&func);
+
                     let _instance = instance;
                     while let Some(call) = rx.next().await {
                         (call)(&mut extension, &mut store).await;
@@ -198,6 +211,24 @@ impl wit::ExtensionImports for WasmState {
         }
 
         Ok(inner(self, repo, options).await.map_err(|e| e.to_string()))
+    }
+
+    async fn current_platform(&mut self) -> Result<(wit::Os, wit::Architecture)> {
+        dbg!(std::env::consts::OS, std::env::consts::ARCH);
+        Ok((
+            match std::env::consts::OS {
+                "macos" => wit::Os::Mac,
+                "linux" => wit::Os::Linux,
+                "windows" => wit::Os::Windows,
+                _ => panic!("unsupported os"),
+            },
+            match std::env::consts::ARCH {
+                "aarch64" => wit::Architecture::Aarch64,
+                "x86" => wit::Architecture::X86,
+                "x86_64" => wit::Architecture::X8664,
+                _ => panic!("unsupported architecture"),
+            },
+        ))
     }
 }
 

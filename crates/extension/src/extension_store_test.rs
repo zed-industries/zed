@@ -12,7 +12,10 @@ use node_runtime::FakeNodeRuntime;
 use project::Project;
 use serde_json::json;
 use settings::SettingsStore;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use theme::ThemeRegistry;
 use util::http::{FakeHttpClient, Response};
 use wasmtime::Store;
@@ -124,7 +127,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     authors: Vec::new(),
                     repository: None,
                     themes: Vec::new(),
-                    lib: None,
+                    lib: Default::default(),
                     languages: vec!["languages/ruby".into(), "languages/erb".into()],
                     grammars: [
                         ("ruby".into(), GrammarManifestEntry::default()),
@@ -149,7 +152,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         "themes/monokai.json".into(),
                         "themes/monokai-pro.json".into(),
                     ],
-                    lib: None,
+                    lib: Default::default(),
                     languages: Vec::new(),
                     grammars: BTreeMap::default(),
                     language_servers: BTreeMap::default(),
@@ -499,6 +502,137 @@ async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
         .unwrap();
 
     dbg!(&command);
+}
+
+#[gpui::test]
+async fn test_extension_store_with_real_extension(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let http_client = FakeHttpClient::create(|_| async move {
+        Ok(Response::new(
+            json!([
+                {
+                    "tag_name": "something",
+                    "prerelease": false,
+                    "tarball_url": "",
+                    "zipball_url": "",
+                    "assets": [
+                        {
+                            "name": "ok",
+                            "browser_download_url": "http://the-download-url.example.com"
+                        }
+                    ]
+                }
+            ])
+            .to_string()
+            .into(),
+        ))
+    });
+
+    let gleam_extension_dir = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../extensions/gleam"
+    ))
+    .canonicalize()
+    .unwrap();
+    compile_extension(&gleam_extension_dir);
+
+    fs.insert_tree("/the-extension-dir", json!({ "installed": {} }))
+        .await;
+    fs.insert_tree_from_real_fs("/the-extension-dir/installed/gleam", gleam_extension_dir)
+        .await;
+
+    let language_registry = Arc::new(LanguageRegistry::test());
+    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let node_runtime = FakeNodeRuntime::new();
+
+    let store = cx.new_model(|cx| {
+        ExtensionStore::new(
+            PathBuf::from("/the-extension-dir"),
+            fs.clone(),
+            http_client.clone(),
+            node_runtime,
+            language_registry.clone(),
+            theme_registry.clone(),
+            cx,
+        )
+    });
+
+    cx.executor().run_until_parked();
+    let extension = store.read_with(cx, |store, _| store.wasm_extensions[0].clone());
+
+    fs.insert_tree(
+        "/the-project-dir",
+        json!({
+            ".tool-versions": "rust 1.73.0",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-project-dir".as_ref()], cx).await;
+    let worktree = project.read_with(cx, |project, cx| {
+        project.worktrees().next().unwrap().read(cx).snapshot()
+    });
+
+    let config = extension
+        .0
+        .language_servers
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let command = extension
+        .1
+        .call(
+            |extension: &mut wit::Extension, store: &mut Store<WasmState>| {
+                async move {
+                    let resource = store.data_mut().table().push(worktree).unwrap();
+                    let command = extension
+                        .call_get_language_server_command(
+                            store,
+                            &wit::LanguageServerConfig {
+                                name: config.name,
+                                language_name: config.language,
+                            },
+                            resource,
+                        )
+                        .await;
+                    command
+                }
+                .boxed()
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    dbg!(&command);
+}
+
+fn compile_extension(extension_dir_path: &Path) {
+    dbg!(extension_dir_path);
+
+    let output = std::process::Command::new("cargo")
+        .args(["component", "build", "--target-dir"])
+        .arg(extension_dir_path.join("target"))
+        .current_dir(&extension_dir_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "failed to build component {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let name = "zed_gleam";
+
+    let mut wasm_path = PathBuf::from(extension_dir_path);
+    wasm_path.extend(["target", "wasm32-wasi", "debug", name]);
+    wasm_path.set_extension("wasm");
+
+    std::fs::rename(wasm_path, extension_dir_path.join("extension.wasm")).unwrap();
 }
 
 fn compile_example_extension(name: &str) -> Vec<u8> {

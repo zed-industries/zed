@@ -16,6 +16,19 @@ world extension {
         pre-release: bool,
     }
 
+    enum os {
+        mac,
+        linux,
+        windows,
+    }
+
+    enum architecture {
+        aarch64,
+        x86,
+        x8664,
+    }
+
+    import current-platform: func() -> tuple<os, architecture>;
     import npm-package-latest-version: func(package-name: string) -> result<string, string>;
     import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 

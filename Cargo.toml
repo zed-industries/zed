@@ -23,6 +23,7 @@ members = [
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
+    "crates/extension_api",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
@@ -91,6 +92,7 @@ members = [
     "crates/workspace",
     "crates/zed",
     "crates/zed_actions",
+    "extensions/gleam",
 ]
 default-members = ["crates/zed"]
 resolver = "2"

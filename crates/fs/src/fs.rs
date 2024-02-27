@@ -675,6 +675,30 @@ impl FakeFs {
         .boxed()
     }
 
+    pub fn insert_tree_from_real_fs<'a>(
+        &'a self,
+        path: impl 'a + AsRef<Path> + Send,
+        src_path: impl 'a + AsRef<Path> + Send,
+    ) -> futures::future::BoxFuture<'a, ()> {
+        use futures::FutureExt as _;
+
+        async move {
+            let path = path.as_ref();
+            if std::fs::metadata(&src_path).unwrap().is_file() {
+                let contents = std::fs::read(src_path).unwrap();
+                self.insert_file(path, contents).await;
+            } else {
+                self.create_dir(path).await.unwrap();
+                for entry in std::fs::read_dir(&src_path).unwrap() {
+                    let entry = entry.unwrap();
+                    self.insert_tree_from_real_fs(&path.join(entry.file_name()), &entry.path())
+                        .await;
+                }
+            }
+        }
+        .boxed()
+    }
+
     pub fn with_git_state<F>(&self, dot_git: &Path, emit_git_event: bool, f: F)
     where
         F: FnOnce(&mut FakeGitRepositoryState),

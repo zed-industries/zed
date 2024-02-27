@@ -59,7 +59,7 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub authors: Vec<String>,
     #[serde(default)]
-    pub lib: Option<LibManifestEntry>,
+    pub lib: LibManifestEntry,
 
     #[serde(default)]
     pub themes: Vec<PathBuf>,
@@ -73,7 +73,7 @@ pub struct ExtensionManifest {
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LibManifestEntry {
-    path: String,
+    path: Option<PathBuf>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -234,7 +234,7 @@ impl ExtensionStore {
         if let Some(manifest_content) = manifest_content.log_err() {
             if let Some(manifest) = serde_json::from_str(&manifest_content).log_err() {
                 // TODO: don't detach
-                self.manifest_updated(manifest, cx).detach();
+                self.extensions_updated(manifest, cx).detach();
             }
         }
 
@@ -379,7 +379,7 @@ impl ExtensionStore {
     /// no longer in the manifest, or whose files have changed on disk.
     /// Then it loads any themes, languages, or grammars that are newly
     /// added to the manifest, or whose files have changed on disk.
-    fn manifest_updated(
+    fn extensions_updated(
         &mut self,
         new_index: ExtensionIndex,
         cx: &mut ModelContext<Self>,
@@ -440,7 +440,7 @@ impl ExtensionStore {
             .iter()
             .filter_map(|(name, entry)| {
                 if extensions_to_unload.contains(&entry.extension) {
-                    Some(name.clone())
+                    Some(name.clone().into())
                 } else {
                     None
                 }
@@ -470,10 +470,6 @@ impl ExtensionStore {
             })
             .collect::<Vec<_>>();
 
-        let themes_to_remove = &themes_to_remove
-            .into_iter()
-            .map(|theme| theme.into())
-            .collect::<Vec<_>>();
         self.theme_registry.remove_user_themes(&themes_to_remove);
         self.language_registry
             .remove_languages(&languages_to_remove, &grammars_to_remove);
@@ -557,12 +553,15 @@ impl ExtensionStore {
 
             let mut wasm_extensions = Vec::new();
             for extension_manifest in extension_manifests {
-                let Some(lib) = &extension_manifest.lib else {
+                let Some(wasm_path) = &extension_manifest.lib.path else {
                     continue;
                 };
 
                 let mut path = root_dir.clone();
-                path.extend([extension_manifest.id.as_ref(), lib.path.as_ref()]);
+                path.extend([
+                    Path::new(extension_manifest.id.as_ref()),
+                    wasm_path.as_path(),
+                ]);
                 let mut wasm_file = fs.open_sync(&path).await.expect("failed to open wasm file");
                 let mut wasm_bytes = Vec::new();
                 wasm_file
@@ -641,10 +640,10 @@ impl ExtensionStore {
         self.needs_reload = false;
         self.reload_task = Some(cx.spawn(|this, mut cx| {
             async move {
-                let manifest = cx
+                let extension_index = cx
                     .background_executor()
                     .spawn(async move {
-                        let mut manifest = ExtensionIndex::default();
+                        let mut index = ExtensionIndex::default();
 
                         fs.create_dir(&extensions_dir).await.log_err();
 
@@ -654,20 +653,16 @@ impl ExtensionStore {
                                 let Ok(extension_dir) = extension_dir else {
                                     continue;
                                 };
-                                Self::add_extension_to_index(
-                                    fs.clone(),
-                                    extension_dir,
-                                    &mut manifest,
-                                )
-                                .await
-                                .log_err();
+                                Self::add_extension_to_index(fs.clone(), extension_dir, &mut index)
+                                    .await
+                                    .log_err();
                             }
                         }
 
-                        if let Ok(manifest_json) = serde_json::to_string_pretty(&manifest) {
+                        if let Ok(index_json) = serde_json::to_string_pretty(&index) {
                             fs.save(
                                 &manifest_path,
-                                &manifest_json.as_str().into(),
+                                &index_json.as_str().into(),
                                 Default::default(),
                             )
                             .await
@@ -675,13 +670,13 @@ impl ExtensionStore {
                             .log_err();
                         }
 
-                        manifest
+                        index
                     })
                     .await;
 
-                if let Ok(task) =
-                    this.update(&mut cx, |this, cx| this.manifest_updated(manifest, cx))
-                {
+                if let Ok(task) = this.update(&mut cx, |this, cx| {
+                    this.extensions_updated(extension_index, cx)
+                }) {
                     task.await.log_err();
                 }
 
@@ -706,13 +701,22 @@ impl ExtensionStore {
             .and_then(OsStr::to_str)
             .ok_or_else(|| anyhow!("invalid extension name"))?;
 
-        let extension_manifest_path = extension_dir.join("extension.json");
-        let extension_manifest = fs
-            .load(&extension_manifest_path)
-            .await
-            .context("failed to load extension.json")?;
+        let mut extension_manifest_path = extension_dir.join("extension.json");
         let mut extension_manifest: ExtensionManifest =
-            serde_json::from_str(&extension_manifest).context("invalid extension.json")?;
+            if fs.is_file(&extension_manifest_path).await {
+                let extension_manifest = fs
+                    .load(&extension_manifest_path)
+                    .await
+                    .context("failed to load extension.json")?;
+                serde_json::from_str(&extension_manifest).context("invalid extension.json")?
+            } else {
+                extension_manifest_path.set_extension("toml");
+                let extension_manifest = fs
+                    .load(&extension_manifest_path)
+                    .await
+                    .context("failed to load extension.toml")?;
+                ::toml::from_str(&extension_manifest).context("invalid extension.json")?
+            };
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
             while let Some(language_path) = language_paths.next().await {
@@ -775,6 +779,14 @@ impl ExtensionStore {
                     );
                 }
             }
+        }
+
+        let default_extension_wasm_path = extension_dir.join("extension.wasm");
+        if fs.is_file(&default_extension_wasm_path).await {
+            extension_manifest
+                .lib
+                .path
+                .get_or_insert(default_extension_wasm_path);
         }
 
         index
