@@ -1178,11 +1178,25 @@ impl ProjectPanel {
                             let a_is_file = components_a.peek().is_none() && entry_a.is_file();
                             let b_is_file = components_b.peek().is_none() && entry_b.is_file();
                             let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                                let name_a =
-                                    UniCase::new(component_a.as_os_str().to_string_lossy());
-                                let name_b =
-                                    UniCase::new(component_b.as_os_str().to_string_lossy());
-                                name_a.cmp(&name_b)
+                                let a_as_number = Path::new(component_a.as_os_str())
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .map(|stem| stem.parse::<i32>());
+                                let b_as_number = Path::new(component_b.as_os_str())
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .map(|stem| stem.parse::<i32>());
+                                match (a_as_number, b_as_number) {
+                                    (Some(Ok(num_a)), Some(Ok(num_b))) => num_a.cmp(&num_b),
+                                    _ => {
+                                        let name_a =
+                                            UniCase::new(component_a.as_os_str().to_string_lossy());
+                                        let name_b =
+                                            UniCase::new(component_b.as_os_str().to_string_lossy());
+
+                                        name_a.cmp(&name_b)
+                                    }
+                                }
                             });
                             if !ordering.is_eq() {
                                 return ordering;
