@@ -1132,14 +1132,11 @@ impl Element for Div {
         _frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        self.interactivity
-            .paint(bounds, cx, |_style, scroll_offset, cx| {
-                cx.with_element_offset(scroll_offset, |cx| {
-                    for child in &mut self.children {
-                        child.paint(cx);
-                    }
-                })
-            });
+        self.interactivity.paint(bounds, cx, |_style, cx| {
+            for child in &mut self.children {
+                child.paint(cx);
+            }
+        });
     }
 }
 
@@ -1385,7 +1382,7 @@ impl Interactivity {
         &mut self,
         bounds: Bounds<Pixels>,
         cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
+        f: impl FnOnce(&Style, &mut ElementContext),
     ) {
         cx.with_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
@@ -1890,7 +1887,7 @@ impl Interactivity {
         &mut self,
         style: &Style,
         cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
+        f: impl FnOnce(&Style, &mut ElementContext),
     ) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
@@ -1915,8 +1912,7 @@ impl Interactivity {
                     cx.on_action(action_type, listener)
                 }
 
-                let scroll_offset = self.scroll_offset.as_ref().map(|offset| *offset.borrow());
-                f(style, scroll_offset.unwrap_or_default(), cx)
+                f(style, cx)
             },
         );
     }

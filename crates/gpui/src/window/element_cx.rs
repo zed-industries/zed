@@ -36,7 +36,7 @@ use crate::{
     Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
     StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    Window, WindowContext, ACTIVE_DRAG_Z_INDEX, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -310,6 +310,60 @@ impl<'a> VisualContext for ElementContext<'a> {
 }
 
 impl<'a> ElementContext<'a> {
+    pub(crate) fn draw_roots(&mut self) {
+        // Measure and commit bounds for all root elements.
+        let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
+        self.with_z_index(0, |cx| {
+            let available_space = cx.window.viewport_size.map(Into::into);
+            root_element.commit_root(Point::default(), available_space, cx);
+        });
+
+        let mut active_drag_element = None;
+        let mut tooltip_element = None;
+        if let Some(active_drag) = self.app.active_drag.take() {
+            self.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
+                let mut element = active_drag.view.clone().into_any();
+                let offset = cx.mouse_position() - active_drag.cursor_offset;
+                element.commit_root(offset, AvailableSpace::min_size(), cx);
+                active_drag_element = Some(element);
+            });
+            self.app.active_drag = Some(active_drag);
+        } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
+            self.with_z_index(1, |cx| {
+                let mut element = tooltip_request.tooltip.view.clone().into_any();
+                let offset = tooltip_request.tooltip.cursor_offset;
+                element.commit_root(offset, AvailableSpace::min_size(), cx);
+                tooltip_element = Some(element);
+            });
+            self.window.next_frame.tooltip_request = Some(tooltip_request);
+        }
+
+        // Now actually paint the elements.
+        self.with_z_index(0, |cx| {
+            cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
+                // We need to use cx.cx here so we can utilize borrow splitting
+                for (action_type, action_listeners) in &cx.cx.app.global_action_listeners {
+                    for action_listener in action_listeners.iter().cloned() {
+                        cx.cx.window.next_frame.dispatch_tree.on_action(
+                            *action_type,
+                            Rc::new(move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                                action_listener(action, phase, cx)
+                            }),
+                        )
+                    }
+                }
+
+                root_element.paint(cx)
+            })
+        });
+
+        if let Some(mut drag_element) = active_drag_element {
+            self.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| drag_element.paint(cx));
+        } else if let Some(mut tooltip_element) = tooltip_element {
+            self.with_z_index(1, |cx| tooltip_element.paint(cx))
+        }
+    }
+
     pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
         let view_id = self.parent_view_id();
         let grafted_view_ids = self

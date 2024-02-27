@@ -212,7 +212,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
 
     fn commit_bounds(
         &mut self,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {

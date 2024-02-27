@@ -447,6 +447,27 @@ pub enum AvailableSpace {
     MaxContent,
 }
 
+impl AvailableSpace {
+    /// Returns a `Size` with both width and height set to `AvailableSpace::MinContent`.
+    ///
+    /// This function is useful when you want to create a `Size` with the minimum content constraints
+    /// for both dimensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let min_content_size = AvailableSpace::min_size();
+    /// assert_eq!(min_content_size.width, AvailableSpace::MinContent);
+    /// assert_eq!(min_content_size.height, AvailableSpace::MinContent);
+    /// ```
+    pub const fn min_size() -> Size<Self> {
+        Size {
+            width: Self::MinContent,
+            height: Self::MinContent,
+        }
+    }
+}
+
 impl From<AvailableSpace> for TaffyAvailableSpace {
     fn from(space: AvailableSpace) -> TaffyAvailableSpace {
         match space {

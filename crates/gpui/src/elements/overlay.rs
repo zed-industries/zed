@@ -182,16 +182,14 @@ impl Element for Overlay {
 
     fn paint(
         &mut self,
-        bounds: crate::Bounds<crate::Pixels>,
-        frame_state: &mut Self::FrameState,
+        _bounds: crate::Bounds<crate::Pixels>,
+        _frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        cx.with_absolute_element_offset(frame_state.offset, |cx| {
-            cx.break_content_mask(|cx| {
-                for child in &mut self.children {
-                    child.paint(cx);
-                }
-            })
+        cx.break_content_mask(|cx| {
+            for child in &mut self.children {
+                child.paint(cx);
+            }
         })
     }
 }

@@ -101,7 +101,7 @@ struct LayoutItemsResponse {
 #[derive(Default)]
 pub struct ListFrameState {
     scroll_top: ListOffset,
-    items: SmallVec<[(Point<Pixels>, AnyElement); 32]>,
+    items: SmallVec<[AnyElement; 32]>,
 }
 
 #[derive(Clone)]
@@ -623,14 +623,13 @@ impl Element for List {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
                 for mut item_element in layout_response.item_elements {
-                    let item_height = item_element
-                        .measure(layout_response.available_item_space, cx)
-                        .height;
-                    cx.with_absolute_element_offset(item_origin, |cx| {
-                        item_element.commit_bounds(cx)
-                    });
-                    frame_state.items.push((item_origin, item_element));
-                    item_origin.y += item_height;
+                    let item_size = item_element.commit_root(
+                        item_origin,
+                        layout_response.available_item_space,
+                        cx,
+                    );
+                    frame_state.items.push(item_element);
+                    item_origin.y += item_size.height;
                 }
             });
         }
@@ -646,8 +645,8 @@ impl Element for List {
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            for (item_origin, item) in &mut frame_state.items {
-                cx.with_absolute_element_offset(*item_origin, |cx| item.paint(cx));
+            for item in &mut frame_state.items {
+                item.paint(cx);
             }
         });
 

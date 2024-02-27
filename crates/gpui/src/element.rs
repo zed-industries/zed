@@ -233,6 +233,10 @@ enum ElementDrawPhase<S> {
         available_space: Size<AvailableSpace>,
         frame_state: S,
     },
+    BoundsCommitted {
+        bounds: Bounds<Pixels>,
+        frame_state: S,
+    },
     Painted,
 }
 
@@ -260,26 +264,7 @@ impl<E: Element> DrawableElement<E> {
     }
 
     fn commit_bounds(&mut self, cx: &mut ElementContext) {
-        match &mut self.phase {
-            ElementDrawPhase::LayoutRequested {
-                layout_id,
-                frame_state,
-            }
-            | ElementDrawPhase::LayoutComputed {
-                layout_id,
-                frame_state,
-                ..
-            } => {
-                let bounds = cx.layout_bounds(*layout_id);
-                self.element.commit_bounds(bounds, frame_state, cx);
-            }
-            _ => panic!("must call request_layout before commit_bounds"),
-        }
-    }
-
-    fn paint(&mut self, cx: &mut ElementContext) -> E::FrameState {
         match mem::take(&mut self.phase) {
-            ElementDrawPhase::Start => panic!("must call request_layout before paint"),
             ElementDrawPhase::LayoutRequested {
                 layout_id,
                 mut frame_state,
@@ -290,11 +275,28 @@ impl<E: Element> DrawableElement<E> {
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
+                self.element.commit_bounds(bounds, &mut frame_state, cx);
+                self.phase = ElementDrawPhase::BoundsCommitted {
+                    bounds,
+                    frame_state,
+                };
+            }
+            _ => panic!("must call request_layout before commit_bounds"),
+        }
+    }
+
+    fn paint(&mut self, cx: &mut ElementContext) -> E::FrameState {
+        match mem::take(&mut self.phase) {
+            ElementDrawPhase::BoundsCommitted {
+                bounds,
+                mut frame_state,
+                ..
+            } => {
                 self.element.paint(bounds, &mut frame_state, cx);
                 self.phase = ElementDrawPhase::Painted;
                 frame_state
             }
-            ElementDrawPhase::Painted => panic!("elements can only be painted once"),
+            _ => panic!("must call commit_bounds before paint"),
         }
     }
 
@@ -339,16 +341,6 @@ impl<E: Element> DrawableElement<E> {
         };
 
         cx.layout_bounds(layout_id).size
-    }
-
-    fn draw(
-        &mut self,
-        origin: Point<Pixels>,
-        available_space: Size<AvailableSpace>,
-        cx: &mut ElementContext,
-    ) -> E::FrameState {
-        self.measure(available_space, cx);
-        cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
     }
 }
 
@@ -425,6 +417,18 @@ impl AnyElement {
         cx: &mut ElementContext,
     ) -> Size<Pixels> {
         self.0.measure(available_space, cx)
+    }
+
+    /// Initializes this element, performs layout if needed and commits its bounds.
+    pub fn commit_root(
+        &mut self,
+        absolute_offset: Point<Pixels>,
+        available_space: Size<AvailableSpace>,
+        cx: &mut ElementContext,
+    ) -> Size<Pixels> {
+        let size = self.measure(available_space, cx);
+        cx.with_absolute_element_offset(absolute_offset, |cx| self.commit_bounds(cx));
+        size
     }
 }
 

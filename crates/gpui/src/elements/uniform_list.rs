@@ -6,8 +6,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
-    ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Render,
-    Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Render, Size,
+    StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -71,7 +71,7 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     item_size: Size<Pixels>,
-    items: SmallVec<[(Point<Pixels>, AnyElement); 32]>,
+    items: SmallVec<[AnyElement; 32]>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -223,11 +223,8 @@ impl Element for UniformList {
                                     AvailableSpace::Definite(padded_bounds.size.width),
                                     AvailableSpace::Definite(item_height),
                                 );
-                                item.measure(available_space, cx);
-                                cx.with_absolute_element_offset(item_origin, |cx| {
-                                    item.commit_bounds(cx)
-                                });
-                                frame_state.items.push((item_origin, item));
+                                item.commit_root(item_origin, available_space, cx);
+                                frame_state.items.push(item);
                             }
                         });
                     });
@@ -242,12 +239,12 @@ impl Element for UniformList {
         frame_state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
-        self.interactivity.paint(bounds, cx, |_, _, cx| {
+        self.interactivity.paint(bounds, cx, |_, cx| {
             cx.with_z_index(1, |cx| {
                 let content_mask = ContentMask { bounds };
                 cx.with_content_mask(Some(content_mask), |cx| {
-                    for (item_origin, item) in &mut frame_state.items {
-                        cx.with_absolute_element_offset(*item_origin, |cx| item.paint(cx));
+                    for item in &mut frame_state.items {
+                        item.paint(cx);
                     }
                 });
             });

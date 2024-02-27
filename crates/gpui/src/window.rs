@@ -1,13 +1,12 @@
 use crate::{
-    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
-    AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
-    WindowOptions, WindowTextSystem,
+    px, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext, Bounds,
+    Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId,
+    Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten, Global, GlobalElementId,
+    Hsla, KeyBinding, KeyDownEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model,
+    ModelContext, Modifiers, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
+    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, View, VisualContext,
+    WeakView, WindowAppearance, WindowBounds, WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -37,7 +36,7 @@ use util::{measure, ResultExt};
 mod element_cx;
 pub use element_cx::*;
 
-const ACTIVE_DRAG_Z_INDEX: u16 = 1;
+pub(crate) const ACTIVE_DRAG_Z_INDEX: u16 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
@@ -961,54 +960,7 @@ impl<'a> WindowContext<'a> {
             requested_handler.handler = input_handler;
         }
 
-        let root_view = self.window.root_view.take().unwrap();
-        self.with_element_context(|cx| {
-            cx.with_z_index(0, |cx| {
-                cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
-                    // We need to use cx.cx here so we can utilize borrow splitting
-                    for (action_type, action_listeners) in &cx.cx.app.global_action_listeners {
-                        for action_listener in action_listeners.iter().cloned() {
-                            cx.cx.window.next_frame.dispatch_tree.on_action(
-                                *action_type,
-                                Rc::new(
-                                    move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                                        action_listener(action, phase, cx)
-                                    },
-                                ),
-                            )
-                        }
-                    }
-
-                    let available_space = cx.window.viewport_size.map(Into::into);
-                    root_view.draw(Point::default(), available_space, cx);
-                })
-            })
-        });
-
-        if let Some(active_drag) = self.app.active_drag.take() {
-            self.with_element_context(|cx| {
-                cx.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
-                    let offset = cx.mouse_position() - active_drag.cursor_offset;
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(offset, available_space, cx);
-                })
-            });
-            self.active_drag = Some(active_drag);
-        } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
-            self.with_element_context(|cx| {
-                cx.with_z_index(1, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    tooltip_request.tooltip.view.draw(
-                        tooltip_request.tooltip.cursor_offset,
-                        available_space,
-                        cx,
-                    );
-                })
-            });
-            self.window.next_frame.tooltip_request = Some(tooltip_request);
-        }
+        self.with_element_context(|cx| cx.draw_roots());
         self.window.dirty_views.clear();
 
         self.window
@@ -1020,7 +972,6 @@ impl<'a> WindowContext<'a> {
             );
         self.window.next_frame.focus = self.window.focus;
         self.window.next_frame.window_active = self.window.active.get();
-        self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
         let cursor_style = self

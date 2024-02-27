@@ -54,7 +54,7 @@ impl Element for Svg {
     ) where
         Self: Sized,
     {
-        self.interactivity.paint(bounds, cx, |style, _, cx| {
+        self.interactivity.paint(bounds, cx, |style, cx| {
             if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                 cx.paint_svg(bounds, path.clone(), color).log_err();
             }

@@ -1,8 +1,8 @@
 use crate::{
-    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, Bounds,
-    ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
-    FocusableView, IntoElement, LayoutId, Model, Pixels, Point, Render, Size, StackingOrder, Style,
-    TextStyle, ViewContext, VisualContext, WeakModel,
+    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
+    ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
+    LayoutId, Model, Pixels, Render, StackingOrder, Style, TextStyle, ViewContext, VisualContext,
+    WeakModel,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -262,21 +262,6 @@ impl AnyView {
     pub fn entity_id(&self) -> EntityId {
         self.model.entity_id()
     }
-
-    pub(crate) fn draw(
-        &self,
-        origin: Point<Pixels>,
-        available_space: Size<AvailableSpace>,
-        cx: &mut ElementContext,
-    ) {
-        cx.paint_view(self.entity_id(), |cx| {
-            cx.with_absolute_element_offset(origin, |cx| {
-                let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
-                cx.compute_layout(layout_id, available_space);
-                rendered_element.paint(cx)
-            });
-        })
-    }
 }
 
 impl<V: Render> From<View<V>> for AnyView {
@@ -388,7 +373,7 @@ impl Element for AnyView {
 
     fn paint(
         &mut self,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         state: &mut Self::FrameState,
         cx: &mut ElementContext,
     ) {
