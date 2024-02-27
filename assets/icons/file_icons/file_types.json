@@ -15,13 +15,14 @@
     "bashrc": "terminal",
     "bmp": "image",
     "c": "code",
-    "cc": "code",
+    "cc": "cpp",
     "cjs": "code",
     "conf": "settings",
-    "cpp": "code",
+    "cpp": "cpp",
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
+    "cxx": "cpp",
     "dart": "dart",
     "dat": "storage",
     "db": "storage",
@@ -180,6 +181,9 @@
     "collapsed_folder": {
       "icon": "icons/file_icons/folder.svg"
     },
+    "cpp": {
+      "icon": "icons/file_icons/cpp.svg"
+    },
     "css": {
       "icon": "icons/file_icons/css.svg"
     },
@@ -228,7 +232,7 @@
     "java": {
       "icon": "icons/file_icons/java.svg"
     },
-    "kotlin":{
+    "kotlin": {
       "icon": "icons/file_icons/kotlin.svg"
     },
     "lock": {
