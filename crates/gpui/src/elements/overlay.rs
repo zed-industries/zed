@@ -86,7 +86,7 @@ impl Element for Overlay {
             ..Style::default()
         };
 
-        let layout_id = cx.before_layout(&overlay_style, child_layout_ids.iter().copied());
+        let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
 
         (
             layout_id,

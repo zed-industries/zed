@@ -1052,7 +1052,7 @@ impl<'a> ElementContext<'a> {
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the `Element::layout` trait method and enables any element to participate in layout.
-    pub fn before_layout(
+    pub fn request_layout(
         &mut self,
         style: &Style,
         children: impl IntoIterator<Item = LayoutId>,

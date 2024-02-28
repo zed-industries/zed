@@ -1072,7 +1072,7 @@ impl Element for Div {
                     .iter_mut()
                     .map(|child| child.before_layout(cx))
                     .collect::<SmallVec<_>>();
-                cx.before_layout(&style, child_layout_ids.iter().copied())
+                cx.request_layout(&style, child_layout_ids.iter().copied())
             })
         });
         (layout_id, DivFrameState { child_layout_ids })

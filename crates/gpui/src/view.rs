@@ -20,22 +20,14 @@ pub struct View<V> {
 
 impl<V> Sealed for View<V> {}
 
-#[doc(hidden)]
-#[derive(Default)]
-pub struct AnyViewFrameState {
-    element: Option<AnyElement>,
-    root_style: Style,
-}
-
 struct AnyViewState {
     root_style: Style,
     cache_key: ViewCacheKey,
-    next_stacking_order_id: u16,
 }
 
+#[derive(Default)]
 struct ViewCacheKey {
     bounds: Bounds<Pixels>,
-    stacking_order: StackingOrder,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
 }
@@ -221,7 +213,7 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    before_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
+    build_element: fn(&AnyView, &mut ElementContext) -> AnyElement,
     cache: bool,
 }
 
@@ -238,7 +230,7 @@ impl AnyView {
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
             model: self.model.downgrade(),
-            layout: self.before_layout,
+            layout: self.build_element,
         }
     }
 
@@ -249,7 +241,7 @@ impl AnyView {
             Ok(model) => Ok(View { model }),
             Err(model) => Err(Self {
                 model,
-                before_layout: self.before_layout,
+                build_element: self.build_element,
                 cache: self.cache,
             }),
         }
@@ -270,23 +262,26 @@ impl<V: Render> From<View<V>> for AnyView {
     fn from(value: View<V>) -> Self {
         AnyView {
             model: value.model.into_any(),
-            before_layout: any_view::before_layout::<V>,
+            build_element: any_view::build_element::<V>,
             cache: false,
         }
     }
 }
 
 impl Element for AnyView {
-    type BeforeLayout = AnyViewFrameState;
-    type AfterLayout = ();
+    type BeforeLayout = Option<AnyElement>;
+    type AfterLayout = Option<AnyElement>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         cx.with_view_id(self.entity_id(), |cx| {
+            if self.cache {
+            } else {
+            }
+
             cx.with_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
                     let mut element_state = element_state.unwrap();
-                    let mut before_layout = AnyViewFrameState::default();
 
                     if self.cache
                         && !cx.window.dirty_views.contains(&self.entity_id())
@@ -296,16 +291,18 @@ impl Element for AnyView {
                             .as_ref()
                             .map(|element_state| &element_state.root_style)
                         {
-                            let layout_id = cx.before_layout(root_style, None);
-                            return ((layout_id, before_layout), element_state);
+                            let layout_id = cx.request_layout(root_style, None);
+                            return ((layout_id, None), element_state);
                         }
                     }
 
-                    let (layout_id, element) = (self.before_layout)(self, cx);
-                    before_layout.element = Some(element);
-                    before_layout.root_style = cx.layout_style(layout_id).unwrap().clone();
-
-                    ((layout_id, before_layout), element_state)
+                    let mut element = (self.build_element)(self, cx);
+                    let layout_id = element.before_layout(cx);
+                    let element_state = Some(AnyViewState {
+                        root_style: cx.layout_style(layout_id).unwrap().clone(),
+                        cache_key: ViewCacheKey::default(),
+                    });
+                    ((layout_id, Some(element)), element_state)
                 },
             )
         })
@@ -314,61 +311,44 @@ impl Element for AnyView {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
+        element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) {
+    ) -> Option<AnyElement> {
         cx.with_view_id(self.entity_id(), |cx| {
             cx.with_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
-                    let element_state = element_state.unwrap();
+                    let mut element_state = element_state.unwrap().unwrap();
 
-                    if !self.cache {
-                        before_layout.element.as_mut().unwrap().after_layout(cx);
-                        return ((), element_state);
-                    }
-
-                    if let Some(cache_key) = element_state
-                        .as_ref()
-                        .map(|element_state| &element_state.cache_key)
-                    {
-                        if cache_key.bounds == bounds
-                            && cache_key.content_mask == cx.content_mask()
-                            && cache_key.stacking_order == *cx.stacking_order()
-                            && cache_key.text_style == cx.text_style()
-                        {
-                            todo!("reuse entries in the depth map");
-                            return ((), element_state);
+                    // When element is defined
+                    if let Some(mut element) = element.take() {
+                        element.after_layout(cx);
+                        if self.cache {
+                            element_state.cache_key.bounds = bounds;
+                            element_state.cache_key.content_mask = cx.content_mask();
+                            element_state.cache_key.text_style = cx.text_style();
                         }
+                        return (Some(element), Some(element_state));
                     }
 
-                    if let Some(element) = before_layout.element.as_mut() {
-                        element.after_layout(cx);
+                    if element_state.cache_key.bounds == bounds
+                        && element_state.cache_key.content_mask == cx.content_mask()
+                        && element_state.cache_key.text_style == cx.text_style()
+                    {
+                        todo!("reuse entries in the depth map");
+                        (None, Some(element_state))
                     } else {
-                        let mut element = (self.before_layout)(self, cx).1;
-                        element.after_layout(cx);
-                        before_layout.element = Some(element);
-                    }
+                        element_state.cache_key.bounds = bounds;
+                        element_state.cache_key.content_mask = cx.content_mask();
+                        element_state.cache_key.text_style = cx.text_style();
 
-                    (
-                        (),
-                        Some(AnyViewState {
-                            root_style: before_layout.root_style.clone(),
-                            cache_key: ViewCacheKey {
-                                bounds,
-                                stacking_order: cx.stacking_order().clone(),
-                                content_mask: cx.content_mask(),
-                                text_style: cx.text_style(),
-                            },
-                            next_stacking_order_id: cx
-                                .window
-                                .next_frame
-                                .next_stacking_order_ids
-                                .last()
-                                .copied()
-                                .unwrap(),
-                        }),
-                    )
+                        let mut element = (self.build_element)(self, cx);
+                        let layout_id = element.before_layout(cx);
+                        cx.compute_layout(layout_id, bounds.size.into());
+                        element_state.root_style = cx.layout_style(layout_id).unwrap().clone();
+                        element.after_layout(cx);
+                        (Some(element), Some(element_state))
+                    }
                 },
             )
         })
@@ -427,7 +407,7 @@ impl AnyWeakView {
         let model = self.model.upgrade()?;
         Some(AnyView {
             model,
-            before_layout: self.layout,
+            build_element: self.layout,
             cache: false,
         })
     }
@@ -437,7 +417,7 @@ impl<V: 'static + Render> From<WeakView<V>> for AnyWeakView {
     fn from(view: WeakView<V>) -> Self {
         Self {
             model: view.model.into(),
-            layout: any_view::before_layout::<V>,
+            layout: any_view::build_element::<V>,
         }
     }
 }
@@ -457,15 +437,15 @@ impl std::fmt::Debug for AnyWeakView {
 }
 
 mod any_view {
-    use crate::{AnyElement, AnyView, ElementContext, IntoElement, LayoutId, Render};
+    use crate::{AnyElement, AnyView, ElementContext, IntoElement, Render};
 
-    pub(crate) fn before_layout<V: 'static + Render>(
+    pub(crate) fn build_element<V: 'static + Render>(
         view: &AnyView,
         cx: &mut ElementContext,
-    ) -> (LayoutId, AnyElement) {
+    ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
         let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());
         let layout_id = element.before_layout(cx);
-        (layout_id, element)
+        element
     }
 }

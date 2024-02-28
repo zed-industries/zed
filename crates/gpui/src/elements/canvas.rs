@@ -38,7 +38,7 @@ impl<T: 'static> Element for Canvas<T> {
     fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::BeforeLayout) {
         let mut style = Style::default();
         style.refine(&self.style);
-        let layout_id = cx.before_layout(&style, []);
+        let layout_id = cx.request_layout(&style, []);
         (layout_id, style)
     }
 

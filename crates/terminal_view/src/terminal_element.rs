@@ -547,7 +547,7 @@ impl Element for TerminalElement {
         let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
-            cx.before_layout(&style, None)
+            cx.request_layout(&style, None)
         });
 
         (layout_id, ())

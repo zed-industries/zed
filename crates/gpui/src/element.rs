@@ -501,7 +501,7 @@ impl Element for () {
     type AfterLayout = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        (cx.before_layout(&crate::Style::default(), None), ())
+        (cx.request_layout(&crate::Style::default(), None), ())
     }
 
     fn after_layout(
