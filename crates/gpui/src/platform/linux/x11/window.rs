@@ -16,12 +16,7 @@ use xcb::{
 };
 
 use std::{
-    ffi::c_void,
-    mem,
-    num::NonZeroU32,
-    ptr::NonNull,
-    rc::Rc,
-    sync::{self, Arc},
+    cell::RefCell, ffi::c_void, mem, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::{self, Arc}
 };
 
 use super::X11Display;
@@ -87,12 +82,12 @@ struct RawWindow {
 }
 
 pub(crate) struct X11WindowState {
-    xcb_connection: Arc<xcb::Connection>,
+    xcb_connection: Rc<xcb::Connection>,
     display: Rc<dyn PlatformDisplay>,
     raw: RawWindow,
     x_window: x::Window,
-    callbacks: Mutex<Callbacks>,
-    inner: Mutex<LinuxWindowInner>,
+    callbacks: RefCell<Callbacks>,
+    inner: RefCell<LinuxWindowInner>,
 }
 
 #[derive(Clone)]
@@ -138,7 +133,7 @@ impl rwh::HasDisplayHandle for X11Window {
 impl X11WindowState {
     pub fn new(
         options: WindowOptions,
-        xcb_connection: &Arc<xcb::Connection>,
+        xcb_connection: &Rc<xcb::Connection>,
         x_main_screen_index: i32,
         x_window: x::Window,
         atoms: &XcbAtoms,
@@ -255,12 +250,12 @@ impl X11WindowState {
         let gpu_extent = query_render_extent(xcb_connection, x_window);
 
         Self {
-            xcb_connection: Arc::clone(xcb_connection),
+            xcb_connection: xcb_connection.clone(),
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index)),
             raw,
             x_window,
-            callbacks: Mutex::new(Callbacks::default()),
-            inner: Mutex::new(LinuxWindowInner {
+            callbacks: RefCell::new(Callbacks::default()),
+            inner: RefCell  ::new(LinuxWindowInner {
                 bounds,
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
@@ -270,25 +265,25 @@ impl X11WindowState {
     }
 
     pub fn destroy(&self) {
-        self.inner.lock().renderer.destroy();
+        self.inner.borrow_mut().renderer.destroy();
         self.xcb_connection.send_request(&x::UnmapWindow {
             window: self.x_window,
         });
         self.xcb_connection.send_request(&x::DestroyWindow {
             window: self.x_window,
         });
-        if let Some(fun) = self.callbacks.lock().close.take() {
+        if let Some(fun) = self.callbacks.borrow_mut().close.take() {
             fun();
         }
         self.xcb_connection.flush().unwrap();
     }
 
     pub fn refresh(&self) {
-        let mut cb = self.callbacks.lock();
+        let mut cb = self.callbacks.borrow_mut();
         if let Some(mut fun) = cb.request_frame.take() {
             drop(cb);
             fun();
-            let mut cb = self.callbacks.lock();
+            let mut cb = self.callbacks.borrow_mut();
             cb.request_frame = Some(fun);
         }
     }
@@ -297,7 +292,7 @@ impl X11WindowState {
         let mut resize_args = None;
         let do_move;
         {
-            let mut inner = self.inner.lock();
+            let mut inner = self.inner.borrow_mut();
             let old_bounds = mem::replace(&mut inner.bounds, bounds);
             do_move = old_bounds.origin != bounds.origin;
             //todo!(linux): use normal GPUI types here, refactor out the double
@@ -311,7 +306,7 @@ impl X11WindowState {
             }
         }
 
-        let mut callbacks = self.callbacks.lock();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some((content_size, scale_factor)) = resize_args {
             if let Some(ref mut fun) = callbacks.resize {
                 fun(content_size, scale_factor)
@@ -335,13 +330,13 @@ impl X11WindowState {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
-        if let Some(ref mut fun) = self.callbacks.lock().input {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
             if fun(input.clone()) {
                 return;
             }
         }
         if let PlatformInput::KeyDown(event) = input {
-            let mut inner = self.inner.lock();
+            let mut inner = self.inner.borrow_mut();
             if let Some(ref mut input_handler) = inner.input_handler {
                 if let Some(ime_key) = &event.keystroke.ime_key {
                     input_handler.replace_text_in_range(None, ime_key);
@@ -351,7 +346,7 @@ impl X11WindowState {
     }
 
     pub fn set_focused(&self, focus: bool) {
-        if let Some(ref mut fun) = self.callbacks.lock().active_status_change {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
             fun(focus);
         }
     }
@@ -359,15 +354,15 @@ impl X11WindowState {
 
 impl PlatformWindow for X11Window {
     fn bounds(&self) -> WindowBounds {
-        WindowBounds::Fixed(self.0.inner.lock().bounds.map(|v| GlobalPixels(v as f32)))
+        WindowBounds::Fixed(self.0.inner.borrow_mut().bounds.map(|v| GlobalPixels(v as f32)))
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.0.inner.lock().content_size()
+        self.0.inner.borrow_mut().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
-        self.0.inner.lock().scale_factor
+        self.0.inner.borrow_mut().scale_factor
     }
 
     //todo!(linux)
@@ -405,11 +400,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.0.inner.lock().input_handler = Some(input_handler);
+        self.0.inner.borrow_mut().input_handler = Some(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.0.inner.lock().input_handler.take()
+        self.0.inner.borrow_mut().input_handler.take()
     }
 
     //todo!(linux)
@@ -469,39 +464,39 @@ impl PlatformWindow for X11Window {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.lock().request_frame = Some(callback);
+        self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.0.callbacks.lock().input = Some(callback);
+        self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.lock().active_status_change = Some(callback);
+        self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.0.callbacks.lock().resize = Some(callback);
+        self.0.callbacks.borrow_mut().resize = Some(callback);
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.lock().fullscreen = Some(callback);
+        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.lock().moved = Some(callback);
+        self.0.callbacks.borrow_mut().moved = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.callbacks.lock().should_close = Some(callback);
+        self.0.callbacks.borrow_mut().should_close = Some(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        self.0.callbacks.lock().close = Some(callback);
+        self.0.callbacks.borrow_mut().close = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.lock().appearance_changed = Some(callback);
+        self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
     //todo!(linux)
@@ -510,12 +505,12 @@ impl PlatformWindow for X11Window {
     }
 
     fn draw(&self, scene: &Scene) {
-        let mut inner = self.0.inner.lock();
+        let mut inner = self.0.inner.borrow_mut();
         inner.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
-        let inner = self.0.inner.lock();
+        let inner = self.0.inner.borrow_mut();
         inner.renderer.sprite_atlas().clone()
     }
 

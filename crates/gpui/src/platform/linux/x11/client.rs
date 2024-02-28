@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::borrow::Borrow;
+use std::cell::{Cell, RefCell};
 use std::time::Duration;
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
-use parking_lot::Mutex;
 use xcb::{x, Xid as _};
 use xkbcommon::xkb;
 
@@ -26,11 +26,11 @@ pub(crate) struct X11ClientState {
 
 pub(crate) struct X11Client {
     platform_inner: Rc<LinuxPlatformInner>,
-    xcb_connection: Arc<xcb::Connection>,
+    xcb_connection: Rc<xcb::Connection>,
     x_root_index: i32,
     atoms: XcbAtoms,
-    refresh_millis: AtomicU64,
-    state: Mutex<X11ClientState>,
+    refresh_millis: Cell<u64>,
+    state: RefCell<X11ClientState>,
 }
 
 impl X11Client {
@@ -55,7 +55,7 @@ impl X11Client {
         assert!(xkb_ver.supported());
 
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
-        let xcb_connection = Arc::new(xcb_connection);
+        let xcb_connection = Rc::new(xcb_connection);
         let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let xkb_device_id = xkb::x11::get_core_keyboard_device_id(&xcb_connection);
         let xkb_keymap = xkb::x11::keymap_new_from_device(
@@ -69,12 +69,12 @@ impl X11Client {
             xkb::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id);
 
         let client: Rc<X11Client> = Rc::new(Self {
-            platform_inner: Rc::clone(&inner),
-            xcb_connection: Arc::clone(&xcb_connection),
+            platform_inner: inner.clone(),
+            xcb_connection: xcb_connection.clone(),
             x_root_index,
             atoms,
-            refresh_millis: AtomicU64::new(8),
-            state: Mutex::new(X11ClientState {
+            refresh_millis: Cell::new(16),
+            state: RefCell::new(X11ClientState {
                 windows: HashMap::default(),
                 windows_to_refresh: HashSet::default(),
                 xkb: xkb_state,
@@ -82,7 +82,7 @@ impl X11Client {
         });
 
         // Safety: Safe if xcb::Connection always returns a valid fd
-        let fd = unsafe { FdWrapper::new(Arc::clone(&xcb_connection)) };
+        let fd = unsafe { FdWrapper::new(xcb_connection.clone()) };
 
         inner
             .loop_handle
@@ -93,7 +93,7 @@ impl X11Client {
                     calloop::Mode::Level,
                 ),
                 {
-                    let client = Rc::clone(&client);
+                    let client = client.clone();
                     move |readiness, _, _| {
                         if readiness.readable || readiness.error {
                             while let Some(event) = xcb_connection.poll_for_event()? {
@@ -110,14 +110,14 @@ impl X11Client {
             .loop_handle
             .insert_source(
                 calloop::timer::Timer::from_duration(Duration::from_millis(
-                    client.refresh_millis.load(Ordering::Relaxed),
+                    client.refresh_millis.get(),
                 )),
                 {
                     let client = client.clone();
                     move |_, _, _| {
                         client.present();
                         calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(
-                            client.refresh_millis.load(Ordering::Relaxed),
+                            client.refresh_millis.get(),
                         ))
                     }
                 },
@@ -127,62 +127,70 @@ impl X11Client {
         client
     }
 
-    fn get_window(&self, win: x::Window) -> Rc<X11WindowState> {
-        let state = self.state.lock();
-        // todo!(linux): This might be called when the windows are empty.
-        Rc::clone(&state.windows[&win])
+    fn get_window(&self, win: x::Window) -> Option<Rc<X11WindowState>> {
+        let state = self.state.borrow();
+        state.windows.get(&win).cloned()
     }
 
     fn present(&self) {
-        let state = self.state.lock();
+        let state = self.state.borrow_mut();
         for window_state in state.windows.values() {
             window_state.refresh();
         }
     }
 
-    fn handle_event(&self, event: xcb::Event) {
+    fn handle_event(&self, event: xcb::Event) -> Option<()> {
         match event {
-            xcb::Event::X(x::Event::ClientMessage(ev)) => {
-                if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
+            xcb::Event::X(x::Event::ClientMessage(event)) => {
+                if let x::ClientMessageData::Data32([atom, ..]) = event.data() {
                     if atom == self.atoms.wm_del_window.resource_id() {
-                        self.state.lock().windows_to_refresh.remove(&ev.window());
+                        self.state
+                            .borrow_mut()
+                            .windows_to_refresh
+                            .remove(&event.window());
                         // window "x" button clicked by user, we gracefully exit
-                        let window = self.state.lock().windows.remove(&ev.window()).unwrap();
+                        let window = self
+                            .state
+                            .borrow_mut()
+                            .windows
+                            .remove(&event.window())
+                            .unwrap();
                         window.destroy();
-                        let state = self.state.lock();
+                        let state = self.state.borrow();
                         if state.windows.is_empty() {
                             self.platform_inner.loop_signal.stop();
                         }
                     }
                 }
             }
-            xcb::Event::X(x::Event::ConfigureNotify(ev)) => {
+            xcb::Event::X(x::Event::ConfigureNotify(event)) => {
                 let bounds = Bounds {
                     origin: Point {
-                        x: ev.x().into(),
-                        y: ev.y().into(),
+                        x: event.x().into(),
+                        y: event.y().into(),
                     },
                     size: Size {
-                        width: ev.width().into(),
-                        height: ev.height().into(),
+                        width: event.width().into(),
+                        height: event.height().into(),
                     },
                 };
-                self.get_window(ev.window()).configure(bounds)
+                let window = self.get_window(event.window())?;
+                window.configure(bounds);
             }
-            xcb::Event::X(x::Event::FocusIn(ev)) => {
-                let window = self.get_window(ev.event());
+            xcb::Event::X(x::Event::FocusIn(event)) => {
+                let window = self.get_window(event.event())?;
                 window.set_focused(true);
             }
-            xcb::Event::X(x::Event::FocusOut(ev)) => {
-                let window = self.get_window(ev.event());
+            xcb::Event::X(x::Event::FocusOut(event)) => {
+                let window = self.get_window(event.event())?;
                 window.set_focused(false);
             }
-            xcb::Event::X(x::Event::KeyPress(ev)) => {
-                let window = self.get_window(ev.event());
-                let modifiers = super::modifiers_from_state(ev.state());
+            xcb::Event::X(x::Event::KeyPress(event)) => {
+                let window = self.get_window(event.event())?;
+                let modifiers = super::modifiers_from_state(event.state());
                 let keystroke = {
-                    let code = ev.detail().into();
-                    let mut state = self.state.lock();
+                    let code = event.detail().into();
+                    let mut state = self.state.borrow_mut();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     state.xkb.update_key(code, xkb::KeyDirection::Down);
                     keystroke
@@ -193,12 +201,12 @@ impl X11Client {
                     is_held: false,
                 }));
             }
-            xcb::Event::X(x::Event::KeyRelease(ev)) => {
-                let window = self.get_window(ev.event());
-                let modifiers = super::modifiers_from_state(ev.state());
+            xcb::Event::X(x::Event::KeyRelease(event)) => {
+                let window = self.get_window(event.event())?;
+                let modifiers = super::modifiers_from_state(event.state());
                 let keystroke = {
-                    let code = ev.detail().into();
-                    let mut state = self.state.lock();
+                    let code = event.detail().into();
+                    let mut state = self.state.borrow_mut();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     state.xkb.update_key(code, xkb::KeyDirection::Up);
                     keystroke
@@ -206,21 +214,21 @@ impl X11Client {
 
                 window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
             }
-            xcb::Event::X(x::Event::ButtonPress(ev)) => {
-                let window = self.get_window(ev.event());
-                let modifiers = super::modifiers_from_state(ev.state());
+            xcb::Event::X(x::Event::ButtonPress(event)) => {
+                let window = self.get_window(event.event())?;
+                let modifiers = super::modifiers_from_state(event.state());
                 let position =
-                    Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
-                if let Some(button) = super::button_of_key(ev.detail()) {
+                    Point::new((event.event_x() as f32).into(), (event.event_y() as f32).into());
+                if let Some(button) = super::button_of_key(event.detail()) {
                     window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
                         button,
                         position,
                         modifiers,
                         click_count: 1,
                     }));
-                } else if ev.detail() >= 4 && ev.detail() <= 5 {
+                } else if event.detail() >= 4 && event.detail() <= 5 {
                     // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
-                    let delta_x = if ev.detail() == 4 { 1.0 } else { -1.0 };
+                    let delta_x = if event.detail() == 4 { 1.0 } else { -1.0 };
                     window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
                         position,
                         delta: ScrollDelta::Lines(Point::new(0.0, delta_x)),
@@ -228,15 +236,15 @@ impl X11Client {
                         touch_phase: TouchPhase::default(),
                     }));
                 } else {
-                    log::warn!("Unknown button press: {ev:?}");
+                    log::warn!("Unknown button press: {event:?}");
                 }
             }
-            xcb::Event::X(x::Event::ButtonRelease(ev)) => {
-                let window = self.get_window(ev.event());
-                let modifiers = super::modifiers_from_state(ev.state());
+            xcb::Event::X(x::Event::ButtonRelease(event)) => {
+                let window = self.get_window(event.event())?;
+                let modifiers = super::modifiers_from_state(event.state());
                 let position =
-                    Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
-                if let Some(button) = super::button_of_key(ev.detail()) {
+                    Point::new((event.event_x() as f32).into(), (event.event_y() as f32).into());
+                if let Some(button) = super::button_of_key(event.detail()) {
                     window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
                         button,
                         position,
@@ -245,24 +253,24 @@ impl X11Client {
                     }));
                 }
             }
-            xcb::Event::X(x::Event::MotionNotify(ev)) => {
-                let window = self.get_window(ev.event());
-                let pressed_button = super::button_from_state(ev.state());
+            xcb::Event::X(x::Event::MotionNotify(event)) => {
+                let window = self.get_window(event.event())?;
+                let pressed_button = super::button_from_state(event.state());
                 let position =
-                    Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
-                let modifiers = super::modifiers_from_state(ev.state());
+                    Point::new((event.event_x() as f32).into(), (event.event_y() as f32).into());
+                let modifiers = super::modifiers_from_state(event.state());
                 window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
                     pressed_button,
                     position,
                     modifiers,
                 }));
             }
-            xcb::Event::X(x::Event::LeaveNotify(ev)) => {
-                let window = self.get_window(ev.event());
-                let pressed_button = super::button_from_state(ev.state());
+            xcb::Event::X(x::Event::LeaveNotify(event)) => {
+                let window = self.get_window(event.event())?;
+                let pressed_button = super::button_from_state(event.state());
                 let position =
-                    Point::new((ev.event_x() as f32).into(), (ev.event_y() as f32).into());
-                let modifiers = super::modifiers_from_state(ev.state());
+                    Point::new((event.event_x() as f32).into(), (event.event_y() as f32).into());
+                let modifiers = super::modifiers_from_state(event.state());
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,
                     position,
@@ -270,7 +278,9 @@ impl X11Client {
                 }));
             }
             _ => {}
-        }
+        };
+
+        Some(())
     }
 }
 
@@ -328,11 +338,10 @@ impl Client for X11Client {
 
         let refresh_millies = mode_refresh_rate_millis(mode).expect("Please just work");
 
-        self.refresh_millis
-            .store(refresh_millies as u64, Ordering::Relaxed);
+        self.refresh_millis.set(refresh_millies as u64);
 
         self.state
-            .lock()
+            .borrow_mut()
             .windows
             .insert(x_window, Rc::clone(&window_ptr));
         Box::new(X11Window(window_ptr))
