@@ -22,7 +22,7 @@ pub mod markdown;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
-use gpui::{AppContext, AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
@@ -108,6 +108,12 @@ pub trait ToLspPosition {
 /// A name of a language server.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+
+pub struct Location {
+    pub buffer: Model<Buffer>,
+    pub range: Range<Anchor>,
+}
 
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods

@@ -90,6 +90,7 @@ use util::{
 };
 
 pub use fs::*;
+pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use project_core::project_settings;
@@ -313,12 +314,6 @@ pub struct LanguageServerProgress {
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
     pub path: Arc<Path>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Location {
-    pub buffer: Model<Buffer>,
-    pub range: Range<language::Anchor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
