@@ -103,6 +103,8 @@ wayland-protocols = { version = "0.31.2", features = ["client", "staging", "unst
 wayland-backend = { version = "0.3.3", features = ["client_system"] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 as-raw-xcb-connection = "1"
+calloop = "0.12.4"
+calloop-wayland-source = "0.2.0"
 #TODO: use these on all platforms
 blade-graphics.workspace = true
 blade-macros.workspace = true
