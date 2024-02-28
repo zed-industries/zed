@@ -1360,6 +1360,7 @@ enum InlayHintRefreshReason {
     RefreshRequested,
     ExcerptsRemoved(Vec<ExcerptId>),
 }
+
 impl InlayHintRefreshReason {
     fn description(&self) -> &'static str {
         match self {
@@ -3029,6 +3030,12 @@ impl Editor {
         }
 
         let reason_description = reason.description();
+        let ignore_debounce = matches!(
+            reason,
+            InlayHintRefreshReason::SettingsChange(_)
+                | InlayHintRefreshReason::Toggle(_)
+                | InlayHintRefreshReason::ExcerptsRemoved(_)
+        );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
@@ -3091,6 +3098,7 @@ impl Editor {
             reason_description,
             self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
             invalidate_cache,
+            ignore_debounce,
             cx,
         ) {
             self.splice_inlay_hints(to_remove, to_insert, cx);
@@ -4466,6 +4474,9 @@ impl Editor {
     }
 
     pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let mut selections = self.selections.all::<Point>(cx);
         let mut prev_edited_row = 0;
         let mut row_delta = 0;
@@ -4508,7 +4519,7 @@ impl Editor {
 
         // If a selection ends at the beginning of a line, don't indent
         // that last line.
-        if selection.end.column == 0 {
+        if selection.end.column == 0 && selection.end.row > selection.start.row {
             end_row -= 1;
         }
 
@@ -4559,6 +4570,9 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
         let mut deletion_ranges = Vec::new();
@@ -4699,6 +4713,9 @@ impl Editor {
     }
 
     pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let mut row_ranges = Vec::<Range<u32>>::new();
         for selection in self.selections.all::<Point>(cx) {
             let start = selection.start.row;

@@ -51,6 +51,8 @@ actions!(
         ConvertToUpperCase,
         ConvertToLowerCase,
         JoinLines,
+        Indent,
+        Outdent,
     ]
 );
 
@@ -125,7 +127,34 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
                         editor.join_lines(&Default::default(), cx)
                     }
                 })
-            })
+            });
+            if vim.state().mode.is_visual() {
+                vim.switch_mode(Mode::Normal, false, cx)
+            }
+        });
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            vim.update_active_editor(cx, |_, editor, cx| {
+                editor.transact(cx, |editor, cx| editor.indent(&Default::default(), cx))
+            });
+            if vim.state().mode.is_visual() {
+                vim.switch_mode(Mode::Normal, false, cx)
+            }
+        });
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &Outdent, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            vim.update_active_editor(cx, |_, editor, cx| {
+                editor.transact(cx, |editor, cx| editor.outdent(&Default::default(), cx))
+            });
+            if vim.state().mode.is_visual() {
+                vim.switch_mode(Mode::Normal, false, cx)
+            }
         });
     });
 
@@ -379,10 +408,12 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
 mod test {
     use gpui::TestAppContext;
     use indoc::indoc;
+    use settings::SettingsStore;
 
     use crate::{
         state::Mode::{self},
-        test::NeovimBackedTestContext,
+        test::{NeovimBackedTestContext, VimTestContext},
+        VimSettings,
     };
 
     #[gpui::test]
@@ -901,6 +932,90 @@ mod test {
             cx.assert_binding_matches_all([&count.to_string(), "shift-t", "b"], test_case)
                 .await;
         }
+    }
+
+    #[gpui::test]
+    async fn test_f_and_t_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_multiline_find = Some(true);
+            });
+        });
+
+        cx.assert_binding(
+            ["f", "l"],
+            indoc! {"
+            ˇfunction print() {
+                console.log('ok')
+            }
+            "},
+            Mode::Normal,
+            indoc! {"
+            function print() {
+                consoˇle.log('ok')
+            }
+            "},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["t", "l"],
+            indoc! {"
+            ˇfunction print() {
+                console.log('ok')
+            }
+            "},
+            Mode::Normal,
+            indoc! {"
+            function print() {
+                consˇole.log('ok')
+            }
+            "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_capital_f_and_capital_t_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_multiline_find = Some(true);
+            });
+        });
+
+        cx.assert_binding(
+            ["shift-f", "p"],
+            indoc! {"
+            function print() {
+                console.ˇlog('ok')
+            }
+            "},
+            Mode::Normal,
+            indoc! {"
+            function ˇprint() {
+                console.log('ok')
+            }
+            "},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["shift-t", "p"],
+            indoc! {"
+            function print() {
+                console.ˇlog('ok')
+            }
+            "},
+            Mode::Normal,
+            indoc! {"
+            function pˇrint() {
+                console.log('ok')
+            }
+            "},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]

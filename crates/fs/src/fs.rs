@@ -30,7 +30,7 @@ use std::{
 };
 use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
-use util::ResultExt;
+use util::{paths, ResultExt};
 
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
@@ -189,7 +189,14 @@ impl Fs for RealFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = NamedTempFile::new()?;
+            let mut tmp_file = if cfg!(target_os = "linux") {
+                // Use the directory of the destination as temp dir to avoid
+                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+                // See https://github.com/zed-industries/zed/pull/8437 for more details.
+                NamedTempFile::new_in(path.parent().unwrap_or(&paths::TEMP_DIR))
+            } else {
+                NamedTempFile::new()
+            }?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
             Ok::<(), anyhow::Error>(())

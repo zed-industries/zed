@@ -16,17 +16,11 @@ test-support = [
 ]
 
 [dependencies]
-anyhow.workspace = true
-collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
-lazy_static.workspace = true
 linkify.workspace = true
 pulldown-cmark.workspace = true
-smallvec.workspace = true
-smol.workspace = true
-sum_tree.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
