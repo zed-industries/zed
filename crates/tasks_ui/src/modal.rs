@@ -276,35 +276,171 @@ impl PickerDelegate for TasksModalDelegate {
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
-    use project::{FakeFs, Project, TestSource, TestTask};
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::{FakeFs, Project};
     use serde_json::json;
+    use workspace::AppState;
 
     use super::*;
 
     #[gpui::test]
     async fn test_name(cx: &mut TestAppContext) {
+        init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/dir",
             json!({
+                ".zed": {
+                    "tasks.json": r#"[
+                        {
+                            "label": "example task",
+                            "command": "echo",
+                            "args": ["4"]
+                        },
+                        {
+                            "label": "another one",
+                            "command": "echo",
+                            "args": ["55"]
+                        },
+                    ]"#,
+                },
                 "a.ts": "a"
             }),
         )
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let pane = workspace
-            .update(cx, |workspace, cx| {
-                workspace
-                    .toggle_modal(cx, |cx| {
-                        TasksModal::new(Inventory::new(cx), cx.view().downgrade(), cx)
-                    })
-                    .clone()
+        project.update(cx, |project, cx| {
+            project.task_inventory().update(cx, |inventory, cx| {
+                inventory.add_source(TaskSourceKind::UserInput, |cx| OneshotSource::new(cx), cx)
             })
-            .unwrap();
+        });
 
-        todo!("TODO kb")
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            query(&tasks_picker, cx),
+            "",
+            "Initial query should be empty"
+        );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["another one", "example task"],
+            "Initial tasks should be listed in alphabetical order"
+        );
+
+        let query_str = "tas";
+        cx.simulate_input(query_str);
+        assert_eq!(query(&tasks_picker, cx), query_str);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["example task"],
+            "Only one task should match the query {query_str}"
+        );
+
+        cx.dispatch_action(menu::UseSelectedQuery);
+        assert_eq!(
+            query(&tasks_picker, cx),
+            "example task",
+            "Query should be set to the selected task's name"
+        );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["example task"],
+            "No other tasks should be listed"
+        );
+        cx.dispatch_action(menu::Confirm);
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            query(&tasks_picker, cx),
+            "",
+            "Query should be reset after confirming"
+        );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["example task", "another one"],
+            "Last recently used task should be listed first"
+        );
+
+        let query_str = "echo 4";
+        cx.simulate_input(query_str);
+        assert_eq!(query(&tasks_picker, cx), query_str);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            Vec::<String>::new(),
+            "No tasks should match custom command query"
+        );
+
+        cx.dispatch_action(menu::SecondaryConfirm);
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            query(&tasks_picker, cx),
+            "",
+            "Query should be reset after confirming"
+        );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![query_str, "example task", "another one"],
+            "Last recently used one show task should be listed first"
+        );
+
+        cx.dispatch_action(menu::UseSelectedQuery);
+        assert_eq!(
+            query(&tasks_picker, cx),
+            query_str,
+            "Query should be set to the custom task's name"
+        );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![query_str],
+            "Only custom task should be listed"
+        );
+    }
+
+    fn open_spawn_tasks(
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> View<Picker<TasksModalDelegate>> {
+        cx.dispatch_action(crate::modal::Spawn);
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TasksModal>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        })
+    }
+
+    fn query(spawn_tasks: &View<Picker<TasksModalDelegate>>, cx: &mut VisualTestContext) -> String {
+        spawn_tasks.update(cx, |spawn_tasks, cx| spawn_tasks.query(cx))
+    }
+
+    fn task_names(
+        spawn_tasks: &View<Picker<TasksModalDelegate>>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<String> {
+        spawn_tasks.update(cx, |spawn_tasks, _| {
+            spawn_tasks
+                .delegate
+                .matches
+                .iter()
+                .map(|hit| hit.string.clone())
+                .collect::<Vec<_>>()
+        })
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            language::init(cx);
+            crate::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            state
+        })
     }
 }
