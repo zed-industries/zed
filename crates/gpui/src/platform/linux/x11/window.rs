@@ -16,7 +16,13 @@ use xcb::{
 };
 
 use std::{
-    cell::RefCell, ffi::c_void, mem, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::{self, Arc}
+    cell::RefCell,
+    ffi::c_void,
+    mem,
+    num::NonZeroU32,
+    ptr::NonNull,
+    rc::Rc,
+    sync::{self, Arc},
 };
 
 use super::X11Display;
@@ -255,7 +261,7 @@ impl X11WindowState {
             raw,
             x_window,
             callbacks: RefCell::new(Callbacks::default()),
-            inner: RefCell  ::new(LinuxWindowInner {
+            inner: RefCell::new(LinuxWindowInner {
                 bounds,
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
@@ -354,7 +360,13 @@ impl X11WindowState {
 
 impl PlatformWindow for X11Window {
     fn bounds(&self) -> WindowBounds {
-        WindowBounds::Fixed(self.0.inner.borrow_mut().bounds.map(|v| GlobalPixels(v as f32)))
+        WindowBounds::Fixed(
+            self.0
+                .inner
+                .borrow_mut()
+                .bounds
+                .map(|v| GlobalPixels(v as f32)),
+        )
     }
 
     fn content_size(&self) -> Size<Pixels> {

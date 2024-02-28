@@ -1,7 +1,6 @@
-use std::borrow::Borrow;
 use std::cell::{Cell, RefCell};
-use std::time::Duration;
 use std::rc::Rc;
+use std::time::Duration;
 
 use xcb::{x, Xid as _};
 use xkbcommon::xkb;
@@ -217,8 +216,10 @@ impl X11Client {
             xcb::Event::X(x::Event::ButtonPress(event)) => {
                 let window = self.get_window(event.event())?;
                 let modifiers = super::modifiers_from_state(event.state());
-                let position =
-                    Point::new((event.event_x() as f32).into(), (event.event_y() as f32).into());
+                let position = Point::new(
+                    (event.event_x() as f32).into(),
+                    (event.event_y() as f32).into(),
+                );
                 if let Some(button) = super::button_of_key(event.detail()) {
                     window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
                         button,
@@ -242,8 +243,10 @@ impl X11Client {
             xcb::Event::X(x::Event::ButtonRelease(event)) => {
                 let window = self.get_window(event.event())?;
                 let modifiers = super::modifiers_from_state(event.state());
-                let position =
-                    Point::new((event.event_x() as f32).into(), (event.event_y() as f32).into());
+                let position = Point::new(
+                    (event.event_x() as f32).into(),
+                    (event.event_y() as f32).into(),
+                );
                 if let Some(button) = super::button_of_key(event.detail()) {
                     window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
                         button,
@@ -256,8 +259,10 @@ impl X11Client {
             xcb::Event::X(x::Event::MotionNotify(event)) => {
                 let window = self.get_window(event.event())?;
                 let pressed_button = super::button_from_state(event.state());
-                let position =
-                    Point::new((event.event_x() as f32).into(), (event.event_y() as f32).into());
+                let position = Point::new(
+                    (event.event_x() as f32).into(),
+                    (event.event_y() as f32).into(),
+                );
                 let modifiers = super::modifiers_from_state(event.state());
                 window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
                     pressed_button,
@@ -268,8 +273,10 @@ impl X11Client {
             xcb::Event::X(x::Event::LeaveNotify(event)) => {
                 let window = self.get_window(event.event())?;
                 let pressed_button = super::button_from_state(event.state());
-                let position =
-                    Point::new((event.event_x() as f32).into(), (event.event_y() as f32).into());
+                let position = Point::new(
+                    (event.event_x() as f32).into(),
+                    (event.event_y() as f32).into(),
+                );
                 let modifiers = super::modifiers_from_state(event.state());
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,

@@ -132,17 +132,14 @@ impl WaylandClient {
         }));
 
         let source = WaylandSource::new(conn, event_queue);
-        let conn = source.connection();
 
-        {
-            let mut state = WaylandClientState(Rc::clone(&state_inner));
-            linux_platform_inner
-                .loop_handle
-                .insert_source(source, move |_, queue, _| {
-                    queue.dispatch_pending(&mut state)
-                })
-                .unwrap();
-        }
+        let mut state = WaylandClientState(Rc::clone(&state_inner));
+        linux_platform_inner
+            .loop_handle
+            .insert_source(source, move |_, queue, _| {
+                queue.dispatch_pending(&mut state)
+            })
+            .unwrap();
 
         Self {
             platform_inner: linux_platform_inner,
