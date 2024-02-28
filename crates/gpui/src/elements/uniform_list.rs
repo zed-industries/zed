@@ -217,7 +217,7 @@ impl Element for UniformList {
                                 AvailableSpace::Definite(padded_bounds.size.width),
                                 AvailableSpace::Definite(item_height),
                             );
-                            item.commit_root(item_origin, available_space, cx);
+                            item.layout(item_origin, available_space, cx);
                             before_layout.items.push(item);
                         }
                     });

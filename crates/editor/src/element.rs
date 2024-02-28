@@ -781,7 +781,7 @@ impl EditorElement {
                 - indicator_size.width)
                 / 2.;
             y += (line_height - indicator_size.height) / 2.;
-            // todo!("do the above logic during commit_root")
+            // todo!("do the above logic during layout")
             button.paint(cx);
 
             // button.draw(bounds.origin + point(x, y), available_space, cx);
@@ -2917,7 +2917,7 @@ impl Element for EditorElement {
                                         .text_color(self.style.background)
                                         .child(name)
                                         .into_any();
-                                    cx.with_element_context(|cx| element.commit_root(
+                                    cx.with_element_context(|cx| element.layout(
                                         name_origin,
                                         AvailableSpace::min_size(),
                                         cx,
@@ -3091,7 +3091,7 @@ impl Element for EditorElement {
                     .child(context_menu.context_menu.clone())
                     .anchor(AnchorCorner::TopLeft)
                     .snap_to_window().into_any();
-                cx.with_element_context(|cx| element.commit_root(gpui::Point::default(), AvailableSpace::min_size(), cx));
+                cx.with_element_context(|cx| element.layout(gpui::Point::default(), AvailableSpace::min_size(), cx));
                 element
             });
 

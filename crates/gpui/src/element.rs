@@ -432,7 +432,7 @@ impl AnyElement {
     }
 
     /// Initializes this element, performs layout if needed and commits its bounds.
-    pub fn commit_root(
+    pub fn layout(
         &mut self,
         absolute_offset: Point<Pixels>,
         available_space: Size<AvailableSpace>,

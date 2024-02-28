@@ -314,20 +314,20 @@ impl<'a> ElementContext<'a> {
         // Measure and commit bounds for all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
         let available_space = self.window.viewport_size.map(Into::into);
-        root_element.commit_root(Point::default(), available_space, self);
+        root_element.layout(Point::default(), available_space, self);
 
         let mut active_drag_element = None;
         let mut tooltip_element = None;
         if let Some(active_drag) = self.app.active_drag.take() {
             let mut element = active_drag.view.clone().into_any();
             let offset = self.mouse_position() - active_drag.cursor_offset;
-            element.commit_root(offset, AvailableSpace::min_size(), self);
+            element.layout(offset, AvailableSpace::min_size(), self);
             active_drag_element = Some(element);
             self.app.active_drag = Some(active_drag);
         } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
             let mut element = tooltip_request.tooltip.view.clone().into_any();
             let offset = tooltip_request.tooltip.cursor_offset;
-            element.commit_root(offset, AvailableSpace::min_size(), self);
+            element.layout(offset, AvailableSpace::min_size(), self);
             tooltip_element = Some(element);
             self.window.next_frame.tooltip_request = Some(tooltip_request);
         }

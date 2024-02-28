@@ -624,11 +624,8 @@ impl Element for List {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
                 for mut item_element in layout_response.item_elements {
-                    let item_size = item_element.commit_root(
-                        item_origin,
-                        layout_response.available_item_space,
-                        cx,
-                    );
+                    let item_size =
+                        item_element.layout(item_origin, layout_response.available_item_space, cx);
                     before_layout.items.push(item_element);
                     item_origin.y += item_size.height;
                 }

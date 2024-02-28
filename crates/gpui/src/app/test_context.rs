@@ -684,7 +684,7 @@ impl<'a> VisualTestContext {
             cx.with_element_context(|cx| {
                 cx.with_view_id(entity_id, |cx| {
                     let mut element = f(cx);
-                    element.commit_root(origin, space, cx);
+                    element.layout(origin, space, cx);
                     element.paint(cx);
                 })
             });

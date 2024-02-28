@@ -677,7 +677,7 @@ impl Element for TerminalElement {
                         .id("terminal-element")
                         .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
                         .into_any_element();
-                    element.commit_root(
+                    element.layout(
                         bounds.origin + point(gutter, px(0.)),
                         bounds.size.into(),
                         cx,

@@ -1288,7 +1288,7 @@ impl Render for AssistantPanel {
                                     )
                                     .track_scroll(scroll_handle)
                                     .into_any_element();
-                                    list.commit_root(bounds.origin, bounds.size.into(), cx);
+                                    list.layout(bounds.origin, bounds.size.into(), cx);
                                     list
                                 },
                                 |_bounds, mut list, cx| list.paint(cx),
