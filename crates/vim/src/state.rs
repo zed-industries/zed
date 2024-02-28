@@ -241,9 +241,10 @@ impl Operator {
     pub fn context_flags(&self) -> &'static [&'static str] {
         match self {
             Operator::Object { .. } => &["VimObject"],
-            Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace => {
-                &["VimWaiting"]
-            }
+            Operator::FindForward { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Replace
+            | Operator::MultiReplace => &["VimWaiting"],
             _ => &[],
         }
     }
