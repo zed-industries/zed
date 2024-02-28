@@ -1182,11 +1182,15 @@ impl ProjectPanel {
                                     let num_and_remainder_a = Path::new(component_a.as_os_str())
                                         .file_stem()
                                         .and_then(|s| s.to_str())
-                                        .and_then(NumericPrefixWithSuffix::from_str)?;
+                                        .and_then(
+                                            NumericPrefixWithSuffix::from_numeric_prefixed_str,
+                                        )?;
                                     let num_and_remainder_b = Path::new(component_b.as_os_str())
                                         .file_stem()
                                         .and_then(|s| s.to_str())
-                                        .and_then(NumericPrefixWithSuffix::from_str)?;
+                                        .and_then(
+                                            NumericPrefixWithSuffix::from_numeric_prefixed_str,
+                                        )?;
 
                                     num_and_remainder_a.partial_cmp(&num_and_remainder_b)
                                 });
