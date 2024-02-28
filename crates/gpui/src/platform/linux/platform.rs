@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use std::cell::RefCell;
 use std::env;
 use std::{
     path::{Path, PathBuf},
@@ -42,13 +43,13 @@ pub(crate) struct Callbacks {
 }
 
 pub(crate) struct LinuxPlatformInner {
-    pub(crate) event_loop: Mutex<EventLoop<'static, ()>>,
+    pub(crate) event_loop: RefCell<EventLoop<'static, ()>>,
     pub(crate) loop_handle: Rc<LoopHandle<'static, ()>>,
     pub(crate) loop_signal: LoopSignal,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<LinuxTextSystem>,
-    pub(crate) callbacks: Mutex<Callbacks>,
+    pub(crate) callbacks: RefCell<Callbacks>,
 }
 
 pub(crate) struct LinuxPlatform {
@@ -69,7 +70,7 @@ impl LinuxPlatform {
 
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(LinuxTextSystem::new());
-        let callbacks = Mutex::new(Callbacks::default());
+        let callbacks = RefCell::new(Callbacks::default());
 
         let event_loop = EventLoop::try_new().unwrap();
         event_loop
@@ -85,7 +86,7 @@ impl LinuxPlatform {
         let inner = Rc::new(LinuxPlatformInner {
             loop_handle: Rc::new(event_loop.handle()),
             loop_signal: event_loop.get_signal(),
-            event_loop: Mutex::new(event_loop),
+            event_loop: RefCell::new(event_loop),
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
@@ -123,11 +124,16 @@ impl Platform for LinuxPlatform {
         on_finish_launching();
         self.inner
             .event_loop
-            .lock()
+            .borrow_mut()
             .run(None, &mut (), |data| {})
-            .unwrap();
-        if let Some(ref mut fun) = self.inner.callbacks.lock().quit {
+            .expect("Run loop failed");
+
+        let mut lock = self.inner.callbacks.borrow_mut();
+        if let Some(mut fun) = lock.quit.take() {
+            drop(lock);
             fun();
+            let mut lock = self.inner.callbacks.borrow_mut();
+            lock.quit = Some(fun);
         }
     }
 
@@ -176,7 +182,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.callbacks.lock().open_urls = Some(callback);
+        self.inner.callbacks.borrow_mut().open_urls = Some(callback);
     }
 
     fn prompt_for_paths(
@@ -263,35 +269,35 @@ impl Platform for LinuxPlatform {
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().become_active = Some(callback);
+        self.inner.callbacks.borrow_mut().become_active = Some(callback);
     }
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().resign_active = Some(callback);
+        self.inner.callbacks.borrow_mut().resign_active = Some(callback);
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().quit = Some(callback);
+        self.inner.callbacks.borrow_mut().quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().reopen = Some(callback);
+        self.inner.callbacks.borrow_mut().reopen = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.inner.callbacks.lock().event = Some(callback);
+        self.inner.callbacks.borrow_mut().event = Some(callback);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.callbacks.lock().app_menu_action = Some(callback);
+        self.inner.callbacks.borrow_mut().app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().will_open_app_menu = Some(callback);
+        self.inner.callbacks.borrow_mut().will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.inner.callbacks.lock().validate_app_menu_command = Some(callback);
+        self.inner.callbacks.borrow_mut().validate_app_menu_command = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {

@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use blade_graphics as gpu;
 use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
 use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
+use postage::watch::Ref;
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
 };
@@ -106,8 +108,8 @@ impl WaylandWindowInner {
 }
 
 pub(crate) struct WaylandWindowState {
-    inner: Mutex<WaylandWindowInner>,
-    pub(crate) callbacks: Mutex<Callbacks>,
+    inner: RefCell<WaylandWindowInner>,
+    pub(crate) callbacks: RefCell<Callbacks>,
     pub(crate) surface: Arc<wl_surface::WlSurface>,
     pub(crate) toplevel: Arc<xdg_toplevel::XdgToplevel>,
     viewport: Option<wp_viewport::WpViewport>,
@@ -139,32 +141,32 @@ impl WaylandWindowState {
 
         Self {
             surface: Arc::clone(&wl_surf),
-            inner: Mutex::new(WaylandWindowInner::new(&wl_surf, bounds)),
-            callbacks: Mutex::new(Callbacks::default()),
+            inner: RefCell::new(WaylandWindowInner::new(&wl_surf, bounds)),
+            callbacks: RefCell::new(Callbacks::default()),
             toplevel,
             viewport,
         }
     }
 
     pub fn update(&self) {
-        let mut cb = self.callbacks.lock();
+        let mut cb = self.callbacks.borrow_mut();
         if let Some(mut fun) = cb.request_frame.take() {
             drop(cb);
             fun();
-            self.callbacks.lock().request_frame = Some(fun);
+            self.callbacks.borrow_mut().request_frame = Some(fun);
         }
     }
 
     pub fn set_size_and_scale(&self, width: i32, height: i32, scale: f32) {
-        self.inner.lock().scale = scale;
-        self.inner.lock().bounds.size.width = width;
-        self.inner.lock().bounds.size.height = height;
-        self.inner.lock().renderer.update_drawable_size(size(
+        self.inner.borrow_mut().scale = scale;
+        self.inner.borrow_mut().bounds.size.width = width;
+        self.inner.borrow_mut().bounds.size.height = height;
+        self.inner.borrow_mut().renderer.update_drawable_size(size(
             width as f64 * scale as f64,
             height as f64 * scale as f64,
         ));
 
-        if let Some(ref mut fun) = self.callbacks.lock().resize {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().resize {
             fun(
                 Size {
                     width: px(width as f32),
@@ -180,12 +182,12 @@ impl WaylandWindowState {
     }
 
     pub fn resize(&self, width: i32, height: i32) {
-        let scale = self.inner.lock().scale;
+        let scale = self.inner.borrow_mut().scale;
         self.set_size_and_scale(width, height, scale);
     }
 
     pub fn rescale(&self, scale: f32) {
-        let bounds = self.inner.lock().bounds;
+        let bounds = self.inner.borrow_mut().bounds;
         self.set_size_and_scale(bounds.size.width, bounds.size.height, scale)
     }
 
@@ -198,13 +200,13 @@ impl WaylandWindowState {
     /// of the decorations. This is because the state of the decorations
     /// is managed by the compositor and not the client.
     pub fn set_decoration_state(&self, state: WaylandDecorationState) {
-        self.inner.lock().decoration_state = state;
+        self.inner.borrow_mut().decoration_state = state;
         log::trace!("Window decorations are now handled by {:?}", state);
         // todo!(linux) - Handle this properly
     }
 
     pub fn close(&self) {
-        let mut callbacks = self.callbacks.lock();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(fun) = callbacks.close.take() {
             fun()
         }
@@ -212,13 +214,13 @@ impl WaylandWindowState {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
-        if let Some(ref mut fun) = self.callbacks.lock().input {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
             if fun(input.clone()) {
                 return;
             }
         }
         if let PlatformInput::KeyDown(event) = input {
-            let mut inner = self.inner.lock();
+            let mut inner = self.inner.borrow_mut();
             if let Some(ref mut input_handler) = inner.input_handler {
                 if let Some(ime_key) = &event.keystroke.ime_key {
                     input_handler.replace_text_in_range(None, ime_key);
@@ -228,7 +230,7 @@ impl WaylandWindowState {
     }
 
     pub fn set_focused(&self, focus: bool) {
-        if let Some(ref mut fun) = self.callbacks.lock().active_status_change {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
             fun(focus);
         }
     }
@@ -256,7 +258,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        let inner = self.0.inner.lock();
+        let inner = self.0.inner.borrow_mut();
         Size {
             width: Pixels(inner.bounds.size.width as f32),
             height: Pixels(inner.bounds.size.height as f32),
@@ -264,7 +266,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn scale_factor(&self) -> f32 {
-        self.0.inner.lock().scale
+        self.0.inner.borrow_mut().scale
     }
 
     //todo!(linux)
@@ -298,11 +300,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.0.inner.lock().input_handler = Some(input_handler);
+        self.0.inner.borrow_mut().input_handler = Some(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.0.inner.lock().input_handler.take()
+        self.0.inner.borrow_mut().input_handler.take()
     }
 
     //todo!(linux)
@@ -345,19 +347,19 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.lock().request_frame = Some(callback);
+        self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.0.callbacks.lock().input = Some(callback);
+        self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.lock().active_status_change = Some(callback);
+        self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.0.callbacks.lock().resize = Some(callback);
+        self.0.callbacks.borrow_mut().resize = Some(callback);
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
@@ -365,15 +367,15 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.lock().moved = Some(callback);
+        self.0.callbacks.borrow_mut().moved = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.callbacks.lock().should_close = Some(callback);
+        self.0.callbacks.borrow_mut().should_close = Some(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        self.0.callbacks.lock().close = Some(callback);
+        self.0.callbacks.borrow_mut().close = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
@@ -386,12 +388,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        let mut inner = self.0.inner.lock();
+        let mut inner = self.0.inner.borrow_mut();
         inner.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        let inner = self.0.inner.lock();
+        let inner = self.0.inner.borrow_mut();
         inner.renderer.sprite_atlas().clone()
     }
 
