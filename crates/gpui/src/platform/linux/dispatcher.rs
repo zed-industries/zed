@@ -13,10 +13,7 @@ use calloop::{
 };
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
-use std::{
-    thread,
-    time::Duration,
-};
+use std::{thread, time::Duration};
 use util::ResultExt;
 
 struct TimerAfter {
@@ -116,7 +113,7 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn tick(&self, background_only: bool) -> bool {
-       false
+        false
     }
 
     fn park(&self) {

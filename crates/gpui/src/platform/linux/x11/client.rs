@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::Duration;
 use std::{rc::Rc, sync::Arc};
 
 use parking_lot::Mutex;
@@ -27,6 +29,7 @@ pub(crate) struct X11Client {
     xcb_connection: Arc<xcb::Connection>,
     x_root_index: i32,
     atoms: XcbAtoms,
+    refresh_millis: AtomicU64,
     state: Mutex<X11ClientState>,
 }
 
@@ -34,7 +37,11 @@ impl X11Client {
     pub(crate) fn new(inner: Rc<LinuxPlatformInner>) -> Rc<Self> {
         let (xcb_connection, x_root_index) = xcb::Connection::connect_with_extensions(
             None,
-            &[xcb::Extension::Present, xcb::Extension::Xkb],
+            &[
+                xcb::Extension::Present,
+                xcb::Extension::Xkb,
+                xcb::Extension::RandR,
+            ],
             &[],
         )
         .unwrap();
@@ -57,6 +64,7 @@ impl X11Client {
             xkb_device_id,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         );
+
         let xkb_state =
             xkb::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id);
 
@@ -65,6 +73,7 @@ impl X11Client {
             xcb_connection: Arc::clone(&xcb_connection),
             x_root_index,
             atoms,
+            refresh_millis: AtomicU64::new(8),
             state: Mutex::new(X11ClientState {
                 windows: HashMap::default(),
                 windows_to_refresh: HashSet::default(),
@@ -95,7 +104,25 @@ impl X11Client {
                     }
                 },
             )
-            .unwrap();
+            .expect("Failed to initialize x11 event source");
+
+        inner
+            .loop_handle
+            .insert_source(
+                calloop::timer::Timer::from_duration(Duration::from_millis(
+                    client.refresh_millis.load(Ordering::Relaxed),
+                )),
+                {
+                    let client = client.clone();
+                    move |_, _, _| {
+                        client.present();
+                        calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(
+                            client.refresh_millis.load(Ordering::Relaxed),
+                        ))
+                    }
+                },
+            )
+            .expect("Failed to initialize refresh timer");
 
         client
     }
@@ -104,6 +131,13 @@ impl X11Client {
         let state = self.state.lock();
         // todo!(linux): This might be called when the windows are empty.
         Rc::clone(&state.windows[&win])
+    }
+
+    fn present(&self) {
+        let state = self.state.lock();
+        for window_state in state.windows.values() {
+            window_state.refresh();
+        }
     }
 
     fn handle_event(&self, event: xcb::Event) {
@@ -121,9 +155,6 @@ impl X11Client {
                         }
                     }
                 }
-            }
-            xcb::Event::X(x::Event::Expose(ev)) => {
-                self.get_window(ev.window()).refresh();
             }
             xcb::Event::X(x::Event::ConfigureNotify(ev)) => {
                 let bounds = Bounds {
@@ -276,10 +307,46 @@ impl Client for X11Client {
         ));
         window_ptr.request_refresh();
 
+        let cookie = self
+            .xcb_connection
+            .send_request(&xcb::randr::GetScreenResourcesCurrent { window: x_window });
+        let screen_resources = self.xcb_connection.wait_for_reply(cookie).expect("TODO");
+        let crtc = screen_resources.crtcs().first().expect("TODO");
+
+        let cookie = self.xcb_connection.send_request(&xcb::randr::GetCrtcInfo {
+            crtc: crtc.to_owned(),
+            config_timestamp: xcb::x::Time::CurrentTime as u32,
+        });
+        let crtc_info = self.xcb_connection.wait_for_reply(cookie).expect("TODO");
+
+        let mode_id = crtc_info.mode().resource_id();
+        let mode = screen_resources
+            .modes()
+            .iter()
+            .find(|m| m.id == mode_id)
+            .expect("Missing screen mode for crtc specified mode id");
+
+        let refresh_millies = mode_refresh_rate_millis(mode).expect("Please just work");
+
+        self.refresh_millis
+            .store(refresh_millies as u64, Ordering::Relaxed);
+
         self.state
             .lock()
             .windows
             .insert(x_window, Rc::clone(&window_ptr));
         Box::new(X11Window(window_ptr))
     }
+}
+
+// Adatpted from:
+// https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
+pub fn mode_refresh_rate_millis(mode: &xcb::randr::ModeInfo) -> Option<u64> {
+    if mode.dot_clock <= 0 || mode.htotal <= 0 || mode.vtotal <= 0 {
+        return None;
+    }
+
+    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
+    let milliseconds = (millihertz as f64 / 1_000_000.) as u64;
+    Some(milliseconds)
 }
