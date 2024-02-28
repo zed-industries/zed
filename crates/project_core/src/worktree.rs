@@ -68,7 +68,10 @@ use util::{
     ResultExt,
 };
 
+#[cfg(feature = "test-support")]
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+#[cfg(not(feature = "test-support"))]
+const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
