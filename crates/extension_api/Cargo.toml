@@ -9,7 +9,7 @@ path = "src/extension_api.rs"
 
 [dependencies]
 anyhow.workspace = true
-wit-bindgen = "0.18.0"
+wit-bindgen = "0.18"
 
 [package.metadata.component]
 target = { path = "wit" }

@@ -83,28 +83,21 @@ impl WasmHost {
                 &this.engine,
                 WasmState {
                     table: ResourceTable::new(),
-                    ctx: WasiCtxBuilder::new().inherit_stdio().build(),
+                    ctx: WasiCtxBuilder::new()
+                        .inherit_stdio()
+                        .env("RUST_BACKTRACE", "1")
+                        .build(),
                     host: this.clone(),
                 },
             );
             let (mut extension, instance) =
                 wit::Extension::instantiate_async(&mut store, &component, &this.linker)
                     .await
-                    .context("failed to insantiate wasm component")?;
+                    .context("failed to instantiate wasm component")?;
             let (tx, mut rx) = futures::channel::mpsc::unbounded::<ExtensionCall>();
             executor
                 .spawn(async move {
-                    let mut exports = instance.exports(&mut store);
-
-                    eprintln!("modules {}", exports.root().modules().count());
-                    // instance.get_module(store, name)
-                    for i in exports.root().modules() {
-                        dbg!(&i);
-                    }
-
-                    drop(exports);
-
-                    // dbg!(&func);
+                    extension.call_init_extension(&mut store).await.unwrap();
 
                     let _instance = instance;
                     while let Some(call) = rx.next().await {

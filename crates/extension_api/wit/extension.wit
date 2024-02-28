@@ -1,6 +1,8 @@
 package zed:extension;
 
 world extension {
+    export init-extension: func();
+
     record github-release {
         version: string,
         assets: list<github-release-asset>,

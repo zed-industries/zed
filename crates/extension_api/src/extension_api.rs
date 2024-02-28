@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 pub struct Guest;
 pub use wit::*;
 
@@ -16,22 +14,28 @@ pub trait Extension: Send + Sync {
 #[macro_export]
 macro_rules! register_extension {
     ($extension:path) => {
-        pub extern "C" fn __zed_extension_init() {
-            zed_extension_api::register_extension($extension);
+        #[export_name = "init-extension"]
+        pub extern "C" fn __init_extension() {
+            zed_extension_api::register_extension(&$extension);
         }
     };
 }
 
 #[doc(hidden)]
-pub fn register_extension(extension: impl Extension + 'static) {
-    EXTENSION.get_or_init(|| Box::new(extension));
+pub fn register_extension(extension: &'static dyn Extension) {
+    unsafe { EXTENSION = Some(extension) };
 }
 
-static EXTENSION: OnceLock<Box<dyn Extension>> = OnceLock::new();
+fn extension() -> &'static dyn Extension {
+    unsafe { EXTENSION.unwrap() }
+}
+
+static mut EXTENSION: Option<&'static dyn Extension> = None;
 
 mod wit {
     wit_bindgen::generate!({
         exports: { world: super::Component },
+        skip: ["init-extension"]
     });
 }
 
@@ -42,9 +46,6 @@ impl wit::Guest for Component {
         config: wit::LanguageServerConfig,
         worktree: &wit::Worktree,
     ) -> Result<wit::Command> {
-        EXTENSION
-            .get()
-            .unwrap()
-            .get_language_server_command(config, worktree)
+        extension().get_language_server_command(config, worktree)
     }
 }
