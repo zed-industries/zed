@@ -235,28 +235,28 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
-        let mut related_paths = Vec::new();
         let (worktree_id, _) = self.candidates[hit.candidate_id];
-        if let Some(worktree_abs_path) = worktree_id.and_then(|worktree_id| {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    Some(
-                        workspace
-                            .project()
-                            .read(cx)
-                            .worktree_for_id(worktree_id, cx)?
-                            .read(cx)
-                            .abs_path()
-                            .to_path_buf(),
-                    )
-                })
-                .ok()
-                .flatten()
-        }) {
-            related_paths.push(worktree_abs_path);
-        }
+        let path_for_label = worktree_id
+            .and_then(|worktree_id| {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        Some(
+                            workspace
+                                .project()
+                                .read(cx)
+                                .worktree_for_id(worktree_id, cx)?
+                                .read(cx)
+                                .abs_path()
+                                .to_path_buf(),
+                        )
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_else(|| PathBuf::new());
 
-        let highlighted_location = HighlightedMatchWithPaths::new(hit, &related_paths, true);
+        let highlighted_location =
+            HighlightedMatchWithPaths::new(hit, &[path_for_label], false, true);
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)

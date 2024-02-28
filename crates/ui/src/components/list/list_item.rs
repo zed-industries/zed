@@ -223,7 +223,7 @@ impl RenderOnce for ListItem {
                     .child(
                         h_flex()
                             .flex_grow()
-                            .flex_shrink_0()
+                            .flex_shrink()
                             .flex_basis(relative(0.25))
                             .gap_1()
                             .overflow_hidden()

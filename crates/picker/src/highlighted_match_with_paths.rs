@@ -11,7 +11,7 @@ pub struct HighlightedMatchWithPaths {
     render_paths: bool,
 }
 
-#[derive(Clone, IntoElement)]
+#[derive(Debug, Clone, IntoElement)]
 struct HighlightedText {
     text: String,
     highlight_positions: Vec<usize>,
@@ -55,24 +55,48 @@ impl RenderOnce for HighlightedText {
 }
 
 impl HighlightedMatchWithPaths {
-    pub fn new(string_match: &StringMatch, paths: &[PathBuf], render_paths: bool) -> Self {
-        let mut path_start_offset = 0;
-        let (names, paths): (Vec<_>, Vec<_>) = paths
-            .iter()
-            .map(|path| {
-                let path = path.compact();
-                let highlighted_text = Self::highlights_for_path(
-                    path.as_ref(),
-                    &string_match.positions,
-                    path_start_offset,
-                );
+    pub fn new(
+        label: &StringMatch,
+        paths: &[PathBuf],
+        highlight_in_paths: bool,
+        render_paths: bool,
+    ) -> Self {
+        let (names, paths) = if highlight_in_paths {
+            let mut path_start_offset = 0;
+            paths
+                .iter()
+                .map(|path| {
+                    let path = path.compact();
+                    let highlighted_text = Self::highlights_for_path(
+                        path.as_ref(),
+                        &label.positions,
+                        path_start_offset,
+                    );
 
-                path_start_offset += highlighted_text.1.char_count;
-
-                highlighted_text
-            })
-            .unzip();
-
+                    path_start_offset += highlighted_text.1.char_count;
+                    highlighted_text
+                })
+                .unzip()
+        } else {
+            (
+                vec![Some(HighlightedText {
+                    text: label.string.clone(),
+                    highlight_positions: label.positions.clone(),
+                    char_count: label.string.chars().count(),
+                })],
+                paths
+                    .iter()
+                    .map(|path| {
+                        let path_string = path.to_string_lossy().to_string();
+                        HighlightedText {
+                            char_count: path_string.chars().count(),
+                            highlight_positions: Vec::new(),
+                            text: path_string,
+                        }
+                    })
+                    .collect(),
+            )
+        };
         Self {
             names: HighlightedText::join(names.into_iter().filter_map(|name| name), ", "),
             paths,

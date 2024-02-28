@@ -27,6 +27,13 @@ struct SourceInInventory {
     worktree: Option<WorktreeId>,
 }
 
+// TODO kb use this to draw proper labels in the task modal
+// enum SourceId {
+//     UserInput,
+//     AbsPath(PathBuf),
+//     Worktree { id: WorktreeId, abs_path: PathBuf },
+// }
+
 impl Inventory {
     pub(crate) fn new(cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|_| Self {

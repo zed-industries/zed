@@ -251,6 +251,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         let highlighted_match = HighlightedMatchWithPaths::new(
             &r#match,
             location.paths().as_slice(),
+            true,
             self.render_paths,
         );
         Some(
