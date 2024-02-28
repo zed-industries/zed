@@ -40,7 +40,7 @@ pub struct CommandPalette {
 }
 
 lazy_static! {
-    static ref STRIP_UNNECESSARY_WHITESPACES: Regex = Regex::new(r"\s+").unwrap();
+    static ref CONSECUTIVE_WHITESPACES: Regex = Regex::new(r"\s+").unwrap();
 }
 
 impl CommandPalette {
@@ -253,7 +253,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = STRIP_UNNECESSARY_WHITESPACES.replace_all(&query.trim(), " ").to_string();
+            let query = CONSECUTIVE_WHITESPACES.replace_all(&query.trim(), " ").to_string();
             async move {
                 commands.sort_by_key(|action| {
                     (
