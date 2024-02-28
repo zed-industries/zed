@@ -241,6 +241,11 @@ impl LspAdapter for EsLintLspAdapter {
                         .unwrap_or_else(|| workspace_root.as_os_str()),
                 },
                 "problems": {},
+                "codeActionOnSave": {
+                    // We enable this, but without also configuring `code_actions_on_format`
+                    // in the Zed configuration, it doesn't have an effect.
+                    "enable": true,
+                },
                 "experimental": {
                     "useFlatConfig": workspace_root.join("eslint.config.js").is_file(),
                 },
