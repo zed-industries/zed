@@ -51,6 +51,8 @@ actions!(
         ConvertToUpperCase,
         ConvertToLowerCase,
         JoinLines,
+        Indent,
+        Outdent,
     ]
 );
 
@@ -125,7 +127,34 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
                         editor.join_lines(&Default::default(), cx)
                     }
                 })
-            })
+            });
+            if vim.state().mode.is_visual() {
+                vim.switch_mode(Mode::Normal, false, cx)
+            }
+        });
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            vim.update_active_editor(cx, |_, editor, cx| {
+                editor.transact(cx, |editor, cx| editor.indent(&Default::default(), cx))
+            });
+            if vim.state().mode.is_visual() {
+                vim.switch_mode(Mode::Normal, false, cx)
+            }
+        });
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &Outdent, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            vim.update_active_editor(cx, |_, editor, cx| {
+                editor.transact(cx, |editor, cx| editor.outdent(&Default::default(), cx))
+            });
+            if vim.state().mode.is_visual() {
+                vim.switch_mode(Mode::Normal, false, cx)
+            }
         });
     });
 
