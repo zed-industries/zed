@@ -13,6 +13,7 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libxkbcommon-x11-dev
     openssl
+    libssl-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
