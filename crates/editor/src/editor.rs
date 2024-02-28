@@ -4474,6 +4474,9 @@ impl Editor {
     }
 
     pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let mut selections = self.selections.all::<Point>(cx);
         let mut prev_edited_row = 0;
         let mut row_delta = 0;
@@ -4567,6 +4570,9 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
         let mut deletion_ranges = Vec::new();
@@ -4707,6 +4713,9 @@ impl Editor {
     }
 
     pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let mut row_ranges = Vec::<Range<u32>>::new();
         for selection in self.selections.all::<Point>(cx) {
             let start = selection.start.row;
