@@ -409,7 +409,7 @@ impl<'a> ElementContext<'a> {
             .requested_cursor_style
             .as_ref()
             .map_or(true, |prev_style_request| {
-                style_request.stacking_order > prev_style_request.stacking_order
+                style_request.stacking_order >= prev_style_request.stacking_order
             })
         {
             self.window.next_frame.requested_cursor_style = Some(style_request.clone());
