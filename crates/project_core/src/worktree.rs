@@ -68,6 +68,8 @@ use util::{
     ResultExt,
 };
 
+pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
@@ -652,7 +654,7 @@ fn start_background_scan_tasks(
         let abs_path = abs_path.to_path_buf();
         let background = cx.background_executor().clone();
         async move {
-            let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
+            let events = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
             let case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
                 log::error!(
                     "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
@@ -4340,7 +4342,7 @@ impl BackgroundScanner {
             return self.executor.simulate_random_delay().await;
         }
 
-        smol::Timer::after(Duration::from_millis(100)).await;
+        smol::Timer::after(FS_WATCH_LATENCY).await;
     }
 }
 
