@@ -1,8 +1,15 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
-use std::{any::Any, path::PathBuf};
+use project::project_settings::ProjectSettings;
+use serde_json::Value;
+use settings::Settings;
+use std::{
+    any::Any,
+    path::{Path, PathBuf},
+};
 
 pub struct DartLanguageServer;
 
@@ -50,5 +57,17 @@ impl LspAdapter for DartLanguageServer {
 
     async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
         None
+    }
+
+    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+        let settings = ProjectSettings::get_global(cx)
+            .lsp
+            .get("dart")
+            .and_then(|s| s.settings.clone())
+            .unwrap_or_default();
+
+        serde_json::json!({
+            "dart": settings
+        })
     }
 }
