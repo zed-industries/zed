@@ -817,12 +817,13 @@ mod element {
     }
 
     impl Element for PaneAxisElement {
-        type FrameState = ();
+        type BeforeLayout = ();
+        type AfterLayout = ();
 
         fn before_layout(
             &mut self,
             cx: &mut ui::prelude::ElementContext,
-        ) -> (gpui::LayoutId, Self::FrameState) {
+        ) -> (gpui::LayoutId, Self::BeforeLayout) {
             let mut style = Style::default();
             style.flex_grow = 1.;
             style.flex_shrink = 1.;
@@ -835,7 +836,7 @@ mod element {
         fn after_layout(
             &mut self,
             bounds: Bounds<Pixels>,
-            state: &mut Self::FrameState,
+            state: &mut Self::BeforeLayout,
             cx: &mut ElementContext,
         ) {
             // we paint children below that need to be commited
@@ -845,7 +846,8 @@ mod element {
         fn paint(
             &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
-            _frame_state: &mut Self::FrameState,
+            _: &mut Self::BeforeLayout,
+            _: &mut Self::AfterLayout,
             cx: &mut ui::prelude::ElementContext,
         ) {
             let state = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(

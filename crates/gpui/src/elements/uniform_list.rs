@@ -102,9 +102,10 @@ impl Styled for UniformList {
 }
 
 impl Element for UniformList {
-    type FrameState = UniformListFrameState;
+    type BeforeLayout = UniformListFrameState;
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let max_items = self.item_count;
         let item_size = self.measure_item(None, cx);
         let layout_id = self.interactivity.layout(cx, |style, cx| {
@@ -137,7 +138,7 @@ impl Element for UniformList {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        frame_state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         let style = self.interactivity.compute_style(None, cx);
@@ -152,7 +153,7 @@ impl Element for UniformList {
 
         let content_size = Size {
             width: padded_bounds.size.width,
-            height: frame_state.item_size.height * self.item_count + padding.top + padding.bottom,
+            height: before_layout.item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
@@ -217,7 +218,7 @@ impl Element for UniformList {
                                 AvailableSpace::Definite(item_height),
                             );
                             item.commit_root(item_origin, available_space, cx);
-                            frame_state.items.push(item);
+                            before_layout.items.push(item);
                         }
                     });
                 }
@@ -227,13 +228,14 @@ impl Element for UniformList {
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        frame_state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         self.interactivity.paint(bounds, cx, |_, cx| {
             let content_mask = ContentMask { bounds };
             cx.with_content_mask(Some(content_mask), |cx| {
-                for item in &mut frame_state.items {
+                for item in &mut before_layout.items {
                     item.paint(cx);
                 }
             });

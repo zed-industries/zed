@@ -27,9 +27,10 @@ impl IntoElement for Canvas {
 }
 
 impl Element for Canvas {
-    type FrameState = Style;
+    type BeforeLayout = Style;
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::BeforeLayout) {
         let mut style = Style::default();
         style.refine(&self.style);
         let layout_id = cx.before_layout(&style, []);
@@ -39,13 +40,19 @@ impl Element for Canvas {
     fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
-        _style: &mut Style,
+        _before_layout: &mut Style,
         _cx: &mut ElementContext,
     ) {
         // TODO: what do we want to do here?
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, style: &mut Style, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        style: &mut Style,
+        _: &mut Self::AfterLayout,
+        cx: &mut ElementContext,
+    ) {
         style.paint(bounds, cx, |cx| {
             (self.paint_callback.take().unwrap())(&bounds, cx)
         });

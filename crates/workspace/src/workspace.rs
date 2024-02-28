@@ -4602,9 +4602,10 @@ struct DisconnectedOverlay;
 
 // TODO! Actually render this on top
 impl Element for DisconnectedOverlay {
-    type FrameState = AnyElement;
+    type BeforeLayout = AnyElement;
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -4628,7 +4629,7 @@ impl Element for DisconnectedOverlay {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        overlay: &mut Self::FrameState,
+        overlay: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         cx.add_opaque_layer(bounds);
@@ -4637,8 +4638,9 @@ impl Element for DisconnectedOverlay {
 
     fn paint(
         &mut self,
-        bounds: Bounds<Pixels>,
-        overlay: &mut Self::FrameState,
+        _: Bounds<Pixels>,
+        overlay: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         overlay.paint(cx)

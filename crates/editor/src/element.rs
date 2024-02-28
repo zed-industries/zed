@@ -3023,12 +3023,13 @@ enum Invisible {
 }
 
 impl Element for EditorElement {
-    type FrameState = ();
+    type BeforeLayout = ();
+    type AfterLayout = ();
 
     fn before_layout(
         &mut self,
         cx: &mut gpui::ElementContext,
-    ) -> (gpui::LayoutId, Self::FrameState) {
+    ) -> (gpui::LayoutId, Self::BeforeLayout) {
         cx.with_view_id(self.editor.entity_id(), |cx| {
             self.editor.update(cx, |editor, cx| {
                 editor.set_style(self.style.clone(), cx);
@@ -3080,16 +3081,18 @@ impl Element for EditorElement {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::FrameState,
+        state: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
-        todo!("implement after_layout on editor")
+        todo!("implement after_layout on editor");
+        todo!("implement after_layout on editor");
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
-        _frame_state: &mut Self::FrameState,
+        _: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut gpui::ElementContext,
     ) {
         let editor = self.editor.clone();

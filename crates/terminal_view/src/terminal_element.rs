@@ -754,9 +754,10 @@ impl TerminalElement {
 }
 
 impl Element for TerminalElement {
-    type FrameState = ();
+    type BeforeLayout = ();
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext<'_>) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext<'_>) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self.interactivity.layout(cx, |mut style, cx| {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
@@ -771,7 +772,7 @@ impl Element for TerminalElement {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::FrameState,
+        state: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         todo!("implement commit bounds on terminal element");
@@ -780,7 +781,7 @@ impl Element for TerminalElement {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _state: &mut Self::FrameState,
+        _state: &mut Self::BeforeLayout,
         cx: &mut ElementContext<'_>,
     ) {
         let mut layout = self.compute_layout(bounds, cx);

@@ -524,12 +524,13 @@ pub struct ListOffset {
 }
 
 impl Element for List {
-    type FrameState = ListFrameState;
+    type BeforeLayout = ListFrameState;
+    type AfterLayout = ();
 
     fn before_layout(
         &mut self,
         cx: &mut crate::ElementContext,
-    ) -> (crate::LayoutId, Self::FrameState) {
+    ) -> (crate::LayoutId, Self::BeforeLayout) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
                 let mut style = Style::default();
@@ -593,9 +594,9 @@ impl Element for List {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        frame_state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) {
+    ) -> Self::AfterLayout {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
@@ -628,7 +629,7 @@ impl Element for List {
                         layout_response.available_item_space,
                         cx,
                     );
-                    frame_state.items.push(item_element);
+                    before_layout.items.push(item_element);
                     item_origin.y += item_size.height;
                 }
             });
@@ -641,18 +642,19 @@ impl Element for List {
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        frame_state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            for item in &mut frame_state.items {
+            for item in &mut before_layout.items {
                 item.paint(cx);
             }
         });
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
-        let scroll_top = frame_state.scroll_top;
+        let scroll_top = before_layout.scroll_top;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
                 && bounds.contains(&event.position)

@@ -70,9 +70,10 @@ impl ParentElement for Overlay {
 }
 
 impl Element for Overlay {
-    type FrameState = OverlayState;
+    type BeforeLayout = OverlayState;
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::BeforeLayout) {
         let child_layout_ids = self
             .children
             .iter_mut()
@@ -99,16 +100,16 @@ impl Element for Overlay {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        frame_state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
-        if frame_state.child_layout_ids.is_empty() {
+        if before_layout.child_layout_ids.is_empty() {
             return;
         }
 
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
-        for child_layout_id in &frame_state.child_layout_ids {
+        for child_layout_id in &before_layout.child_layout_ids {
             let child_bounds = cx.layout_bounds(*child_layout_id);
             child_min = child_min.min(&child_bounds.origin);
             child_max = child_max.max(&child_bounds.lower_right());
@@ -168,10 +169,13 @@ impl Element for Overlay {
             desired.origin.y = limits.origin.y;
         }
 
-        frame_state.offset = cx.element_offset() + desired.origin - bounds.origin;
-        frame_state.offset = point(frame_state.offset.x.round(), frame_state.offset.y.round());
+        before_layout.offset = cx.element_offset() + desired.origin - bounds.origin;
+        before_layout.offset = point(
+            before_layout.offset.x.round(),
+            before_layout.offset.y.round(),
+        );
 
-        cx.with_absolute_element_offset(frame_state.offset, |cx| {
+        cx.with_absolute_element_offset(before_layout.offset, |cx| {
             cx.break_content_mask(|cx| {
                 for child in &mut self.children {
                     child.after_layout(cx);
@@ -183,7 +187,8 @@ impl Element for Overlay {
     fn paint(
         &mut self,
         _bounds: crate::Bounds<crate::Pixels>,
-        _frame_state: &mut Self::FrameState,
+        _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         cx.break_content_mask(|cx| {

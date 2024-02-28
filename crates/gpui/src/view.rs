@@ -95,9 +95,10 @@ impl<V: 'static> View<V> {
 }
 
 impl<V: Render> Element for View<V> {
-    type FrameState = AnyElement;
+    type BeforeLayout = AnyElement;
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         cx.with_view_id(self.entity_id(), |cx| {
             // TODO! Implement caching for these views as well?
             let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
@@ -109,7 +110,7 @@ impl<V: Render> Element for View<V> {
     fn after_layout(
         &mut self,
         _: Bounds<Pixels>,
-        element: &mut Self::FrameState,
+        element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         cx.with_view_id(self.entity_id(), |cx| element.after_layout(cx));
@@ -118,7 +119,8 @@ impl<V: Render> Element for View<V> {
     fn paint(
         &mut self,
         _: Bounds<Pixels>,
-        element: &mut Self::FrameState,
+        element: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         cx.paint_view(self.entity_id(), |cx| element.paint(cx));
@@ -275,15 +277,16 @@ impl<V: Render> From<View<V>> for AnyView {
 }
 
 impl Element for AnyView {
-    type FrameState = AnyViewFrameState;
+    type BeforeLayout = AnyViewFrameState;
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         cx.with_view_id(self.entity_id(), |cx| {
             cx.with_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
                     let mut element_state = element_state.unwrap();
-                    let mut frame_state = AnyViewFrameState::default();
+                    let mut before_layout = AnyViewFrameState::default();
 
                     if self.cache
                         && !cx.window.dirty_views.contains(&self.entity_id())
@@ -294,15 +297,15 @@ impl Element for AnyView {
                             .map(|element_state| &element_state.root_style)
                         {
                             let layout_id = cx.before_layout(root_style, None);
-                            return ((layout_id, frame_state), element_state);
+                            return ((layout_id, before_layout), element_state);
                         }
                     }
 
                     let (layout_id, element) = (self.before_layout)(self, cx);
-                    frame_state.element = Some(element);
-                    frame_state.root_style = cx.layout_style(layout_id).unwrap().clone();
+                    before_layout.element = Some(element);
+                    before_layout.root_style = cx.layout_style(layout_id).unwrap().clone();
 
-                    ((layout_id, frame_state), element_state)
+                    ((layout_id, before_layout), element_state)
                 },
             )
         })
@@ -311,7 +314,7 @@ impl Element for AnyView {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        frame_state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         cx.with_view_id(self.entity_id(), |cx| {
@@ -321,7 +324,7 @@ impl Element for AnyView {
                     let element_state = element_state.unwrap();
 
                     if !self.cache {
-                        frame_state.element.as_mut().unwrap().after_layout(cx);
+                        before_layout.element.as_mut().unwrap().after_layout(cx);
                         return ((), element_state);
                     }
 
@@ -339,18 +342,18 @@ impl Element for AnyView {
                         }
                     }
 
-                    if let Some(element) = frame_state.element.as_mut() {
+                    if let Some(element) = before_layout.element.as_mut() {
                         element.after_layout(cx);
                     } else {
                         let mut element = (self.before_layout)(self, cx).1;
                         element.after_layout(cx);
-                        frame_state.element = Some(element);
+                        before_layout.element = Some(element);
                     }
 
                     (
                         (),
                         Some(AnyViewState {
-                            root_style: frame_state.root_style.clone(),
+                            root_style: before_layout.root_style.clone(),
                             cache_key: ViewCacheKey {
                                 bounds,
                                 stacking_order: cx.stacking_order().clone(),
@@ -374,7 +377,8 @@ impl Element for AnyView {
     fn paint(
         &mut self,
         _bounds: Bounds<Pixels>,
-        state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         cx.paint_view(self.entity_id(), |cx| {
@@ -382,7 +386,7 @@ impl Element for AnyView {
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
                     let element_state = element_state.unwrap();
-                    if let Some(element) = state.element.as_mut() {
+                    if let Some(element) = before_layout.element.as_mut() {
                         element.paint(cx);
                     } else {
                         let element_state = element_state.as_ref().unwrap();

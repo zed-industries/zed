@@ -27,9 +27,10 @@ impl Svg {
 }
 
 impl Element for Svg {
-    type FrameState = ();
+    type BeforeLayout = ();
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self
             .interactivity
             .layout(cx, |style, cx| cx.before_layout(&style, None));
@@ -39,7 +40,7 @@ impl Element for Svg {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        _frame_state: &mut Self::FrameState,
+        _before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         self.interactivity
@@ -49,7 +50,8 @@ impl Element for Svg {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _frame_state: &mut Self::FrameState,
+        _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) where
         Self: Sized,

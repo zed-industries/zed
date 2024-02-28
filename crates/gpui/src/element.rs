@@ -44,29 +44,34 @@ use std::{any::Any, fmt::Debug, mem, ops::DerefMut};
 /// You can create custom elements by implementing this trait, see the module-level documentation
 /// for more details.
 pub trait Element: 'static + IntoElement {
-    /// The type of state to store for this element between frames. See the module-level documentation
-    /// for details.
-    type FrameState: 'static;
+    /// The type of state returned from [`Element::before_layout`]. A mutable reference to this state is subsequently
+    /// provided to [`Element::after_layout`] and [`Element::paint`].
+    type BeforeLayout: 'static;
+
+    /// The type of state returned from [`Element::after_layout`]. A mutable reference to this state is subsequently
+    /// provided to [`Element::paint`].
+    type AfterLayout: 'static;
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.
     /// Use this method to request a layout from Taffy and initialize the element's state.
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState);
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout);
 
     /// After laying out an element, we need to commit its bounds to the current frame for occlusion
     /// purposes. The state argument is the same state that was returned from [`Element::before_layout()`].
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    );
+    ) -> Self::AfterLayout;
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::before_layout()`].
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     );
 
@@ -154,9 +159,10 @@ impl<C: RenderOnce> Component<C> {
 }
 
 impl<C: RenderOnce> Element for Component<C> {
-    type FrameState = AnyElement;
+    type BeforeLayout = AnyElement;
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut element = self
             .0
             .take()
@@ -170,16 +176,17 @@ impl<C: RenderOnce> Element for Component<C> {
     fn after_layout(
         &mut self,
         _: Bounds<Pixels>,
-        element: &mut Self::FrameState,
+        element: &mut AnyElement,
         cx: &mut ElementContext,
     ) {
-        element.after_layout(cx)
+        element.after_layout(cx);
     }
 
     fn paint(
         &mut self,
         _: Bounds<Pixels>,
-        element: &mut Self::FrameState,
+        element: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         element.paint(cx)
@@ -217,25 +224,26 @@ trait ElementObject {
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
 pub(crate) struct DrawableElement<E: Element> {
     element: E,
-    phase: ElementDrawPhase<E::FrameState>,
+    phase: ElementDrawPhase<E::BeforeLayout, E::AfterLayout>,
 }
 
 #[derive(Default)]
-enum ElementDrawPhase<S> {
+enum ElementDrawPhase<BeforeLayout, AfterLayout> {
     #[default]
     Start,
-    LayoutRequested {
+    BeforeLayout {
         layout_id: LayoutId,
-        frame_state: S,
+        before_layout: BeforeLayout,
     },
     LayoutComputed {
         layout_id: LayoutId,
         available_space: Size<AvailableSpace>,
-        frame_state: S,
+        before_layout: BeforeLayout,
     },
-    BoundsCommitted {
+    AfterLayout {
         bounds: Bounds<Pixels>,
-        frame_state: S,
+        before_layout: BeforeLayout,
+        after_layout: AfterLayout,
     },
     Painted,
 }
@@ -252,10 +260,10 @@ impl<E: Element> DrawableElement<E> {
     fn before_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Start => {
-                let (layout_id, frame_state) = self.element.before_layout(cx);
-                self.phase = ElementDrawPhase::LayoutRequested {
+                let (layout_id, before_layout) = self.element.before_layout(cx);
+                self.phase = ElementDrawPhase::BeforeLayout {
                     layout_id,
-                    frame_state,
+                    before_layout,
                 };
                 layout_id
             }
@@ -265,36 +273,39 @@ impl<E: Element> DrawableElement<E> {
 
     fn after_layout(&mut self, cx: &mut ElementContext) {
         match mem::take(&mut self.phase) {
-            ElementDrawPhase::LayoutRequested {
+            ElementDrawPhase::BeforeLayout {
                 layout_id,
-                mut frame_state,
+                mut before_layout,
             }
             | ElementDrawPhase::LayoutComputed {
                 layout_id,
-                mut frame_state,
+                mut before_layout,
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
-                self.element.after_layout(bounds, &mut frame_state, cx);
-                self.phase = ElementDrawPhase::BoundsCommitted {
+                let after_layout = self.element.after_layout(bounds, &mut before_layout, cx);
+                self.phase = ElementDrawPhase::AfterLayout {
                     bounds,
-                    frame_state,
+                    before_layout,
+                    after_layout,
                 };
             }
             _ => panic!("must call before_layout before after_layout"),
         }
     }
 
-    fn paint(&mut self, cx: &mut ElementContext) -> E::FrameState {
+    fn paint(&mut self, cx: &mut ElementContext) -> E::BeforeLayout {
         match mem::take(&mut self.phase) {
-            ElementDrawPhase::BoundsCommitted {
+            ElementDrawPhase::AfterLayout {
                 bounds,
-                mut frame_state,
+                mut before_layout,
+                mut after_layout,
                 ..
             } => {
-                self.element.paint(bounds, &mut frame_state, cx);
+                self.element
+                    .paint(bounds, &mut before_layout, &mut after_layout, cx);
                 self.phase = ElementDrawPhase::Painted;
-                frame_state
+                before_layout
             }
             _ => panic!("must call after_layout before paint"),
         }
@@ -310,22 +321,22 @@ impl<E: Element> DrawableElement<E> {
         }
 
         let layout_id = match mem::take(&mut self.phase) {
-            ElementDrawPhase::LayoutRequested {
+            ElementDrawPhase::BeforeLayout {
                 layout_id,
-                frame_state,
+                before_layout,
             } => {
                 cx.compute_layout(layout_id, available_space);
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
                     available_space,
-                    frame_state,
+                    before_layout,
                 };
                 layout_id
             }
             ElementDrawPhase::LayoutComputed {
                 layout_id,
                 available_space: prev_available_space,
-                frame_state,
+                before_layout,
             } => {
                 if available_space != prev_available_space {
                     cx.compute_layout(layout_id, available_space);
@@ -333,7 +344,7 @@ impl<E: Element> DrawableElement<E> {
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
                     available_space,
-                    frame_state,
+                    before_layout,
                 };
                 layout_id
             }
@@ -347,7 +358,7 @@ impl<E: Element> DrawableElement<E> {
 impl<E> ElementObject for DrawableElement<E>
 where
     E: Element,
-    E::FrameState: 'static,
+    E::BeforeLayout: 'static,
 {
     fn inner_element(&mut self) -> &mut dyn Any {
         &mut self.element
@@ -381,7 +392,7 @@ impl AnyElement {
     pub(crate) fn new<E>(element: E) -> Self
     where
         E: 'static + Element,
-        E::FrameState: Any,
+        E::BeforeLayout: Any,
     {
         let element = ELEMENT_ARENA
             .with_borrow_mut(|arena| arena.alloc(|| DrawableElement::new(element)))
@@ -433,9 +444,10 @@ impl AnyElement {
 }
 
 impl Element for AnyElement {
-    type FrameState = ();
+    type BeforeLayout = ();
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self.before_layout(cx);
         (layout_id, ())
     }
@@ -443,13 +455,19 @@ impl Element for AnyElement {
     fn after_layout(
         &mut self,
         _: Bounds<Pixels>,
-        _: &mut Self::FrameState,
+        _: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         self.after_layout(cx)
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::FrameState, cx: &mut ElementContext) {
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        _: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
+        cx: &mut ElementContext,
+    ) {
         self.paint(cx)
     }
 }
@@ -478,16 +496,17 @@ impl IntoElement for () {
 }
 
 impl Element for () {
-    type FrameState = ();
+    type BeforeLayout = ();
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         (cx.before_layout(&crate::Style::default(), None), ())
     }
 
     fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
-        _state: &mut Self::FrameState,
+        _state: &mut Self::BeforeLayout,
         _cx: &mut ElementContext,
     ) {
     }
@@ -495,7 +514,8 @@ impl Element for () {
     fn paint(
         &mut self,
         _bounds: Bounds<Pixels>,
-        _state: &mut Self::FrameState,
+        _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         _cx: &mut ElementContext,
     ) {
     }

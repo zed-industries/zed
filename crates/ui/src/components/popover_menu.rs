@@ -166,9 +166,10 @@ pub struct PopoverMenuFrameState {
 }
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
-    type FrameState = PopoverMenuFrameState;
+    type BeforeLayout = PopoverMenuFrameState;
+    type AfterLayout = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::FrameState) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::BeforeLayout) {
         self.with_element_state(cx, |this, element_state, cx| {
             let mut menu_layout_id = None;
 
@@ -213,19 +214,19 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
-        frame_state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         self.with_element_state(cx, |_this, element_state, cx| {
-            if let Some(child) = frame_state.child_element.as_mut() {
+            if let Some(child) = before_layout.child_element.as_mut() {
                 child.after_layout(cx);
             }
 
-            if let Some(child_layout_id) = frame_state.child_layout_id.as_ref() {
+            if let Some(child_layout_id) = before_layout.child_layout_id.as_ref() {
                 element_state.child_bounds = Some(cx.layout_bounds(*child_layout_id));
             }
 
-            if let Some(menu) = frame_state.menu_element.as_mut() {
+            if let Some(menu) = before_layout.menu_element.as_mut() {
                 menu.after_layout(cx);
             }
         })
@@ -234,15 +235,16 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn paint(
         &mut self,
         _: Bounds<gpui::Pixels>,
-        frame_state: &mut Self::FrameState,
+        before_layout: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         self.with_element_state(cx, |_this, element_state, cx| {
-            if let Some(mut child) = frame_state.child_element.take() {
+            if let Some(mut child) = before_layout.child_element.take() {
                 child.paint(cx);
             }
 
-            if let Some(mut menu) = frame_state.menu_element.take() {
+            if let Some(mut menu) = before_layout.menu_element.take() {
                 menu.paint(cx);
 
                 if let Some(child_bounds) = element_state.child_bounds {

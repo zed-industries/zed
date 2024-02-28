@@ -4081,7 +4081,7 @@ impl Editor {
         _line_height: Pixels,
         _gutter_margin: Pixels,
         editor_view: View<Editor>,
-    ) -> Vec<Option<IconButton>> {
+    ) -> Vec<Option<AnyElement>> {
         fold_data
             .iter()
             .enumerate()
@@ -4108,6 +4108,7 @@ impl Editor {
                                 .selected(fold_status == FoldStatus::Folded)
                                 .selected_icon(ui::IconName::ChevronRight)
                                 .size(ui::ButtonSize::None)
+                                .into_any_element()
                         })
                     })
                     .flatten()
