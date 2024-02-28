@@ -7,8 +7,6 @@ use std::sync::Arc;
 use blade_graphics as gpu;
 use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
 use futures::channel::oneshot::Receiver;
-use parking_lot::Mutex;
-use postage::watch::Ref;
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
 };

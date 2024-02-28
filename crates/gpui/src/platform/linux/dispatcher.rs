@@ -64,9 +64,9 @@ impl LinuxDispatcher {
                             .insert_source(
                                 calloop::timer::Timer::from_duration(timer.duration),
                                 move |e, _, _| {
-                                    runnable.take().map(|runnable| {
+                                    if let Some(runnable) = runnable.take() {
                                         runnable.run();
-                                    });
+                                    }
                                     TimeoutAction::Drop
                                 },
                             )
