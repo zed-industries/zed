@@ -242,6 +242,8 @@ impl PlatformInput {
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::*;
 
+    // Any change to the logic here should be reflected in `../linux/utils.rs`
+
     let mut chars_ignoring_modifiers =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
