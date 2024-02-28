@@ -7029,7 +7029,11 @@ impl Project {
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(tasks_file_rx, cx)
+                                StaticSource::new(
+                                    format!("local_tasks_for_workspace_{remote_worktree_id}"),
+                                    tasks_file_rx,
+                                    cx,
+                                )
                             },
                             cx,
                         );
