@@ -26,11 +26,14 @@ struct SourceInInventory {
     kind: TaskSourceKind,
 }
 
-/// TODO kb docs
-#[derive(Debug, Clone)]
+/// Kind of a source the tasks are fetched from, used to display more source information in the UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskSourceKind {
+    /// bash-like commands spawned by users, not associated with any path
     UserInput,
+    /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
     AbsPath(PathBuf),
+    /// Worktree-specific task definitions, e.g. dynamic tasks from open worktree file, or tasks from the worktree's .zed/task.json
     Worktree { id: WorktreeId, abs_path: PathBuf },
 }
 
@@ -61,21 +64,21 @@ impl Inventory {
     /// If the task with the same path was not added yet,
     /// registers a new tasks source to fetch for available tasks later.
     /// Unless a source is removed, ignores future additions for the same path.
-    pub fn add_static_source(
+    pub fn add_source(
         &mut self,
         kind: TaskSourceKind,
-        create_static_source: impl FnOnce(&mut ModelContext<Self>) -> Model<Box<dyn TaskSource>>,
+        create_source: impl FnOnce(&mut ModelContext<Self>) -> Model<Box<dyn TaskSource>>,
         cx: &mut ModelContext<Self>,
     ) {
         let abs_path = kind.abs_path();
         if abs_path.is_some() {
-            if self.sources.iter().any(|s| s.kind.abs_path() == abs_path) {
-                log::debug!("Static source {abs_path:?} already exists, not adding");
+            if let Some(a) =  self.sources.iter().find(|s| s.kind.abs_path() == abs_path) {
+                log::debug!("Source for path {abs_path:?} already exists, not adding. Old kind: {OLD_KIND:?}, new kind: {kind:?}", OLD_KIND = a.kind);
                 return;
             }
         }
 
-        let source = create_static_source(cx);
+        let source = create_source(cx);
         let type_id = source.read(cx).type_id();
         let source = SourceInInventory {
             _subscription: cx.observe(&source, |_, _, cx| {
@@ -167,15 +170,22 @@ impl Inventory {
             })
             .sorted_unstable_by(
                 |((kind_a, task_a), usages_a), ((kind_b, task_b), usages_b)| {
-                    usages_b
-                        .cmp(usages_a)
-                        .reverse()
+                    usages_a
+                        .cmp(usages_b)
                         .then(
-                            kind_b
+                            kind_a
                                 .worktree()
-                                .is_some()
-                                .cmp(&kind_a.worktree().is_some()),
+                                .is_none()
+                                .cmp(&kind_b.worktree().is_none()),
                         )
+                        .then(kind_a.worktree().cmp(&kind_b.worktree()))
+                        .then(
+                            kind_a
+                                .abs_path()
+                                .is_none()
+                                .cmp(&kind_b.abs_path().is_none()),
+                        )
+                        .then(kind_a.abs_path().cmp(&kind_b.abs_path()))
                         .then({
                             NumericPrefixWithSuffix::from_numeric_prefixed_str(task_a.name())
                                 .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
@@ -232,17 +242,17 @@ mod tests {
         );
 
         inventory.update(cx, |inventory, cx| {
-            inventory.add_static_source(
+            inventory.add_source(
                 TaskSourceKind::UserInput,
-                |cx| TestSource::new(vec!["3_task".to_string()], cx),
+                |cx| StaticTestSource::new(vec!["3_task".to_string()], cx),
                 cx,
             );
         });
         inventory.update(cx, |inventory, cx| {
-            inventory.add_static_source(
+            inventory.add_source(
                 TaskSourceKind::UserInput,
                 |cx| {
-                    TestSource::new(
+                    StaticTestSource::new(
                         vec![
                             "1_task".to_string(),
                             "2_task".to_string(),
@@ -308,9 +318,9 @@ mod tests {
         );
 
         inventory.update(cx, |inventory, cx| {
-            inventory.add_static_source(
+            inventory.add_source(
                 TaskSourceKind::UserInput,
-                |cx| TestSource::new(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
+                |cx| StaticTestSource::new(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
                 cx,
             );
         });
@@ -358,9 +368,152 @@ mod tests {
         );
     }
 
-    #[test]
-    fn todo_kb() {
-        todo!("TODO kb tests on namespace conflicts, maybe file watch?")
+    #[gpui::test]
+    fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
+        let inventory_with_statics = cx.update(Inventory::new);
+        let common_name = "common_task_name";
+        let path_1 = Path::new("path_1");
+        let path_2 = Path::new("path_2");
+        let worktree_1 = WorktreeId::from_usize(1);
+        let worktree_path_1 = Path::new("worktree_path_1");
+        let worktree_2 = WorktreeId::from_usize(2);
+        let worktree_path_2 = Path::new("worktree_path_2");
+        inventory_with_statics.update(cx, |inventory, cx| {
+            inventory.add_source(
+                TaskSourceKind::UserInput,
+                |cx| StaticTestSource::new(vec!["user_input".to_string(), common_name.to_string()], cx),
+                cx,
+            );
+            inventory.add_source(
+                TaskSourceKind::AbsPath(path_1.to_path_buf()),
+                |cx| {
+                    StaticTestSource::new(
+                        vec!["static_source_1".to_string(), common_name.to_string()],
+                        cx,
+                    )
+                },
+                cx,
+            );
+            inventory.add_source(
+                TaskSourceKind::AbsPath(path_2.to_path_buf()),
+                |cx| {
+                    StaticTestSource::new(
+                        vec!["static_source_2".to_string(), common_name.to_string()],
+                        cx,
+                    )
+                },
+                cx,
+            );
+            inventory.add_source(
+                TaskSourceKind::Worktree {
+                    id: worktree_1,
+                    abs_path: worktree_path_1.to_path_buf(),
+                },
+                |cx| StaticTestSource::new(vec!["worktree_1".to_string(), common_name.to_string()], cx),
+                cx,
+            );
+            inventory.add_source(
+                TaskSourceKind::Worktree {
+                    id: worktree_2,
+                    abs_path: worktree_path_2.to_path_buf(),
+                },
+                |cx| StaticTestSource::new(vec!["worktree_2".to_string(), common_name.to_string()], cx),
+                cx,
+            );
+        });
+
+        let worktree_independent_tasks = vec![
+            (
+                TaskSourceKind::AbsPath(path_1.to_path_buf()),
+                common_name.to_string(),
+            ),
+            (
+                TaskSourceKind::AbsPath(path_1.to_path_buf()),
+                "static_source_1".to_string(),
+            ),
+            (
+                TaskSourceKind::AbsPath(path_2.to_path_buf()),
+                common_name.to_string(),
+            ),
+            (
+                TaskSourceKind::AbsPath(path_2.to_path_buf()),
+                "static_source_2".to_string(),
+            ),
+            (TaskSourceKind::UserInput, common_name.to_string()),
+            (TaskSourceKind::UserInput, "user_input".to_string()),
+        ];
+        let worktree_1_tasks = vec![
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_1,
+                    abs_path: worktree_path_1.to_path_buf(),
+                },
+                common_name.to_string(),
+            ),
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_1,
+                    abs_path: worktree_path_1.to_path_buf(),
+                },
+                "worktree_1".to_string(),
+            ),
+        ];
+        let worktree_2_tasks = vec![
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_2,
+                    abs_path: worktree_path_2.to_path_buf(),
+                },
+                common_name.to_string(),
+            ),
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_2,
+                    abs_path: worktree_path_2.to_path_buf(),
+                },
+                "worktree_2".to_string(),
+            ),
+        ];
+
+        let all_tasks = worktree_1_tasks
+            .iter()
+            .chain(worktree_2_tasks.iter())
+            // worktree-less tasks come later in the list
+            .chain(worktree_independent_tasks.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for path in [
+            None,
+            Some(path_1),
+            Some(path_2),
+            Some(worktree_path_1),
+            Some(worktree_path_2),
+        ] {
+            assert_eq!(
+                list_tasks(&inventory_with_statics, path, None, false, cx),
+                all_tasks,
+                "Path {path:?} choice should not adjust static runnables"
+            );
+            assert_eq!(
+                list_tasks(&inventory_with_statics, path, Some(worktree_1), false, cx),
+                worktree_1_tasks
+                    .iter()
+                    .chain(worktree_independent_tasks.iter())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                "Path {path:?} choice should not adjust static runnables for worktree_1"
+            );
+            assert_eq!(
+                list_tasks(&inventory_with_statics, path, Some(worktree_2), false, cx),
+                worktree_2_tasks
+                    .iter()
+                    .chain(worktree_independent_tasks.iter())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                "Path {path:?} choice should not adjust static runnables for worktree_2"
+            );
+        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -387,11 +540,11 @@ mod tests {
         }
     }
 
-    struct TestSource {
+    struct StaticTestSource {
         tasks: Vec<TestTask>,
     }
 
-    impl TestSource {
+    impl StaticTestSource {
         fn new(
             task_names: impl IntoIterator<Item = String>,
             cx: &mut AppContext,
@@ -411,10 +564,11 @@ mod tests {
         }
     }
 
-    impl TaskSource for TestSource {
+    impl TaskSource for StaticTestSource {
         fn tasks_for_path(
             &mut self,
-            _path: Option<&Path>,
+            // static task source does not depend on path input
+            _: Option<&Path>,
             _cx: &mut ModelContext<Box<dyn TaskSource>>,
         ) -> Vec<Arc<dyn Task>> {
             self.tasks
@@ -441,6 +595,22 @@ mod tests {
                 .list_tasks(path, worktree, lru, cx)
                 .into_iter()
                 .map(|(_, task)| task.name().to_string())
+                .collect()
+        })
+    }
+
+    fn list_tasks(
+        inventory: &Model<Inventory>,
+        path: Option<&Path>,
+        worktree: Option<WorktreeId>,
+        lru: bool,
+        cx: &mut TestAppContext,
+    ) -> Vec<(TaskSourceKind, String)> {
+        inventory.update(cx, |inventory, cx| {
+            inventory
+                .list_tasks(path, worktree, lru, cx)
+                .into_iter()
+                .map(|(source_kind, task)| (source_kind, task.name().to_string()))
                 .collect()
         })
     }

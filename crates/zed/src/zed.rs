@@ -160,12 +160,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
-                    inventory.add_static_source(
+                    inventory.add_source(
                         TaskSourceKind::UserInput,
                         |cx| OneshotSource::new(cx),
                         cx,
                     );
-                    inventory.add_static_source(
+                    inventory.add_source(
                         TaskSourceKind::AbsPath(paths::TASKS.clone()),
                         |cx| {
                             let tasks_file_rx = watch_config_file(

@@ -7023,7 +7023,7 @@ impl Project {
                     } else {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
-                        task_inventory.add_static_source(
+                        task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
