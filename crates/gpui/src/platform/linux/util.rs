@@ -63,7 +63,7 @@ impl Keystroke {
             _ => {
                 handle_consumed_modifiers = false;
                 xkb::keysym_get_name(key_sym).to_lowercase()
-            },
+            }
         };
 
         // Ignore control characters (and DEL) for the purposes of ime_key,
