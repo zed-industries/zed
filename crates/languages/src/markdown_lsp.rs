@@ -31,7 +31,7 @@ impl LspAdapter for MarkdownOxideLanguageServer {
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         Err(anyhow!(
-            "Markdown Oxide must be availiable in $PATH"
+            "Markdown Oxide must be available in $PATH"
         ))
     }
 
@@ -41,7 +41,7 @@ impl LspAdapter for MarkdownOxideLanguageServer {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         Some(LanguageServerBinary {
-            path: "markdown-oxide".into(),
+            path: "/home/felix/coding/LargerIdeas/ObsidianLS/obsidian-ls/target/release/markdown-oxide".into(),
             env: None,
             arguments: vec![],
         })
