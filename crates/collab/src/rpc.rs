@@ -1742,7 +1742,7 @@ async fn join_hosted_project(
     response: Response<proto::JoinHostedProject>,
     session: Session,
 ) -> Result<()> {
-    let (mut project, replica_id) = session
+    let (project, replica_id) = &mut *session
         .db()
         .await
         .join_hosted_project(
