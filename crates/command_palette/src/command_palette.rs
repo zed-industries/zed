@@ -247,7 +247,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = query.replace(" ", "").to_string();
+            let query = query.replace(" ", "");
             async move {
                 commands.sort_by_key(|action| {
                     (
