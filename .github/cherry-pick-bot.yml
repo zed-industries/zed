@@ -1,2 +1,2 @@
 enabled: true
-preservePullRequestTitle: false
+preservePullRequestTitle: true
