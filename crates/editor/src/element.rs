@@ -912,9 +912,15 @@ impl EditorElement {
                         .as_ref()
                         .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
                     {
-                        cx.set_cursor_style(CursorStyle::PointingHand);
+                        cx.set_cursor_style(
+                            CursorStyle::PointingHand,
+                            interactive_text_bounds.stacking_order.clone(),
+                        );
                     } else {
-                        cx.set_cursor_style(CursorStyle::IBeam);
+                        cx.set_cursor_style(
+                            CursorStyle::IBeam,
+                            interactive_text_bounds.stacking_order.clone(),
+                        );
                     }
                 }
 
@@ -1539,7 +1545,10 @@ impl EditorElement {
         };
         let mut mouse_position = cx.mouse_position();
         if interactive_track_bounds.visibly_contains(&mouse_position, cx) {
-            cx.set_cursor_style(CursorStyle::Arrow);
+            cx.set_cursor_style(
+                CursorStyle::Arrow,
+                interactive_track_bounds.stacking_order.clone(),
+            );
         }
 
         cx.on_mouse_event({

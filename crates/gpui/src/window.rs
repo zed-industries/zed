@@ -1022,13 +1022,10 @@ impl<'a> WindowContext<'a> {
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
-        let cursor_style = self
-            .window
-            .next_frame
-            .requested_cursor_style
-            .take()
-            .unwrap_or(CursorStyle::Arrow);
+        let cursor_style_request = self.window.next_frame.requested_cursor_style.take();
         if self.is_window_active() {
+            let cursor_style =
+                cursor_style_request.map_or(CursorStyle::Arrow, |request| request.style);
             self.platform.set_cursor_style(cursor_style);
         }
 
