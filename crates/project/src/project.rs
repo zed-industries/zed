@@ -94,6 +94,7 @@ pub use fs::*;
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use project_core::project_settings;
 pub use project_core::worktree::{self, *};
+pub use project_core::Location;
 pub use task_inventory::Inventory;
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
@@ -313,12 +314,6 @@ pub struct LanguageServerProgress {
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
     pub path: Arc<Path>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Location {
-    pub buffer: Model<Buffer>,
-    pub range: Range<language::Anchor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
