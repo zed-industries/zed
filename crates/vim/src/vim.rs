@@ -17,7 +17,10 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
-use editor::{movement, Editor, EditorEvent, EditorMode};
+use editor::{
+    movement::{self, FindRange},
+    Editor, EditorEvent, EditorMode,
+};
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, Global, Subscription, View, ViewContext,
     WeakView, WindowContext,
@@ -482,6 +485,11 @@ impl Vim {
                 let find = Motion::FindForward {
                     before,
                     char: text.chars().next().unwrap(),
+                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                        FindRange::MultiLine
+                    } else {
+                        FindRange::SingleLine
+                    },
                 };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
@@ -492,6 +500,11 @@ impl Vim {
                 let find = Motion::FindBackward {
                     after,
                     char: text.chars().next().unwrap(),
+                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                        FindRange::MultiLine
+                    } else {
+                        FindRange::SingleLine
+                    },
                 };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
@@ -628,11 +641,13 @@ struct VimSettings {
     // vim always uses system cliupbaord
     // some magic where yy is system and dd is not.
     pub use_system_clipboard: UseSystemClipboard,
+    pub use_multiline_find: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
     pub use_system_clipboard: Option<UseSystemClipboard>,
+    pub use_multiline_find: Option<bool>,
 }
 
 impl Settings for VimSettings {

@@ -571,7 +571,8 @@
   },
   // Vim settings
   "vim": {
-    "use_system_clipboard": "always"
+    "use_system_clipboard": "always",
+    "use_multiline_find": false
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
