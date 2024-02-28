@@ -524,13 +524,13 @@ impl Render for ExtensionsPage {
                     return this.child(self.render_empty_state(cx));
                 }
 
+                let view = cx.view().clone();
+                let scroll_handle = self.list.clone();
+                let item_count = entries.len();
                 this.child(
-                    canvas({
-                        let view = cx.view().clone();
-                        let scroll_handle = self.list.clone();
-                        let item_count = entries.len();
+                    canvas(
                         move |bounds, cx| {
-                            uniform_list::<_, Div, _>(
+                            let mut list = uniform_list::<_, Div, _>(
                                 view,
                                 "entries",
                                 item_count,
@@ -538,14 +538,12 @@ impl Render for ExtensionsPage {
                             )
                             .size_full()
                             .track_scroll(scroll_handle)
-                            .into_any_element()
-                            .draw(
-                                bounds.origin,
-                                bounds.size.map(AvailableSpace::Definite),
-                                cx,
-                            )
-                        }
-                    })
+                            .into_any_element();
+                            list.commit_root(bounds.origin, bounds.size.into(), cx);
+                            list
+                        },
+                        |_bounds, mut list, cx| list.paint(cx),
+                    )
                     .size_full(),
                 )
             }))

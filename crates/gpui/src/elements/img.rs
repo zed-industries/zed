@@ -94,7 +94,7 @@ impl Element for Img {
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self
             .interactivity
-            .layout(cx, |style, cx| cx.before_layout(&style, []));
+            .before_layout(cx, |style, cx| cx.before_layout(&style, []));
         (layout_id, ())
     }
 
@@ -104,7 +104,7 @@ impl Element for Img {
         _before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
-        self.interactivity()
+        self.interactivity
             .after_layout(bounds, bounds.size, cx, |_, _, _| {})
     }
 

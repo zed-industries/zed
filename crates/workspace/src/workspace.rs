@@ -3821,18 +3821,15 @@ impl Render for Workspace {
                     .border_t()
                     .border_b()
                     .border_color(colors.border)
-                    .child(
-                        canvas({
-                            let this = cx.view().clone();
-                            move |bounds, cx| {
-                                this.update(cx, |this, _cx| {
-                                    this.bounds = *bounds;
-                                })
-                            }
-                        })
+                    .child({
+                        let this = cx.view().clone();
+                        canvas(
+                            move |bounds, cx| this.update(cx, |this, _cx| this.bounds = bounds),
+                            |_, _, _| {},
+                        )
                         .absolute()
-                        .size_full(),
-                    )
+                        .size_full()
+                    })
                     .on_drag_move(
                         cx.listener(|workspace, e: &DragMoveEvent<DraggedDock>, cx| {
                             match e.drag(cx).0 {

@@ -33,7 +33,7 @@ impl Element for Svg {
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self
             .interactivity
-            .layout(cx, |style, cx| cx.before_layout(&style, None));
+            .before_layout(cx, |style, cx| cx.before_layout(&style, None));
         (layout_id, ())
     }
 

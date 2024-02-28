@@ -108,7 +108,7 @@ impl Element for UniformList {
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let max_items = self.item_count;
         let item_size = self.measure_item(None, cx);
-        let layout_id = self.interactivity.layout(cx, |style, cx| {
+        let layout_id = self.interactivity.before_layout(cx, |style, cx| {
             cx.request_measured_layout(style, move |known_dimensions, available_space, _cx| {
                 let desired_height = item_size.height * max_items;
                 let width = known_dimensions

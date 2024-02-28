@@ -551,7 +551,6 @@ impl ChatPanel {
                                 .child(
                                     div()
                                         .absolute()
-                                        .z_index(1)
                                         .right_0()
                                         .w_6()
                                         .bg(background)
@@ -788,7 +787,7 @@ impl Render for ChatPanel {
             .size_full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_flex().z_index(1).child(
+                h_flex().child(
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()

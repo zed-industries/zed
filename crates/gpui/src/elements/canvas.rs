@@ -4,21 +4,26 @@ use crate::{Bounds, Element, ElementContext, IntoElement, Pixels, Style, StyleRe
 
 /// Construct a canvas element with the given paint callback.
 /// Useful for adding short term custom drawing to a view.
-pub fn canvas(callback: impl 'static + FnOnce(&Bounds<Pixels>, &mut ElementContext)) -> Canvas {
+pub fn canvas<T>(
+    after_layout: impl 'static + FnOnce(Bounds<Pixels>, &mut ElementContext) -> T,
+    paint: impl 'static + FnOnce(Bounds<Pixels>, T, &mut ElementContext),
+) -> Canvas<T> {
     Canvas {
-        paint_callback: Some(Box::new(callback)),
+        after_layout: Some(Box::new(after_layout)),
+        paint: Some(Box::new(paint)),
         style: StyleRefinement::default(),
     }
 }
 
 /// A canvas element, meant for accessing the low level paint API without defining a whole
 /// custom element
-pub struct Canvas {
-    paint_callback: Option<Box<dyn FnOnce(&Bounds<Pixels>, &mut ElementContext)>>,
+pub struct Canvas<T> {
+    after_layout: Option<Box<dyn FnOnce(Bounds<Pixels>, &mut ElementContext) -> T>>,
+    paint: Option<Box<dyn FnOnce(Bounds<Pixels>, T, &mut ElementContext)>>,
     style: StyleRefinement,
 }
 
-impl IntoElement for Canvas {
+impl<T: 'static> IntoElement for Canvas<T> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -26,9 +31,9 @@ impl IntoElement for Canvas {
     }
 }
 
-impl Element for Canvas {
+impl<T: 'static> Element for Canvas<T> {
     type BeforeLayout = Style;
-    type AfterLayout = ();
+    type AfterLayout = Option<T>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::BeforeLayout) {
         let mut style = Style::default();
@@ -39,27 +44,28 @@ impl Element for Canvas {
 
     fn after_layout(
         &mut self,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _before_layout: &mut Style,
-        _cx: &mut ElementContext,
-    ) {
-        // TODO: what do we want to do here?
+        cx: &mut ElementContext,
+    ) -> Option<T> {
+        Some(self.after_layout.take().unwrap()(bounds, cx))
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         style: &mut Style,
-        _: &mut Self::AfterLayout,
+        after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
+        let after_layout = after_layout.take().unwrap();
         style.paint(bounds, cx, |cx| {
-            (self.paint_callback.take().unwrap())(&bounds, cx)
+            (self.paint.take().unwrap())(bounds, after_layout, cx)
         });
     }
 }
 
-impl Styled for Canvas {
+impl<T> Styled for Canvas<T> {
     fn style(&mut self) -> &mut crate::StyleRefinement {
         &mut self.style
     }

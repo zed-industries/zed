@@ -1065,7 +1065,7 @@ impl Element for Div {
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut child_layout_ids = SmallVec::new();
-        let layout_id = self.interactivity.layout(cx, |style, cx| {
+        let layout_id = self.interactivity.before_layout(cx, |style, cx| {
             cx.with_text_style(style.text_style().cloned(), |cx| {
                 child_layout_ids = self
                     .children
@@ -1226,7 +1226,7 @@ impl InteractiveBounds {
 
 impl Interactivity {
     /// Layout this element according to this interactivity state's configured styles
-    pub fn layout(
+    pub fn before_layout(
         &mut self,
         cx: &mut ElementContext,
         f: impl FnOnce(Style, &mut ElementContext) -> LayoutId,
@@ -1289,13 +1289,13 @@ impl Interactivity {
     }
 
     /// Commit the bounds of this element according to this interactivity state's configured styles.
-    pub fn after_layout(
+    pub fn after_layout<R>(
         &mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
-    ) {
+        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext) -> R,
+    ) -> R {
         self.content_size = content_size;
         cx.with_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
@@ -1316,12 +1316,12 @@ impl Interactivity {
                         }
 
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
-                        f(&style, scroll_offset, cx);
-                        ((), element_state)
+                        let result = f(&style, scroll_offset, cx);
+                        (result, element_state)
                     })
                 })
             },
-        );
+        )
     }
 
     fn clamp_scroll_position(

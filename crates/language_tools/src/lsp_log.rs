@@ -807,7 +807,7 @@ impl Render for LspLogToolbarItemView {
                                         .justify_between()
                                         .child(Label::new(RPC_MESSAGES))
                                         .child(
-                                            div().z_index(120).child(
+                                            div().child(
                                                 Checkbox::new(
                                                     ix,
                                                     if row.rpc_trace_enabled {
