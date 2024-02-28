@@ -108,6 +108,36 @@
 {"Key":"i"}
 {"Key":"p"}
 {"Get":{"state":"\n\nˇ\n\n\nThe quick brown fox jumps\nover the lazy dog.\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\n\nThe quick brown fox jumps\nover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇThe quick brown fox jumps\nover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumpsˇ\nover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nˇover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nover the lazy dog.ˇ\n"}}
+{"Key":"c"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Insert"}}
 {"Put":{"state":"ˇ\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nover the lazy dog.\n"}}
 {"Key":"c"}
 {"Key":"a"}
@@ -128,6 +158,36 @@
 {"Key":"a"}
 {"Key":"p"}
 {"Get":{"state":"\n\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\n\nThe quick brown fox jumps\nover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\n","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇThe quick brown fox jumps\nover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumpsˇ\nover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nˇover the lazy dog.\n"}}
+{"Key":"c"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ","mode":"Insert"}}
+{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nover the lazy dog.ˇ\n"}}
+{"Key":"c"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ","mode":"Insert"}}
 {"Put":{"state":"ˇThe quick brown fox jumps\nover the lazy dog.\n\n\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\n\n"}}
 {"Key":"c"}
 {"Key":"i"}
@@ -248,92 +308,17 @@
 {"Key":"a"}
 {"Key":"p"}
 {"Get":{"state":"The quick brown fox jumps\nover the lazy dog.\n\n\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Normal"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\n\nThe quick brown fox jumps\nover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇThe quick brown fox jumps\nover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumpsˇ\nover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nˇover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nover the lazy dog.ˇ\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ\n","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\n\nThe quick brown fox jumps\nover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\n","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\nˇ\n","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇThe quick brown fox jumps\nover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumpsˇ\nover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nˇover the lazy dog.\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ","mode":"Insert"}}
-{"Put":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nThe quick brown fox jumps\nover the lazy dog.ˇ\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"\n\nThe quick brown fox jumps\nover the lazy dog.\n\n\nˇ","mode":"Insert"}}
 {"Put":{"state":"ˇThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
 {"Key":"c"}
 {"Key":"i"}
 {"Key":"p"}
 {"Get":{"state":"ˇ\n\n \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n","mode":"Insert"}}
-{"Put":{"state":"The quick brown fox jumps\nˇover the lazy dog.\n\n \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"ˇ\n\n \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n","mode":"Insert"}}
-{"Put":{"state":"The quick brown fox jumps\nover the lazy dog.\nˇ\n \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"The quick brown fox jumps\nover the lazy dog.\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n","mode":"Insert"}}
 {"Put":{"state":"The quick brown fox jumps\nover the lazy dog.\n\nˇ \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
 {"Key":"c"}
 {"Key":"i"}
 {"Key":"p"}
 {"Get":{"state":"The quick brown fox jumps\nover the lazy dog.\nˇ\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n","mode":"Insert"}}
 {"Put":{"state":"The quick brown fox jumps\nover the lazy dog.\n\n \t\n\nˇThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
-{"Key":"c"}
-{"Key":"i"}
-{"Key":"p"}
-{"Get":{"state":"The quick brown fox jumps\nover the lazy dog.\n\n \t\n\nˇ\n\n \t\n\t \t\n","mode":"Insert"}}
-{"Put":{"state":"The quick brown fox jumps\nover the lazy dog.\n\n \t\n\nThe quick brown fox jumps\nˇover the lazy dog.\n\n \t\n\t \t\n"}}
 {"Key":"c"}
 {"Key":"i"}
 {"Key":"p"}
@@ -358,27 +343,12 @@
 {"Key":"a"}
 {"Key":"p"}
 {"Get":{"state":"ˇ\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n","mode":"Insert"}}
-{"Put":{"state":"The quick brown fox jumps\nˇover the lazy dog.\n\n \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"ˇ\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n","mode":"Insert"}}
-{"Put":{"state":"The quick brown fox jumps\nover the lazy dog.\nˇ\n \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"The quick brown fox jumps\nover the lazy dog.\nˇ\n\n \t\n\t \t\n","mode":"Insert"}}
 {"Put":{"state":"The quick brown fox jumps\nover the lazy dog.\n\nˇ \t\n\nThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
 {"Key":"c"}
 {"Key":"a"}
 {"Key":"p"}
 {"Get":{"state":"The quick brown fox jumps\nover the lazy dog.\nˇ\n\n \t\n\t \t\n","mode":"Insert"}}
 {"Put":{"state":"The quick brown fox jumps\nover the lazy dog.\n\n \t\n\nˇThe quick brown fox jumps\nover the lazy dog.\n\n \t\n\t \t\n"}}
-{"Key":"c"}
-{"Key":"a"}
-{"Key":"p"}
-{"Get":{"state":"The quick brown fox jumps\nover the lazy dog.\n\n \t\n\nˇ","mode":"Insert"}}
-{"Put":{"state":"The quick brown fox jumps\nover the lazy dog.\n\n \t\n\nThe quick brown fox jumps\nˇover the lazy dog.\n\n \t\n\t \t\n"}}
 {"Key":"c"}
 {"Key":"a"}
 {"Key":"p"}

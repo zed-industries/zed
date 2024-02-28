@@ -1079,18 +1079,18 @@ mod test {
             ˇfox jumps overˇ
             the lazy dog.ˇ
         "},
-        // Heading newline paragraph
+        // Heading blank paragraph and trailing normal paragraph
         indoc! {"
             ˇ
             ˇ
             ˇThe quick brown fox jumps
             ˇover the lazy dog.
-
-
-            The quick brown fox jumps
-            over the lazy dog.
+            ˇ
+            ˇ
+            ˇThe quick brown fox jumpsˇ
+            ˇover the lazy dog.ˇ
         "},
-        // Newline paragraph and trailing newline paragraph
+        // Inserted blank paragraph and trailing blank paragraph
         indoc! {"
             ˇThe quick brown fox jumps
             ˇover the lazy dog.
@@ -1103,26 +1103,15 @@ mod test {
             ˇ
             ˇ
         "},
-        // Trailing normal paragraph
-        indoc! {"
-
-
-            The quick brown fox jumps
-            over the lazy dog.
-            ˇ
-            ˇ
-            ˇThe quick brown fox jumpsˇ
-            ˇover the lazy dog.ˇ
-        "},
-        // "Empty" line paragraph with whitespace characters
+        // "Blank" paragraph with whitespace characters
         indoc! {"
             ˇThe quick brown fox jumps
-            ˇover the lazy dog.
-            ˇ
+            over the lazy dog.
+
             ˇ \t
 
             ˇThe quick brown fox jumps
-            ˇover the lazy dog.ˇ
+            over the lazy dog.ˇ
             ˇ
             ˇ \t
             \t \t
