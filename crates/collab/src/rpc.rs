@@ -277,6 +277,7 @@ impl Server {
             .add_message_handler(leave_channel_chat)
             .add_request_handler(send_channel_message)
             .add_request_handler(remove_channel_message)
+            .add_request_handler(update_channel_message)
             .add_request_handler(get_channel_messages)
             .add_request_handler(get_channel_messages_by_id)
             .add_request_handler(get_notifications)
@@ -3029,6 +3030,7 @@ async fn send_channel_message(
         timestamp: timestamp.unix_timestamp() as u64,
         nonce: Some(nonce),
         reply_to_message_id: request.reply_to_message_id,
+        edited_at: None,
     };
     broadcast(
         Some(session.connection_id),
@@ -3084,6 +3086,36 @@ async fn remove_channel_message(
         .await
         .remove_channel_message(channel_id, message_id, session.user_id)
         .await?;
+    broadcast(Some(session.connection_id), connection_ids, |connection| {
+        session.peer.send(connection, request.clone())
+    });
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn update_channel_message(
+    request: proto::UpdateChannelMessage,
+    response: Response<proto::UpdateChannelMessage>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let message_id = MessageId::from_proto(request.message_id);
+    let connection_ids = session
+        .db()
+        .await
+        .update_channel_message(
+            channel_id,
+            message_id,
+            session.user_id,
+            request.body.as_str(),
+            &request.mentions,
+            request
+                .reply_to_message_id
+                .map(|id| MessageId::from_proto(id)),
+            OffsetDateTime::now_utc(),
+        )
+        .await?;
+
     broadcast(Some(session.connection_id), connection_ids, |connection| {
         session.peer.send(connection, request.clone())
     });

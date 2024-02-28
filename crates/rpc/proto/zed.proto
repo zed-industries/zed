@@ -168,6 +168,7 @@ message Envelope {
         GetChannelMessages get_channel_messages = 140;
         GetChannelMessagesResponse get_channel_messages_response = 141;
         RemoveChannelMessage remove_channel_message = 142;
+        UpdateChannelMessage update_channel_message = 162;
         AckChannelMessage ack_channel_message = 143;
         GetChannelMessagesById get_channel_messages_by_id = 144;
 
@@ -1133,6 +1134,14 @@ message RemoveChannelMessage {
     uint64 message_id = 2;
 }
 
+message UpdateChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+    string body = 3;
+    repeated ChatMention mentions = 4;
+    optional uint64 reply_to_message_id = 5;
+}
+
 message AckChannelMessage {
     uint64 channel_id = 1;
     uint64 message_id = 2;
@@ -1178,6 +1187,7 @@ message ChannelMessage {
     Nonce nonce = 5;
     repeated ChatMention mentions = 6;
     optional uint64 reply_to_message_id = 7;
+    optional uint64 edited_at = 8;
 }
 
 message ChatMention {

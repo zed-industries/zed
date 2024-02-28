@@ -51,6 +51,7 @@ pub struct ChannelMessage {
     pub nonce: u128,
     pub mentions: Vec<(Range<usize>, UserId)>,
     pub reply_to_message_id: Option<u64>,
+    pub edited_at: Option<OffsetDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -93,6 +94,7 @@ impl EventEmitter<ChannelChatEvent> for ChannelChat {}
 pub fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelChat::handle_message_sent);
     client.add_model_message_handler(ChannelChat::handle_message_removed);
+    //TODO: client.add_model_message_handler(ChannelChat::handle_message_updated);
 }
 
 impl ChannelChat {
@@ -187,6 +189,7 @@ impl ChannelChat {
                     mentions: message.mentions.clone(),
                     nonce,
                     reply_to_message_id: message.reply_to_message_id,
+                    edited_at: None,
                 },
                 &(),
             ),
@@ -230,6 +233,52 @@ impl ChannelChat {
             })?;
             Ok(())
         })
+    }
+
+    pub fn update_message(
+        &mut self,
+        id: u64,
+        message: MessageParams,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Task<Result<()>>> {
+        let current_user = self
+            .user_store
+            .read(cx)
+            .current_user()
+            .ok_or_else(|| anyhow!("current_user is not present"))?;
+        let nonce = self.rng.gen();
+
+        let updated_message = ChannelMessage {
+            id: ChannelMessageId::Saved(id),
+            body: message.text.clone(),
+            sender: current_user,
+            timestamp: OffsetDateTime::now_utc(),
+            mentions: message.mentions.clone(),
+            nonce,
+            reply_to_message_id: message.reply_to_message_id,
+            edited_at: Some(OffsetDateTime::now_utc()),
+        };
+
+        let mut cursor = self.messages.cursor::<(ChannelMessageId, Count)>();
+        let result: Option<&ChannelMessage> = cursor.find(|m| updated_message.id == m.id);
+
+        println!("{:#?}", result);
+        println!("{:#?}", cursor.item_summary().unwrap().count);
+
+        let response = self.rpc.request(proto::UpdateChannelMessage {
+            channel_id: self.channel_id,
+            message_id: id,
+            body: message.text,
+            mentions: mentions_to_proto(&message.mentions),
+            reply_to_message_id: message.reply_to_message_id,
+        });
+        Ok(cx.spawn(move |this, mut cx| async move {
+            response.await?;
+            this.update(&mut cx, |this, cx| {
+                this.message_update(id, cx);
+            })?;
+            Ok(())
+        }))
     }
 
     pub fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<Option<()>>> {
@@ -593,6 +642,25 @@ impl ChannelChat {
             }
         }
     }
+
+    fn message_update(&mut self, id: u64, cx: &mut ModelContext<Self>) {
+        // let mut cursor = self.messages.cursor::<ChannelMessageId>();
+
+        // let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
+        // if let Some(item) = cursor.item() {
+        //     if item.id == ChannelMessageId::Saved(id) {
+        //         let ix = messages.summary().count;
+        //         cursor.next(&());
+        //         // messages.append(cursor.suffix(&()), &());
+        //         // drop(cursor);
+        //         // self.messages = messages;
+        //         cx.emit(ChannelChatEvent::MessagesUpdated {
+        //             old_range: ix..ix + 1,
+        //             new_count: 0,
+        //         });
+        //     }
+        // }
+    }
 }
 
 async fn messages_from_proto(
@@ -617,6 +685,18 @@ impl ChannelMessage {
                 user_store.get_user(message.sender_id, cx)
             })?
             .await?;
+
+        let edited_at = message
+            .edited_at
+            .map(|t| -> Option<OffsetDateTime> {
+                if let Ok(a) = OffsetDateTime::from_unix_timestamp(t as i64) {
+                    return Some(a);
+                }
+
+                None
+            })
+            .flatten();
+
         Ok(ChannelMessage {
             id: ChannelMessageId::Saved(message.id),
             body: message.body,
@@ -635,6 +715,7 @@ impl ChannelMessage {
                 .ok_or_else(|| anyhow!("nonce is required"))?
                 .into(),
             reply_to_message_id: message.reply_to_message_id,
+            edited_at,
         })
     }
 

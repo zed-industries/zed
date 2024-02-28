@@ -70,7 +70,10 @@ struct SerializedChatPanel {
     width: Option<Pixels>,
 }
 
-actions!(chat_panel, [ToggleFocus, CloseReplyPreview]);
+actions!(
+    chat_panel,
+    [ToggleFocus, CloseReplyPreview, CancelEditMessage]
+);
 
 impl ChatPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
@@ -415,7 +418,7 @@ impl ChatPanel {
         let _is_pending = message.is_pending();
 
         let belongs_to_user = Some(message.sender.id) == self.client.user_id();
-        let can_delete_message = belongs_to_user || is_admin;
+        let can_modify_message = belongs_to_user || is_admin;
 
         let element_id: ElementId = match message.id {
             ChannelMessageId::Saved(id) => ("saved-message", id).into(),
@@ -478,7 +481,7 @@ impl ChatPanel {
                             .child(
                                 Label::new(format_timestamp(
                                     OffsetDateTime::now_utc(),
-                                    message.timestamp,
+                                    message.edited_at.unwrap_or(message.timestamp),
                                     self.local_timezone,
                                     None,
                                 ))
@@ -548,6 +551,8 @@ impl ChatPanel {
                                         el.visible_on_hover("")
                                     })
                                     .when_some(message_id, |el, message_id| {
+                                        let message = message.clone();
+
                                         el.child(
                                             popover_menu(("menu", message_id))
                                                 .trigger(IconButton::new(
@@ -558,7 +563,8 @@ impl ChatPanel {
                                                     Some(Self::render_message_menu(
                                                         &this,
                                                         message_id,
-                                                        can_delete_message,
+                                                        &message,
+                                                        can_modify_message,
                                                         cx,
                                                     ))
                                                 }),
@@ -580,9 +586,12 @@ impl ChatPanel {
     fn render_message_menu(
         this: &View<Self>,
         message_id: u64,
-        can_delete_message: bool,
+        message: &ChannelMessage,
+        can_modify_message: bool,
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
+        let reply_to_message_id = message.reply_to_message_id;
+
         let menu = {
             ContextMenu::build(cx, move |menu, cx| {
                 menu.entry(
@@ -595,7 +604,39 @@ impl ChatPanel {
                         })
                     }),
                 )
-                .when(can_delete_message, move |menu| {
+                .when(can_modify_message, |menu| {
+                    let message_body = message.body.clone();
+
+                    menu.entry(
+                        "Edit message",
+                        None,
+                        cx.handler_for(&this, move |this, cx| {
+                            this.message_editor.update(cx, |editor, cx| {
+                                let buffer = editor
+                                    .editor
+                                    .read(cx)
+                                    .buffer()
+                                    .read(cx)
+                                    .as_singleton()
+                                    .expect("message editor must be singleton");
+
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.set_text(message_body.clone(), cx)
+                                });
+
+                                if let Some(reply_to_message_id) = reply_to_message_id {
+                                    editor.set_reply_to_message_id(reply_to_message_id);
+                                } else {
+                                    editor.clear_reply_to_message_id();
+                                }
+
+                                editor.set_edit_message_id(message_id);
+                                editor.focus_handle(cx).focus(cx);
+                            })
+                        }),
+                    )
+                })
+                .when(can_modify_message, |menu| {
                     menu.entry(
                         "Delete message",
                         None,
@@ -636,11 +677,24 @@ impl ChatPanel {
                 .message_editor
                 .update(cx, |editor, cx| editor.take_message(cx));
 
-            if let Some(task) = chat
-                .update(cx, |chat, cx| chat.send_message(message, cx))
-                .log_err()
-            {
-                task.detach();
+            if let Some(id) = self.message_editor.read(cx).edit_message_id() {
+                self.message_editor.update(cx, |editor, _| {
+                    editor.clear_edit_message_id();
+                });
+
+                if let Some(task) = chat
+                    .update(cx, |chat, cx| chat.update_message(id, message, cx))
+                    .log_err()
+                {
+                    task.detach();
+                }
+            } else {
+                if let Some(task) = chat
+                    .update(cx, |chat, cx| chat.send_message(message, cx))
+                    .log_err()
+                {
+                    task.detach();
+                }
             }
         }
     }
@@ -725,11 +779,31 @@ impl ChatPanel {
         self.message_editor
             .update(cx, |editor, _| editor.clear_reply_to_message_id());
     }
+
+    fn cancel_edit_message(&mut self, _: &CancelEditMessage, cx: &mut ViewContext<Self>) {
+        self.message_editor.update(cx, |editor, cx| {
+            editor.clear_edit_message_id();
+            editor.clear_reply_to_message_id();
+
+            let buffer = editor
+                .editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("message editor must be singleton");
+
+            buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
+        });
+    }
 }
 
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let reply_to_message_id = self.message_editor.read(cx).reply_to_message_id();
+        let message_editor = self.message_editor.read(cx);
+
+        let reply_to_message_id = message_editor.reply_to_message_id();
+        let edit_message_id = message_editor.edit_message_id();
 
         v_flex()
             .key_context("ChatPanel")
@@ -785,6 +859,35 @@ impl Render for ChatPanel {
                     )
                 }
             }))
+            // .when(!self.is_scrolled_to_bottom, |el| {
+            //     el.child(div().border_t_1().border_color(cx.theme().colors().border))
+            // })
+            .when_some(edit_message_id, |el, _| {
+                el.child(
+                    h_flex()
+                        .px_2()
+                        .text_ui_xs()
+                        .justify_between()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().background)
+                        .child("Close edit message")
+                        .child(
+                            IconButton::new("cancel-edit-message", IconName::Close)
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(|cx| {
+                                    Tooltip::for_action(
+                                        "Cancel edit message",
+                                        &CancelEditMessage,
+                                        cx,
+                                    )
+                                })
+                                .on_click(cx.listener(move |_, _, cx| {
+                                    cx.dispatch_action(CancelEditMessage.boxed_clone())
+                                })),
+                        ),
+                )
+            })
             .when_some(reply_to_message_id, |el, reply_to_message_id| {
                 let reply_message = self
                     .active_chat()
@@ -803,8 +906,8 @@ impl Render for ChatPanel {
                 el.when_some(reply_message, |el, reply_message| {
                     el.child(
                         div()
-                            .when(!self.is_scrolled_to_bottom, |el| {
-                                el.border_t_1().border_color(cx.theme().colors().border)
+                            .when(edit_message_id.is_some(), |el| {
+                                el.border_t_2().border_color(cx.theme().colors().border)
                             })
                             .flex()
                             .w_full()
@@ -836,6 +939,7 @@ impl Render for ChatPanel {
                     h_flex()
                         .key_context("MessageEditor")
                         .on_action(cx.listener(ChatPanel::close_reply_preview))
+                        .on_action(cx.listener(ChatPanel::cancel_edit_message))
                         .when(
                             !self.is_scrolled_to_bottom && reply_to_message_id.is_none(),
                             |el| el.border_t_1().border_color(cx.theme().colors().border),
@@ -1024,6 +1128,7 @@ mod tests {
             nonce: 5,
             mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
             reply_to_message_id: None,
+            edited_at: None,
         };
 
         let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);

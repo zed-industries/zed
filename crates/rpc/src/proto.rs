@@ -235,6 +235,7 @@ messages!(
     (ReloadBuffersResponse, Foreground),
     (RemoveChannelMember, Foreground),
     (RemoveChannelMessage, Foreground),
+    (UpdateChannelMessage, Foreground),
     (RemoveContact, Foreground),
     (RemoveProjectCollaborator, Foreground),
     (RenameChannel, Foreground),
@@ -345,6 +346,7 @@ request_messages!(
     (ReloadBuffers, ReloadBuffersResponse),
     (RemoveChannelMember, Ack),
     (RemoveChannelMessage, Ack),
+    (UpdateChannelMessage, Ack),
     (RemoveContact, Ack),
     (RenameChannel, RenameChannelResponse),
     (RenameProjectEntry, ProjectEntryResponse),
@@ -429,6 +431,7 @@ entity_messages!(
     {channel_id, Channel},
     ChannelMessageSent,
     RemoveChannelMessage,
+    UpdateChannelMessage,
     UpdateChannelBuffer,
     UpdateChannelBufferCollaborators,
 );

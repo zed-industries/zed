@@ -572,6 +572,12 @@
     }
   },
   {
+    "context": "ChatPanel > MessageEditor",
+    "bindings": {
+      "escape": "chat_panel::CancelEditMessage"
+    }
+  },
+  {
     "context": "Terminal",
     "bindings": {
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
