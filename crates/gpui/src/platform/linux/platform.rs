@@ -361,6 +361,7 @@ impl Platform for LinuxPlatform {
         })
     }
 
+    //todo!(linux)
     fn app_path(&self) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::app_path is not implemented yet",
