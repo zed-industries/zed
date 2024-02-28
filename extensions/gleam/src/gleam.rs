@@ -15,6 +15,7 @@ impl zed::Extension for GleamExtension {
                 pre_release: false,
             },
         )?;
+
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
             "gleam-{version}-{arch}-{os}.tar.gz",
@@ -31,13 +32,19 @@ impl zed::Extension for GleamExtension {
             },
         );
 
-        println!("{}", &asset_name);
-
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
+
+        println!("{}", &asset_name);
+
+        zed::download_file(
+            &asset.download_url,
+            "gleam",
+            zed::DownloadedFileType::GzipTar,
+        )?;
 
         Ok(zed::Command {
             command: "ok".into(),

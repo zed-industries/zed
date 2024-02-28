@@ -11,6 +11,14 @@ pub trait Extension: Send + Sync {
     ) -> Result<Command>;
 }
 
+pub fn download_file(
+    url: &str,
+    output_filename: &str,
+    file_type: wit::DownloadedFileType,
+) -> Result<()> {
+    wit::download_file(url, output_filename, file_type).map(|_| ())
+}
+
 #[macro_export]
 macro_rules! register_extension {
     ($extension:path) => {

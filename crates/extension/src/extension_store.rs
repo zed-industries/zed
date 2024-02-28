@@ -206,7 +206,12 @@ impl ExtensionStore {
             extensions_being_installed: Default::default(),
             extensions_being_uninstalled: Default::default(),
             reload_task: None,
-            wasm_host: WasmHost::new(fs.clone(), http_client.clone(), node_runtime),
+            wasm_host: WasmHost::new(
+                fs.clone(),
+                http_client.clone(),
+                node_runtime,
+                extensions_dir.join("work"),
+            ),
             wasm_extensions: Vec::new(),
             needs_reload: false,
             modified_extensions: Default::default(),
@@ -568,9 +573,13 @@ impl ExtensionStore {
                     .read_to_end(&mut wasm_bytes)
                     .expect("failed to read wasm");
                 wasm_extensions.push((
-                    extension_manifest,
+                    extension_manifest.clone(),
                     wasm_host
-                        .load_extension(wasm_bytes, cx.background_executor().clone())
+                        .load_extension(
+                            wasm_bytes,
+                            extension_manifest,
+                            cx.background_executor().clone(),
+                        )
                         .await
                         .expect("failed to load wasm extension"),
                 ));

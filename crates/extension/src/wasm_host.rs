@@ -1,21 +1,26 @@
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use async_trait::async_trait;
 use fs::Fs;
 use futures::{
     channel::{mpsc::UnboundedSender, oneshot},
     future::BoxFuture,
+    io::BufReader,
     Future, FutureExt, StreamExt as _,
 };
 use gpui::BackgroundExecutor;
 use language::WASM_ENGINE;
 use node_runtime::NodeRuntime;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use util::http::HttpClient;
 use wasmtime::{
     component::{Component, Linker, Resource, ResourceTable},
     Engine, Store,
 };
 use wasmtime_wasi::preview2::{command as wasi_command, WasiCtx, WasiCtxBuilder, WasiView};
+
+use crate::ExtensionManifest;
 
 pub mod wit {
     wasmtime::component::bindgen!({
@@ -33,6 +38,7 @@ pub(crate) struct WasmHost {
     http_client: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
     fs: Arc<dyn Fs>,
+    work_dir: PathBuf,
 }
 
 #[derive(Clone)]
@@ -41,6 +47,7 @@ pub struct WasmExtension {
 }
 
 pub(crate) struct WasmState {
+    manifest: Arc<ExtensionManifest>,
     table: ResourceTable,
     ctx: WasiCtx,
     host: Arc<WasmHost>,
@@ -56,6 +63,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
+        work_dir: PathBuf,
     ) -> Arc<Self> {
         let engine = WASM_ENGINE.clone();
         let mut linker = Linker::new(&engine);
@@ -65,6 +73,7 @@ impl WasmHost {
             engine,
             linker: Arc::new(linker),
             fs,
+            work_dir,
             http_client,
             node_runtime,
         })
@@ -73,6 +82,7 @@ impl WasmHost {
     pub fn load_extension(
         self: &Arc<Self>,
         wasm_bytes: Vec<u8>,
+        manifest: Arc<ExtensionManifest>,
         executor: BackgroundExecutor,
     ) -> impl 'static + Future<Output = Result<WasmExtension>> {
         let this = self.clone();
@@ -82,6 +92,7 @@ impl WasmHost {
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
+                    manifest,
                     table: ResourceTable::new(),
                     ctx: WasiCtxBuilder::new()
                         .inherit_stdio()
@@ -203,11 +214,12 @@ impl wit::ExtensionImports for WasmState {
             })
         }
 
-        Ok(inner(self, repo, options).await.map_err(|e| e.to_string()))
+        Ok(inner(self, repo, options)
+            .await
+            .map_err(|err| err.to_string()))
     }
 
     async fn current_platform(&mut self) -> Result<(wit::Os, wit::Architecture)> {
-        dbg!(std::env::consts::OS, std::env::consts::ARCH);
         Ok((
             match std::env::consts::OS {
                 "macos" => wit::Os::Mac,
@@ -222,6 +234,77 @@ impl wit::ExtensionImports for WasmState {
                 _ => panic!("unsupported architecture"),
             },
         ))
+    }
+
+    async fn download_file(
+        &mut self,
+        url: String,
+        filename: String,
+        file_type: wit::DownloadedFileType,
+    ) -> wasmtime::Result<Result<(), String>> {
+        async fn inner(
+            this: &mut WasmState,
+            url: String,
+            filename: String,
+            file_type: wit::DownloadedFileType,
+        ) -> anyhow::Result<()> {
+            let container_dir = this.host.work_dir.join(this.manifest.id.as_ref());
+            let destination_path = container_dir.join(&filename);
+
+            let mut response = this
+                .host
+                .http_client
+                .get(&url, Default::default(), true)
+                .await
+                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+
+            if !response.status().is_success() {
+                Err(anyhow!(
+                    "download failed with status {}",
+                    response.status().to_string()
+                ))?;
+            }
+            let body = BufReader::new(response.body_mut());
+
+            match file_type {
+                wit::DownloadedFileType::Gzip => {
+                    let decompressed_bytes = GzipDecoder::new(body);
+                    futures::pin_mut!(decompressed_bytes);
+                    this.host
+                        .fs
+                        .create_file_with(&destination_path, decompressed_bytes)
+                        .await?;
+                }
+                wit::DownloadedFileType::GzipTar => {
+                    let decompressed_bytes = GzipDecoder::new(body);
+                    let archive = Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await?;
+                }
+                wit::DownloadedFileType::Zip => {
+                    let zip_filename = format!("{filename}.zip");
+                    let mut zip_path = destination_path.clone();
+                    zip_path.set_file_name(zip_filename);
+                    futures::pin_mut!(body);
+                    this.host.fs.create_file_with(&zip_path, body).await?;
+
+                    let unzip_status = std::process::Command::new("unzip")
+                        .current_dir(&container_dir)
+                        .arg(&zip_path)
+                        .output()?
+                        .status;
+                    if !unzip_status.success() {
+                        Err(anyhow!("failed to unzip {filename} archive"))?;
+                    }
+                }
+            }
+
+            Ok(())
+        }
+
+        Ok(inner(self, url, filename, file_type)
+            .await
+            .map(|_| ())
+            .map_err(|err| err.to_string()))
     }
 }
 

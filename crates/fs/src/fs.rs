@@ -14,7 +14,7 @@ use notify::{Config, EventKind, Watcher};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-use futures::{future::BoxFuture, Stream, StreamExt};
+use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
 use repository::GitRepository;
@@ -43,6 +43,11 @@ use std::ffi::OsStr;
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
+    async fn create_file_with(
+        &self,
+        path: &Path,
+        content: Pin<&mut (dyn AsyncRead + Send)>,
+    ) -> Result<()>;
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
@@ -122,6 +127,16 @@ impl Fs for RealFs {
             open_options.create_new(true);
         }
         open_options.open(path).await?;
+        Ok(())
+    }
+
+    async fn create_file_with(
+        &self,
+        path: &Path,
+        content: Pin<&mut (dyn AsyncRead + Send)>,
+    ) -> Result<()> {
+        let mut file = smol::fs::File::create(&path).await?;
+        futures::io::copy(content, &mut file).await?;
         Ok(())
     }
 
@@ -954,6 +969,17 @@ impl Fs for FakeFs {
             Ok(())
         })?;
         state.emit_event(&[path]);
+        Ok(())
+    }
+
+    async fn create_file_with(
+        &self,
+        path: &Path,
+        mut content: Pin<&mut (dyn AsyncRead + Send)>,
+    ) -> Result<()> {
+        let mut bytes = Vec::new();
+        content.read_to_end(&mut bytes).await?;
+        self.write_file_internal(path, bytes)?;
         Ok(())
     }
 

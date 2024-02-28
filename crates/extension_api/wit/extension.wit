@@ -30,9 +30,16 @@ world extension {
         x8664,
     }
 
+    enum downloaded-file-type {
+        gzip,
+        gzip-tar,
+        zip,
+    }
+
     import current-platform: func() -> tuple<os, architecture>;
     import npm-package-latest-version: func(package-name: string) -> result<string, string>;
     import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
+    import download-file: func(url: string, output-filename: string, file-type: downloaded-file-type) -> result<_, string>;
 
     record command {
         command: string,
