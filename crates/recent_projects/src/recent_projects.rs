@@ -1,15 +1,12 @@
-mod highlighted_workspace_location;
-
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result,
     Subscription, Task, View, ViewContext, WeakView,
 };
-use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{highlighted_match_with_paths::HighlightedMatchWithPaths, Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, tooltip_container, HighlightedLabel, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_DB};
 
@@ -250,27 +247,18 @@ impl PickerDelegate for RecentProjectsDelegate {
         };
 
         let (workspace_id, location) = &self.workspaces[r#match.candidate_id];
-        let highlighted_location: HighlightedWorkspaceLocation =
-            HighlightedWorkspaceLocation::new(&r#match, location);
-        let tooltip_highlighted_location = highlighted_location.clone();
-
         let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
+        let highlighted_match = HighlightedMatchWithPaths::new(
+            &r#match,
+            location.paths().as_slice(),
+            self.render_paths,
+        );
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(
-                    v_flex()
-                        .child(highlighted_location.names)
-                        .when(self.render_paths, |this| {
-                            this.children(highlighted_location.paths.into_iter().map(|path| {
-                                HighlightedLabel::new(path.text, path.highlight_positions)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                            }))
-                        }),
-                )
+                .child(highlighted_match.clone().render(cx))
                 .when(!is_current_workspace, |el| {
                     let delete_button = div()
                         .child(
@@ -293,7 +281,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     }
                 })
                 .tooltip(move |cx| {
-                    let tooltip_highlighted_location = tooltip_highlighted_location.clone();
+                    let tooltip_highlighted_location = highlighted_match.clone();
                     cx.new_view(move |_| MatchTooltip {
                         highlighted_location: tooltip_highlighted_location,
                     })
@@ -340,23 +328,13 @@ impl RecentProjectsDelegate {
     }
 }
 struct MatchTooltip {
-    highlighted_location: HighlightedWorkspaceLocation,
+    highlighted_location: HighlightedMatchWithPaths,
 }
 
 impl Render for MatchTooltip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         tooltip_container(cx, |div, _| {
-            div.children(
-                self.highlighted_location
-                    .paths
-                    .clone()
-                    .into_iter()
-                    .map(|path| {
-                        HighlightedLabel::new(path.text, path.highlight_positions)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                    }),
-            )
+            self.highlighted_location.render_paths_children(div)
         })
     }
 }

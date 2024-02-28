@@ -1,14 +1,20 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fuzzy::StringMatch;
 use ui::{prelude::*, HighlightedLabel};
 use util::paths::PathExt;
-use workspace::WorkspaceLocation;
+
+#[derive(Clone)]
+pub struct HighlightedMatchWithPaths {
+    names: HighlightedText,
+    paths: Vec<HighlightedText>,
+    render_paths: bool,
+}
 
 #[derive(Clone, IntoElement)]
-pub struct HighlightedText {
-    pub text: String,
-    pub highlight_positions: Vec<usize>,
+struct HighlightedText {
+    text: String,
+    highlight_positions: Vec<usize>,
     char_count: usize,
 }
 
@@ -48,17 +54,10 @@ impl RenderOnce for HighlightedText {
     }
 }
 
-#[derive(Clone)]
-pub struct HighlightedWorkspaceLocation {
-    pub names: HighlightedText,
-    pub paths: Vec<HighlightedText>,
-}
-
-impl HighlightedWorkspaceLocation {
-    pub fn new(string_match: &StringMatch, location: &WorkspaceLocation) -> Self {
+impl HighlightedMatchWithPaths {
+    pub fn new(string_match: &StringMatch, paths: &[PathBuf], render_paths: bool) -> Self {
         let mut path_start_offset = 0;
-        let (names, paths): (Vec<_>, Vec<_>) = location
-            .paths()
+        let (names, paths): (Vec<_>, Vec<_>) = paths
             .iter()
             .map(|path| {
                 let path = path.compact();
@@ -77,7 +76,16 @@ impl HighlightedWorkspaceLocation {
         Self {
             names: HighlightedText::join(names.into_iter().filter_map(|name| name), ", "),
             paths,
+            render_paths,
         }
+    }
+
+    pub fn render_paths_children(&mut self, element: Div) -> Div {
+        element.children(self.paths.clone().into_iter().map(|path| {
+            HighlightedLabel::new(path.text, path.highlight_positions)
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+        }))
     }
 
     // Compute the highlighted text for the name and path
@@ -126,5 +134,13 @@ impl HighlightedWorkspaceLocation {
                 char_count: path_char_count,
             },
         )
+    }
+}
+
+impl RenderOnce for HighlightedMatchWithPaths {
+    fn render(mut self, _: &mut WindowContext) -> impl IntoElement {
+        v_flex()
+            .child(self.names.clone())
+            .when(self.render_paths, |this| self.render_paths_children(this))
     }
 }

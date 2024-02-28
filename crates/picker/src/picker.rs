@@ -8,6 +8,8 @@ use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
 
+pub mod highlighted_match_with_paths;
+
 enum ElementContainer {
     List(ListState),
     UniformList(UniformListScrollHandle),

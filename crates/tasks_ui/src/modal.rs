@@ -6,10 +6,10 @@ use gpui::{
     Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
     VisualContext, WeakView,
 };
-use picker::{Picker, PickerDelegate};
-use project::{Inventory, ProjectPath};
+use picker::{highlighted_match_with_paths::HighlightedMatchWithPaths, Picker, PickerDelegate};
+use project::{Inventory, ProjectPath, WorktreeId};
 use task::{oneshot_source::OneshotSource, Task};
-use ui::{v_flex, HighlightedLabel, ListItem, ListItemSpacing, Selectable, WindowContext};
+use ui::{v_flex, ListItem, ListItemSpacing, RenderOnce, Selectable, WindowContext};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -20,7 +20,7 @@ actions!(task, [Spawn, Rerun]);
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Vec<Arc<dyn Task>>,
+    candidates: Vec<(Option<WorktreeId>, Arc<dyn Task>)>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -146,7 +146,9 @@ impl PickerDelegate for TasksModalDelegate {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     let (path, worktree) = match picker.delegate.active_item_path(cx) {
-                        Some((abs_path, project_path)) => (Some(abs_path), Some(project_path.worktree_id)),
+                        Some((abs_path, project_path)) => {
+                            (Some(abs_path), Some(project_path.worktree_id))
+                        }
                         None => (None, None),
                     };
                     picker.delegate.candidates =
@@ -158,7 +160,7 @@ impl PickerDelegate for TasksModalDelegate {
                         .candidates
                         .iter()
                         .enumerate()
-                        .map(|(index, candidate)| StringMatchCandidate {
+                        .map(|(index, (_, candidate))| StringMatchCandidate {
                             id: index,
                             char_bag: candidate.name().chars().collect(),
                             string: candidate.name().into(),
@@ -206,7 +208,7 @@ impl PickerDelegate for TasksModalDelegate {
         } else {
             self.matches.get(current_match_index).map(|current_match| {
                 let ix = current_match.candidate_id;
-                self.candidates[ix].clone()
+                self.candidates[ix].1.clone()
             })
         };
 
@@ -230,16 +232,37 @@ impl PickerDelegate for TasksModalDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<picker::Picker<Self>>,
+        cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
-        let highlights: Vec<_> = hit.positions.iter().copied().collect();
+        let mut related_paths = Vec::new();
+        let (worktree_id, _) = self.candidates[hit.candidate_id];
+        if let Some(worktree_abs_path) = worktree_id.and_then(|worktree_id| {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    Some(
+                        workspace
+                            .project()
+                            .read(cx)
+                            .worktree_for_id(worktree_id, cx)?
+                            .read(cx)
+                            .abs_path()
+                            .to_path_buf(),
+                    )
+                })
+                .ok()
+                .flatten()
+        }) {
+            related_paths.push(worktree_abs_path);
+        }
+
+        let highlighted_location = HighlightedMatchWithPaths::new(hit, &related_paths, true);
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .start_slot(HighlightedLabel::new(hit.string.clone(), highlights)),
+                .child(highlighted_location.render(cx)),
         )
     }
 }

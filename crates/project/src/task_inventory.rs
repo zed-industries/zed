@@ -8,8 +8,8 @@ use std::{
 
 use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use project_core::worktree::WorktreeId;
 use itertools::Itertools;
+use project_core::worktree::WorktreeId;
 use task::{Task, TaskId, TaskSource};
 use util::{post_inc, NumericPrefixWithSuffix};
 
@@ -110,7 +110,7 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         lru: bool,
         cx: &mut AppContext,
-    ) -> Vec<Arc<dyn Task>> {
+    ) -> Vec<(Option<WorktreeId>, Arc<dyn Task>)> {
         let mut lru_score = 0_u32;
         let tasks_by_usage = if lru {
             self.last_scheduled_tasks
@@ -125,6 +125,7 @@ impl Inventory {
         };
         let not_used_score = post_inc(&mut lru_score);
 
+        // TODO kb need to consider name collisions here
         self.sources
             .iter()
             .filter(|source| {
@@ -134,11 +135,13 @@ impl Inventory {
                 source
                     .source
                     .update(cx, |source, cx| source.tasks_for_path(path, cx))
+                    .into_iter()
+                    .map(|task| (source.worktree, task))
             })
             .map(|task| {
                 let usages = if lru {
                     tasks_by_usage
-                        .get(&task.id())
+                        .get(&task.1.id())
                         .copied()
                         .unwrap_or(not_used_score)
                 } else {
@@ -146,15 +149,20 @@ impl Inventory {
                 };
                 (task, usages)
             })
-            .sorted_unstable_by(|(task_a, usages_a), (task_b, usages_b)| {
-                usages_a.cmp(usages_b).then({
-                    NumericPrefixWithSuffix::from_numeric_prefixed_str(task_a.name())
-                        .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                            task_b.name(),
-                        ))
-                        .then(task_a.name().cmp(task_b.name()))
-                })
-            })
+            .sorted_unstable_by(
+                |((worktree_a, task_a), usages_a), ((worktree_b, task_b), usages_b)| {
+                    usages_a
+                        .cmp(usages_b)
+                        .then(worktree_a.is_none().cmp(&worktree_b.is_some()))
+                        .then({
+                            NumericPrefixWithSuffix::from_numeric_prefixed_str(task_a.name())
+                                .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                                    task_b.name(),
+                                ))
+                                .then(task_a.name().cmp(task_b.name()))
+                        })
+                },
+            )
             .map(|(task, _)| task)
             .collect()
     }
@@ -165,7 +173,8 @@ impl Inventory {
             // TODO straighten the `Path` story to understand what has to be passed here: or it will break in the future.
             self.list_tasks(None, None, false, cx)
                 .into_iter()
-                .find(|task| task.id() == id)
+                .find(|(_, task)| task.id() == id)
+                .map(|(_, task)| task)
         })
     }
 
@@ -330,6 +339,11 @@ mod tests {
         );
     }
 
+    #[test]
+    fn todo_kb() {
+        todo!("TODO kb tests on namespace conflicts, maybe file watch?")
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TestTask {
         id: TaskId,
@@ -407,17 +421,17 @@ mod tests {
             inventory
                 .list_tasks(path, worktree, lru, cx)
                 .into_iter()
-                .map(|task| task.name().to_string())
+                .map(|(_, task)| task.name().to_string())
                 .collect()
         })
     }
 
     fn register_task_used(inventory: &Model<Inventory>, task_name: &str, cx: &mut TestAppContext) {
         inventory.update(cx, |inventory, cx| {
-            let task = inventory
+            let (_, task) = inventory
                 .list_tasks(None, None, false, cx)
                 .into_iter()
-                .find(|task| task.name() == task_name)
+                .find(|(_, task)| task.name() == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
             inventory.task_scheduled(task.id().clone());
         });
