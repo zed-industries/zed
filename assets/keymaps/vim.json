@@ -460,8 +460,8 @@
       "ctrl-c": ["vim::SwitchMode", "Normal"],
       "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"],
-      ">": "editor::Indent",
-      "<": "editor::Outdent",
+      ">": "vim::Indent",
+      "<": "vim::Outdent",
       "i": [
         "vim::PushOperator",
         {
