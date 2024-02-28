@@ -1178,11 +1178,27 @@ impl ProjectPanel {
                             let a_is_file = components_a.peek().is_none() && entry_a.is_file();
                             let b_is_file = components_b.peek().is_none() && entry_b.is_file();
                             let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                                let name_a =
-                                    UniCase::new(component_a.as_os_str().to_string_lossy());
-                                let name_b =
-                                    UniCase::new(component_b.as_os_str().to_string_lossy());
-                                name_a.cmp(&name_b)
+                                let maybe_numeric_ordering = maybe!({
+                                    let num_and_remainder_a = Path::new(component_a.as_os_str())
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .and_then(NumericPrefixWithSuffix::from_str)?;
+                                    let num_and_remainder_b = Path::new(component_b.as_os_str())
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .and_then(NumericPrefixWithSuffix::from_str)?;
+
+                                    num_and_remainder_a.partial_cmp(&num_and_remainder_b)
+                                });
+
+                                maybe_numeric_ordering.unwrap_or_else(|| {
+                                    let name_a =
+                                        UniCase::new(component_a.as_os_str().to_string_lossy());
+                                    let name_b =
+                                        UniCase::new(component_b.as_os_str().to_string_lossy());
+
+                                    name_a.cmp(&name_b)
+                                })
                             });
                             if !ordering.is_eq() {
                                 return ordering;
@@ -1479,6 +1495,35 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct NumericPrefixWithSuffix<'a>(i32, &'a str);
+
+impl<'a> NumericPrefixWithSuffix<'a> {
+    fn from_str(str: &'a str) -> Option<Self> {
+        let mut chars = str.chars();
+        let prefix: String = chars.by_ref().take_while(|c| c.is_digit(10)).collect();
+        let remainder = chars.as_str();
+
+        match prefix.parse::<i32>() {
+            Ok(prefix) => Some(NumericPrefixWithSuffix(prefix, remainder)),
+            Err(_) => None,
+        }
+    }
+}
+
+impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let NumericPrefixWithSuffix(num_a, remainder_a) = self;
+        let NumericPrefixWithSuffix(num_b, remainder_b) = other;
+
+        Some(
+            num_a
+                .cmp(&num_b)
+                .then_with(|| UniCase::new(remainder_a).cmp(&UniCase::new(remainder_b))),
+        )
     }
 }
 
