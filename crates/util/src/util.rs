@@ -497,9 +497,9 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
 pub struct NumericPrefixWithSuffix<'a>(i32, &'a str);
 
 impl<'a> NumericPrefixWithSuffix<'a> {
-    pub fn from_str(str: &'a str) -> Option<Self> {
+    pub fn from_numeric_prefixed_str(str: &'a str) -> Option<Self> {
         let mut chars = str.chars();
-        let prefix: String = chars.by_ref().take_while(|c| c.is_digit(10)).collect();
+        let prefix: String = chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
         let remainder = chars.as_str();
 
         match prefix.parse::<i32>() {
@@ -514,7 +514,7 @@ impl Ord for NumericPrefixWithSuffix<'_> {
         let NumericPrefixWithSuffix(num_a, remainder_a) = self;
         let NumericPrefixWithSuffix(num_b, remainder_b) = other;
         num_a
-            .cmp(&num_b)
+            .cmp(num_b)
             .then_with(|| UniCase::new(remainder_a).cmp(&UniCase::new(remainder_b)))
     }
 }
@@ -569,7 +569,7 @@ mod tests {
     fn test_numeric_prefix_with_suffix() {
         let mut sorted = vec!["1-abc", "10", "11def", "2", "21-abc"];
         sorted.sort_by_key(|s| {
-            NumericPrefixWithSuffix::from_str(s).unwrap_or_else(|| {
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(s).unwrap_or_else(|| {
                 panic!("Cannot convert string `{s}` into NumericPrefixWithSuffix")
             })
         });
@@ -577,7 +577,7 @@ mod tests {
 
         for numeric_prefix_less in ["numeric_prefix_less", "aaa", "~™£"] {
             assert_eq!(
-                NumericPrefixWithSuffix::from_str(numeric_prefix_less),
+                NumericPrefixWithSuffix::from_numeric_prefixed_str(numeric_prefix_less),
                 None,
                 "String without numeric prefix `{numeric_prefix_less}` should not be converted into NumericPrefixWithSuffix"
             )
