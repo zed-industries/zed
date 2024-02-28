@@ -22,8 +22,8 @@ use editor::{
     Editor, EditorEvent, EditorMode,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, EntityId, Global, Subscription, View, ViewContext,
-    WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, EntityId, Global, KeystrokeEvent, Subscription,
+    View, ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
@@ -76,6 +76,7 @@ pub fn init(cx: &mut AppContext) {
     VimModeSetting::register(cx);
     VimSettings::register(cx);
 
+    cx.observe_keystrokes(observe_keystrokes).detach();
     editor_events::init(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, cx| register(workspace, cx))
@@ -135,46 +136,42 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     visual::register(workspace, cx);
 }
 
-/// Registers a keystroke observer to observe keystrokes for the Vim integration.
-pub fn observe_keystrokes(cx: &mut WindowContext) {
-    cx.observe_keystrokes(|keystroke_event, cx| {
-        if let Some(action) = keystroke_event
-            .action
-            .as_ref()
-            .map(|action| action.boxed_clone())
-        {
-            Vim::update(cx, |vim, _| {
-                if vim.workspace_state.recording {
-                    vim.workspace_state
-                        .recorded_actions
-                        .push(ReplayableAction::Action(action.boxed_clone()));
+/// Called whenever an keystroke is typed so vim can observe all actions
+/// and keystrokes accordingly.
+fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
+    if let Some(action) = keystroke_event
+        .action
+        .as_ref()
+        .map(|action| action.boxed_clone())
+    {
+        Vim::update(cx, |vim, _| {
+            if vim.workspace_state.recording {
+                vim.workspace_state
+                    .recorded_actions
+                    .push(ReplayableAction::Action(action.boxed_clone()));
 
-                    if vim.workspace_state.stop_recording_after_next_action {
-                        vim.workspace_state.recording = false;
-                        vim.workspace_state.stop_recording_after_next_action = false;
-                    }
+                if vim.workspace_state.stop_recording_after_next_action {
+                    vim.workspace_state.recording = false;
+                    vim.workspace_state.stop_recording_after_next_action = false;
                 }
-            });
-
-            // Keystroke is handled by the vim system, so continue forward
-            if action.name().starts_with("vim::") {
-                return;
             }
-        } else if cx.has_pending_keystrokes() {
+        });
+
+        // Keystroke is handled by the vim system, so continue forward
+        if action.name().starts_with("vim::") {
             return;
         }
+    } else if cx.has_pending_keystrokes() {
+        return;
+    }
 
-        Vim::update(cx, |vim, cx| match vim.active_operator() {
-            Some(
-                Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace,
-            ) => {}
-            Some(_) => {
-                vim.clear_operator(cx);
-            }
-            _ => {}
-        });
-    })
-    .detach()
+    Vim::update(cx, |vim, cx| match vim.active_operator() {
+        Some(Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace) => {}
+        Some(_) => {
+            vim.clear_operator(cx);
+        }
+        _ => {}
+    });
 }
 
 /// The state pertaining to Vim mode.
