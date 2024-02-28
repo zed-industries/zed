@@ -643,7 +643,7 @@ impl Element for List {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        after_layout: &mut Self::AfterLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {

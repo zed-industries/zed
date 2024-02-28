@@ -222,8 +222,9 @@ trait ElementObject {
 }
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
-pub(crate) struct DrawableElement<E: Element> {
-    element: E,
+pub struct DrawableElement<E: Element> {
+    /// The drawn element.
+    pub element: E,
     phase: ElementDrawPhase<E::BeforeLayout, E::AfterLayout>,
 }
 
