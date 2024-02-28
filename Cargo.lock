@@ -9146,6 +9146,7 @@ dependencies = [
  "picker",
  "project",
  "serde",
+ "serde_json",
  "task",
  "ui",
  "util",

@@ -97,6 +97,7 @@ impl TasksModal {
 impl Render for TasksModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
         v_flex()
+            .key_context("TasksModal")
             .w(rems(34.))
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|modal, _, cx| {
@@ -134,9 +135,10 @@ impl PickerDelegate for TasksModalDelegate {
 
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
         Arc::from(format!(
-            "{} runs the selected task, {} spawns a bash-like task from the prompt",
-            cx.keystroke_text_for(&menu::Confirm),
+            "{} use task name as prompt, {} spawns a bash-like task from the prompt, {} runs the selected task",
+            cx.keystroke_text_for(&menu::UseSelectedQuery),
             cx.keystroke_text_for(&menu::SecondaryConfirm),
+            cx.keystroke_text_for(&menu::Confirm),
         ))
     }
 
@@ -265,5 +267,44 @@ impl PickerDelegate for TasksModalDelegate {
                 .selected(selected)
                 .child(highlighted_location.render(cx)),
         )
+    }
+
+    fn selected_as_query(&self) -> Option<String> {
+        Some(self.matches.get(self.selected_index())?.string.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project, TestSource, TestTask};
+    use serde_json::json;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_name(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.ts": "a"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .toggle_modal(cx, |cx| {
+                        TasksModal::new(Inventory::new(cx), cx.view().downgrade(), cx)
+                    })
+                    .clone()
+            })
+            .unwrap();
+
+        todo!("TODO kb")
     }
 }

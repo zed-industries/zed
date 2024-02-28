@@ -17,3 +17,7 @@ serde.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+project = { workspace = true, features = ["test-support"] }

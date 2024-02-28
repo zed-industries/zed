@@ -54,7 +54,7 @@ impl TaskSourceKind {
 }
 
 impl Inventory {
-    pub(crate) fn new(cx: &mut AppContext) -> Model<Self> {
+    pub fn new(cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|_| Self {
             sources: Vec::new(),
             last_scheduled_tasks: VecDeque::new(),
@@ -219,12 +219,120 @@ impl Inventory {
     }
 }
 
+#[cfg(feature = "test-support")]
+pub mod test_inventory {
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+
+    use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
+    use task::{Task, TaskId, TaskSource};
+
+    use crate::Inventory;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct TestTask {
+        pub id: task::TaskId,
+        pub name: String,
+    }
+
+    impl Task for TestTask {
+        fn id(&self) -> &TaskId {
+            &self.id
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn cwd(&self) -> Option<&Path> {
+            None
+        }
+
+        fn exec(&self, _cwd: Option<PathBuf>) -> Option<task::SpawnInTerminal> {
+            None
+        }
+    }
+
+    pub struct TestSource {
+        pub tasks: Vec<TestTask>,
+    }
+
+    impl TestSource {
+        pub fn new(
+            task_names: impl IntoIterator<Item = String>,
+            cx: &mut AppContext,
+        ) -> Model<Box<dyn TaskSource>> {
+            cx.new_model(|_| {
+                Box::new(Self {
+                    tasks: task_names
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, name)| TestTask {
+                            id: TaskId(format!("task_{i}_{name}")),
+                            name,
+                        })
+                        .collect(),
+                }) as Box<dyn TaskSource>
+            })
+        }
+    }
+
+    impl TaskSource for TestSource {
+        fn tasks_for_path(
+            &mut self,
+            _path: Option<&Path>,
+            _cx: &mut ModelContext<Box<dyn TaskSource>>,
+        ) -> Vec<Arc<dyn Task>> {
+            self.tasks
+                .clone()
+                .into_iter()
+                .map(|task| Arc::new(task) as Arc<dyn Task>)
+                .collect()
+        }
+
+        fn as_any(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
+
+    pub fn list_task_names(
+        inventory: &Model<Inventory>,
+        path: Option<&Path>,
+        lru: bool,
+        cx: &mut TestAppContext,
+    ) -> Vec<String> {
+        inventory.update(cx, |inventory, cx| {
+            inventory
+                .list_tasks(path, lru, cx)
+                .into_iter()
+                .map(|task| task.name().to_string())
+                .collect()
+        })
+    }
+
+    pub fn register_task_used(
+        inventory: &Model<Inventory>,
+        task_name: &str,
+        cx: &mut TestAppContext,
+    ) {
+        inventory.update(cx, |inventory, cx| {
+            let task = inventory
+                .list_tasks(None, false, cx)
+                .into_iter()
+                .find(|task| task.name() == task_name)
+                .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
+            inventory.task_scheduled(task.id().clone());
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use gpui::TestAppContext;
 
+    use super::test_inventory::*;
     use super::*;
 
     #[gpui::test]
