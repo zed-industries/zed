@@ -121,7 +121,6 @@ actions!(
         ToggleRightDock,
         ToggleBottomDock,
         CloseAllDocks,
-        ToggleGraphicsProfiler,
     ]
 );
 
@@ -3572,7 +3571,6 @@ impl Workspace {
                     workspace.reopen_closed_item(cx).detach();
                 }),
             )
-            .on_action(|_: &ToggleGraphicsProfiler, cx| cx.toggle_graphics_profiler())
     }
 
     #[cfg(any(test, feature = "test-support"))]
