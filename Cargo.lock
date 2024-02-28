@@ -10487,6 +10487,7 @@ dependencies = [
  "take-until",
  "tempfile",
  "tendril",
+ "unicase",
  "url",
 ]
 
