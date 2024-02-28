@@ -7,7 +7,7 @@ use collections::{hash_map, HashMap};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
-    FutureExt as _, TryFutureExt as _,
+    Future, FutureExt as _, TryFutureExt as _,
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use lsp::{LanguageServerBinary, LanguageServerId};
@@ -24,7 +24,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{paths::PathExt, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
+use util::{paths::PathExt, post_inc, ResultExt};
 
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
@@ -291,35 +291,36 @@ impl LanguageRegistry {
     pub fn language_for_name(
         self: &Arc<Self>,
         name: &str,
-    ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
+    ) -> impl Future<Output = Result<Arc<Language>>> {
         let name = UniCase::new(name);
-        self.get_or_load_language(|language_name, _| UniCase::new(language_name) == name)
+        let rx = self.get_or_load_language(|language_name, _| UniCase::new(language_name) == name);
+        async move { rx.await? }
     }
 
     pub fn language_for_name_or_extension(
         self: &Arc<Self>,
         string: &str,
-    ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
+    ) -> impl Future<Output = Result<Arc<Language>>> {
         let string = UniCase::new(string);
-        self.get_or_load_language(|name, config| {
+        let rx = self.get_or_load_language(|name, config| {
             UniCase::new(name) == string
                 || config
                     .path_suffixes
                     .iter()
                     .any(|suffix| UniCase::new(suffix) == string)
-        })
+        });
+        async move { rx.await? }
     }
 
     pub fn language_for_file(
         self: &Arc<Self>,
-        path: impl AsRef<Path>,
+        path: &Path,
         content: Option<&Rope>,
-    ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
-        let path = path.as_ref();
+    ) -> impl Future<Output = Result<Arc<Language>>> {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
-        self.get_or_load_language(|_, config| {
+        let rx = self.get_or_load_language(move |_, config| {
             let path_matches = config
                 .path_suffixes
                 .iter()
@@ -334,13 +335,14 @@ impl LanguageRegistry {
                 },
             );
             path_matches || content_matches
-        })
+        });
+        async move { rx.await? }
     }
 
     fn get_or_load_language(
         self: &Arc<Self>,
         callback: impl Fn(&str, &LanguageMatcher) -> bool,
-    ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
+    ) -> oneshot::Receiver<Result<Arc<Language>>> {
         let (tx, rx) = oneshot::channel();
 
         let mut state = self.state.write();
@@ -421,13 +423,13 @@ impl LanguageRegistry {
             let _ = tx.send(Err(anyhow!("executor does not exist")));
         }
 
-        rx.unwrap()
+        rx
     }
 
     fn get_or_load_grammar(
         self: &Arc<Self>,
         name: Arc<str>,
-    ) -> UnwrapFuture<oneshot::Receiver<Result<tree_sitter::Language>>> {
+    ) -> impl Future<Output = Result<tree_sitter::Language>> {
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.write();
 
@@ -483,7 +485,7 @@ impl LanguageRegistry {
             tx.send(Err(anyhow!("no such grammar {}", name))).ok();
         }
 
-        rx.unwrap()
+        async move { rx.await? }
     }
 
     pub fn to_vec(&self) -> Vec<Arc<Language>> {
