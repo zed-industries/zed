@@ -485,27 +485,26 @@ impl ProjectPanel {
         }
 
         if let Some(parent_path) = entry.path.parent() {
-            let children_count = worktree
-                .entries(false)
-                .filter(|e| e.path.parent() == Some(parent_path))
-                .count();
-
-            return children_count <= 1;
+            let snapshot = worktree.snapshot();
+            let child_entries: Vec<&Entry> = snapshot.child_entries(parent_path).collect();
+            if child_entries.len() == 1 {
+                let child = child_entries[0];
+                return child.kind.is_dir();
+            }
         };
         false
     }
 
     fn is_foldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
-        if !entry.is_dir() {
-            return false;
+        if entry.is_dir() {
+            let snapshot = worktree.snapshot();
+            let child_entries: Vec<&Entry> = snapshot.child_entries(&entry.path).collect();
+            if child_entries.len() == 1 {
+                let child = child_entries[0];
+                return child.kind.is_dir();
+            }
         }
-
-        let children_count: Vec<&Entry> = worktree // children count for unfolded dirs
-            .entries(true)
-            .filter(|e| e.path.parent() == Some(&entry.path))
-            .collect();
-
-        children_count.len() <= 1 && (children_count.is_empty() || children_count[0].is_dir())
+        false
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
@@ -870,13 +869,11 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             self.unfolded_dir_ids.insert(entry.id);
 
+            let snapshot = worktree.snapshot();
             let mut parent_path = entry.path.parent();
             while let Some(path) = parent_path {
                 if let Some(parent_entry) = worktree.entry_for_path(path) {
-                    let children_count = worktree
-                        .entries(true)
-                        .filter(|e| e.path.parent() == Some(path))
-                        .count();
+                    let children_count = snapshot.child_entries(path).count();
 
                     if children_count > 1 {
                         break;
@@ -899,12 +896,16 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             self.unfolded_dir_ids.remove(&entry.id);
 
-            let children = worktree
-                .entries(true)
-                .filter(|e| e.path.starts_with(&entry.path) && e.path != entry.path);
-
-            for child in children {
+            let snapshot = worktree.snapshot();
+            let mut path = &*entry.path;
+            loop {
+                let children: Vec<&Entry> = snapshot.child_entries(path).collect();
+                if children.len() > 1 || children.is_empty() || !children[0].is_dir() {
+                    break;
+                }
+                let child = children[0];
                 self.unfolded_dir_ids.remove(&child.id);
+                path = &*child.path;
             }
 
             self.update_visible_entries(None, cx);
@@ -1243,7 +1244,7 @@ impl ProjectPanel {
                     && entry.kind.is_dir()
                     && !self.unfolded_dir_ids.contains(&entry.id)
                 {
-                    let is_omitted = ProjectPanel::should_omit_entry(snapshot.clone(), entry);
+                    let is_omitted = ProjectPanel::should_omit_entry(&snapshot, entry);
 
                     if is_omitted {
                         entry_iter.advance();
@@ -1313,20 +1314,22 @@ impl ProjectPanel {
         }
     }
 
-    fn should_omit_entry(snapshot: Snapshot, entry: &Entry) -> bool {
+    fn should_omit_entry(snapshot: &Snapshot, entry: &Entry) -> bool {
         if let Some(root_path) = snapshot.root_entry() {
             if entry.path == root_path.path {
                 return false;
             }
         }
 
-        let children: Vec<&Entry> = snapshot
-            .entries(true)
-            .into_iter()
-            .filter(|e| e.path.parent() == Some(&entry.path))
-            .collect();
+        let child_entries: Vec<&Entry> = snapshot.child_entries(&entry.path).collect();
+        if child_entries.len() == 1 {
+            let child = child_entries[0];
+            if child.kind.is_dir() {
+                return true;
+            }
+        }
 
-        children.len() == 1 && children[0].kind.is_dir()
+        false
     }
 
     fn expand_entry(
