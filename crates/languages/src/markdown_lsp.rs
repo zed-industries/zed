@@ -1,8 +1,8 @@
 use std::{any::Any, path::PathBuf};
 
-use async_trait::async_trait;
-use language::{LspAdapter, LanguageServerName, LspAdapterDelegate};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 
 pub struct MarkdownOxideLanguageServer;
@@ -30,9 +30,7 @@ impl LspAdapter for MarkdownOxideLanguageServer {
         _container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        Err(anyhow!(
-            "Markdown Oxide must be available in $PATH"
-        ))
+        Err(anyhow!("Markdown Oxide must be available in $PATH"))
     }
 
     async fn cached_server_binary(

@@ -26,6 +26,7 @@ mod haskell;
 mod html;
 mod json;
 mod lua;
+mod markdown_lsp;
 mod nu;
 mod ocaml;
 mod php;
@@ -43,7 +44,6 @@ mod uiua;
 mod vue;
 mod yaml;
 mod zig;
-mod markdown_lsp;
 
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
@@ -202,7 +202,10 @@ pub fn init(
             languages.clone(),
         ))],
     );
-    language("markdown", vec![Arc::new(markdown_lsp::MarkdownOxideLanguageServer)]);
+    language(
+        "markdown",
+        vec![Arc::new(markdown_lsp::MarkdownOxideLanguageServer)],
+    );
     language(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
