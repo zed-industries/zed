@@ -12,7 +12,6 @@ if [[ -n $apt ]]; then
     libfontconfig-dev
     libwayland-dev
     libxkbcommon-x11-dev
-    openssl
     libssl-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
