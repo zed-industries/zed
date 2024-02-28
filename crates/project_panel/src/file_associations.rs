@@ -13,6 +13,7 @@ struct TypeConfig {
 
 #[derive(Deserialize, Debug)]
 pub struct FileAssociations {
+    names: HashMap<String, String>,
     suffixes: HashMap<String, String>,
     types: HashMap<String, TypeConfig>,
 }
@@ -38,6 +39,7 @@ impl FileAssociations {
                     .map_err(Into::into)
             })
             .unwrap_or_else(|_| FileAssociations {
+                names: HashMap::default(),
                 suffixes: HashMap::default(),
                 types: HashMap::default(),
             })
@@ -48,16 +50,29 @@ impl FileAssociations {
 
         // FIXME: Associate a type with the languages and have the file's language
         //        override these associations
-        maybe!({
-            let suffix = path.icon_suffix()?;
 
-            this.suffixes
-                .get(suffix)
+        // First, try to find an icon based on the file name
+        let name = path.file_name()?.to_str();
+        let icon_from_name = name.and_then(|name_str| {
+            this.names
+                .get(name_str)
                 .and_then(|type_str| this.types.get(type_str))
                 .map(|type_config| type_config.icon.clone())
-        })
-        .or_else(|| this.types.get("default").map(|config| config.icon.clone()))
+        });
+
+        // If no icon is found based on the file name, try to find an icon based on the file extension
+        let suffix = path.icon_suffix();
+        let icon_from_suffix = suffix.and_then(|suffix_str| {
+            this.suffixes
+                .get(suffix_str)
+                .and_then(|type_str| this.types.get(type_str))
+                .map(|type_config| type_config.icon.clone())
+        });
+
+        // Return the icon found based on the file name or extension, or fallback to default icon
+        icon_from_name.or(icon_from_suffix).or_else(|| this.types.get("default").map(|config| config.icon.clone()))
     }
+
 
     pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
         let this = cx.try_global::<Self>()?;
