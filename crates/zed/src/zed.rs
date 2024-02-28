@@ -2751,18 +2751,20 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_bundled_languages(cx: &mut AppContext) {
-        let settings = SettingsStore::test(cx);
+    async fn test_bundled_languages(cx: &mut TestAppContext) {
+        let settings = cx.update(|cx| SettingsStore::test(cx));
         cx.set_global(settings);
         let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.background_executor().clone());
+        languages.set_executor(cx.executor().clone());
         let languages = Arc::new(languages);
         let node_runtime = node_runtime::FakeNodeRuntime::new();
-        languages::init(languages.clone(), node_runtime, cx);
+        cx.update(|cx| {
+            languages::init(languages.clone(), node_runtime, cx);
+        });
         for name in languages.language_names() {
-            languages.language_for_name(&name);
+            languages.language_for_name(&name).await.unwrap();
         }
-        cx.background_executor().run_until_parked();
+        cx.run_until_parked();
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

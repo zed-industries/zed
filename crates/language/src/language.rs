@@ -1522,16 +1522,16 @@ mod tests {
         });
 
         languages
-            .language_for_file("the/script", None)
+            .language_for_file("the/script".as_ref(), None)
             .await
             .unwrap_err();
         languages
-            .language_for_file("the/script", Some(&"nothing".into()))
+            .language_for_file("the/script".as_ref(), Some(&"nothing".into()))
             .await
             .unwrap_err();
         assert_eq!(
             languages
-                .language_for_file("the/script", Some(&"#!/bin/env node".into()))
+                .language_for_file("the/script".as_ref(), Some(&"#!/bin/env node".into()))
                 .await
                 .unwrap()
                 .name()
