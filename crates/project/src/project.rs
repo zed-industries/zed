@@ -7000,8 +7000,7 @@ impl Project {
 
             if abs_path.ends_with(&*LOCAL_SETTINGS_RELATIVE_PATH) {
                 let settings_dir = Arc::from(
-                    abs_path
-                        .ancestors()
+                    path.ancestors()
                         .nth(LOCAL_SETTINGS_RELATIVE_PATH.components().count())
                         .unwrap(),
                 );

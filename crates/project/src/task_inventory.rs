@@ -72,7 +72,7 @@ impl Inventory {
     ) {
         let abs_path = kind.abs_path();
         if abs_path.is_some() {
-            if let Some(a) =  self.sources.iter().find(|s| s.kind.abs_path() == abs_path) {
+            if let Some(a) = self.sources.iter().find(|s| s.kind.abs_path() == abs_path) {
                 log::debug!("Source for path {abs_path:?} already exists, not adding. Old kind: {OLD_KIND:?}, new kind: {kind:?}", OLD_KIND = a.kind);
                 return;
             }
@@ -320,7 +320,9 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |cx| StaticTestSource::new(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
+                |cx| {
+                    StaticTestSource::new(vec!["10_hello".to_string(), "11_hello".to_string()], cx)
+                },
                 cx,
             );
         });
@@ -381,7 +383,12 @@ mod tests {
         inventory_with_statics.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |cx| StaticTestSource::new(vec!["user_input".to_string(), common_name.to_string()], cx),
+                |cx| {
+                    StaticTestSource::new(
+                        vec!["user_input".to_string(), common_name.to_string()],
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -409,7 +416,12 @@ mod tests {
                     id: worktree_1,
                     abs_path: worktree_path_1.to_path_buf(),
                 },
-                |cx| StaticTestSource::new(vec!["worktree_1".to_string(), common_name.to_string()], cx),
+                |cx| {
+                    StaticTestSource::new(
+                        vec!["worktree_1".to_string(), common_name.to_string()],
+                        cx,
+                    )
+                },
                 cx,
             );
             inventory.add_source(
@@ -417,7 +429,12 @@ mod tests {
                     id: worktree_2,
                     abs_path: worktree_path_2.to_path_buf(),
                 },
-                |cx| StaticTestSource::new(vec!["worktree_2".to_string(), common_name.to_string()], cx),
+                |cx| {
+                    StaticTestSource::new(
+                        vec!["worktree_2".to_string(), common_name.to_string()],
+                        cx,
+                    )
+                },
                 cx,
             );
         });

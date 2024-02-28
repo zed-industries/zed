@@ -6377,12 +6377,10 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
- "fuzzy",
  "gpui",
  "menu",
  "serde_json",
  "ui",
- "util",
  "workspace",
 ]
 
