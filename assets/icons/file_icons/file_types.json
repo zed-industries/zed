@@ -1,5 +1,7 @@
 {
-  "names": { "Dockerfile": "docker", "docker-compose": "docker" },
+  "names": {
+    "Dockerfile": "docker"
+  },
   "suffixes": {
     "astro": "astro",
     "Emakefile": "erlang",

@@ -60,10 +60,6 @@ impl FileAssociations {
                 .map(|type_config| type_config.icon.clone())
         });
 
-        if icon_from_name.is_some() {
-            return icon_from_name;
-        }
-
         // If no icon is found based on the file name, try to find an icon based on the file extension
         let suffix = path.icon_suffix();
         let icon_from_suffix = suffix.and_then(|suffix_str| {
@@ -73,8 +69,8 @@ impl FileAssociations {
                 .map(|type_config| type_config.icon.clone())
         });
 
-        // Return the icon found based on the extension, or fallback to default icon
-        icon_from_suffix.or_else(|| this.types.get("default").map(|config| config.icon.clone()))
+        // Return the icon found based on the file name or extension, or fallback to default icon
+        icon_from_name.or(icon_from_suffix).or_else(|| this.types.get("default").map(|config| config.icon.clone()))
     }
 
 
