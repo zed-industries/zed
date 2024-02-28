@@ -57,13 +57,14 @@ impl Database {
             }
 
             let project = project::ActiveModel {
-                room_id: ActiveValue::set(participant.room_id),
-                host_user_id: ActiveValue::set(participant.user_id),
+                room_id: ActiveValue::set(Some(participant.room_id)),
+                host_user_id: ActiveValue::set(Some(participant.user_id)),
                 host_connection_id: ActiveValue::set(Some(connection.id as i32)),
                 host_connection_server_id: ActiveValue::set(Some(ServerId(
                     connection.owner_id as i32,
                 ))),
-                ..Default::default()
+                id: ActiveValue::NotSet,
+                hosted_project_id: ActiveValue::Set(None),
             }
             .insert(&*tx)
             .await?;
@@ -153,8 +154,12 @@ impl Database {
             self.update_project_worktrees(project.id, worktrees, &tx)
                 .await?;
 
+            let room_id = project
+                .room_id
+                .ok_or_else(|| anyhow!("project not in a room"))?;
+
             let guest_connection_ids = self.project_guest_connection_ids(project.id, &tx).await?;
-            let room = self.get_room(project.room_id, &tx).await?;
+            let room = self.get_room(room_id, &tx).await?;
             Ok((room, guest_connection_ids))
         })
         .await
@@ -514,13 +519,28 @@ impl Database {
     ) -> Result<(Project, ReplicaId)> {
         self.transaction(|tx| async move {
             let (hosted_project, role) = self.get_hosted_project(id, user_id, &*tx).await?;
-            let project = project::Entity::find()
-                .filter(project::Column::HostedProjectId)
-                .eq(id)
+            let project = if let Some(project) = project::Entity::find()
+                .filter(project::Column::HostedProjectId.eq(id))
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
+            {
+                project
+            } else {
+                project::ActiveModel {
+                    hosted_project_id: ActiveValue::Set(Some(id)),
+                    id: ActiveValue::NotSet,
+                    room_id: ActiveValue::Set(None),
+                    host_user_id: ActiveValue::Set(None),
+                    host_connection_id: ActiveValue::Set(None),
+                    host_connection_server_id: ActiveValue::Set(None),
+                }
+                .insert(&*tx)
+                .await?
+            };
+
+            Ok(Project::default())
         })
+        .await
     }
 
     /// Adds the given connection to the specified project.
@@ -551,7 +571,7 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
-            if project.room_id != participant.room_id {
+            if project.room_id != Some(participant.room_id) {
                 return Err(anyhow!("no such project"))?;
             }
 
@@ -706,6 +726,8 @@ impl Database {
                 .await?;
 
             let project = Project {
+                id: project_id,
+                role: participant.role.unwrap_or(ChannelRole::Member),
                 collaborators: collaborators
                     .into_iter()
                     .map(|collaborator| ProjectCollaborator {
@@ -791,10 +813,10 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            let room = self.get_room(project.room_id, &tx).await?;
+            let room = self.get_room(room_id, &tx).await?;
             let left_project = LeftProject {
                 id: project_id,
-                host_user_id: project.host_user_id,
+                host_user_id: project.host_user_id.ok_or_else(|| anyhow!("no host"))?,
                 host_connection_id: Some(project.host_connection()?),
                 connection_ids,
             };
@@ -1015,7 +1037,9 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("project {} not found", project_id))?;
-            Ok(project.room_id)
+            Ok(project
+                .room_id
+                .ok_or_else(|| anyhow!("project not in room"))?)
         })
         .await
     }

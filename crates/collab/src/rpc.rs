@@ -1732,7 +1732,7 @@ async fn join_hosted_project(
     response: Response<proto::JoinHostedProject>,
     session: Session,
 ) -> Result<()> {
-    let (project, replica_id) = &mut *session
+    let (mut project, replica_id) = session
         .db()
         .await
         .join_hosted_project(
@@ -1741,6 +1741,8 @@ async fn join_hosted_project(
             session.connection_id,
         )
         .await?;
+    let project_id = project.id;
+    let user_id = session.user_id;
 
     let collaborators = project
         .collaborators
@@ -1770,7 +1772,7 @@ async fn join_hosted_project(
                     collaborator: Some(proto::Collaborator {
                         peer_id: Some(session.connection_id.into()),
                         replica_id: replica_id.0 as u32,
-                        user_id: guest_user_id.to_proto(),
+                        user_id: user_id.to_proto(),
                     }),
                 },
             )
@@ -1784,7 +1786,7 @@ async fn join_hosted_project(
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
-        role: ChannelRole::Member.into(), // todo
+        role: project.role.into(),
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
