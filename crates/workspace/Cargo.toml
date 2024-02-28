@@ -13,6 +13,7 @@ doctest = false
 test-support = [
     "call/test-support",
     "client/test-support",
+    "db/test-support",
     "project/test-support",
     "settings/test-support",
     "gpui/test-support",

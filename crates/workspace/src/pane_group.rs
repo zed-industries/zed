@@ -588,9 +588,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, InteractiveBounds,
-        IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WeakView, WindowContext,
+        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, IntoElement,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
+        WeakView, WindowContext,
     };
     use parking_lot::Mutex;
     use settings::Settings;
@@ -754,15 +754,13 @@ mod element {
             };
 
             cx.with_z_index(3, |cx| {
-                let interactive_handle_bounds = InteractiveBounds {
-                    bounds: handle_bounds,
-                    stacking_order: cx.stacking_order().clone(),
-                };
-                if interactive_handle_bounds.visibly_contains(&cx.mouse_position(), cx) {
-                    cx.set_cursor_style(match axis {
+                if handle_bounds.contains(&cx.mouse_position()) {
+                    let stacking_order = cx.stacking_order().clone();
+                    let cursor_style = match axis {
                         Axis::Vertical => CursorStyle::ResizeUpDown,
                         Axis::Horizontal => CursorStyle::ResizeLeftRight,
-                    })
+                    };
+                    cx.set_cursor_style(cursor_style, stacking_order);
                 }
 
                 cx.add_opaque_layer(handle_bounds);

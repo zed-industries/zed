@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
-use gpui::{px, FontStyle, FontWeight, HighlightStyle, UnderlineStyle};
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
+use gpui::{px, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, UnderlineStyle};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 /// Parsed Markdown content.
 #[derive(Debug, Clone)]
@@ -47,6 +47,13 @@ impl MarkdownHighlight {
                     });
                 }
 
+                if style.strikethrough {
+                    highlight.strikethrough = Some(StrikethroughStyle {
+                        thickness: px(1.),
+                        ..Default::default()
+                    });
+                }
+
                 if style.weight != FontWeight::default() {
                     highlight.font_weight = Some(style.weight);
                 }
@@ -66,6 +73,8 @@ pub struct MarkdownHighlightStyle {
     pub italic: bool,
     /// Whether the text should be underlined.
     pub underline: bool,
+    /// Whether the text should be struck through.
+    pub strikethrough: bool,
     /// The weight of the text.
     pub weight: FontWeight,
 }
@@ -151,6 +160,7 @@ pub async fn parse_markdown_block(
 ) {
     let mut bold_depth = 0;
     let mut italic_depth = 0;
+    let mut strikethrough_depth = 0;
     let mut link_url = None;
     let mut current_language = None;
     let mut list_stack = Vec::new();
@@ -172,6 +182,10 @@ pub async fn parse_markdown_block(
 
                     if italic_depth > 0 {
                         style.italic = true;
+                    }
+
+                    if strikethrough_depth > 0 {
+                        style.strikethrough = true;
                     }
 
                     if let Some(link) = link_url.clone().and_then(|u| Link::identify(u)) {
@@ -221,7 +235,12 @@ pub async fn parse_markdown_block(
             Event::Start(tag) => match tag {
                 Tag::Paragraph => new_paragraph(text, &mut list_stack),
 
-                Tag::Heading(_, _, _) => {
+                Tag::Heading {
+                    level: _,
+                    id: _,
+                    classes: _,
+                    attrs: _,
+                } => {
                     new_paragraph(text, &mut list_stack);
                     bold_depth += 1;
                 }
@@ -242,7 +261,14 @@ pub async fn parse_markdown_block(
 
                 Tag::Strong => bold_depth += 1,
 
-                Tag::Link(_, url, _) => link_url = Some(url.to_string()),
+                Tag::Strikethrough => strikethrough_depth += 1,
+
+                Tag::Link {
+                    link_type: _,
+                    dest_url,
+                    title: _,
+                    id: _,
+                } => link_url = Some(dest_url.to_string()),
 
                 Tag::List(number) => {
                     list_stack.push((number, false));
@@ -272,12 +298,13 @@ pub async fn parse_markdown_block(
             },
 
             Event::End(tag) => match tag {
-                Tag::Heading(_, _, _) => bold_depth -= 1,
-                Tag::CodeBlock(_) => current_language = None,
-                Tag::Emphasis => italic_depth -= 1,
-                Tag::Strong => bold_depth -= 1,
-                Tag::Link(_, _, _) => link_url = None,
-                Tag::List(_) => drop(list_stack.pop()),
+                TagEnd::Heading(_) => bold_depth -= 1,
+                TagEnd::CodeBlock => current_language = None,
+                TagEnd::Emphasis => italic_depth -= 1,
+                TagEnd::Strong => bold_depth -= 1,
+                TagEnd::Strikethrough => strikethrough_depth -= 1,
+                TagEnd::Link => link_url = None,
+                TagEnd::List(_) => drop(list_stack.pop()),
                 _ => {}
             },
 

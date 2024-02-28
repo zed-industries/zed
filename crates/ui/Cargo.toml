@@ -10,13 +10,10 @@ name = "ui"
 path = "src/ui.rs"
 
 [dependencies]
-anyhow.workspace = true
 chrono.workspace = true
 gpui.workspace = true
 itertools = { workspace = true, optional = true }
 menu.workspace = true
-rand = "0.8"
-serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }

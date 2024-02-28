@@ -214,6 +214,22 @@ impl EditorLspTestContext {
         Self::new(language, capabilities, cx).await
     }
 
+    pub async fn new_html(cx: &mut gpui::TestAppContext) -> Self {
+        let language = Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["html".into()],
+                    ..Default::default()
+                },
+                block_comment: Some(("<!-- ".into(), " -->".into())),
+                ..Default::default()
+            },
+            Some(tree_sitter_html::language()),
+        );
+        Self::new(language, Default::default(), cx).await
+    }
+
     // Constructs lsp range using a marked string with '[', ']' range delimiters
     pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
         let ranges = self.ranges(marked_text);

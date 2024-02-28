@@ -1,6 +1,6 @@
 use anyhow::Result;
-use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
-use client::UserId;
+use channel::{ChannelMembership, ChannelStore, MessageParams};
+use client::{ChannelId, UserId};
 use collections::{HashMap, HashSet};
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::StringMatchCandidate;
@@ -131,7 +131,7 @@ impl MessageEditor {
 
     pub fn set_channel(
         &mut self,
-        channel_id: u64,
+        channel_id: ChannelId,
         channel_name: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) {

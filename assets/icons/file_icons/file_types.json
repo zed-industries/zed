@@ -1,4 +1,9 @@
 {
+  "stems": {
+    "Podfile": "ruby",
+    "Procfile": "heroku",
+    "Dockerfile": "docker"
+  },
   "suffixes": {
     "astro": "astro",
     "Emakefile": "erlang",
@@ -22,6 +27,8 @@
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
+    "coffee": "coffeescript",
+    "dart": "dart",
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
@@ -42,6 +49,7 @@
     "fmp": "storage",
     "fp7": "storage",
     "frm": "storage",
+    "fs": "fsharp",
     "gdb": "storage",
     "gif": "image",
     "gitattributes": "vcs",
@@ -64,7 +72,7 @@
     "ico": "image",
     "ini": "settings",
     "j2k": "image",
-    "java": "code",
+    "java": "java",
     "jfif": "image",
     "jp2": "image",
     "jpeg": "image",
@@ -73,6 +81,7 @@
     "json": "storage",
     "jsonc": "storage",
     "jxl": "image",
+    "kt": "kotlin",
     "ldf": "storage",
     "lock": "lock",
     "lockb": "bun",
@@ -84,6 +93,7 @@
     "mdb": "storage",
     "mdf": "storage",
     "mdx": "document",
+    "metadata": "code",
     "mkv": "video",
     "mjs": "code",
     "mka": "audio",
@@ -96,14 +106,17 @@
     "myd": "storage",
     "myi": "storage",
     "nu": "terminal",
+    "nim": "nim",
     "odp": "document",
     "ods": "document",
     "odt": "document",
     "ogg": "audio",
     "opus": "audio",
+    "otf": "font",
     "pdb": "storage",
     "pdf": "document",
     "php": "php",
+    "plist": "template",
     "png": "image",
     "ppt": "document",
     "pptx": "document",
@@ -128,13 +141,20 @@
     "sqlite": "storage",
     "svelte": "template",
     "svg": "image",
-    "swift": "code",
+    "sc": "scala",
+    "scala": "scala",
+    "sql": "storage",
+    "swift": "swift",
+    "tf": "terraform",
+    "tfvars": "terraform",
     "tiff": "image",
     "toml": "toml",
     "ts": "typescript",
     "tsv": "storage",
+    "ttf": "font",
     "tsx": "code",
     "txt": "document",
+    "tcl": "tcl",
     "vue": "vue",
     "wav": "audio",
     "webm": "video",
@@ -176,8 +196,17 @@
     "css": {
       "icon": "icons/file_icons/css.svg"
     },
+    "coffeescript": {
+      "icon": "icons/file_icons/coffeescript.svg"
+    },
+    "dart": {
+      "icon": "icons/file_icons/dart.svg"
+    },
     "default": {
       "icon": "icons/file_icons/file.svg"
+    },
+    "docker": {
+      "icon": "icons/file_icons/docker.svg"
     },
     "document": {
       "icon": "icons/file_icons/book.svg"
@@ -200,8 +229,17 @@
     "expanded_folder": {
       "icon": "icons/file_icons/folder_open.svg"
     },
+    "font": {
+      "icon": "icons/file_icons/font.svg"
+    },
+    "fsharp": {
+      "icon": "icons/file_icons/fsharp.svg"
+    },
     "haskell": {
       "icon": "icons/file_icons/haskell.svg"
+    },
+    "heroku": {
+      "icon": "icons/file_icons/heroku.svg"
     },
     "go": {
       "icon": "icons/file_icons/go.svg"
@@ -211,6 +249,12 @@
     },
     "image": {
       "icon": "icons/file_icons/image.svg"
+    },
+    "java": {
+      "icon": "icons/file_icons/java.svg"
+    },
+    "kotlin": {
+      "icon": "icons/file_icons/kotlin.svg"
     },
     "lock": {
       "icon": "icons/file_icons/lock.svg"
@@ -226,6 +270,9 @@
     },
     "ocaml": {
       "icon": "icons/file_icons/ocaml.svg"
+    },
+    "nim": {
+      "icon": "icons/file_icons/nim.svg"
     },
     "phoenix": {
       "icon": "icons/file_icons/phoenix.svg"
@@ -257,8 +304,17 @@
     "storage": {
       "icon": "icons/file_icons/database.svg"
     },
+    "scala": {
+      "icon": "icons/file_icons/scala.svg"
+    },
+    "swift": {
+      "icon": "icons/file_icons/swift.svg"
+    },
     "template": {
       "icon": "icons/file_icons/html.svg"
+    },
+    "terraform": {
+      "icon": "icons/file_icons/terraform.svg"
     },
     "terminal": {
       "icon": "icons/file_icons/terminal.svg"
@@ -269,6 +325,9 @@
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
     },
+    "tcl": {
+      "icon": "icons/file_icons/tcl.svg"
+    },  
     "vcs": {
       "icon": "icons/file_icons/git.svg"
     },

@@ -1,5 +1,6 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::{ActiveCall, ParticipantLocation};
+use client::ChannelId;
 use collab_ui::{
     channel_view::ChannelView,
     notifications::project_shared_notification::ProjectSharedNotification,
@@ -2000,7 +2001,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 }
 
 async fn join_channel(
-    channel_id: u64,
+    channel_id: ChannelId,
     client: &TestClient,
     cx: &mut TestAppContext,
 ) -> anyhow::Result<()> {

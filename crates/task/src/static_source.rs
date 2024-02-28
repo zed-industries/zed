@@ -12,7 +12,7 @@ use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::{Source, SpawnInTerminal, Task, TaskId};
+use crate::{SpawnInTerminal, Task, TaskId, TaskSource};
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// A single config file entry with the deserialized task definition.
@@ -152,12 +152,12 @@ impl StaticSource {
     pub fn new(
         tasks_file_tracker: UnboundedReceiver<String>,
         cx: &mut AppContext,
-    ) -> Model<Box<dyn Source>> {
+    ) -> Model<Box<dyn TaskSource>> {
         let definitions = TrackedFile::new(DefinitionProvider::default(), tasks_file_tracker, cx);
         cx.new_model(|cx| {
             let _subscription = cx.observe(
                 &definitions,
-                |source: &mut Box<(dyn Source + 'static)>, new_definitions, cx| {
+                |source: &mut Box<(dyn TaskSource + 'static)>, new_definitions, cx| {
                     if let Some(static_source) = source.as_any().downcast_mut::<Self>() {
                         static_source.tasks = new_definitions
                             .read(cx)
@@ -181,11 +181,11 @@ impl StaticSource {
     }
 }
 
-impl Source for StaticSource {
+impl TaskSource for StaticSource {
     fn tasks_for_path(
         &mut self,
         _: Option<&Path>,
-        _: &mut ModelContext<Box<dyn Source>>,
+        _: &mut ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks
             .clone()

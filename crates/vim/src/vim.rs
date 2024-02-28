@@ -17,10 +17,13 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
-use editor::{movement, Editor, EditorEvent, EditorMode};
+use editor::{
+    movement::{self, FindRange},
+    Editor, EditorEvent, EditorMode,
+};
 use gpui::{
-    actions, impl_actions, Action, AppContext, EntityId, Global, Subscription, View, ViewContext,
-    WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, EntityId, Global, KeystrokeEvent, Subscription,
+    View, ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
@@ -73,6 +76,7 @@ pub fn init(cx: &mut AppContext) {
     VimModeSetting::register(cx);
     VimSettings::register(cx);
 
+    cx.observe_keystrokes(observe_keystrokes).detach();
     editor_events::init(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, cx| register(workspace, cx))
@@ -132,46 +136,42 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     visual::register(workspace, cx);
 }
 
-/// Registers a keystroke observer to observe keystrokes for the Vim integration.
-pub fn observe_keystrokes(cx: &mut WindowContext) {
-    cx.observe_keystrokes(|keystroke_event, cx| {
-        if let Some(action) = keystroke_event
-            .action
-            .as_ref()
-            .map(|action| action.boxed_clone())
-        {
-            Vim::update(cx, |vim, _| {
-                if vim.workspace_state.recording {
-                    vim.workspace_state
-                        .recorded_actions
-                        .push(ReplayableAction::Action(action.boxed_clone()));
+/// Called whenever an keystroke is typed so vim can observe all actions
+/// and keystrokes accordingly.
+fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
+    if let Some(action) = keystroke_event
+        .action
+        .as_ref()
+        .map(|action| action.boxed_clone())
+    {
+        Vim::update(cx, |vim, _| {
+            if vim.workspace_state.recording {
+                vim.workspace_state
+                    .recorded_actions
+                    .push(ReplayableAction::Action(action.boxed_clone()));
 
-                    if vim.workspace_state.stop_recording_after_next_action {
-                        vim.workspace_state.recording = false;
-                        vim.workspace_state.stop_recording_after_next_action = false;
-                    }
+                if vim.workspace_state.stop_recording_after_next_action {
+                    vim.workspace_state.recording = false;
+                    vim.workspace_state.stop_recording_after_next_action = false;
                 }
-            });
-
-            // Keystroke is handled by the vim system, so continue forward
-            if action.name().starts_with("vim::") {
-                return;
             }
-        } else if cx.has_pending_keystrokes() {
+        });
+
+        // Keystroke is handled by the vim system, so continue forward
+        if action.name().starts_with("vim::") {
             return;
         }
+    } else if cx.has_pending_keystrokes() {
+        return;
+    }
 
-        Vim::update(cx, |vim, cx| match vim.active_operator() {
-            Some(
-                Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace,
-            ) => {}
-            Some(_) => {
-                vim.clear_operator(cx);
-            }
-            _ => {}
-        });
-    })
-    .detach()
+    Vim::update(cx, |vim, cx| match vim.active_operator() {
+        Some(Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace) => {}
+        Some(_) => {
+            vim.clear_operator(cx);
+        }
+        _ => {}
+    });
 }
 
 /// The state pertaining to Vim mode.
@@ -482,6 +482,11 @@ impl Vim {
                 let find = Motion::FindForward {
                     before,
                     char: text.chars().next().unwrap(),
+                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                        FindRange::MultiLine
+                    } else {
+                        FindRange::SingleLine
+                    },
                 };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
@@ -492,6 +497,11 @@ impl Vim {
                 let find = Motion::FindBackward {
                     after,
                     char: text.chars().next().unwrap(),
+                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                        FindRange::MultiLine
+                    } else {
+                        FindRange::SingleLine
+                    },
                 };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
@@ -628,11 +638,13 @@ struct VimSettings {
     // vim always uses system cliupbaord
     // some magic where yy is system and dd is not.
     pub use_system_clipboard: UseSystemClipboard,
+    pub use_multiline_find: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
     pub use_system_clipboard: Option<UseSystemClipboard>,
+    pub use_multiline_find: Option<bool>,
 }
 
 impl Settings for VimSettings {
