@@ -13,6 +13,7 @@ use gpui::{
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
+use settings::SettingsStore;
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -90,6 +91,7 @@ pub struct TerminalView {
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
     workspace_id: WorkspaceId,
+    show_title: bool,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -165,7 +167,12 @@ impl TerminalView {
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
             workspace_id,
-            _subscriptions: vec![focus_in, focus_out],
+            show_title: TerminalSettings::get_global(cx).toolbar.title,
+            _subscriptions: vec![
+                focus_in,
+                focus_out,
+                cx.observe_global::<SettingsStore>(Self::settings_changed),
+            ],
             _terminal_subscriptions: terminal_subscriptions,
         }
     }
@@ -206,6 +213,12 @@ impl TerminalView {
             });
 
         self.context_menu = Some((context_menu, position, subscription));
+    }
+
+    fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        let settings = TerminalSettings::get_global(cx);
+        self.show_title = settings.toolbar.title;
+        cx.notify();
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
@@ -832,7 +845,11 @@ impl Item for TerminalView {
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+        if self.show_title {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 
     fn breadcrumbs(&self, _: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
