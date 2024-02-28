@@ -241,7 +241,6 @@ impl LspAdapter for EsLintLspAdapter {
             // We enable this, but without also configuring `code_actions_on_format`
             // in the Zed configuration, it doesn't have an effect.
             "enable": true,
-            "rules": []
         });
 
         if let Some(code_action_settings) = eslint_user_settings
