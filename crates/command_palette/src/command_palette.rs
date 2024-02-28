@@ -1,5 +1,5 @@
-use regex::Regex;
 use lazy_static::lazy_static;
+use regex::Regex;
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
@@ -253,7 +253,9 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = CONSECUTIVE_WHITESPACES.replace_all(&query.trim(), " ").to_string();
+            let query = CONSECUTIVE_WHITESPACES
+                .replace_all(&query.trim(), " ")
+                .to_string();
             async move {
                 commands.sort_by_key(|action| {
                     (
