@@ -362,7 +362,9 @@ impl Platform for LinuxPlatform {
     }
 
     fn app_path(&self) -> Result<PathBuf> {
-        unimplemented!()
+        Err(anyhow::Error::msg(
+            "Platform<LinuxPlatform>::app_path is not implemented yet",
+        ))
     }
 
     //todo!(linux)
@@ -372,8 +374,11 @@ impl Platform for LinuxPlatform {
         UtcOffset::UTC
     }
 
+    //todo!(linux)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
-        unimplemented!()
+        Err(anyhow::Error::msg(
+            "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
+        ))
     }
 
     //todo!(linux)
@@ -392,16 +397,25 @@ impl Platform for LinuxPlatform {
         None
     }
 
+    //todo!(linux)
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        unimplemented!()
+        Task::Ready(Some(Err(anyhow::Error::msg(
+            "Platform<LinuxPlatform>::with_credentials is not implemented yet",
+        ))))
     }
 
+    //todo!(linux)
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        unimplemented!()
+        Task::Ready(Some(Err(anyhow::Error::msg(
+            "Platform<LinuxPlatform>::read_credentials is not implemented yet",
+        ))))
     }
 
+    //todo!(linux)
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        unimplemented!()
+        Task::Ready(Some(Err(anyhow::Error::msg(
+            "Platform<LinuxPlatform>::delete_credentials is not implemented yet",
+        ))))
     }
 
     fn window_appearance(&self) -> crate::WindowAppearance {
