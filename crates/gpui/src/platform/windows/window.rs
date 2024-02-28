@@ -18,11 +18,10 @@ use windows::{
     core::{w, HSTRING, PCWSTR},
     Win32::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
-        Graphics::Gdi::HBRUSH,
         UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, PostQuitMessage, RegisterClassW,
-            SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW, CW_USEDEFAULT,
-            GWLP_WNDPROC, HCURSOR, HICON, HMENU, SW_MAXIMIZE, SW_SHOW, WINDOW_EX_STYLE,
+            CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, LoadCursorW, PostQuitMessage,
+            RegisterClassW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW,
+            CW_USEDEFAULT, GWLP_USERDATA, HMENU, IDC_ARROW, SW_MAXIMIZE, SW_SHOW, WINDOW_EX_STYLE,
             WINDOW_LONG_PTR_INDEX, WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY,
             WM_PAINT, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
         },
@@ -30,9 +29,9 @@ use windows::{
 };
 
 use crate::{
-    platform::blade::BladeRenderer, AnyWindowHandle, Bounds, GlobalPixels, Modifiers, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptLevel, Scene, Size, WindowAppearance, WindowBounds, WindowOptions, WindowsDisplay,
+    platform::blade::BladeRenderer, AnyWindowHandle, Bounds, GlobalPixels, HiLoWord, Modifiers,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptLevel, Scene, Size, WindowAppearance, WindowBounds, WindowOptions, WindowsDisplay,
     WindowsPlatformInner,
 };
 
@@ -114,8 +113,8 @@ impl WindowsWindowInner {
         log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         match msg {
             WM_MOVE => {
-                let x = (lparam.0 & 0xFFFF).max(1) as f64;
-                let y = ((lparam.0 >> 16) & 0xFFFF).max(1) as f64;
+                let x = lparam.loword() as f64;
+                let y = lparam.hiword() as f64;
                 self.origin.set(Point::new(x.into(), y.into()));
                 let mut callbacks = self.callbacks.borrow_mut();
                 if let Some(callback) = callbacks.moved.as_mut() {
@@ -124,8 +123,8 @@ impl WindowsWindowInner {
             }
             WM_SIZE => {
                 // todo!("windows"): handle maximized or minimized
-                let width = (lparam.0 & 0xFFFF).max(1) as f64;
-                let height = ((lparam.0 >> 16) & 0xFFFF).max(1) as f64;
+                let width = lparam.loword().max(1) as f64;
+                let height = lparam.hiword().max(1) as f64;
                 self.renderer
                     .borrow_mut()
                     .update_drawable_size(Size { width, height });
@@ -467,14 +466,8 @@ fn register_wnd_class() -> PCWSTR {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let wc = WNDCLASSW {
-            lpfnWndProc: Some(wnd_proc_start),
-            cbClsExtra: 0,
-            cbWndExtra: std::mem::size_of::<*const c_void>() as i32,
-            hInstance: HINSTANCE::default(),
-            hIcon: HICON::default(),
-            hCursor: HCURSOR::default(),
-            hbrBackground: HBRUSH::default(),
-            lpszMenuName: PCWSTR::null(),
+            lpfnWndProc: Some(wnd_proc),
+            hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             ..Default::default()
         };
@@ -484,7 +477,7 @@ fn register_wnd_class() -> PCWSTR {
     CLASS_NAME
 }
 
-unsafe extern "system" fn wnd_proc_start(
+unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
@@ -502,22 +495,11 @@ unsafe extern "system" fn wnd_proc_start(
             ctx.handle,
         ));
         let weak = Box::new(Rc::downgrade(&inner));
-        unsafe { set_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0), Box::into_raw(weak) as isize) };
-        unsafe { set_window_long(hwnd, GWLP_WNDPROC, wnd_proc as *const c_void as isize) };
+        unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
         ctx.inner = Some(inner);
         return LRESULT(1);
     }
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-}
-
-unsafe extern "system" fn wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    let ptr =
-        unsafe { get_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0)) } as *mut Weak<WindowsWindowInner>;
+    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowInner>;
     if ptr.is_null() {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
@@ -528,7 +510,7 @@ unsafe extern "system" fn wnd_proc(
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
     if msg == WM_NCDESTROY {
-        unsafe { set_window_long(hwnd, WINDOW_LONG_PTR_INDEX(0), 0) };
+        unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
         unsafe { std::mem::drop(Box::from_raw(ptr)) };
     }
     r
