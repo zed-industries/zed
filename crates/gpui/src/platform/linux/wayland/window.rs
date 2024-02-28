@@ -394,10 +394,6 @@ impl PlatformWindow for WaylandWindow {
         let inner = self.0.inner.borrow_mut();
         inner.renderer.sprite_atlas().clone()
     }
-
-    fn set_graphics_profiler_enabled(&self, enabled: bool) {
-        //todo!(linux)
-    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

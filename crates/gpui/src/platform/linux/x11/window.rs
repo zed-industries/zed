@@ -525,8 +525,4 @@ impl PlatformWindow for X11Window {
         let inner = self.0.inner.borrow_mut();
         inner.renderer.sprite_atlas().clone()
     }
-
-    fn set_graphics_profiler_enabled(&self, enabled: bool) {
-        unimplemented!("linux")
-    }
 }
