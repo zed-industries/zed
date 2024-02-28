@@ -44,7 +44,7 @@ impl Render for UpdateNotification {
                         crate::view_release_notes(&Default::default(), cx);
                         this.dismiss(&menu::Cancel, cx)
                     })),
-            );
+            )
     }
 }
 
