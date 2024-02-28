@@ -222,7 +222,7 @@ trait ElementObject {
 }
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
-pub struct DrawableElement<E: Element> {
+pub struct Drawable<E: Element> {
     /// The drawn element.
     pub element: E,
     phase: ElementDrawPhase<E::BeforeLayout, E::AfterLayout>,
@@ -250,9 +250,9 @@ enum ElementDrawPhase<BeforeLayout, AfterLayout> {
 }
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
-impl<E: Element> DrawableElement<E> {
+impl<E: Element> Drawable<E> {
     fn new(element: E) -> Self {
-        DrawableElement {
+        Drawable {
             element,
             phase: ElementDrawPhase::Start,
         }
@@ -356,7 +356,7 @@ impl<E: Element> DrawableElement<E> {
     }
 }
 
-impl<E> ElementObject for DrawableElement<E>
+impl<E> ElementObject for Drawable<E>
 where
     E: Element,
     E::BeforeLayout: 'static,
@@ -366,15 +366,15 @@ where
     }
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
-        DrawableElement::before_layout(self, cx)
+        Drawable::before_layout(self, cx)
     }
 
     fn after_layout(&mut self, cx: &mut ElementContext) {
-        DrawableElement::after_layout(self, cx);
+        Drawable::after_layout(self, cx);
     }
 
     fn paint(&mut self, cx: &mut ElementContext) {
-        DrawableElement::paint(self, cx);
+        Drawable::paint(self, cx);
     }
 
     fn measure(
@@ -382,7 +382,7 @@ where
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> Size<Pixels> {
-        DrawableElement::measure(self, available_space, cx)
+        Drawable::measure(self, available_space, cx)
     }
 }
 
@@ -396,7 +396,7 @@ impl AnyElement {
         E::BeforeLayout: Any,
     {
         let element = ELEMENT_ARENA
-            .with_borrow_mut(|arena| arena.alloc(|| DrawableElement::new(element)))
+            .with_borrow_mut(|arena| arena.alloc(|| Drawable::new(element)))
             .map(|element| element as &mut dyn ElementObject);
         AnyElement(element)
     }

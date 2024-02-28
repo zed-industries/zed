@@ -51,7 +51,7 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
-pub use element::{Cursor, EditorElement, HighlightedRange, HighlightedRangeLine};
+pub use element::{CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine};
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;

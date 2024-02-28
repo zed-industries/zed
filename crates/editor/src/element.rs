@@ -968,23 +968,23 @@ impl EditorElement {
                         };
 
                         let fold_background = {
-                            let _fold_frame_state = div()
-                                .id(fold.id)
-                                .size_full()
-                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                                .on_click(cx.listener_for(
-                                    &self.editor,
-                                    move |editor: &mut Editor, _, cx| {
-                                        editor.unfold_ranges(
-                                            [fold_range.start..fold_range.end],
-                                            true,
-                                            false,
-                                            cx,
-                                        );
-                                        cx.stop_propagation();
-                                    },
-                                ))
-                                .draw(fold_bounds.origin, fold_bounds.size, cx);
+                            // let _fold_frame_state = div()
+                            //     .id(fold.id)
+                            //     .size_full()
+                            //     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                            //     .on_click(cx.listener_for(
+                            //         &self.editor,
+                            //         move |editor: &mut Editor, _, cx| {
+                            //             editor.unfold_ranges(
+                            //                 [fold_range.start..fold_range.end],
+                            //                 true,
+                            //                 false,
+                            //                 cx,
+                            //             );
+                            //             cx.stop_propagation();
+                            //         },
+                            //     ))
+                            //     .draw(fold_bounds.origin, fold_bounds.size, cx);
 
                             todo!("FOLD FRAME STATE, RE-ENABLE ME!!!")
                             // if fold_frame_state.is_active() {
@@ -1022,7 +1022,7 @@ impl EditorElement {
                     );
                 }
 
-                let mut cursors = SmallVec::<[Cursor; 32]>::new();
+                let mut cursors = SmallVec::<[CursorLayout; 32]>::new();
                 let corner_radius = 0.15 * layout.position_map.line_height;
                 let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
@@ -1112,7 +1112,7 @@ impl EditorElement {
                                     });
                                 }
 
-                                cursors.push(Cursor {
+                                cursors.push(CursorLayout {
                                     color: player_color.cursor,
                                     block_width,
                                     origin: point(x, y),
@@ -2694,6 +2694,7 @@ impl Element for EditorElement {
 
             // Add 1 to ensure selections bleed off screen
             let end_row = 1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
+            let visible_display_row_range = start_row..end_row;
 
             let start_anchor = if start_row == 0 {
                 Anchor::min()
@@ -2892,6 +2893,108 @@ impl Element for EditorElement {
                 .unwrap()
                 .width;
             let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
+            let scroll_position = point(
+                scroll_position.x * em_width,
+                scroll_position.y * line_height,
+            );
+
+            let mut cursors = Vec::<CursorLayout>::new();
+            let cursor_corner_radius = 0.15 * line_height;
+            let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
+
+            for (participant_ix, (player_color, selections)) in
+                selections.iter().enumerate()
+            {
+                for selection in selections.into_iter() {
+                    if selection.is_local && !selection.range.is_empty() {
+                        invisible_display_ranges.push(selection.range.clone());
+                    }
+
+                    if !selection.is_local || self.editor.read(cx).show_local_cursors(cx) {
+                        let cursor_position = selection.head;
+                        if
+                            visible_display_row_range
+                            .contains(&cursor_position.row())
+                        {
+                            let cursor_row_layout = line_layouts
+                                [(cursor_position.row() - start_row) as usize]
+                                .line;
+                            let cursor_column = cursor_position.column() as usize;
+
+                            let cursor_character_x =
+                                cursor_row_layout.x_for_index(cursor_column);
+                            let mut block_width = cursor_row_layout
+                                .x_for_index(cursor_column + 1)
+                                - cursor_character_x;
+                            if block_width == Pixels::ZERO {
+                                block_width = em_width;
+                            }
+                            let block_text = if let CursorShape::Block = selection.cursor_shape
+                            {
+                                    snapshot
+                                    .chars_at(cursor_position)
+                                    .next()
+                                    .and_then(|(character, _)| {
+                                        let text = if character == '\n' {
+                                            SharedString::from(" ")
+                                        } else {
+                                            SharedString::from(character.to_string())
+                                        };
+                                        let len = text.len();
+                                        cx.text_system()
+                                            .shape_line(
+                                                text,
+                                                cursor_row_layout.font_size,
+                                                &[TextRun {
+                                                    len,
+                                                    font: self.style.text.font(),
+                                                    color: self.style.background,
+                                                    background_color: None,
+                                                    strikethrough: None,
+                                                    underline: None,
+                                                }],
+                                            )
+                                            .log_err()
+                                    })
+                            } else {
+                                None
+                            };
+
+                            let x = cursor_character_x - scroll_position.x;
+                            let y = cursor_position.row() as f32
+                                * line_height
+                                - scroll_position.y;
+                            if selection.is_newest {
+                                self.editor.update(cx, |editor, _| {
+                                    editor.pixel_position_of_newest_cursor = Some(point(
+                                        text_bounds.origin.x + x + block_width / 2.,
+                                        text_bounds.origin.y
+                                            + y
+                                            + layout.position_map.line_height / 2.,
+                                    ))
+                                });
+                            }
+
+                            cursors.push(CursorLayout {
+                                color: player_color.cursor,
+                                block_width,
+                                origin: point(x, y),
+                                line_height: layout.position_map.line_height,
+                                shape: selection.cursor_shape,
+                                block_text,
+                                cursor_name: selection.user_name.clone().map(|name| {
+                                    CursorName {
+                                        string: name,
+                                        color: self.style.background,
+                                        is_top_row: cursor_position.row() == 0,
+                                        z_index: (participant_ix % 256).try_into().unwrap(),
+                                    }
+                                }),
+                            });
+                        }
+                    }
+                }
+            }
 
             let (scroll_width, blocks) = cx.with_element_context(|cx| {
                 cx.with_element_id(Some("editor_blocks"), |cx| {
@@ -3048,10 +3151,7 @@ impl Element for EditorElement {
                 mode: snapshot.mode,
                 position_map: Arc::new(PositionMap {
                     size: bounds.size,
-                    scroll_position: point(
-                        scroll_position.x * em_width,
-                        scroll_position.y * line_height,
-                    ),
+                    scroll_position,
                     scroll_max,
                     line_layouts,
                     line_height,
@@ -3077,6 +3177,7 @@ impl Element for EditorElement {
                 display_hunks,
                 blocks,
                 selections,
+                cursors,
                 context_menu,
                 code_actions_indicator,
                 fold_indicators,
@@ -3179,6 +3280,7 @@ pub struct AfterEditorLayout {
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
+    cursors: CursorLayout,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     is_singleton: bool,
@@ -3310,26 +3412,17 @@ fn layout_line(
     )
 }
 
-#[derive(Debug)]
-pub struct Cursor {
+pub struct CursorLayout {
     origin: gpui::Point<Pixels>,
     block_width: Pixels,
     line_height: Pixels,
     color: Hsla,
     shape: CursorShape,
     block_text: Option<ShapedLine>,
-    cursor_name: Option<CursorName>,
+    cursor_name: Option<AnyElement>,
 }
 
-#[derive(Debug)]
-pub struct CursorName {
-    string: SharedString,
-    color: Hsla,
-    is_top_row: bool,
-    z_index: u16,
-}
-
-impl Cursor {
+impl CursorLayout {
     pub fn new(
         origin: gpui::Point<Pixels>,
         block_width: Pixels,
@@ -3337,9 +3430,9 @@ impl Cursor {
         color: Hsla,
         shape: CursorShape,
         block_text: Option<ShapedLine>,
-        cursor_name: Option<CursorName>,
-    ) -> Cursor {
-        Cursor {
+        cursor_name: Option<AnyElement>,
+    ) -> CursorLayout {
+        CursorLayout {
             origin,
             block_width,
             line_height,

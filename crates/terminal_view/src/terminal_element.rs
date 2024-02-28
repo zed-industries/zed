@@ -1,4 +1,4 @@
-use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
+use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     div, fill, point, px, relative, AnyElement, AvailableSpace, Bounds, DispatchPhase, Element,
     ElementContext, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler,
@@ -32,7 +32,7 @@ pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
-    cursor: Option<Cursor>,
+    cursor: Option<CursorLayout>,
     background_color: Hsla,
     dimensions: TerminalSize,
     mode: TermMode,
@@ -579,7 +579,7 @@ impl TerminalElement {
                         AlacCursorShape::Hidden => unreachable!(),
                     };
 
-                    Cursor::new(
+                    CursorLayout::new(
                         cursor_position,
                         block_width,
                         dimensions.line_height,
