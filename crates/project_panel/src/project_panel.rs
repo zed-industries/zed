@@ -27,7 +27,7 @@ use std::{cmp::Ordering, ffi::OsStr, ops::Range, path::Path, sync::Arc};
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
@@ -1495,35 +1495,6 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-struct NumericPrefixWithSuffix<'a>(i32, &'a str);
-
-impl<'a> NumericPrefixWithSuffix<'a> {
-    fn from_str(str: &'a str) -> Option<Self> {
-        let mut chars = str.chars();
-        let prefix: String = chars.by_ref().take_while(|c| c.is_digit(10)).collect();
-        let remainder = chars.as_str();
-
-        match prefix.parse::<i32>() {
-            Ok(prefix) => Some(NumericPrefixWithSuffix(prefix, remainder)),
-            Err(_) => None,
-        }
-    }
-}
-
-impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let NumericPrefixWithSuffix(num_a, remainder_a) = self;
-        let NumericPrefixWithSuffix(num_b, remainder_b) = other;
-
-        Some(
-            num_a
-                .cmp(&num_b)
-                .then_with(|| UniCase::new(remainder_a).cmp(&UniCase::new(remainder_b))),
-        )
     }
 }
 
