@@ -141,8 +141,8 @@
     "toml": "toml",
     "ts": "typescript",
     "tsv": "storage",
-    "ttf": "font",
     "tsx": "jsx",
+    "ttf": "font",
     "txt": "document",
     "vue": "vue",
     "wav": "audio",
@@ -181,6 +181,12 @@
     },
     "collapsed_folder": {
       "icon": "icons/file_icons/folder.svg"
+    },
+    "cpp": {
+      "icon": "icons/file_icons/cpp.svg"
+    },
+    "cs" : {
+      "icon" : "icons/file_icons/cs.svg"
     },
     "css": {
       "icon": "icons/file_icons/css.svg"
@@ -229,6 +235,9 @@
     },
     "java": {
       "icon": "icons/file_icons/java.svg"
+    },
+    "jsx": {
+      "icon": "icons/file_icons/jsx.svg"
     },
     "kotlin":{
       "icon": "icons/file_icons/kotlin.svg"
