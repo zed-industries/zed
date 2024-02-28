@@ -41,7 +41,7 @@ fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_
     if let Some(spawn_in_terminal) = spawn_in_terminal {
         workspace.project().update(cx, |project, cx| {
             project.task_inventory().update(cx, |inventory, _| {
-                inventory.last_scheduled_task = Some(task.id().clone());
+                inventory.task_scheduled(task.id().clone());
             })
         });
         cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));
