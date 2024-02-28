@@ -1,3 +1,5 @@
+use regex::Regex;
+use lazy_static::lazy_static;
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
@@ -35,6 +37,10 @@ impl ModalView for CommandPalette {}
 
 pub struct CommandPalette {
     picker: View<Picker<CommandPaletteDelegate>>,
+}
+
+lazy_static! {
+    static ref STRIP_UNNECESSARY_WHITESPACES: Regex = Regex::new(r"\s+").unwrap();
 }
 
 impl CommandPalette {
@@ -247,7 +253,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = query.replace(" ", "");
+            let query = STRIP_UNNECESSARY_WHITESPACES.replace_all(&query.trim(), " ").to_string();
             async move {
                 commands.sort_by_key(|action| {
                     (
