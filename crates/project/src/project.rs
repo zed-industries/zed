@@ -4129,17 +4129,13 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         if self.is_local() {
-            let mut buffers_with_paths_and_servers = buffers
+            let mut buffers_with_paths = buffers
                 .into_iter()
                 .filter_map(|buffer_handle| {
                     let buffer = buffer_handle.read(cx);
                     let file = File::from_dyn(buffer.file())?;
                     let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
-                    let (adapter, server) = self
-                        .primary_language_server_for_buffer(buffer, cx)
-                        .map(|(a, s)| (Some(a.clone()), Some(s.clone())))
-                        .unwrap_or((None, None));
-                    Some((buffer_handle, buffer_abs_path, adapter, server))
+                    Some((buffer_handle, buffer_abs_path))
                 })
                 .collect::<Vec<_>>();
 
@@ -4147,7 +4143,7 @@ impl Project {
                 // Do not allow multiple concurrent formatting requests for the
                 // same buffer.
                 project.update(&mut cx, |this, cx| {
-                    buffers_with_paths_and_servers.retain(|(buffer, _, _, _)| {
+                    buffers_with_paths.retain(|(buffer, _)| {
                         this.buffers_being_formatted
                             .insert(buffer.read(cx).remote_id())
                     });
@@ -4156,10 +4152,10 @@ impl Project {
                 let _cleanup = defer({
                     let this = project.clone();
                     let mut cx = cx.clone();
-                    let buffers = &buffers_with_paths_and_servers;
+                    let buffers = &buffers_with_paths;
                     move || {
                         this.update(&mut cx, |this, cx| {
-                            for (buffer, _, _, _) in buffers {
+                            for (buffer, _) in buffers {
                                 this.buffers_being_formatted
                                     .remove(&buffer.read(cx).remote_id());
                             }
@@ -4169,9 +4165,14 @@ impl Project {
                 });
 
                 let mut project_transaction = ProjectTransaction::default();
-                for (buffer, buffer_abs_path, lsp_adapter, language_server) in
-                    &buffers_with_paths_and_servers
-                {
+                for (buffer, buffer_abs_path) in &buffers_with_paths {
+                    let adapters_and_servers: Vec<_> = project.update(&mut cx, |project, cx| {
+                        project
+                            .language_servers_for_buffer(&buffer.read(cx), cx)
+                            .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                            .collect()
+                    })?;
+
                     let settings = buffer.update(&mut cx, |buffer, cx| {
                         language_settings(buffer.language(), buffer.file(), cx).clone()
                     })?;
@@ -4202,9 +4203,7 @@ impl Project {
                         buffer.end_transaction(cx)
                     })?;
 
-                    if let (Some(lsp_adapter), Some(language_server)) =
-                        (lsp_adapter, language_server)
-                    {
+                    for (lsp_adapter, language_server) in adapters_and_servers.iter() {
                         // Apply the code actions on
                         let code_actions: Vec<lsp::CodeActionKind> = settings
                             .code_actions_on_format
@@ -4241,6 +4240,7 @@ impl Project {
                                     if edit.changes.is_none() && edit.document_changes.is_none() {
                                         continue;
                                     }
+
                                     let new = Self::deserialize_workspace_edit(
                                         project
                                             .upgrade()
@@ -4284,17 +4284,23 @@ impl Project {
                         }
                     }
 
-                    // Apply language-specific formatting using either a language server
+                    // Apply language-specific formatting using either the primary language server
                     // or external command.
+                    let primary_language_server = adapters_and_servers
+                        .first()
+                        .cloned()
+                        .map(|(_, lsp)| lsp.clone());
+                    let server_and_buffer = primary_language_server
+                        .as_ref()
+                        .zip(buffer_abs_path.as_ref());
+
                     let mut format_operation = None;
                     match (&settings.formatter, &settings.format_on_save) {
                         (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
                         (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
                         | (_, FormatOnSave::LanguageServer) => {
-                            if let Some((language_server, buffer_abs_path)) =
-                                language_server.as_ref().zip(buffer_abs_path.as_ref())
-                            {
+                            if let Some((language_server, buffer_abs_path)) = server_and_buffer {
                                 format_operation = Some(FormatOperation::Lsp(
                                     Self::format_via_lsp(
                                         &project,
@@ -4338,7 +4344,7 @@ impl Project {
                             {
                                 format_operation = Some(new_operation);
                             } else if let Some((language_server, buffer_abs_path)) =
-                                language_server.as_ref().zip(buffer_abs_path.as_ref())
+                                server_and_buffer
                             {
                                 format_operation = Some(FormatOperation::Lsp(
                                     Self::format_via_lsp(
