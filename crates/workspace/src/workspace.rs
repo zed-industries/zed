@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    ChannelId, Client, ErrorExt, HostedProjectId, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -2781,7 +2781,11 @@ impl Workspace {
 
     // RPC handlers
 
-    fn active_view_for_follower(&self, cx: &mut ViewContext<Self>) -> Option<proto::View> {
+    fn active_view_for_follower(
+        &self,
+        follower_project_id: Option<u64>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<proto::View> {
         let item = self.active_item(cx)?;
         let leader_id = self
             .pane_for(&*item)
@@ -2790,6 +2794,13 @@ impl Workspace {
         let item_handle = item.to_followable_item_handle(cx)?;
         let id = item_handle.remote_id(&self.app_state.client, cx)?;
         let variant = item_handle.to_state_proto(cx)?;
+
+        if item_handle.is_project_item(cx)
+            && (follower_project_id.is_none()
+                || follower_project_id != self.project.read(cx).remote_id())
+        {
+            return None;
+        }
 
         Some(proto::View {
             id: Some(id.to_proto()),
@@ -2806,7 +2817,7 @@ impl Workspace {
         let client = &self.app_state.client;
         let project_id = self.project.read(cx).remote_id();
 
-        let active_view = self.active_view_for_follower(cx);
+        let active_view = self.active_view_for_follower(follower_project_id, cx);
         let active_view_id = active_view.as_ref().and_then(|view| view.id.clone());
 
         cx.notify();
@@ -3981,7 +3992,6 @@ impl WorkspaceStore {
                 project_id: envelope.payload.project_id,
                 peer_id: envelope.original_sender_id()?,
             };
-            let active_project = ActiveCall::global(cx).read(cx).location().cloned();
 
             let mut response = proto::FollowResponse::default();
             this.workspaces.retain(|workspace| {
@@ -3996,14 +4006,16 @@ impl WorkspaceStore {
 
                         if let Some(active_view_id) = handler_response.active_view_id.clone() {
                             if response.active_view_id.is_none()
-                                || Some(workspace.project.downgrade()) == active_project
+                                || workspace.project.read(cx).remote_id() == follower.project_id
                             {
                                 response.active_view_id = Some(active_view_id);
                             }
                         }
 
                         if let Some(active_view) = handler_response.active_view.clone() {
-                            if workspace.project.read(cx).remote_id() == follower.project_id {
+                            if response.active_view_id.is_none()
+                                || workspace.project.read(cx).remote_id() == follower.project_id
+                            {
                                 response.active_view = Some(active_view)
                             }
                         }
@@ -4452,33 +4464,6 @@ pub fn create_and_open_local_file(
 
         let item = items.pop().flatten();
         item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
-    })
-}
-
-pub fn join_hosted_project(
-    project_id: HostedProjectId,
-    app_state: Arc<AppState>,
-    cx: &mut AppContext,
-) -> Task<Result<()>> {
-    cx.spawn(|cx| async move {
-        let project = Project::hosted(
-            project_id,
-            app_state.user_store.clone(),
-            app_state.client.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            cx.clone(),
-        )
-        .await?;
-
-        let window_bounds_override = window_bounds_env_override(&cx);
-        cx.update(|cx| {
-            let options = (app_state.build_window_options)(window_bounds_override, None, cx);
-            cx.open_window(options, |cx| {
-                cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
-            })
-        })?;
-        Ok(())
     })
 }
 
