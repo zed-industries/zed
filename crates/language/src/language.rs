@@ -108,11 +108,30 @@ pub trait ToLspPosition {
 /// A name of a language server.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
     pub buffer: Model<Buffer>,
     pub range: Range<Anchor>,
+}
+
+pub enum LanguageTaskKind {
+    RunFile,
+    TestAtLine,
+    TestFile,
+    TestPackage,
+    TestWorkspace,
+}
+
+pub struct LanguageTask {}
+pub trait LanguageTaskBuilder: Sync + Send + 'static {
+    fn task_for(
+        &self,
+        kind: LanguageTaskKind,
+        buffer: Model<Buffer>,
+        path: &Path,
+        cx: &mut AppContext,
+    ) -> Option<Task<LanguageTask>>;
 }
 
 /// Represents a Language Server, with certain cached sync properties.
@@ -656,6 +675,7 @@ pub struct Language {
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) adapters: Vec<Arc<CachedLspAdapter>>,
 
+    pub(crate) task_builder: Option<Arc<dyn LanguageTaskBuilder>>,
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
         futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
@@ -779,6 +799,7 @@ impl Language {
 
             #[cfg(any(test, feature = "test-support"))]
             fake_adapter: None,
+            task_builder: None,
         }
     }
 
