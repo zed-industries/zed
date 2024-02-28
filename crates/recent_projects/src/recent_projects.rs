@@ -4,8 +4,11 @@ use gpui::{
     Subscription, Task, View, ViewContext, WeakView,
 };
 use ordered_float::OrderedFloat;
-use picker::{highlighted_match_with_paths::HighlightedMatchWithPaths, Picker, PickerDelegate};
-use std::sync::Arc;
+use picker::{
+    highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
+    Picker, PickerDelegate,
+};
+use std::{path::Path, sync::Arc};
 use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_DB};
@@ -242,18 +245,34 @@ impl PickerDelegate for RecentProjectsDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let Some(r#match) = self.matches.get(ix) else {
+        let Some(hit) = self.matches.get(ix) else {
             return None;
         };
 
-        let (workspace_id, location) = &self.workspaces[r#match.candidate_id];
+        let (workspace_id, location) = &self.workspaces[hit.candidate_id];
         let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
-        let highlighted_match = HighlightedMatchWithPaths::new(
-            &r#match,
-            location.paths().as_slice(),
-            true,
-            self.render_paths,
-        );
+
+        let mut path_start_offset = 0;
+        let (match_labels, paths): (Vec<_>, Vec<_>) = location
+            .paths()
+            .iter()
+            .map(|path| {
+                let path = path.compact();
+                let highlighted_text =
+                    highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
+
+                path_start_offset += highlighted_text.1.char_count;
+                highlighted_text
+            })
+            .unzip();
+
+        let highlighted_match = HighlightedMatchWithPaths {
+            match_label: HighlightedText::join(
+                match_labels.into_iter().filter_map(|name| name),
+                ", ",
+            ),
+            paths: if self.render_paths { paths } else { Vec::new() },
+        };
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -290,6 +309,54 @@ impl PickerDelegate for RecentProjectsDelegate {
                 }),
         )
     }
+}
+
+// Compute the highlighted text for the name and path
+fn highlights_for_path(
+    path: &Path,
+    match_positions: &Vec<usize>,
+    path_start_offset: usize,
+) -> (Option<HighlightedText>, HighlightedText) {
+    let path_string = path.to_string_lossy();
+    let path_char_count = path_string.chars().count();
+    // Get the subset of match highlight positions that line up with the given path.
+    // Also adjusts them to start at the path start
+    let path_positions = match_positions
+        .iter()
+        .copied()
+        .skip_while(|position| *position < path_start_offset)
+        .take_while(|position| *position < path_start_offset + path_char_count)
+        .map(|position| position - path_start_offset)
+        .collect::<Vec<_>>();
+
+    // Again subset the highlight positions to just those that line up with the file_name
+    // again adjusted to the start of the file_name
+    let file_name_text_and_positions = path.file_name().map(|file_name| {
+        let text = file_name.to_string_lossy();
+        let char_count = text.chars().count();
+        let file_name_start = path_char_count - char_count;
+        let highlight_positions = path_positions
+            .iter()
+            .copied()
+            .skip_while(|position| *position < file_name_start)
+            .take_while(|position| *position < file_name_start + char_count)
+            .map(|position| position - file_name_start)
+            .collect::<Vec<_>>();
+        HighlightedText {
+            text: text.to_string(),
+            highlight_positions,
+            char_count,
+        }
+    });
+
+    (
+        file_name_text_and_positions,
+        HighlightedText {
+            text: path_string.to_string(),
+            highlight_positions: path_positions,
+            char_count: path_char_count,
+        },
+    )
 }
 
 impl RecentProjectsDelegate {

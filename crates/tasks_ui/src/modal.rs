@@ -6,11 +6,14 @@ use gpui::{
     Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
     VisualContext, WeakView,
 };
-use picker::{highlighted_match_with_paths::HighlightedMatchWithPaths, Picker, PickerDelegate};
-use project::{Inventory, ProjectPath, WorktreeId};
+use picker::{
+    highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
+    Picker, PickerDelegate,
+};
+use project::{Inventory, ProjectPath, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, Task};
 use ui::{v_flex, ListItem, ListItemSpacing, RenderOnce, Selectable, WindowContext};
-use util::ResultExt;
+use util::{paths::PathExt, ResultExt};
 use workspace::{ModalView, Workspace};
 
 use crate::schedule_task;
@@ -20,7 +23,7 @@ actions!(task, [Spawn, Rerun]);
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Vec<(Option<WorktreeId>, Arc<dyn Task>)>,
+    candidates: Vec<(TaskSourceKind, Arc<dyn Task>)>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -235,28 +238,26 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
-        let (worktree_id, _) = self.candidates[hit.candidate_id];
-        let path_for_label = worktree_id
-            .and_then(|worktree_id| {
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        Some(
-                            workspace
-                                .project()
-                                .read(cx)
-                                .worktree_for_id(worktree_id, cx)?
-                                .read(cx)
-                                .abs_path()
-                                .to_path_buf(),
-                        )
-                    })
-                    .ok()
-                    .flatten()
-            })
-            .unwrap_or_else(|| PathBuf::new());
+        let (source_kind, _) = &self.candidates[hit.candidate_id];
+        let details = match source_kind {
+            TaskSourceKind::UserInput => "user input".to_string(),
+            TaskSourceKind::Worktree { abs_path, .. } | TaskSourceKind::AbsPath(abs_path) => {
+                abs_path.compact().to_string_lossy().to_string()
+            }
+        };
 
-        let highlighted_location =
-            HighlightedMatchWithPaths::new(hit, &[path_for_label], false, true);
+        let highlighted_location = HighlightedMatchWithPaths {
+            match_label: HighlightedText {
+                text: hit.string.clone(),
+                highlight_positions: hit.positions.clone(),
+                char_count: hit.string.chars().count(),
+            },
+            paths: vec![HighlightedText {
+                char_count: details.chars().count(),
+                highlight_positions: Vec::new(),
+                text: details,
+            }],
+        };
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)

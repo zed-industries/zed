@@ -23,16 +23,32 @@ struct SourceInInventory {
     source: Model<Box<dyn TaskSource>>,
     _subscription: Subscription,
     type_id: TypeId,
-    local_abs_path: Option<PathBuf>,
-    worktree: Option<WorktreeId>,
+    kind: TaskSourceKind,
 }
 
-// TODO kb use this to draw proper labels in the task modal
-// enum SourceId {
-//     UserInput,
-//     AbsPath(PathBuf),
-//     Worktree { id: WorktreeId, abs_path: PathBuf },
-// }
+/// TODO kb docs
+#[derive(Debug, Clone)]
+pub enum TaskSourceKind {
+    UserInput,
+    AbsPath(PathBuf),
+    Worktree { id: WorktreeId, abs_path: PathBuf },
+}
+
+impl TaskSourceKind {
+    fn abs_path(&self) -> Option<&Path> {
+        match self {
+            Self::AbsPath(abs_path) | Self::Worktree { abs_path, .. } => Some(abs_path),
+            Self::UserInput => None,
+        }
+    }
+
+    fn worktree(&self) -> Option<WorktreeId> {
+        match self {
+            Self::Worktree { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+}
 
 impl Inventory {
     pub(crate) fn new(cx: &mut AppContext) -> Model<Self> {
@@ -47,17 +63,13 @@ impl Inventory {
     /// Unless a source is removed, ignores future additions for the same path.
     pub fn add_static_source(
         &mut self,
-        abs_path: Option<&Path>,
-        worktree: Option<WorktreeId>,
+        kind: TaskSourceKind,
         create_static_source: impl FnOnce(&mut ModelContext<Self>) -> Model<Box<dyn TaskSource>>,
         cx: &mut ModelContext<Self>,
     ) {
+        let abs_path = kind.abs_path();
         if abs_path.is_some() {
-            if self
-                .sources
-                .iter()
-                .any(|s| s.local_abs_path.as_deref() == abs_path)
-            {
+            if self.sources.iter().any(|s| s.kind.abs_path() == abs_path) {
                 log::debug!("Static source {abs_path:?} already exists, not adding");
                 return;
             }
@@ -71,8 +83,7 @@ impl Inventory {
             }),
             source,
             type_id,
-            local_abs_path: abs_path.map(Path::to_path_buf),
-            worktree,
+            kind,
         };
         self.sources.push(source);
         cx.notify();
@@ -83,8 +94,7 @@ impl Inventory {
     ///
     /// Now, entry for this path can be re-added again.
     pub fn remove_local_static_source(&mut self, abs_path: &Path) {
-        self.sources
-            .retain(|s| s.local_abs_path.as_deref() != Some(abs_path));
+        self.sources.retain(|s| s.kind.abs_path() != Some(abs_path));
     }
 
     /// If present, removes the worktree source entry that has the given worktree id,
@@ -92,7 +102,7 @@ impl Inventory {
     ///
     /// Now, entry for this path can be re-added again.
     pub fn remove_worktree_sources(&mut self, worktree: WorktreeId) {
-        self.sources.retain(|s| s.worktree != Some(worktree));
+        self.sources.retain(|s| s.kind.worktree() != Some(worktree));
     }
 
     pub fn source<T: TaskSource>(&self) -> Option<Model<Box<dyn TaskSource>>> {
@@ -117,7 +127,7 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         lru: bool,
         cx: &mut AppContext,
-    ) -> Vec<(Option<WorktreeId>, Arc<dyn Task>)> {
+    ) -> Vec<(TaskSourceKind, Arc<dyn Task>)> {
         let mut lru_score = 0_u32;
         let tasks_by_usage = if lru {
             self.last_scheduled_tasks
@@ -131,19 +141,18 @@ impl Inventory {
             HashMap::default()
         };
         let not_used_score = post_inc(&mut lru_score);
-
-        // TODO kb need to consider name collisions here
         self.sources
             .iter()
             .filter(|source| {
-                worktree.is_none() || source.worktree.is_none() || source.worktree == worktree
+                let source_worktree = source.kind.worktree();
+                worktree.is_none() || source_worktree.is_none() || source_worktree == worktree
             })
             .flat_map(|source| {
                 source
                     .source
                     .update(cx, |source, cx| source.tasks_for_path(path, cx))
                     .into_iter()
-                    .map(|task| (source.worktree, task))
+                    .map(|task| (&source.kind, task))
             })
             .map(|task| {
                 let usages = if lru {
@@ -157,10 +166,16 @@ impl Inventory {
                 (task, usages)
             })
             .sorted_unstable_by(
-                |((worktree_a, task_a), usages_a), ((worktree_b, task_b), usages_b)| {
-                    usages_a
-                        .cmp(usages_b)
-                        .then(worktree_a.is_none().cmp(&worktree_b.is_some()))
+                |((kind_a, task_a), usages_a), ((kind_b, task_b), usages_b)| {
+                    usages_b
+                        .cmp(usages_a)
+                        .reverse()
+                        .then(
+                            kind_b
+                                .worktree()
+                                .is_some()
+                                .cmp(&kind_a.worktree().is_some()),
+                        )
                         .then({
                             NumericPrefixWithSuffix::from_numeric_prefixed_str(task_a.name())
                                 .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
@@ -170,7 +185,7 @@ impl Inventory {
                         })
                 },
             )
-            .map(|(task, _)| task)
+            .map(|((kind, task), _)| (kind.clone(), task))
             .collect()
     }
 
@@ -218,16 +233,14 @@ mod tests {
 
         inventory.update(cx, |inventory, cx| {
             inventory.add_static_source(
-                None,
-                None,
+                TaskSourceKind::UserInput,
                 |cx| TestSource::new(vec!["3_task".to_string()], cx),
                 cx,
             );
         });
         inventory.update(cx, |inventory, cx| {
             inventory.add_static_source(
-                None,
-                None,
+                TaskSourceKind::UserInput,
                 |cx| {
                     TestSource::new(
                         vec![
@@ -296,8 +309,7 @@ mod tests {
 
         inventory.update(cx, |inventory, cx| {
             inventory.add_static_source(
-                None,
-                None,
+                TaskSourceKind::UserInput,
                 |cx| TestSource::new(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
                 cx,
             );

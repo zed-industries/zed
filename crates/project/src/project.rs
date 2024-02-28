@@ -99,7 +99,7 @@ pub use language::Location;
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use project_core::project_settings;
 pub use project_core::worktree::{self, *};
-pub use task_inventory::Inventory;
+pub use task_inventory::{Inventory, TaskSourceKind};
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -7024,8 +7024,10 @@ impl Project {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
                         task_inventory.add_static_source(
-                            Some(&abs_path),
-                            Some(remote_worktree_id),
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
+                                abs_path,
+                            },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
