@@ -1,6 +1,7 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -20,15 +21,6 @@ use futures::channel::mpsc::UnboundedReceiver;
 struct StaticTask {
     id: TaskId,
     definition: Definition,
-}
-
-impl StaticTask {
-    pub(super) fn new(id: usize, task_definition: Definition) -> Self {
-        Self {
-            id: TaskId(format!("static_{}_{}", task_definition.label, id)),
-            definition: task_definition,
-        }
-    }
 }
 
 impl Task for StaticTask {
@@ -150,14 +142,16 @@ impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
 impl StaticSource {
     /// Initializes the static source, reacting on tasks config changes.
     pub fn new(
+        id_base: impl Into<Cow<'static, str>>,
         tasks_file_tracker: UnboundedReceiver<String>,
         cx: &mut AppContext,
     ) -> Model<Box<dyn TaskSource>> {
         let definitions = TrackedFile::new(DefinitionProvider::default(), tasks_file_tracker, cx);
         cx.new_model(|cx| {
+            let id_base = id_base.into();
             let _subscription = cx.observe(
                 &definitions,
-                |source: &mut Box<(dyn TaskSource + 'static)>, new_definitions, cx| {
+                move |source: &mut Box<(dyn TaskSource + 'static)>, new_definitions, cx| {
                     if let Some(static_source) = source.as_any().downcast_mut::<Self>() {
                         static_source.tasks = new_definitions
                             .read(cx)
@@ -166,7 +160,10 @@ impl StaticSource {
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(id, definition)| StaticTask::new(id, definition))
+                            .map(|(i, definition)| StaticTask {
+                                id: TaskId(format!("static_{id_base}_{i}_{}", definition.label)),
+                                definition,
+                            })
                             .collect();
                         cx.notify();
                     }

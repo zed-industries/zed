@@ -59,7 +59,7 @@ use rand::prelude::*;
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
 use serde::Serialize;
-use settings::{Settings, SettingsStore};
+use settings::{watch_config_file, Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
@@ -82,11 +82,15 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use task::static_source::StaticSource;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
 use util::{
-    debug_panic, defer, http::HttpClient, merge_json_value_into,
-    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer,
+    http::HttpClient,
+    merge_json_value_into,
+    paths::{LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH},
+    post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -95,7 +99,7 @@ pub use language::Location;
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use project_core::project_settings;
 pub use project_core::worktree::{self, *};
-pub use task_inventory::Inventory;
+pub use task_inventory::{Inventory, TaskSourceKind};
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -6615,6 +6619,10 @@ impl Project {
         })
         .detach();
 
+        self.task_inventory().update(cx, |inventory, _| {
+            inventory.remove_worktree_sources(id_to_remove);
+        });
+
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 let id = worktree.read(cx).id();
@@ -6972,32 +6980,66 @@ impl Project {
         changes: &UpdatedEntriesSet,
         cx: &mut ModelContext<Self>,
     ) {
+        if worktree.read(cx).as_local().is_none() {
+            return;
+        }
         let project_id = self.remote_id();
         let worktree_id = worktree.entity_id();
-        let worktree = worktree.read(cx).as_local().unwrap();
-        let remote_worktree_id = worktree.id();
+        let remote_worktree_id = worktree.read(cx).id();
 
         let mut settings_contents = Vec::new();
         for (path, _, change) in changes.iter() {
-            if path.ends_with(&*LOCAL_SETTINGS_RELATIVE_PATH) {
+            let removed = change == &PathChange::Removed;
+            let abs_path = match worktree.read(cx).absolutize(path) {
+                Ok(abs_path) => abs_path,
+                Err(e) => {
+                    log::warn!("Cannot absolutize {path:?} received as {change:?} FS change: {e}");
+                    continue;
+                }
+            };
+
+            if abs_path.ends_with(&*LOCAL_SETTINGS_RELATIVE_PATH) {
                 let settings_dir = Arc::from(
                     path.ancestors()
                         .nth(LOCAL_SETTINGS_RELATIVE_PATH.components().count())
                         .unwrap(),
                 );
                 let fs = self.fs.clone();
-                let removed = *change == PathChange::Removed;
-                let abs_path = worktree.absolutize(path);
                 settings_contents.push(async move {
                     (
                         settings_dir,
                         if removed {
                             None
                         } else {
-                            Some(async move { fs.load(&abs_path?).await }.await)
+                            Some(async move { fs.load(&abs_path).await }.await)
                         },
                     )
                 });
+            } else if abs_path.ends_with(&*LOCAL_TASKS_RELATIVE_PATH) {
+                self.task_inventory().update(cx, |task_inventory, cx| {
+                    if removed {
+                        task_inventory.remove_local_static_source(&abs_path);
+                    } else {
+                        let fs = self.fs.clone();
+                        let task_abs_path = abs_path.clone();
+                        task_inventory.add_source(
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
+                                abs_path,
+                            },
+                            |cx| {
+                                let tasks_file_rx =
+                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
+                                StaticSource::new(
+                                    format!("local_tasks_for_workspace_{remote_worktree_id}"),
+                                    tasks_file_rx,
+                                    cx,
+                                )
+                            },
+                            cx,
+                        );
+                    }
+                })
             }
         }
 
