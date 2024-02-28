@@ -38,17 +38,17 @@ impl zed::Extension for GleamExtension {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
-        println!("{}", &asset_name);
-
+        let version_dir = format!("gleam-{}", release.version);
         zed::download_file(
             &asset.download_url,
-            "gleam",
+            &version_dir,
             zed::DownloadedFileType::GzipTar,
-        )?;
+        )
+        .map_err(|e| format!("failed to download file: {e}"))?;
 
         Ok(zed::Command {
-            command: "ok".into(),
-            args: vec![],
+            command: format!("{version_dir}/gleam"),
+            args: vec!["lsp".to_string()],
             env: Default::default(),
         })
     }

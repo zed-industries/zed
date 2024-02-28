@@ -14,6 +14,7 @@ use notify::{Config, EventKind, Watcher};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
+use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
@@ -47,6 +48,11 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
         content: Pin<&mut (dyn AsyncRead + Send)>,
+    ) -> Result<()>;
+    async fn extract_tar_file(
+        &self,
+        path: &Path,
+        content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
     ) -> Result<()>;
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
@@ -137,6 +143,15 @@ impl Fs for RealFs {
     ) -> Result<()> {
         let mut file = smol::fs::File::create(&path).await?;
         futures::io::copy(content, &mut file).await?;
+        Ok(())
+    }
+
+    async fn extract_tar_file(
+        &self,
+        path: &Path,
+        content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
+    ) -> Result<()> {
+        content.unpack(path).await?;
         Ok(())
     }
 
@@ -980,6 +995,29 @@ impl Fs for FakeFs {
         let mut bytes = Vec::new();
         content.read_to_end(&mut bytes).await?;
         self.write_file_internal(path, bytes)?;
+        Ok(())
+    }
+
+    async fn extract_tar_file(
+        &self,
+        path: &Path,
+        content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
+    ) -> Result<()> {
+        let mut entries = content.entries()?;
+        dbg!();
+        while let Some(entry) = entries.next().await {
+            let mut entry = entry?;
+            dbg!(&entry.header());
+            if entry.header().entry_type().is_file() {
+                let path = path.join(entry.path()?.as_ref());
+                let mut bytes = Vec::new();
+                dbg!(&path);
+                entry.read_to_end(&mut bytes).await?;
+                dbg!(&bytes);
+                self.create_dir(path.parent().unwrap()).await?;
+                self.write_file_internal(&path, bytes)?;
+            }
+        }
         Ok(())
     }
 

@@ -277,8 +277,11 @@ impl wit::ExtensionImports for WasmState {
                 }
                 wit::DownloadedFileType::GzipTar => {
                     let decompressed_bytes = GzipDecoder::new(body);
-                    let archive = Archive::new(decompressed_bytes);
-                    archive.unpack(&destination_path).await?;
+                    futures::pin_mut!(decompressed_bytes);
+                    this.host
+                        .fs
+                        .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
+                        .await?;
                 }
                 wit::DownloadedFileType::Zip => {
                     let zip_filename = format!("{filename}.zip");

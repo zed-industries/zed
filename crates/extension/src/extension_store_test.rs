@@ -3,9 +3,10 @@ use crate::{
     ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionManifest,
     ExtensionStore, GrammarManifestEntry,
 };
+use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use fs::FakeFs;
-use futures::FutureExt;
+use fs::{FakeFs, Fs};
+use futures::{io::BufReader, AsyncReadExt, FutureExt};
 use gpui::{Context, TestAppContext};
 use language::{LanguageMatcher, LanguageRegistry};
 use node_runtime::FakeNodeRuntime;
@@ -381,153 +382,52 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_extension_store_with_language_servers(cx: &mut TestAppContext) {
+async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    let http_client = FakeHttpClient::create(|_| async move {
-        Ok(Response::new(
-            json!([
-                {
-                    "tag_name": "something",
-                    "prerelease": false,
-                    "tarball_url": "",
-                    "zipball_url": "",
-                    "assets": [
-                        {
-                            "name": "ok",
-                            "browser_download_url": "http://the-download-url.example.com"
-                        }
-                    ]
-                }
-            ])
-            .to_string()
-            .into(),
-        ))
-    });
-
-    fs.insert_tree(
-        "/the-extension-dir",
-        json!({
-            "installed": {
-                "language_server_example": {
-                    "extension.json": r#"{
-                        "id": "language_server_example",
-                        "name": "An Extension With Language Servers",
-                        "version": "2.0.0",
-                        "lib": {
-                            "path": "extension.wasm"
-                        },
-                        "language_servers": {
-                            "example": {
-                                "name": "the-language-server",
-                                "language": "Rust"
+    let http_client = FakeHttpClient::create(|request| async move {
+        match request.uri().to_string().as_str() {
+            "https://api.github.com/repos/gleam-lang/gleam/releases" => Ok(Response::new(
+                json!([
+                    {
+                        "tag_name": "v1.2.3",
+                        "prerelease": false,
+                        "tarball_url": "",
+                        "zipball_url": "",
+                        "assets": [
+                            {
+                                "name": "gleam-v1.2.3-aarch64-apple-darwin.tar.gz",
+                                "browser_download_url": "http://example.com/the-download"
                             }
-                        }
-                    }"#,
-                }
+                        ]
+                    }
+                ])
+                .to_string()
+                .into(),
+            )),
+
+            "http://example.com/the-download" => {
+                let mut bytes = Vec::<u8>::new();
+                let mut archive = async_tar::Builder::new(&mut bytes);
+                let mut header = async_tar::Header::new_gnu();
+                let content = "the-gleam-binary-contents".as_bytes();
+                header.set_size(content.len() as u64);
+                archive
+                    .append_data(&mut header, "gleam", content)
+                    .await
+                    .unwrap();
+                archive.into_inner().await.unwrap();
+
+                let mut gzipped_bytes = Vec::new();
+                let mut encoder = GzipEncoder::new(BufReader::new(bytes.as_slice()));
+                encoder.read_to_end(&mut gzipped_bytes).await.unwrap();
+
+                Ok(Response::new(gzipped_bytes.into()))
             }
-        }),
-    )
-    .await;
 
-    fs.insert_file(
-        "/the-extension-dir/installed/language_server_example/extension.wasm",
-        compile_example_extension("language_server_example"),
-    )
-    .await;
-
-    let language_registry = Arc::new(LanguageRegistry::test());
-    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
-    let node_runtime = FakeNodeRuntime::new();
-
-    let store = cx.new_model(|cx| {
-        ExtensionStore::new(
-            PathBuf::from("/the-extension-dir"),
-            fs.clone(),
-            http_client.clone(),
-            node_runtime,
-            language_registry.clone(),
-            theme_registry.clone(),
-            cx,
-        )
-    });
-
-    cx.executor().run_until_parked();
-    let extension = store.read_with(cx, |store, _| store.wasm_extensions[0].clone());
-
-    fs.insert_tree(
-        "/the-project-dir",
-        json!({
-            ".tool-versions": "rust 1.73.0",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/the-project-dir".as_ref()], cx).await;
-    let worktree = project.read_with(cx, |project, cx| {
-        project.worktrees().next().unwrap().read(cx).snapshot()
-    });
-
-    let config = extension
-        .0
-        .language_servers
-        .values()
-        .next()
-        .unwrap()
-        .clone();
-    let command = extension
-        .1
-        .call(
-            |extension: &mut wit::Extension, store: &mut Store<WasmState>| {
-                async move {
-                    let resource = store.data_mut().table().push(worktree).unwrap();
-                    let command = extension
-                        .call_get_language_server_command(
-                            store,
-                            &wit::LanguageServerConfig {
-                                name: config.name,
-                                language_name: config.language,
-                            },
-                            resource,
-                        )
-                        .await;
-                    command
-                }
-                .boxed()
-            },
-        )
-        .await
-        .unwrap()
-        .unwrap();
-
-    dbg!(&command);
-}
-
-#[gpui::test]
-async fn test_extension_store_with_real_extension(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    let http_client = FakeHttpClient::create(|_| async move {
-        Ok(Response::new(
-            json!([
-                {
-                    "tag_name": "something",
-                    "prerelease": false,
-                    "tarball_url": "",
-                    "zipball_url": "",
-                    "assets": [
-                        {
-                            "name": "ok",
-                            "browser_download_url": "http://the-download-url.example.com"
-                        }
-                    ]
-                }
-            ])
-            .to_string()
-            .into(),
-        ))
+            _ => Ok(Response::builder().status(404).body("not found".into())?),
+        }
     });
 
     let gleam_extension_dir = Path::new(concat!(
@@ -607,12 +507,18 @@ async fn test_extension_store_with_real_extension(cx: &mut TestAppContext) {
         .unwrap()
         .unwrap();
 
-    dbg!(&command);
+    assert_eq!(
+        fs.load("/the-extension-dir/work/gleam/gleam-v1.2.3/gleam".as_ref())
+            .await
+            .unwrap(),
+        "the-gleam-binary-contents"
+    );
+
+    assert_eq!(command.command, "gleam-v1.2.3/gleam");
+    assert_eq!(command.args, ["lsp".to_string()]);
 }
 
 fn compile_extension(extension_dir_path: &Path) {
-    dbg!(extension_dir_path);
-
     let output = std::process::Command::new("cargo")
         .args(["component", "build", "--target-dir"])
         .arg(extension_dir_path.join("target"))
@@ -633,29 +539,6 @@ fn compile_extension(extension_dir_path: &Path) {
     wasm_path.set_extension("wasm");
 
     std::fs::rename(wasm_path, extension_dir_path.join("extension.wasm")).unwrap();
-}
-
-fn compile_example_extension(name: &str) -> Vec<u8> {
-    let mut example_dir = std::env::current_dir().unwrap();
-    example_dir.extend(["example_extensions", name]);
-
-    let output = std::process::Command::new("cargo")
-        .args(["component", "build"])
-        .current_dir(&example_dir)
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "failed to build component {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let mut wasm_path = example_dir;
-    wasm_path.extend(["target", "wasm32-wasi", "debug", name]);
-    wasm_path.set_extension("wasm");
-
-    std::fs::read(&wasm_path).unwrap()
 }
 
 fn init_test(cx: &mut TestAppContext) {
