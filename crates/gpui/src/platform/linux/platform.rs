@@ -74,11 +74,10 @@ impl LinuxPlatform {
         let event_loop = EventLoop::try_new().unwrap();
         event_loop
             .handle()
-            .insert_source(main_receiver, |event, _, _| match event {
-                calloop::channel::Event::Msg(runnable) => {
+            .insert_source(main_receiver, |event, _, _| {
+                if let calloop::channel::Event::Msg(runnable) = event {
                     runnable.run();
                 }
-                calloop::channel::Event::Closed => {}
             });
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
