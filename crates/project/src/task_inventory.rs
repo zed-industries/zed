@@ -189,30 +189,39 @@ mod tests {
     #[gpui::test]
     fn test_task_list_sorting(cx: &mut TestAppContext) {
         let inventory = cx.update(Inventory::new);
-        let initial_tasks = list_task_names(&inventory, None, true, cx);
+        let initial_tasks = list_task_names(&inventory, None, None, true, cx);
         assert!(
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
         );
-        let initial_tasks = list_task_names(&inventory, None, false, cx);
+        let initial_tasks = list_task_names(&inventory, None, None, false, cx);
         assert!(
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
         );
 
         inventory.update(cx, |inventory, cx| {
-            inventory.add_source(TestSource::new(vec!["3_task".to_string()], cx), cx);
+            inventory.add_static_source(
+                None,
+                None,
+                |cx| TestSource::new(vec!["3_task".to_string()], cx),
+                cx,
+            );
         });
         inventory.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TestSource::new(
-                    vec![
-                        "1_task".to_string(),
-                        "2_task".to_string(),
-                        "1_a_task".to_string(),
-                    ],
-                    cx,
-                ),
+            inventory.add_static_source(
+                None,
+                None,
+                |cx| {
+                    TestSource::new(
+                        vec![
+                            "1_task".to_string(),
+                            "2_task".to_string(),
+                            "1_a_task".to_string(),
+                        ],
+                        cx,
+                    )
+                },
                 cx,
             );
         });
@@ -224,24 +233,24 @@ mod tests {
             "3_task".to_string(),
         ];
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            list_task_names(&inventory, None, None, false, cx),
             &expected_initial_state,
             "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            list_task_names(&inventory, None, None, true, cx),
             &expected_initial_state,
             "Tasks with equal amount of usages should be sorted alphanumerically"
         );
 
         register_task_used(&inventory, "2_task", cx);
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            list_task_names(&inventory, None, None, false, cx),
             &expected_initial_state,
             "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            list_task_names(&inventory, None, None, true, cx),
             vec![
                 "2_task".to_string(),
                 "1_a_task".to_string(),
@@ -255,12 +264,12 @@ mod tests {
         register_task_used(&inventory, "1_task", cx);
         register_task_used(&inventory, "3_task", cx);
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            list_task_names(&inventory, None, None, false, cx),
             &expected_initial_state,
             "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            list_task_names(&inventory, None, None, true, cx),
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -270,8 +279,10 @@ mod tests {
         );
 
         inventory.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TestSource::new(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
+            inventory.add_static_source(
+                None,
+                None,
+                |cx| TestSource::new(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
                 cx,
             );
         });
@@ -284,12 +295,12 @@ mod tests {
             "11_hello".to_string(),
         ];
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            list_task_names(&inventory, None, None, false, cx),
             &expected_updated_state,
             "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            list_task_names(&inventory, None, None, true, cx),
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -302,12 +313,12 @@ mod tests {
 
         register_task_used(&inventory, "11_hello", cx);
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            list_task_names(&inventory, None, None, false, cx),
             &expected_updated_state,
             "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            list_task_names(&inventory, None, None, true, cx),
             vec![
                 "11_hello".to_string(),
                 "3_task".to_string(),
@@ -388,12 +399,13 @@ mod tests {
     fn list_task_names(
         inventory: &Model<Inventory>,
         path: Option<&Path>,
+        worktree: Option<WorktreeId>,
         lru: bool,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
         inventory.update(cx, |inventory, cx| {
             inventory
-                .list_tasks(path, lru, cx)
+                .list_tasks(path, worktree, lru, cx)
                 .into_iter()
                 .map(|task| task.name().to_string())
                 .collect()
@@ -403,7 +415,7 @@ mod tests {
     fn register_task_used(inventory: &Model<Inventory>, task_name: &str, cx: &mut TestAppContext) {
         inventory.update(cx, |inventory, cx| {
             let task = inventory
-                .list_tasks(None, false, cx)
+                .list_tasks(None, None, false, cx)
                 .into_iter()
                 .find(|task| task.name() == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
