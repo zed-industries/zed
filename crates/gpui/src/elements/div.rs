@@ -1221,7 +1221,8 @@ pub struct InteractiveBounds {
 }
 
 impl InteractiveBounds {
-    /// Checks whether this point was inside these bounds, and that these bounds where the topmost layer
+    /// Checks whether this point was inside these bounds in the rendered frame, and that these bounds where the topmost layer
+    /// Never call this during paint to perform hover calculations. It will reference the previous frame and could cause flicker.
     pub fn visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
         self.bounds.contains(point) && cx.was_top_layer(point, &self.stacking_order)
     }
@@ -1449,11 +1450,12 @@ impl Interactivity {
 
                         if !cx.has_active_drag() {
                             if let Some(mouse_cursor) = style.mouse_cursor {
-                                let mouse_position = &cx.mouse_position();
-                                let hovered =
-                                    interactive_bounds.visibly_contains(mouse_position, cx);
+                                let hovered = bounds.contains(&cx.mouse_position());
                                 if hovered {
-                                    cx.set_cursor_style(mouse_cursor);
+                                    cx.set_cursor_style(
+                                        mouse_cursor,
+                                        interactive_bounds.stacking_order.clone(),
+                                    );
                                 }
                             }
                         }
