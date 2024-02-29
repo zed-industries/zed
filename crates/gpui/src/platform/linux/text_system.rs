@@ -13,6 +13,7 @@ use cosmic_text::fontdb::Query;
 use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont, FontSystem, SwashCache,
 };
+
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::rect::RectF;
@@ -81,7 +82,9 @@ impl PlatformTextSystem for LinuxTextSystem {
             .font_system
             .db()
             .faces()
-            .map(|face| face.families.clone()[0].clone().0)
+            .filter_map(|face| {
+                Some(face.families.get(0)?.0.clone())
+            })
             .collect_vec()
     }
 
