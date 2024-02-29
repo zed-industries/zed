@@ -3354,6 +3354,7 @@ dependencies = [
  "theme",
  "toml 0.8.10",
  "util",
+ "wasmparser",
  "wasmtime",
  "wasmtime-wasi",
 ]

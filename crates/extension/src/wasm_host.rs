@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -13,7 +13,7 @@ use gpui::BackgroundExecutor;
 use language::WASM_ENGINE;
 use node_runtime::NodeRuntime;
 use std::{path::PathBuf, sync::Arc};
-use util::http::HttpClient;
+use util::{http::HttpClient, SemanticVersion};
 use wasmtime::{
     component::{Component, Linker, Resource, ResourceTable},
     Engine, Store,
@@ -44,6 +44,7 @@ pub(crate) struct WasmHost {
 #[derive(Clone)]
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
+    zed_api_version: SemanticVersion,
 }
 
 pub(crate) struct WasmState {
@@ -89,6 +90,35 @@ impl WasmHost {
         async move {
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
+
+            let mut zed_api_version = None;
+            for part in wasmparser::Parser::new(0).parse_all(&wasm_bytes) {
+                if let wasmparser::Payload::CustomSection(s) = part? {
+                    if s.name() == "zed:api-version" {
+                        if s.data().len() != 6 {
+                            bail!(
+                                "extension {} has invalid zed:api-version section: {:?}",
+                                manifest.id,
+                                s.data()
+                            );
+                        }
+
+                        let major = u16::from_be_bytes(s.data()[0..2].try_into().unwrap()) as _;
+                        let minor = u16::from_be_bytes(s.data()[2..4].try_into().unwrap()) as _;
+                        let patch = u16::from_be_bytes(s.data()[4..6].try_into().unwrap()) as _;
+                        zed_api_version = Some(SemanticVersion {
+                            major,
+                            minor,
+                            patch,
+                        })
+                    }
+                }
+            }
+
+            let Some(zed_api_version) = zed_api_version else {
+                bail!("extension {} has no zed:api-version section", manifest.id,);
+            };
+
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
@@ -116,7 +146,10 @@ impl WasmHost {
                     }
                 })
                 .detach();
-            Ok(WasmExtension { tx })
+            Ok(WasmExtension {
+                tx,
+                zed_api_version,
+            })
         }
     }
 }

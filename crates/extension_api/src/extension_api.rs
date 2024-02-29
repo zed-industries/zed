@@ -4,7 +4,7 @@ pub use wit::*;
 pub type Result<T, E = String> = core::result::Result<T, E>;
 
 pub trait Extension: Send + Sync {
-    fn get_language_server_command(
+    fn language_server_command(
         &self,
         config: wit::LanguageServerConfig,
         worktree: &wit::Worktree,
@@ -32,6 +32,10 @@ fn extension() -> &'static dyn Extension {
 
 static mut EXTENSION: Option<&'static dyn Extension> = None;
 
+#[link_section = "zed:api-version"]
+#[doc(hidden)]
+pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
+
 mod wit {
     wit_bindgen::generate!({
         exports: { world: super::Component },
@@ -42,10 +46,10 @@ mod wit {
 struct Component;
 
 impl wit::Guest for Component {
-    fn get_language_server_command(
+    fn language_server_command(
         config: wit::LanguageServerConfig,
         worktree: &wit::Worktree,
     ) -> Result<wit::Command> {
-        extension().get_language_server_command(config, worktree)
+        extension().language_server_command(config, worktree)
     }
 }

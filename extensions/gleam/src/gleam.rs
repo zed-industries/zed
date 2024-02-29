@@ -3,7 +3,7 @@ use zed_extension_api::{self as zed, Result};
 struct GleamExtension;
 
 impl zed::Extension for GleamExtension {
-    fn get_language_server_command(
+    fn language_server_command(
         &self,
         config: zed::LanguageServerConfig,
         worktree: &zed::Worktree,

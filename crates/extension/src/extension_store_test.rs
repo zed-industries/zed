@@ -430,13 +430,17 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         }
     });
 
-    let gleam_extension_dir = Path::new(concat!(
+    let gleam_extension_dir = PathBuf::from_iter([
         env!("CARGO_MANIFEST_DIR"),
-        "/../../extensions/gleam"
-    ))
+        "..",
+        "..",
+        "extensions",
+        "gleam",
+    ])
     .canonicalize()
     .unwrap();
-    compile_extension(&gleam_extension_dir);
+
+    compile_extension("zed_gleam", &gleam_extension_dir);
 
     fs.insert_tree("/the-extension-dir", json!({ "installed": {} }))
         .await;
@@ -489,7 +493,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
                 async move {
                     let resource = store.data_mut().table().push(worktree).unwrap();
                     let command = extension
-                        .call_get_language_server_command(
+                        .call_language_server_command(
                             store,
                             &wit::LanguageServerConfig {
                                 name: config.name,
@@ -518,7 +522,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     assert_eq!(command.args, ["lsp".to_string()]);
 }
 
-fn compile_extension(extension_dir_path: &Path) {
+fn compile_extension(name: &str, extension_dir_path: &Path) {
     let output = std::process::Command::new("cargo")
         .args(["component", "build", "--target-dir"])
         .arg(extension_dir_path.join("target"))
@@ -531,8 +535,6 @@ fn compile_extension(extension_dir_path: &Path) {
         "failed to build component {}",
         String::from_utf8_lossy(&output.stderr)
     );
-
-    let name = "zed_gleam";
 
     let mut wasm_path = PathBuf::from(extension_dir_path);
     wasm_path.extend(["target", "wasm32-wasi", "debug", name]);

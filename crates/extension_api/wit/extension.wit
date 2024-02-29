@@ -65,5 +65,5 @@ world extension {
         language-name: string,
     }
 
-    export get-language-server-command: func(config: language-server-config, worktree: borrow<worktree>) -> result<command, string>;
+    export language-server-command: func(config: language-server-config, worktree: borrow<worktree>) -> result<command, string>;
 }
