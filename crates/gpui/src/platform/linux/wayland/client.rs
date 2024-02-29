@@ -88,6 +88,7 @@ pub(crate) struct KeyRepeat {
 
 pub(crate) struct WaylandClient {
     platform_inner: Rc<LinuxPlatformInner>,
+    connection: Connection,
     state: WaylandClientState,
     qh: Arc<QueueHandle<WaylandClientState>>,
 }
@@ -96,19 +97,12 @@ const WL_SEAT_VERSION: u32 = 4;
 
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
-        let conn = Connection::connect_to_env().unwrap();
+        let connection = Connection::connect_to_env().unwrap();
 
-        let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&conn).unwrap();
+        let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&connection).unwrap();
         let qh = event_queue.handle();
 
-        let seat = globals.registry().bind::<wl_seat::WlSeat, _, _>(
-                        global.name,
-                        WL_SEAT_VERSION,
-                        &qh,
-                        (),
-                    );
-
-        let seat: Option<wl_seat::WlSeat> = None;
+        let mut seat: Option<wl_seat::WlSeat> = None;
         globals.contents().with_list(|list| {
             for global in list {
                 if global.interface == "wl_seat" {
@@ -122,9 +116,9 @@ impl WaylandClient {
             }
         });
 
-
         let seat = seat.unwrap();
-        let data_device_manager = globals.bind::<wl_data_device_manager::WlDataDeviceManager>(&qh, 1..=1, ()).unwrap();
+        let data_device_manager: wl_data_device_manager::WlDataDeviceManager = globals.bind(&qh, 1..=1, ()).unwrap();
+        let data_device = data_device_manager.get_data_device(&seat, &qh, ());
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
             serial: 0,
@@ -134,7 +128,7 @@ impl WaylandClient {
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             data_device_manager,
-            data_device: data_device_manager.get_data_device(&seat, &qh, ()),
+            data_device,
             // At most 3 concurrent offers: primary selection, clipboard selection, DnD
             data_offers: hashlru::Cache::new(3),
             windows: Vec::new(),
@@ -162,7 +156,7 @@ impl WaylandClient {
             loop_handle: Rc::clone(&linux_platform_inner.loop_handle),
         }));
 
-        let source = WaylandSource::new(conn, event_queue);
+        let source = WaylandSource::new(connection.clone(), event_queue);
 
         let mut state = WaylandClientState(Rc::clone(&state_inner));
         linux_platform_inner
@@ -174,20 +168,19 @@ impl WaylandClient {
 
         Self {
             platform_inner: linux_platform_inner,
+            connection,
             state: WaylandClientState(state_inner),
             qh: Arc::new(qh),
         }
     }
 
     pub fn flush(&self) {
-        self.conn.flush().expect("failed to flush wayland client");
+        self.connection.flush().expect("failed to flush wayland client");
     }
 
     pub fn create_data_source(&self) -> wl_data_source::WlDataSource {
         let state = self.state.0.borrow();
-        // todo!(linux): the unwrap() can be avoided after the event loop refactor
-        let manager = state.data_device_manager.as_ref().unwrap();
-        manager.create_data_source(&self.qh, ())
+        state.data_device_manager.create_data_source(&self.qh, ())
     }
 }
 
@@ -265,11 +258,7 @@ impl Client for WaylandClient {
         let mut state = &mut self.state.0.borrow_mut();
 
         state.clipboard.prepare_source(&source);
-
-        if let Some(ref device) = state.data_device {
-            device.set_selection(Some(&source), state.serial);
-        }
-
+        state.data_device.set_selection(Some(&source), state.serial);
         state.clipboard.set_source(source, item);
     }
 
