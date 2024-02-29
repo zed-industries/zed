@@ -7709,7 +7709,11 @@ impl Editor {
                         cx.window_context().defer(move |cx| {
                             let target_editor: View<Self> =
                                 workspace.update(cx, |workspace, cx| {
-                                    workspace.open_project_item(target.buffer.clone(), cx)
+                                    workspace.open_project_item(
+                                        workspace.active_pane().clone(),
+                                        target.buffer.clone(),
+                                        cx,
+                                    )
                                 });
                             target_editor.update(cx, |target_editor, cx| {
                                 target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
