@@ -534,7 +534,7 @@ impl Render for ExtensionsPage {
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let entries = self.filtered_extension_entries(cx);
                 if entries.is_empty() {
-                    return this.child(self.render_empty_state(cx)).py_4();
+                    return this.py_4().child(self.render_empty_state(cx));
                 }
 
                 this.child(
