@@ -32,6 +32,7 @@ pub struct Picker<D: PickerDelegate> {
 
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
+
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
     fn separators_after_indices(&self) -> Vec<usize> {
@@ -57,6 +58,9 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn selected_as_query(&self) -> Option<String> {
+        None
+    }
 
     fn render_match(
         &self,
@@ -239,6 +243,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    fn use_selected_query(&mut self, _: &menu::UseSelectedQuery, cx: &mut ViewContext<Self>) {
+        if let Some(new_query) = self.delegate.selected_as_query() {
+            self.set_query(new_query, cx);
+            cx.stop_propagation();
+        }
+    }
+
     fn handle_click(&mut self, ix: usize, secondary: bool, cx: &mut ViewContext<Self>) {
         cx.stop_propagation();
         cx.prevent_default();
@@ -384,6 +395,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
+            .on_action(cx.listener(Self::use_selected_query))
             .child(picker_editor)
             .child(Divider::horizontal())
             .when(self.delegate.match_count() > 0, |el| {

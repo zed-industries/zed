@@ -9140,12 +9140,15 @@ name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "editor",
  "fuzzy",
  "gpui",
+ "language",
  "menu",
  "picker",
  "project",
  "serde",
+ "serde_json",
  "task",
  "ui",
  "util",

@@ -99,6 +99,8 @@ pub use language::Location;
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use project_core::project_settings;
 pub use project_core::worktree::{self, *};
+#[cfg(feature = "test-support")]
+pub use task_inventory::test_inventory::*;
 pub use task_inventory::{Inventory, TaskSourceKind};
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
