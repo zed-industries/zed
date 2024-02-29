@@ -219,14 +219,6 @@ impl X11WindowState {
             data: &[atoms.wm_del_window],
         });
 
-        let fake_id = xcb_connection.generate_id();
-        xcb_connection.send_request(&xcb::present::SelectInput {
-            eid: fake_id,
-            window: x_window,
-            //Note: also consider `IDLE_NOTIFY`
-            event_mask: xcb::present::EventMask::COMPLETE_NOTIFY,
-        });
-
         xcb_connection.send_request(&x::MapWindow { window: x_window });
         xcb_connection.flush().unwrap();
 
@@ -286,11 +278,8 @@ impl X11WindowState {
 
     pub fn refresh(&self) {
         let mut cb = self.callbacks.borrow_mut();
-        if let Some(mut fun) = cb.request_frame.take() {
-            drop(cb);
+        if let Some(ref mut fun) = cb.request_frame {
             fun();
-            let mut cb = self.callbacks.borrow_mut();
-            cb.request_frame = Some(fun);
         }
     }
 
@@ -323,16 +312,6 @@ impl X11WindowState {
                 fun()
             }
         }
-    }
-
-    pub fn request_refresh(&self) {
-        self.xcb_connection.send_request(&xcb::present::NotifyMsc {
-            window: self.x_window,
-            serial: 0,
-            target_msc: 0,
-            divisor: 1,
-            remainder: 0,
-        });
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
