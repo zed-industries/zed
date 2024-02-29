@@ -58,8 +58,10 @@ mod zig;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-struct RustContextProvider;
-impl LanguageContextProvider for RustContextProvider {
+/// A context provider that fills out LanguageContext without inspecting the contents.
+struct DefaultContextProvider;
+
+impl LanguageContextProvider for DefaultContextProvider {
     fn build_context(
         &self,
         location: Location,
@@ -70,9 +72,11 @@ impl LanguageContextProvider for RustContextProvider {
         };
         Ok(LanguageContext {
             file: file.path().to_string_lossy().to_string(),
+            package: None,
         })
     }
 }
+
 pub fn init(
     languages: Arc<LanguageRegistry>,
     node_runtime: Arc<dyn NodeRuntime>,
@@ -145,7 +149,7 @@ pub fn init(
                 config.grammar.clone(),
                 config.matcher.clone(),
                 vec![],
-                None,
+                Some(Arc::new(DefaultContextProvider)),
                 move || Ok((config.clone(), load_queries($name))),
             );
         };
@@ -156,7 +160,7 @@ pub fn init(
                 config.grammar.clone(),
                 config.matcher.clone(),
                 $adapters,
-                None,
+                Some(Arc::new(DefaultContextProvider)),
                 move || Ok((config.clone(), load_queries($name))),
             );
         };
@@ -251,11 +255,7 @@ pub fn init(
             node_runtime.clone(),
         ))]
     );
-    language!(
-        "rust",
-        vec![Arc::new(rust::RustLspAdapter)],
-        RustContextProvider
-    );
+    language!("rust", vec![Arc::new(rust::RustLspAdapter)]);
     language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
