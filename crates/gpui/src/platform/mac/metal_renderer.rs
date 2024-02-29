@@ -294,8 +294,7 @@ impl MetalRenderer {
             zfar: 1.0,
         });
 
-        let mut batches = scene.batches();
-        while let Some(batch) = batches.next() {
+        for batch in scene.batches() {
             let ok = match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(
                     shadows,
@@ -358,7 +357,15 @@ impl MetalRenderer {
             };
 
             if !ok {
-                log::error!("scene too large: {} primitives", scene.primitives.len());
+                log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                    scene.paths.len(),
+                    scene.shadows.len(),
+                    scene.quads.len(),
+                    scene.underlines.len(),
+                    scene.monochrome_sprites.len(),
+                    scene.polychrome_sprites.len(),
+                    scene.surfaces.len(),
+                );
                 break;
             }
         }

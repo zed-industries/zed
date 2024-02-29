@@ -1,7 +1,8 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
     ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
-    LayoutId, Model, Pixels, Render, Style, TextStyle, ViewContext, VisualContext, WeakModel,
+    LayoutId, Model, PaintIndex, Pixels, Render, Style, TextStyle, ViewContext, VisualContext,
+    WeakModel,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -23,6 +24,7 @@ impl<V> Sealed for View<V> {}
 struct AnyViewState {
     root_style: Style,
     occlusion_range: Range<usize>,
+    paint_range: Range<PaintIndex>,
     cache_key: ViewCacheKey,
 }
 
@@ -285,10 +287,6 @@ impl Element for AnyView {
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         cx.with_view_id(self.entity_id(), |cx| {
             if self.cache {
-                let mut element = (self.render)(self, cx);
-                let layout_id = element.before_layout(cx);
-                (layout_id, Some(element))
-            } else {
                 cx.with_element_state::<AnyViewState, _>(
                     Some(ElementId::View(self.entity_id())),
                     |element_state, cx| {
@@ -312,10 +310,15 @@ impl Element for AnyView {
                             root_style: cx.layout_style(layout_id).unwrap().clone(),
                             cache_key: ViewCacheKey::default(),
                             occlusion_range: 0..0,
+                            paint_range: PaintIndex::default()..PaintIndex::default(),
                         });
                         ((layout_id, Some(element)), element_state)
                     },
                 )
+            } else {
+                let mut element = (self.render)(self, cx);
+                let layout_id = element.before_layout(cx);
+                (layout_id, Some(element))
             }
         })
     }
@@ -328,12 +331,6 @@ impl Element for AnyView {
     ) -> Option<AnyElement> {
         cx.with_view_id(self.entity_id(), |cx| {
             if self.cache {
-                cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                    let mut element = element.take().unwrap();
-                    element.after_layout(cx);
-                    Some(element)
-                })
-            } else {
                 cx.with_element_state::<AnyViewState, _>(
                     Some(ElementId::View(self.entity_id())),
                     |element_state, cx| {
@@ -373,6 +370,12 @@ impl Element for AnyView {
                         }
                     },
                 )
+            } else {
+                cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+                    let mut element = element.take().unwrap();
+                    element.after_layout(cx);
+                    Some(element)
+                })
             }
         })
     }
@@ -385,13 +388,28 @@ impl Element for AnyView {
         cx: &mut ElementContext,
     ) {
         cx.paint_view(self.entity_id(), |cx| {
-            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                if let Some(element) = element.as_mut() {
-                    element.paint(cx);
-                } else {
-                    cx.reuse_paint();
-                }
-            })
+            if self.cache {
+                cx.with_element_state::<AnyViewState, _>(
+                    Some(ElementId::View(self.entity_id())),
+                    |element_state, cx| {
+                        let mut element_state = element_state.unwrap().unwrap();
+
+                        if let Some(element) = element {
+                            element_state.paint_range.start = cx.window.next_frame.paint_index();
+                            element.paint(cx);
+                            element_state.paint_range.end = cx.window.next_frame.paint_index();
+                        } else {
+                            cx.reuse_paint(element_state.paint_range.clone());
+                        }
+
+                        ((), Some(element_state))
+                    },
+                )
+            } else {
+                cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+                    element.as_mut().unwrap().paint(cx);
+                })
+            }
         })
     }
 }

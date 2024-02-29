@@ -5,7 +5,11 @@ use crate::{
     bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
     Hsla, Pixels, Point, ScaledPixels,
 };
-use std::{fmt::Debug, iter, slice};
+use std::{
+    fmt::Debug,
+    iter::{self, Peekable},
+    slice,
+};
 
 #[allow(non_camel_case_types, unused)]
 pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
@@ -14,9 +18,15 @@ pub(crate) type DrawOrder = u32;
 
 #[derive(Default)]
 pub(crate) struct Scene {
-    pub(crate) primitives: Vec<Primitive>,
+    primitives: Vec<Primitive>,
     primitive_bounds: BoundsTree<ScaledPixels, ()>,
-    paths: Vec<Path<ScaledPixels>>,
+    pub(crate) shadows: Vec<Shadow>,
+    pub(crate) quads: Vec<Quad>,
+    pub(crate) paths: Vec<Path<ScaledPixels>>,
+    pub(crate) underlines: Vec<Underline>,
+    pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
+    pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
+    pub(crate) surfaces: Vec<Surface>,
 }
 
 impl Scene {
@@ -24,6 +34,12 @@ impl Scene {
         self.primitives.clear();
         self.primitive_bounds.clear();
         self.paths.clear();
+        self.shadows.clear();
+        self.quads.clear();
+        self.underlines.clear();
+        self.monochrome_sprites.clear();
+        self.polychrome_sprites.clear();
+        self.surfaces.clear();
     }
 
     pub fn paths(&self) -> &[Path<ScaledPixels>] {
@@ -47,37 +63,86 @@ impl Scene {
 
         let order = self.primitive_bounds.insert(clipped_bounds, ());
         match &mut primitive {
-            Primitive::Shadow(shadow) => shadow.order = order,
-            Primitive::Quad(quad) => quad.order = order,
+            Primitive::Shadow(shadow) => {
+                shadow.order = order;
+                self.shadows.push(shadow.clone());
+            }
+            Primitive::Quad(quad) => {
+                quad.order = order;
+                self.quads.push(quad.clone());
+            }
             Primitive::Path(path) => {
                 path.order = order;
                 path.id = PathId(self.paths.len());
                 self.paths.push(path.clone());
             }
-            Primitive::Underline(underline) => underline.order = order,
-            Primitive::MonochromeSprite(sprite) => sprite.order = order,
-            Primitive::PolychromeSprite(sprite) => sprite.order = order,
-            Primitive::Surface(surface) => surface.order = order,
+            Primitive::Underline(underline) => {
+                underline.order = order;
+                self.underlines.push(underline.clone());
+            }
+            Primitive::MonochromeSprite(sprite) => {
+                sprite.order = order;
+                self.monochrome_sprites.push(sprite.clone());
+            }
+            Primitive::PolychromeSprite(sprite) => {
+                sprite.order = order;
+                self.polychrome_sprites.push(sprite.clone());
+            }
+            Primitive::Surface(surface) => {
+                surface.order = order;
+                self.surfaces.push(surface.clone());
+            }
         }
         self.primitives.push(primitive);
     }
 
     pub fn finish(&mut self) {
-        self.primitives.sort_unstable();
+        self.shadows.sort_unstable();
+        self.quads.sort_unstable();
+        self.paths.sort_unstable();
+        self.underlines.sort_unstable();
+        self.monochrome_sprites.sort_unstable();
+        self.polychrome_sprites.sort_unstable();
+        self.surfaces.sort_unstable();
     }
 
-    pub(crate) fn batches(&self) -> PrimitiveBatches {
-        PrimitiveBatches {
-            primitives: self.primitives.iter().peekable(),
-            shadows: Vec::new(),
-            quads: Vec::new(),
-            paths: Vec::new(),
-            underlines: Vec::new(),
-            monochrome_sprites: Vec::new(),
-            polychrome_sprites: Vec::new(),
-            surfaces: Vec::new(),
+    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
+        BatchIterator {
+            shadows: &self.shadows,
+            shadows_start: 0,
+            shadows_iter: self.shadows.iter().peekable(),
+            quads: &self.quads,
+            quads_start: 0,
+            quads_iter: self.quads.iter().peekable(),
+            paths: &self.paths,
+            paths_start: 0,
+            paths_iter: self.paths.iter().peekable(),
+            underlines: &self.underlines,
+            underlines_start: 0,
+            underlines_iter: self.underlines.iter().peekable(),
+            monochrome_sprites: &self.monochrome_sprites,
+            monochrome_sprites_start: 0,
+            monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
+            polychrome_sprites: &self.polychrome_sprites,
+            polychrome_sprites_start: 0,
+            polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
+            surfaces: &self.surfaces,
+            surfaces_start: 0,
+            surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
+pub(crate) enum PrimitiveKind {
+    Shadow,
+    #[default]
+    Quad,
+    Path,
+    Underline,
+    MonochromeSprite,
+    PolychromeSprite,
+    Surface,
 }
 
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
@@ -113,6 +178,191 @@ impl Primitive {
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+        }
+    }
+}
+
+struct BatchIterator<'a> {
+    shadows: &'a [Shadow],
+    shadows_start: usize,
+    shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
+    quads: &'a [Quad],
+    quads_start: usize,
+    quads_iter: Peekable<slice::Iter<'a, Quad>>,
+    paths: &'a [Path<ScaledPixels>],
+    paths_start: usize,
+    paths_iter: Peekable<slice::Iter<'a, Path<ScaledPixels>>>,
+    underlines: &'a [Underline],
+    underlines_start: usize,
+    underlines_iter: Peekable<slice::Iter<'a, Underline>>,
+    monochrome_sprites: &'a [MonochromeSprite],
+    monochrome_sprites_start: usize,
+    monochrome_sprites_iter: Peekable<slice::Iter<'a, MonochromeSprite>>,
+    polychrome_sprites: &'a [PolychromeSprite],
+    polychrome_sprites_start: usize,
+    polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
+    surfaces: &'a [Surface],
+    surfaces_start: usize,
+    surfaces_iter: Peekable<slice::Iter<'a, Surface>>,
+}
+
+impl<'a> Iterator for BatchIterator<'a> {
+    type Item = PrimitiveBatch<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut orders_and_kinds = [
+            (
+                self.shadows_iter.peek().map(|s| s.order),
+                PrimitiveKind::Shadow,
+            ),
+            (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
+            (self.paths_iter.peek().map(|q| q.order), PrimitiveKind::Path),
+            (
+                self.underlines_iter.peek().map(|u| u.order),
+                PrimitiveKind::Underline,
+            ),
+            (
+                self.monochrome_sprites_iter.peek().map(|s| s.order),
+                PrimitiveKind::MonochromeSprite,
+            ),
+            (
+                self.polychrome_sprites_iter.peek().map(|s| s.order),
+                PrimitiveKind::PolychromeSprite,
+            ),
+            (
+                self.surfaces_iter.peek().map(|s| s.order),
+                PrimitiveKind::Surface,
+            ),
+        ];
+        orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
+
+        let first = orders_and_kinds[0];
+        let second = orders_and_kinds[1];
+        let (batch_kind, max_order_and_kind) = if first.0.is_some() {
+            (first.1, (second.0.unwrap_or(u32::MAX), second.1))
+        } else {
+            return None;
+        };
+
+        match batch_kind {
+            PrimitiveKind::Shadow => {
+                let shadows_start = self.shadows_start;
+                let mut shadows_end = shadows_start + 1;
+                self.shadows_iter.next();
+                while self
+                    .shadows_iter
+                    .next_if(|shadow| (shadow.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    shadows_end += 1;
+                }
+                self.shadows_start = shadows_end;
+                Some(PrimitiveBatch::Shadows(
+                    &self.shadows[shadows_start..shadows_end],
+                ))
+            }
+            PrimitiveKind::Quad => {
+                let quads_start = self.quads_start;
+                let mut quads_end = quads_start + 1;
+                self.quads_iter.next();
+                while self
+                    .quads_iter
+                    .next_if(|quad| (quad.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    quads_end += 1;
+                }
+                self.quads_start = quads_end;
+                Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
+            }
+            PrimitiveKind::Path => {
+                let paths_start = self.paths_start;
+                let mut paths_end = paths_start + 1;
+                self.paths_iter.next();
+                while self
+                    .paths_iter
+                    .next_if(|path| (path.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    paths_end += 1;
+                }
+                self.paths_start = paths_end;
+                Some(PrimitiveBatch::Paths(&self.paths[paths_start..paths_end]))
+            }
+            PrimitiveKind::Underline => {
+                let underlines_start = self.underlines_start;
+                let mut underlines_end = underlines_start + 1;
+                self.underlines_iter.next();
+                while self
+                    .underlines_iter
+                    .next_if(|underline| (underline.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    underlines_end += 1;
+                }
+                self.underlines_start = underlines_end;
+                Some(PrimitiveBatch::Underlines(
+                    &self.underlines[underlines_start..underlines_end],
+                ))
+            }
+            PrimitiveKind::MonochromeSprite => {
+                let texture_id = self.monochrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.monochrome_sprites_start;
+                let mut sprites_end = sprites_start + 1;
+                self.monochrome_sprites_iter.next();
+                while self
+                    .monochrome_sprites_iter
+                    .next_if(|sprite| {
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.tile.texture_id == texture_id
+                    })
+                    .is_some()
+                {
+                    sprites_end += 1;
+                }
+                self.monochrome_sprites_start = sprites_end;
+                Some(PrimitiveBatch::MonochromeSprites {
+                    texture_id,
+                    sprites: &self.monochrome_sprites[sprites_start..sprites_end],
+                })
+            }
+            PrimitiveKind::PolychromeSprite => {
+                let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.polychrome_sprites_start;
+                let mut sprites_end = self.polychrome_sprites_start + 1;
+                self.polychrome_sprites_iter.next();
+                while self
+                    .polychrome_sprites_iter
+                    .next_if(|sprite| {
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.tile.texture_id == texture_id
+                    })
+                    .is_some()
+                {
+                    sprites_end += 1;
+                }
+                self.polychrome_sprites_start = sprites_end;
+                Some(PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    sprites: &self.polychrome_sprites[sprites_start..sprites_end],
+                })
+            }
+            PrimitiveKind::Surface => {
+                let surfaces_start = self.surfaces_start;
+                let mut surfaces_end = surfaces_start + 1;
+                self.surfaces_iter.next();
+                while self
+                    .surfaces_iter
+                    .next_if(|surface| (surface.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    surfaces_end += 1;
+                }
+                self.surfaces_start = surfaces_end;
+                Some(PrimitiveBatch::Surfaces(
+                    &self.surfaces[surfaces_start..surfaces_end],
+                ))
+            }
         }
     }
 }

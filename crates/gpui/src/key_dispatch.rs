@@ -117,6 +117,10 @@ impl DispatchTree {
         self.keystroke_matchers.clear();
     }
 
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn push_node(
         &mut self,
         context: Option<KeyContext>,

@@ -19,9 +19,9 @@ use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
     ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global,
     IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, OcclusionId, ParentElement, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled,
-    Task, View, Visibility, WindowContext,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
+    ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task,
+    View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -1312,7 +1312,7 @@ impl Interactivity {
                             })
                         {
                             let clipped_bounds = bounds.intersect(&cx.content_mask().bounds);
-                            cx.insert_occlusion(clipped_bounds);
+                            cx.occlude(clipped_bounds);
                         }
 
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);

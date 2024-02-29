@@ -38,7 +38,11 @@ use crate::{
     SUBPIXEL_VARIANTS,
 };
 
-type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
+struct MouseListener {
+    occlusion_id: OcclusionId,
+    invert_occlusion: bool,
+    callback: Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>,
+}
 
 pub(crate) struct RequestedInputHandler {
     pub(crate) view_id: EntityId,
@@ -50,13 +54,19 @@ pub(crate) struct TooltipRequest {
     pub(crate) tooltip: AnyTooltip,
 }
 
-/// Identifies an occlusion, see [ElementContext::insert_occlusion] for more details.
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub struct OcclusionId(usize);
+struct CursorStyleRequest {
+    pub(crate) occlusion_id: OcclusionId,
+    pub(crate) style: CursorStyle,
+}
 
-#[derive(Clone)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub(crate) struct OcclusionId(usize);
+
+/// Identifies an occlusion, see [ElementContext::insert_occlusion] for more details.
+#[derive(Clone, Deref)]
 pub(crate) struct Occlusion {
     pub(crate) id: OcclusionId,
+    #[deref]
     pub(crate) bounds: Bounds<Pixels>,
 }
 
@@ -64,7 +74,7 @@ pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    pub(crate) mouse_listeners: Vec<AnyMouseListener>,
+    pub(crate) mouse_listeners: Vec<MouseListener>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) occlusions: Vec<Occlusion>,
@@ -72,17 +82,14 @@ pub(crate) struct Frame {
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
     pub(crate) tooltip_request: Option<TooltipRequest>,
-    pub(crate) cursor_styles: Vec<(OcclusionId, CursorStyle)>,
+    pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
 }
 
-pub(crate) struct LayoutIndex {
-    occlusion_index: usize,
-}
-
+#[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
     mouse_listeners_index: usize,
@@ -126,10 +133,8 @@ impl Frame {
         debug_assert_eq!(self.view_stack.len(), 0);
     }
 
-    pub(crate) fn layout_index(&self) -> LayoutIndex {
-        LayoutIndex {
-            occlusion_index: self.occlusions.len(),
-        }
+    pub(crate) fn occlusion_index(&self) -> usize {
+        self.occlusions.len()
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
@@ -137,6 +142,7 @@ impl Frame {
             scene_index: self.scene.len(),
             mouse_listeners_index: self.mouse_listeners.len(),
             cursor_styles_index: self.cursor_styles.len(),
+            dispatch_tree_index: self.dispatch_tree.len(),
         }
     }
 
@@ -353,12 +359,9 @@ impl<'a> ElementContext<'a> {
         }
     }
 
-    pub(crate) fn reuse_layout(&mut self, range: Range<LayoutIndex>) {
+    pub(crate) fn reuse_occlusions(&mut self, range: Range<usize>) {
         let window = &mut self.window;
-
-        for occlusion in &window.rendered_frame.occlusions
-            [range.start.occlusion_index..range.end.occlusion_index]
-        {
+        for occlusion in &window.rendered_frame.occlusions[range] {
             window.next_frame.occlusions.push(occlusion.clone());
         }
     }
@@ -429,7 +432,10 @@ impl<'a> ElementContext<'a> {
         self.window
             .next_frame
             .cursor_styles
-            .push((occlusion_id, style));
+            .push(CursorStyleRequest {
+                occlusion_id,
+                style,
+            });
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame
@@ -1048,12 +1054,13 @@ impl<'a> ElementContext<'a> {
     /// This method should be called during `after_layout`. You can use
     /// the returned [OcclusionId] during `paint` or in an event handler
     /// to determine whether the inserted occlusion was the topmost.
-    pub fn insert_occlusion(&mut self, bounds: Bounds<Pixels>) -> OcclusionId {
+    pub fn occlude(&mut self, bounds: Bounds<Pixels>) -> Occlusion {
         let window = &mut self.window;
         let id = window.next_occlusion_id;
         window.next_occlusion_id.0 += 1;
-        window.next_frame.occlusions.push(Occlusion { id, bounds });
-        id
+        let occlusion = Occlusion { id, bounds };
+        window.next_frame.occlusions.push(occlusion.clone());
+        occlusion
     }
 
     /// Invoke the given function with the given focus handle present on the key dispatch stack.
@@ -1139,15 +1146,21 @@ impl<'a> ElementContext<'a> {
     /// the listener will be cleared.
     pub fn on_mouse_event<Event: MouseEvent>(
         &mut self,
+        // occlusion: Occlusion,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
-        self.window.next_frame.mouse_listeners.push(Box::new(
-            move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
-                if let Some(event) = event.downcast_ref() {
-                    handler(event, phase, cx)
-                }
-            },
-        ));
+        let occlusion: Occlusion = todo!();
+        self.window.next_frame.mouse_listeners.push(MouseListener {
+            occlusion_id: occlusion.id,
+            invert_occlusion: false,
+            callback: Box::new(
+                move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
+                    if let Some(event) = event.downcast_ref() {
+                        handler(event, phase, cx)
+                    }
+                },
+            ),
+        });
     }
 
     /// Register a key event listener on the window for the next frame. The type of event

@@ -855,6 +855,17 @@ impl<'a> WindowContext<'a> {
         self.window.mouse_position
     }
 
+    /// Finds the topmost [Occlusion] in the upcoming frame containing the given position.
+    pub fn topmost_occlusion(&self, position: Point<Pixels>) -> Option<Occlusion> {
+        self.window
+            .next_frame
+            .occlusions
+            .iter()
+            .rev()
+            .find(|occlusion| occlusion.bounds.contains(&position))
+            .cloned()
+    }
+
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.window.modifiers
@@ -908,7 +919,8 @@ impl<'a> WindowContext<'a> {
 
         // Set the cursor only if we're the active window.
         if self.is_window_active() {
-            self.compute_cursor_style();
+            let cursor_style = self.compute_cursor_style().unwrap_or(CursorStyle::Arrow);
+            self.platform.set_cursor_style(cursor_style);
         }
 
         // Register requested input handler with the platform window.
@@ -982,15 +994,15 @@ impl<'a> WindowContext<'a> {
 
     fn compute_cursor_style(&mut self) -> Option<CursorStyle> {
         let mouse_position = self.mouse_position();
-
+        let occlusion = self.topmost_occlusion(mouse_position)?;
         // TODO: maybe we should have a HashMap keyed by OcclusionId.
-        let cursor_style = self
+        let request = self
             .window
             .next_frame
             .cursor_styles
             .iter()
-            .take()
-            .unwrap_or(CursorStyle::Arrow);
+            .find(|request| request.occlusion_id == occlusion.id)?;
+        Some(request.style)
     }
 
     /// Dispatch a given keystroke as though the user had typed it.
@@ -1127,43 +1139,37 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
-        if let Some(mut handlers) = self
-            .window
-            .rendered_frame
-            .mouse_listeners
-            .remove(&event.type_id())
-        {
-            // Because handlers may add other handlers, we sort every time.
-            handlers.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
+        let Some(mouse_occlusion) = self.topmost_occlusion(self.mouse_position()) else {
+            return;
+        };
 
-            // Capture phase, events bubble from back to front. Handlers for this phase are used for
-            // special purposes, such as detecting events outside of a given Bounds.
-            for (_, _, handler) in &mut handlers {
+        // Capture phase, events bubble from back to front. Handlers for this phase are used for
+        // special purposes, such as detecting events outside of a given Bounds.
+        for listener in &mut self.window.rendered_frame.mouse_listeners {
+            self.with_element_context(|cx| {
+                handler(event, DispatchPhase::Capture, cx);
+            });
+            if !self.app.propagate_event {
+                break;
+            }
+        }
+
+        // Bubble phase, where most normal handlers do their work.
+        if self.app.propagate_event {
+            for (_, _, handler) in handlers.iter_mut().rev() {
                 self.with_element_context(|cx| {
-                    handler(event, DispatchPhase::Capture, cx);
+                    handler(event, DispatchPhase::Bubble, cx);
                 });
                 if !self.app.propagate_event {
                     break;
                 }
             }
-
-            // Bubble phase, where most normal handlers do their work.
-            if self.app.propagate_event {
-                for (_, _, handler) in handlers.iter_mut().rev() {
-                    self.with_element_context(|cx| {
-                        handler(event, DispatchPhase::Bubble, cx);
-                    });
-                    if !self.app.propagate_event {
-                        break;
-                    }
-                }
-            }
-
-            self.window
-                .rendered_frame
-                .mouse_listeners
-                .insert(event.type_id(), handlers);
         }
+
+        self.window
+            .rendered_frame
+            .mouse_listeners
+            .insert(event.type_id(), handlers);
 
         if self.app.propagate_event && self.has_active_drag() {
             if event.is::<MouseMoveEvent>() {
