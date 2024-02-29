@@ -267,20 +267,27 @@ impl wit::ExtensionImports for WasmState {
             let body = BufReader::new(response.body_mut());
 
             match file_type {
-                wit::DownloadedFileType::Gzip => {
-                    let decompressed_bytes = GzipDecoder::new(body);
-                    futures::pin_mut!(decompressed_bytes);
+                wit::DownloadedFileType::Uncompressed => {
+                    futures::pin_mut!(body);
                     this.host
                         .fs
-                        .create_file_with(&destination_path, decompressed_bytes)
+                        .create_file_with(&destination_path, body)
+                        .await?;
+                }
+                wit::DownloadedFileType::Gzip => {
+                    let body = GzipDecoder::new(body);
+                    futures::pin_mut!(body);
+                    this.host
+                        .fs
+                        .create_file_with(&destination_path, body)
                         .await?;
                 }
                 wit::DownloadedFileType::GzipTar => {
-                    let decompressed_bytes = GzipDecoder::new(body);
-                    futures::pin_mut!(decompressed_bytes);
+                    let body = GzipDecoder::new(body);
+                    futures::pin_mut!(body);
                     this.host
                         .fs
-                        .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
+                        .extract_tar_file(&destination_path, Archive::new(body))
                         .await?;
                 }
                 wit::DownloadedFileType::Zip => {

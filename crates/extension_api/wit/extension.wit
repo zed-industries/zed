@@ -34,11 +34,20 @@ world extension {
         gzip,
         gzip-tar,
         zip,
+        uncompressed,
     }
 
+    /// Get the current operating system and architecture
     import current-platform: func() -> tuple<os, architecture>;
+
+    /// Get the latest version of the given NPM package.
     import npm-package-latest-version: func(package-name: string) -> result<string, string>;
+
+    /// Get the latest release for the given GitHub repository
     import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
+
+    /// Downloads a file from the given url, and saves it to the given filename within the extension's
+    /// working directory. Extracts the file according to the given file type.
     import download-file: func(url: string, output-filename: string, file-type: downloaded-file-type) -> result<_, string>;
 
     record command {
