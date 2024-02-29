@@ -356,64 +356,65 @@ impl<'a> ElementContext<'a> {
         }
     }
 
-    pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
-        let view_id = self.parent_view_id();
-        let grafted_view_ids = self
-            .cx
-            .window
-            .next_frame
-            .dispatch_tree
-            .reuse_view(view_id, &mut self.cx.window.rendered_frame.dispatch_tree);
-        for view_id in grafted_view_ids {
-            assert!(self.window.next_frame.reused_views.insert(view_id));
+    pub(crate) fn reuse_view(&mut self) {
+        todo!()
+        // let view_id = self.parent_view_id();
+        // let grafted_view_ids = self
+        //     .cx
+        //     .window
+        //     .next_frame
+        //     .dispatch_tree
+        //     .reuse_view(view_id, &mut self.cx.window.rendered_frame.dispatch_tree);
+        // for view_id in grafted_view_ids {
+        //     assert!(self.window.next_frame.reused_views.insert(view_id));
 
-            // Reuse the previous input handler requested during painting of the reused view.
-            if self
-                .window
-                .rendered_frame
-                .requested_input_handler
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.requested_input_handler =
-                    self.window.rendered_frame.requested_input_handler.take();
-            }
+        //     // Reuse the previous input handler requested during painting of the reused view.
+        //     if self
+        //         .window
+        //         .rendered_frame
+        //         .requested_input_handler
+        //         .as_ref()
+        //         .map_or(false, |requested| requested.view_id == view_id)
+        //     {
+        //         self.window.next_frame.requested_input_handler =
+        //             self.window.rendered_frame.requested_input_handler.take();
+        //     }
 
-            // Reuse the tooltip previously requested during painting of the reused view.
-            if self
-                .window
-                .rendered_frame
-                .tooltip_request
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.tooltip_request =
-                    self.window.rendered_frame.tooltip_request.take();
-            }
+        //     // Reuse the tooltip previously requested during painting of the reused view.
+        //     if self
+        //         .window
+        //         .rendered_frame
+        //         .tooltip_request
+        //         .as_ref()
+        //         .map_or(false, |requested| requested.view_id == view_id)
+        //     {
+        //         self.window.next_frame.tooltip_request =
+        //             self.window.rendered_frame.tooltip_request.take();
+        //     }
 
-            // Reuse the cursor styles previously requested during painting of the reused view.
-            if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
-                self.window.next_frame.cursor_styles.insert(view_id, style);
-                self.window.next_frame.requested_cursor_style = Some(style);
-            }
-        }
+        //     // Reuse the cursor styles previously requested during painting of the reused view.
+        //     if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
+        //         self.window.next_frame.cursor_styles.insert(view_id, style);
+        //         self.window.next_frame.requested_cursor_style = Some(style);
+        //     }
+        // }
 
-        debug_assert!(
-            next_stacking_order_id
-                >= self
-                    .window
-                    .next_frame
-                    .next_stacking_order_ids
-                    .last()
-                    .copied()
-                    .unwrap()
-        );
-        *self
-            .window
-            .next_frame
-            .next_stacking_order_ids
-            .last_mut()
-            .unwrap() = next_stacking_order_id;
+        // debug_assert!(
+        //     next_stacking_order_id
+        //         >= self
+        //             .window
+        //             .next_frame
+        //             .next_stacking_order_ids
+        //             .last()
+        //             .copied()
+        //             .unwrap()
+        // );
+        // *self
+        //     .window
+        //     .next_frame
+        //     .next_stacking_order_ids
+        //     .last_mut()
+        //     .unwrap() = next_stacking_order_id;
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
