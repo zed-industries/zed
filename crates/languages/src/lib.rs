@@ -34,6 +34,7 @@ mod purescript;
 mod python;
 mod ruby;
 mod rust;
+mod slint;
 mod svelte;
 mod tailwind;
 mod terraform;
@@ -111,6 +112,7 @@ pub fn init(
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
+        ("slint", tree_sitter_slint::language()),
         ("svelte", tree_sitter_svelte::language()),
         ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
@@ -278,6 +280,7 @@ pub fn init(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
     );
+    language("slint", vec![Arc::new(slint::SlintLspAdapter)]);
     language(
         "svelte",
         vec![
