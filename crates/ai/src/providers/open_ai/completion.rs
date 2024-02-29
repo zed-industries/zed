@@ -120,7 +120,7 @@ async fn stream_completion(
 
     let (auth_header_name, auth_header_value) = kind.auth_header(api_key);
     let json_data = request.data()?;
-    let mut response = Request::post(kind.endpoint_url(&api_url))
+    let mut response = Request::post(kind.completions_endpoint_url(&api_url))
         .header("Content-Type", "application/json")
         .header(auth_header_name, auth_header_value)
         .body(json_data)?
@@ -207,7 +207,7 @@ pub enum OpenAiCompletionProviderKind {
 
 impl OpenAiCompletionProviderKind {
     /// Returns the chat completion endpoint URL for this [`OpenAiCompletionProviderKind`].
-    fn endpoint_url(&self, api_url: &str) -> String {
+    fn completions_endpoint_url(&self, api_url: &str) -> String {
         match self {
             Self::OpenAi => {
                 // https://platform.openai.com/docs/api-reference/chat/create
