@@ -999,7 +999,7 @@ impl ProjectSearchView {
 
         let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, None));
-        workspace.add_item(Box::new(search.clone()), cx);
+        workspace.add_item_to_active_pane(Box::new(search.clone()), cx);
         search.update(cx, |search, cx| {
             search
                 .included_files_editor
@@ -1048,7 +1048,7 @@ impl ProjectSearchView {
                     model.search(new_query, cx);
                     model
                 });
-                workspace.add_item(
+                workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
                     cx,
                 );
@@ -1098,7 +1098,7 @@ impl ProjectSearchView {
             let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
             let view = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
 
-            workspace.add_item(Box::new(view.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(view.clone()), cx);
             view
         };
 
