@@ -75,7 +75,6 @@ pub(crate) struct WaylandClientStateInner {
     loop_handle: Rc<LoopHandle<'static, ()>>,
 }
 
-
 #[derive(Clone)]
 pub(crate) struct WaylandClientState(Rc<RefCell<WaylandClientStateInner>>);
 
@@ -99,7 +98,8 @@ impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
         let connection = Connection::connect_to_env().unwrap();
 
-        let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&connection).unwrap();
+        let (globals, mut event_queue) =
+            registry_queue_init::<WaylandClientState>(&connection).unwrap();
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -117,7 +117,8 @@ impl WaylandClient {
         });
 
         let seat = seat.unwrap();
-        let data_device_manager: wl_data_device_manager::WlDataDeviceManager = globals.bind(&qh, 1..=1, ()).unwrap();
+        let data_device_manager: wl_data_device_manager::WlDataDeviceManager =
+            globals.bind(&qh, 1..=1, ()).unwrap();
         let data_device = data_device_manager.get_data_device(&seat, &qh, ());
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
@@ -175,7 +176,9 @@ impl WaylandClient {
     }
 
     pub fn flush(&self) {
-        self.connection.flush().expect("failed to flush wayland client");
+        self.connection
+            .flush()
+            .expect("failed to flush wayland client");
     }
 
     pub fn create_data_source(&self) -> wl_data_source::WlDataSource {
