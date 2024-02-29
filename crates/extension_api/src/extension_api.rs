@@ -4,8 +4,12 @@ pub use wit::*;
 pub type Result<T, E = String> = core::result::Result<T, E>;
 
 pub trait Extension: Send + Sync {
+    fn new() -> Self
+    where
+        Self: Sized;
+
     fn language_server_command(
-        &self,
+        &mut self,
         config: wit::LanguageServerConfig,
         worktree: &wit::Worktree,
     ) -> Result<Command>;
@@ -13,24 +17,26 @@ pub trait Extension: Send + Sync {
 
 #[macro_export]
 macro_rules! register_extension {
-    ($extension:path) => {
+    ($extension_type:ty) => {
         #[export_name = "init-extension"]
         pub extern "C" fn __init_extension() {
-            zed_extension_api::register_extension(&$extension);
+            zed_extension_api::register_extension(|| {
+                Box::new(<$extension_type as zed_extension_api::Extension>::new())
+            });
         }
     };
 }
 
 #[doc(hidden)]
-pub fn register_extension(extension: &'static dyn Extension) {
-    unsafe { EXTENSION = Some(extension) };
+pub fn register_extension(build_extension: fn() -> Box<dyn Extension>) {
+    unsafe { EXTENSION = Some((build_extension)()) }
 }
 
-fn extension() -> &'static dyn Extension {
-    unsafe { EXTENSION.unwrap() }
+fn extension() -> &'static mut dyn Extension {
+    unsafe { EXTENSION.as_deref_mut().unwrap() }
 }
 
-static mut EXTENSION: Option<&'static dyn Extension> = None;
+static mut EXTENSION: Option<Box<dyn Extension>> = None;
 
 #[link_section = "zed:api-version"]
 #[doc(hidden)]
