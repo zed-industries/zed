@@ -183,7 +183,7 @@ impl NotificationPanel {
                 let panel = Self::new(workspace, cx);
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width;
+                        panel.width = serialized_panel.width.map(|w| w.round());
                         cx.notify();
                     });
                 }
