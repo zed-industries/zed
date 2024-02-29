@@ -462,66 +462,75 @@ impl ExtensionsPage {
 
 impl Render for ExtensionsPage {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let toggle_button = |id, title| {
+            ToggleButton::new(id, title)
+                .style(ButtonStyle::Filled)
+                .size(ButtonSize::Large)
+        };
+
         v_flex()
             .size_full()
-            .p_4()
-            .gap_4()
             .bg(cx.theme().colors().editor_background)
             .child(
-                h_flex()
-                    .w_full()
-                    .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(h_flex().child(self.render_search(cx)))
+                v_flex()
+                    .gap_4()
+                    .p_4()
+                    .border_b()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
                     .child(
                         h_flex()
+                            .w_full()
+                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .justify_between()
+                            .child(h_flex().child(self.render_search(cx)))
                             .child(
-                                ToggleButton::new("filter-all", "All")
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Large)
-                                    .selected(self.filter == ExtensionFilter::All)
-                                    .on_click(cx.listener(|this, _event, _cx| {
-                                        this.filter = ExtensionFilter::All;
-                                    }))
-                                    .tooltip(move |cx| Tooltip::text("Show all extensions", cx))
-                                    .first(),
-                            )
-                            .child(
-                                ToggleButton::new("filter-installed", "Installed")
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Large)
-                                    .selected(self.filter == ExtensionFilter::Installed)
-                                    .on_click(cx.listener(|this, _event, _cx| {
-                                        this.filter = ExtensionFilter::Installed;
-                                    }))
-                                    .tooltip(move |cx| {
-                                        Tooltip::text("Show installed extensions", cx)
-                                    })
-                                    .middle(),
-                            )
-                            .child(
-                                ToggleButton::new("filter-not-installed", "Not Installed")
-                                    .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Large)
-                                    .selected(self.filter == ExtensionFilter::NotInstalled)
-                                    .on_click(cx.listener(|this, _event, _cx| {
-                                        this.filter = ExtensionFilter::NotInstalled;
-                                    }))
-                                    .tooltip(move |cx| {
-                                        Tooltip::text("Show not installed extensions", cx)
-                                    })
-                                    .last(),
+                                h_flex()
+                                    .child(
+                                        toggle_button("filter-all", "All")
+                                            .selected(self.filter == ExtensionFilter::All)
+                                            .on_click(cx.listener(|this, _event, _cx| {
+                                                this.filter = ExtensionFilter::All;
+                                            }))
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Show all extensions", cx)
+                                            })
+                                            .first(),
+                                    )
+                                    .child(
+                                        toggle_button("filter-installed", "Installed")
+                                            .selected(self.filter == ExtensionFilter::Installed)
+                                            .on_click(cx.listener(|this, _event, _cx| {
+                                                this.filter = ExtensionFilter::Installed;
+                                            }))
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Show installed extensions", cx)
+                                            })
+                                            .middle(),
+                                    )
+                                    .child(
+                                        toggle_button("filter-not-installed", "Not Installed")
+                                            .selected(self.filter == ExtensionFilter::NotInstalled)
+                                            .on_click(cx.listener(|this, _event, _cx| {
+                                                this.filter = ExtensionFilter::NotInstalled;
+                                            }))
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Show not installed extensions", cx)
+                                            })
+                                            .last(),
+                                    ),
                             ),
                     ),
             )
-            .child(v_flex().size_full().overflow_y_hidden().map(|this| {
+            .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let entries = self.filtered_extension_entries(cx);
                 if entries.is_empty() {
-                    return this.child(self.render_empty_state(cx));
+                    return this.child(self.render_empty_state(cx)).py_4();
                 }
 
                 this.child(
@@ -537,6 +546,7 @@ impl Render for ExtensionsPage {
                                 Self::render_extensions,
                             )
                             .size_full()
+                            .pb_4()
                             .track_scroll(scroll_handle)
                             .into_any_element()
                             .draw(
