@@ -7,9 +7,9 @@ use collections::{hash_map, HashMap};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
-    FutureExt as _, TryFutureExt as _,
+    FutureExt as _,
 };
-use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::{LanguageServerBinary, LanguageServerId};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
