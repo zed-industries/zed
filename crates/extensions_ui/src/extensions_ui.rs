@@ -55,7 +55,11 @@ impl ExtensionsPage {
             let store = ExtensionStore::global(cx);
             let subscription = cx.observe(&store, |_, _, cx| cx.notify());
 
-            let query_editor = cx.new_view(|cx| Editor::single_line(cx));
+            let query_editor = cx.new_view(|cx| {
+                let mut input = Editor::single_line(cx);
+                input.set_placeholder_text("Search extension...", cx);
+                input
+            });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let mut this = Self {
