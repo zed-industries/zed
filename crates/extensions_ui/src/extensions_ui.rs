@@ -57,7 +57,7 @@ impl ExtensionsPage {
 
             let query_editor = cx.new_view(|cx| {
                 let mut input = Editor::single_line(cx);
-                input.set_placeholder_text("Search extension...", cx);
+                input.set_placeholder_text("Search extensions...", cx);
                 input
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
