@@ -617,8 +617,6 @@ mod tests {
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
-    // codeberg
-
     #[test]
     fn test_build_codeberg_permalink_from_ssh_url() {
         let permalink = build_permalink(BuildPermalinkParams {
