@@ -1,45 +1,18 @@
-[
-  (class_body)
-  (function_body)
-  (function_expression_body)
-  (declaration
-    (initializers))
-  (switch_block)
-  (formal_parameter_list)
-  (formal_parameter)
-  (list_literal)
-  (return_statement)
-  (arguments)
-  (try_statement)
-] @indent.begin
+(class_definition
+    "class" @context
+    name: (_) @name) @item
 
-(switch_block
-  (_) @indent.begin
-  (#set! indent.immediate 1)
-  (#set! indent.start_at_same_line 1))
+(function_signature
+    name: (_) @name) @item
 
-[
-  (switch_statement_case)
-  (switch_statement_default)
-] @indent.branch
+(getter_signature
+    "get" @context
+    name: (_) @name) @item
 
-[
-  "("
-  ")"
-  "{"
-  "}"
-  "["
-  "]"
-] @indent.branch
+(setter_signature
+    "set" @context
+    name: (_) @name) @item
 
-"}" @indent.end
-
-(return_statement
-  ";" @indent.end)
-
-(break_statement
-  ";" @indent.end)
-
-(comment) @indent.ignore
-
-(if_statement) @indent.auto
+(enum_declaration
+    "enum" @context
+    name: (_) @name) @item
