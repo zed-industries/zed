@@ -455,9 +455,6 @@ impl PlatformWindow for WindowsWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.inner.renderer.borrow().sprite_atlas().clone()
     }
-
-    // todo!("windows")
-    fn set_graphics_profiler_enabled(&self, enabled: bool) {}
 }
 
 fn register_wnd_class() -> PCWSTR {
