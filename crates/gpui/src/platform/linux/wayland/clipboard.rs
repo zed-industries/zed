@@ -80,14 +80,20 @@ impl Clipboard {
 
         let read_pipe = match setup_offer_read(&offer.instance) {
             Ok(read_pipe) => read_pipe,
-            _ => return None,
+            Err(e) => {
+                log::error!("could not read clipboard: {}", e);
+                return None;
+            }
         };
 
         client.flush();
 
         match read_pipe_with_timeout(read_pipe) {
             Ok(result) => Some(result),
-            Err(_) => None,
+            Err(e) => {
+                log::error!("could not read clipboard: {}", e);
+                None
+            }
         }
     }
 
@@ -104,14 +110,9 @@ impl Clipboard {
     pub fn send_source(&mut self, mime_type: &str, fd: OwnedFd) {
         if let Some(ref mut source_content) = self.source_content {
             let mut file = FileDescriptor::new(fd);
-            let _ = file.write(source_content.as_bytes());
-        }
-    }
-
-    pub fn destroy_source(&mut self) {
-        if self.source.is_some() {
-            self.source = None;
-            self.source_content = None;
+            if let Err(e) = file.write(source_content.as_bytes()) {
+                log::error!("could not write clipboard: {}", e);
+            };
         }
     }
 }

@@ -839,9 +839,6 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientState {
             wl_data_source::Event::Send { mime_type, fd } => {
                 state.clipboard.send_source(&mime_type, fd);
             }
-            wl_data_source::Event::Cancelled => {
-                state.clipboard.destroy_source();
-            }
             _ => {}
         }
     }
