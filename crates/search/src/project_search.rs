@@ -3414,7 +3414,7 @@ pub mod tests {
         search_view
             .update(cx, |search_view, cx| {
                 search_view.results_editor.update(cx, |results_editor, cx| {
-                    // Results are correct and scrolled to top
+                    // Results are correct and scrolled to the top
                     assert_eq!(
                         results_editor.display_text(cx).match_indices(" A ").count(),
                         10
@@ -3437,7 +3437,7 @@ pub mod tests {
                         results_editor.display_text(cx).match_indices(" B ").count(),
                         10
                     );
-                    // ...and scrolled back to top
+                    // ...and scrolled back to the top
                     assert_eq!(results_editor.scroll_position(cx), Point::default());
                 });
             })
