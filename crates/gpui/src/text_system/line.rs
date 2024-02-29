@@ -33,7 +33,7 @@ pub struct ShapedLine {
     pub(crate) layout: Arc<LineLayout>,
     /// The text that was shaped for this line.
     pub text: SharedString,
-    pub(crate) decoration_runs: SmallVec<[DecorationRun; 32]>,
+    pub(crate) decoration_runs: Vec<DecorationRun>,
 }
 
 impl ShapedLine {

@@ -17,9 +17,11 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::SemanticVersion;
 use windows::Win32::{
-    Foundation::HWND,
+    Foundation::{CloseHandle, HANDLE, HWND},
+    System::Threading::{CreateEventW, ResetEvent, INFINITE},
     UI::WindowsAndMessaging::{
-        DispatchMessageW, PeekMessageW, PostQuitMessage, TranslateMessage, MSG, PM_REMOVE, WM_QUIT,
+        DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage,
+        TranslateMessage, MSG, PM_REMOVE, QS_ALLINPUT, WM_QUIT,
     },
 };
 
@@ -41,6 +43,13 @@ pub(crate) struct WindowsPlatformInner {
     text_system: Arc<WindowsTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub(crate) window_handles: RefCell<HashSet<AnyWindowHandle>>,
+    pub(crate) event: HANDLE,
+}
+
+impl Drop for WindowsPlatformInner {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.event) }.ok();
+    }
 }
 
 #[derive(Default)]
@@ -59,7 +68,8 @@ struct Callbacks {
 impl WindowsPlatform {
     pub(crate) fn new() -> Self {
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender));
+        let event = unsafe { CreateEventW(None, true, false, None) }.unwrap();
+        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, event));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(WindowsTextSystem::new());
@@ -72,6 +82,7 @@ impl WindowsPlatform {
             text_system,
             callbacks,
             window_handles,
+            event,
         });
         Self { inner }
     }
@@ -92,19 +103,22 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        loop {
+        'a: loop {
+            unsafe {
+                MsgWaitForMultipleObjects(Some(&[self.inner.event]), false, INFINITE, QS_ALLINPUT)
+            };
             let mut msg = MSG::default();
-            if unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool() {
+            while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool() {
                 if msg.message == WM_QUIT {
-                    break;
+                    break 'a;
                 }
                 unsafe { TranslateMessage(&msg) };
                 unsafe { DispatchMessageW(&msg) };
-            } else if let Ok(runnable) = self.inner.main_receiver.try_recv() {
-                runnable.run();
-            } else {
-                std::thread::yield_now();
             }
+            while let Ok(runnable) = self.inner.main_receiver.try_recv() {
+                runnable.run();
+            }
+            unsafe { ResetEvent(self.inner.event) }.unwrap();
         }
         let mut callbacks = self.inner.callbacks.lock();
         if let Some(callback) = callbacks.quit.as_mut() {

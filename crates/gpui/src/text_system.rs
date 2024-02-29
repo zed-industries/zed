@@ -312,7 +312,7 @@ impl WindowTextSystem {
             "text argument should not contain newlines"
         );
 
-        let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+        let mut decoration_runs = Vec::<DecorationRun>::with_capacity(runs.len());
         for run in runs {
             if let Some(last_run) = decoration_runs.last_mut() {
                 if last_run.color == run.color

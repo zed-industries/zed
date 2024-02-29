@@ -119,6 +119,7 @@ version = "0.53.0"
 features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Security",
     "Win32_System_Threading",
 ]
 
