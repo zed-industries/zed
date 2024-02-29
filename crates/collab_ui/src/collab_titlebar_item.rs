@@ -1,4 +1,4 @@
-use crate::{face_pile::FacePile, CollaborationPanelSettings};
+use crate::face_pile::FacePile;
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, User, UserStore};
@@ -8,7 +8,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
     WindowBounds,
 };
-use project::{Project, RepositoryEntry};
+use project::{project_settings::ProjectSettings, Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use rpc::proto;
 use settings::Settings as _;
@@ -460,11 +460,11 @@ impl CollabTitlebarItem {
             .and_then(RepositoryEntry::branch)
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(popover_menu("project_branch_trigger").when(
-            CollaborationPanelSettings::get_global(cx).git_branch,
+            ProjectSettings::get_global(cx).git.branch,
             |m| {
                 m.trigger(
                     Button::new("project_branch_trigger", branch_name)
-                        .when(CollaborationPanelSettings::get_global(cx).git_icon, |b| {
+                        .when(ProjectSettings::get_global(cx).git.icon, |b| {
                             b.icon(IconName::FileGit)
                                 .icon_position(IconPosition::Start)
                                 .icon_color(Color::Muted)

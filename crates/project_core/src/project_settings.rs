@@ -5,8 +5,16 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::sync::Arc;
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProjectSettings {
+    pub lsp: HashMap<Arc<str>, LspSettings>,
+    pub git: GitSettings,
+    pub file_scan_exclusions: Option<Vec<String>>,
+    pub private_files: Option<Vec<String>>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectSettingsContent {
     /// Configuration for language servers.
     ///
     /// The following settings can be overridden for specific language servers:
@@ -19,7 +27,7 @@ pub struct ProjectSettings {
 
     /// Configuration for Git-related features
     #[serde(default)]
-    pub git: GitSettings,
+    pub git: GitSettingsContent,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`
     ///
@@ -41,13 +49,23 @@ pub struct ProjectSettings {
     pub private_files: Option<Vec<String>>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct GitSettings {
+    pub git_gutter: Option<GitGutterSetting>,
+    pub gutter_debounce: Option<u64>,
+    pub icon: bool,
+    pub branch: bool,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct GitSettingsContent {
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
     pub git_gutter: Option<GitGutterSetting>,
     pub gutter_debounce: Option<u64>,
+    pub icon: Option<bool>,
+    pub branch: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -70,7 +88,7 @@ pub struct LspSettings {
 impl Settings for ProjectSettings {
     const KEY: Option<&'static str> = None;
 
-    type FileContent = Self;
+    type FileContent = ProjectSettingsContent;
 
     fn load(
         default_value: &Self::FileContent,

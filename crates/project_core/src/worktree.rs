@@ -346,7 +346,9 @@ impl Worktree {
                         "file_scan_exclusions",
                     );
                     let new_private_files = path_matchers(
-                        ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
+                        ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx)
+                            .private_files
+                            .as_deref(),
                         "private_files",
                     );
 
@@ -402,7 +404,10 @@ impl Worktree {
                     "file_scan_exclusions",
                 ),
                 private_files: path_matchers(
-                    ProjectSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
+                    ProjectSettings::get(
+                        Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx)
+                        .private_files
+                        .as_deref(),
                     "private_files",
                 ),
                 ignores_by_parent_abs_path: Default::default(),
