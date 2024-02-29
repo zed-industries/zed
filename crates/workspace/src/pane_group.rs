@@ -883,7 +883,8 @@ mod element {
 
                 let child_size = bounds
                     .size
-                    .apply_along(self.axis, |_| space_per_flex * child_flex);
+                    .apply_along(self.axis, |_| space_per_flex * child_flex)
+                    .map(|d| d.round());
 
                 let child_bounds = Bounds {
                     origin,
