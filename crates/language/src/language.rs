@@ -796,8 +796,11 @@ impl Language {
         &self.adapters
     }
 
-    pub fn with_context_provider(mut self, provider: Arc<dyn LanguageContextProvider>) -> Self {
-        self.context_provider = Some(provider);
+    pub fn with_context_provider(
+        mut self,
+        provider: Option<Arc<dyn LanguageContextProvider>>,
+    ) -> Self {
+        self.context_provider = provider;
         self
     }
 

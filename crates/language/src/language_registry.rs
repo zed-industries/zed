@@ -1,6 +1,6 @@
 use crate::{
-    CachedLspAdapter, Language, LanguageConfig, LanguageId, LanguageMatcher, LanguageServerName,
-    LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    CachedLspAdapter, Language, LanguageConfig, LanguageContextProvider, LanguageId,
+    LanguageMatcher, LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -74,6 +74,7 @@ struct AvailableLanguage {
     load: Arc<dyn Fn() -> Result<(LanguageConfig, LanguageQueries)> + 'static + Send + Sync>,
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
     loaded: bool,
+    context_provider: Option<Arc<dyn LanguageContextProvider>>,
 }
 
 enum AvailableGrammar {
@@ -180,6 +181,7 @@ impl LanguageRegistry {
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
         lsp_adapters: Vec<Arc<dyn LspAdapter>>,
+        context_provider: Option<Arc<dyn LanguageContextProvider>>,
         load: impl Fn() -> Result<(LanguageConfig, LanguageQueries)> + 'static + Send + Sync,
     ) {
         let load = Arc::new(load);
@@ -202,6 +204,7 @@ impl LanguageRegistry {
             matcher,
             load,
             lsp_adapters,
+            context_provider,
             loaded: false,
         });
         state.version += 1;
@@ -367,6 +370,7 @@ impl LanguageRegistry {
                             .spawn(async move {
                                 let id = language.id;
                                 let name = language.name.clone();
+                                let provider = language.context_provider.clone();
                                 let language = async {
                                     let (config, queries) = (language.load)()?;
 
@@ -379,6 +383,7 @@ impl LanguageRegistry {
                                     Language::new_with_id(id, config, grammar)
                                         .with_lsp_adapters(language.lsp_adapters)
                                         .await
+                                        .with_context_provider(provider)
                                         .with_queries(queries)
                                 }
                                 .await;

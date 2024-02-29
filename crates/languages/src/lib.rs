@@ -141,6 +141,7 @@ pub fn init(
                 config.grammar.clone(),
                 config.matcher.clone(),
                 vec![],
+                None,
                 move || Ok((config.clone(), load_queries($name))),
             );
         };
@@ -151,6 +152,7 @@ pub fn init(
                 config.grammar.clone(),
                 config.matcher.clone(),
                 $adapters,
+                None,
                 move || Ok((config.clone(), load_queries($name))),
             );
         };
