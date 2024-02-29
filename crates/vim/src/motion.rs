@@ -968,7 +968,7 @@ fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) ->
     map.clip_point(new_point, Bias::Left)
 }
 
-pub(crate) fn end_of_line_cmd(
+fn end_of_line_cmd(
     map: &DisplaySnapshot,
     display_lines: bool,
     mut point: DisplayPoint,
