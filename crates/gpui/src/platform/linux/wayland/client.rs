@@ -217,6 +217,8 @@ impl Client for WaylandClient {
         state.windows.push((xdg_surface, Rc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
     }
+
+    fn handle_idle(&self) {}
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientState {

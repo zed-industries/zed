@@ -11,4 +11,5 @@ pub trait Client {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
+    fn handle_idle(&self);
 }
