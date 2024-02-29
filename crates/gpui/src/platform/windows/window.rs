@@ -398,47 +398,47 @@ impl PlatformWindow for WindowsWindow {
 
     // todo!("windows")
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().request_frame = callback.into();
+        self.inner.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
     // todo!("windows")
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.inner.callbacks.borrow_mut().input = callback.into();
+        self.inner.callbacks.borrow_mut().input = Some(callback);
     }
 
     // todo!("windows")
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.inner.callbacks.borrow_mut().active_status_change = callback.into();
+        self.inner.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
     // todo!("windows")
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.inner.callbacks.borrow_mut().resize = callback.into();
+        self.inner.callbacks.borrow_mut().resize = Some(callback);
     }
 
     // todo!("windows")
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.inner.callbacks.borrow_mut().fullscreen = callback.into();
+        self.inner.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
     // todo!("windows")
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().moved = callback.into();
+        self.inner.callbacks.borrow_mut().moved = Some(callback);
     }
 
     // todo!("windows")
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.inner.callbacks.borrow_mut().should_close = callback.into();
+        self.inner.callbacks.borrow_mut().should_close = Some(callback);
     }
 
     // todo!("windows")
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        self.inner.callbacks.borrow_mut().close = callback.into();
+        self.inner.callbacks.borrow_mut().close = Some(callback);
     }
 
     // todo!("windows")
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().appearance_changed = callback.into();
+        self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
     // todo!("windows")

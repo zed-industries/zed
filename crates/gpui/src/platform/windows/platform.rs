@@ -176,7 +176,7 @@ impl Platform for WindowsPlatform {
 
     // todo!("windows")
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.callbacks.lock().open_urls = callback.into();
+        self.inner.callbacks.lock().open_urls = Some(callback);
     }
 
     // todo!("windows")
@@ -195,38 +195,38 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().become_active = callback.into();
+        self.inner.callbacks.lock().become_active = Some(callback);
     }
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().resign_active = callback.into();
+        self.inner.callbacks.lock().resign_active = Some(callback);
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().quit = callback.into();
+        self.inner.callbacks.lock().quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().reopen = callback.into();
+        self.inner.callbacks.lock().reopen = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.inner.callbacks.lock().event = callback.into();
+        self.inner.callbacks.lock().event = Some(callback);
     }
 
     // todo!("windows")
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.callbacks.lock().app_menu_action = callback.into();
+        self.inner.callbacks.lock().app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().will_open_app_menu = callback.into();
+        self.inner.callbacks.lock().will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.inner.callbacks.lock().validate_app_menu_command = callback.into();
+        self.inner.callbacks.lock().validate_app_menu_command = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {
