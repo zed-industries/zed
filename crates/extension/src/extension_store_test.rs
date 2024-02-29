@@ -6,9 +6,9 @@ use crate::{
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use fs::{FakeFs, Fs};
-use futures::{io::BufReader, AsyncReadExt, FutureExt};
+use futures::{io::BufReader, AsyncReadExt, FutureExt, StreamExt};
 use gpui::{Context, TestAppContext};
-use language::{LanguageMatcher, LanguageRegistry};
+use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use project::Project;
 use serde_json::json;
@@ -385,48 +385,56 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     init_test(cx);
 
+    let language_registry = Arc::new(LanguageRegistry::test());
+    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let node_runtime = FakeNodeRuntime::new();
     let fs = FakeFs::new(cx.executor());
-    let http_client = FakeHttpClient::create(|request| async move {
-        match request.uri().to_string().as_str() {
-            "https://api.github.com/repos/gleam-lang/gleam/releases" => Ok(Response::new(
-                json!([
-                    {
-                        "tag_name": "v1.2.3",
-                        "prerelease": false,
-                        "tarball_url": "",
-                        "zipball_url": "",
-                        "assets": [
-                            {
-                                "name": "gleam-v1.2.3-aarch64-apple-darwin.tar.gz",
-                                "browser_download_url": "http://example.com/the-download"
-                            }
-                        ]
-                    }
-                ])
-                .to_string()
-                .into(),
-            )),
 
-            "http://example.com/the-download" => {
-                let mut bytes = Vec::<u8>::new();
-                let mut archive = async_tar::Builder::new(&mut bytes);
-                let mut header = async_tar::Header::new_gnu();
-                let content = "the-gleam-binary-contents".as_bytes();
-                header.set_size(content.len() as u64);
-                archive
-                    .append_data(&mut header, "gleam", content)
-                    .await
-                    .unwrap();
-                archive.into_inner().await.unwrap();
+    let mut status_updates = language_registry.language_server_binary_statuses();
 
-                let mut gzipped_bytes = Vec::new();
-                let mut encoder = GzipEncoder::new(BufReader::new(bytes.as_slice()));
-                encoder.read_to_end(&mut gzipped_bytes).await.unwrap();
+    let http_client = FakeHttpClient::create({
+        move |request| async move {
+            match request.uri().to_string().as_str() {
+                "https://api.github.com/repos/gleam-lang/gleam/releases" => Ok(Response::new(
+                    json!([
+                        {
+                            "tag_name": "v1.2.3",
+                            "prerelease": false,
+                            "tarball_url": "",
+                            "zipball_url": "",
+                            "assets": [
+                                {
+                                    "name": "gleam-v1.2.3-aarch64-apple-darwin.tar.gz",
+                                    "browser_download_url": "http://example.com/the-download"
+                                }
+                            ]
+                        }
+                    ])
+                    .to_string()
+                    .into(),
+                )),
 
-                Ok(Response::new(gzipped_bytes.into()))
+                "http://example.com/the-download" => {
+                    let mut bytes = Vec::<u8>::new();
+                    let mut archive = async_tar::Builder::new(&mut bytes);
+                    let mut header = async_tar::Header::new_gnu();
+                    let content = "the-gleam-binary-contents".as_bytes();
+                    header.set_size(content.len() as u64);
+                    archive
+                        .append_data(&mut header, "gleam", content)
+                        .await
+                        .unwrap();
+                    archive.into_inner().await.unwrap();
+
+                    let mut gzipped_bytes = Vec::new();
+                    let mut encoder = GzipEncoder::new(BufReader::new(bytes.as_slice()));
+                    encoder.read_to_end(&mut gzipped_bytes).await.unwrap();
+
+                    Ok(Response::new(gzipped_bytes.into()))
+                }
+
+                _ => Ok(Response::builder().status(404).body("not found".into())?),
             }
-
-            _ => Ok(Response::builder().status(404).body("not found".into())?),
         }
     });
 
@@ -446,10 +454,6 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         .await;
     fs.insert_tree_from_real_fs("/the-extension-dir/installed/gleam", gleam_extension_dir)
         .await;
-
-    let language_registry = Arc::new(LanguageRegistry::test());
-    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
-    let node_runtime = FakeNodeRuntime::new();
 
     let store = cx.new_model(|cx| {
         ExtensionStore::new(
@@ -520,6 +524,28 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     assert_eq!(command.command, "gleam-v1.2.3/gleam");
     assert_eq!(command.args, ["lsp".to_string()]);
+
+    assert_eq!(
+        [
+            status_updates.next().await.unwrap(),
+            status_updates.next().await.unwrap(),
+            status_updates.next().await.unwrap(),
+        ],
+        [
+            (
+                LanguageServerName("Gleam LSP".into()),
+                LanguageServerBinaryStatus::CheckingForUpdate
+            ),
+            (
+                LanguageServerName("Gleam LSP".into()),
+                LanguageServerBinaryStatus::Downloading
+            ),
+            (
+                LanguageServerName("Gleam LSP".into()),
+                LanguageServerBinaryStatus::Downloaded
+            )
+        ]
+    );
 }
 
 fn compile_extension(name: &str, extension_dir_path: &Path) {

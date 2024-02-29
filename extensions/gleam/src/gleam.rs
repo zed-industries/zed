@@ -6,8 +6,12 @@ impl zed::Extension for GleamExtension {
     fn language_server_command(
         &self,
         config: zed::LanguageServerConfig,
-        worktree: &zed::Worktree,
+        _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        zed::set_language_server_installation_status(
+            &config.name,
+            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
+        );
         let release = zed::latest_github_release(
             "gleam-lang/gleam",
             zed::GithubReleaseOptions {
@@ -38,6 +42,10 @@ impl zed::Extension for GleamExtension {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
+        zed::set_language_server_installation_status(
+            &config.name,
+            &zed::LanguageServerInstallationStatus::Downloading,
+        );
         let version_dir = format!("gleam-{}", release.version);
         zed::download_file(
             &asset.download_url,
@@ -45,6 +53,11 @@ impl zed::Extension for GleamExtension {
             zed::DownloadedFileType::GzipTar,
         )
         .map_err(|e| format!("failed to download file: {e}"))?;
+
+        zed::set_language_server_installation_status(
+            &config.name,
+            &zed::LanguageServerInstallationStatus::Downloaded,
+        );
 
         Ok(zed::Command {
             command: format!("{version_dir}/gleam"),

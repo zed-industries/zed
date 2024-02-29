@@ -9208,8 +9208,13 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         })
     }
 
-    fn update_status(&self, language: Arc<Language>, status: language::LanguageServerBinaryStatus) {
-        self.language_registry.update_lsp_status(language, status);
+    fn update_status(
+        &self,
+        server_name: LanguageServerName,
+        status: language::LanguageServerBinaryStatus,
+    ) {
+        self.language_registry
+            .update_lsp_status(server_name, status);
     }
 }
 

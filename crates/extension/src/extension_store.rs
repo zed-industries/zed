@@ -210,6 +210,7 @@ impl ExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
+                language_registry.clone(),
                 extensions_dir.join("work"),
             ),
             wasm_extensions: Vec::new(),

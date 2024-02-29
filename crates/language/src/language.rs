@@ -229,7 +229,7 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
-    fn update_status(&self, language: Arc<Language>, status: LanguageServerBinaryStatus);
+    fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
     fn which_command(
         &self,
         command: OsString,
@@ -289,36 +289,37 @@ pub trait LspAdapter: 'static + Send + Sync {
                 task.await?;
             }
 
-            let name = self.name().0;
-            log::info!("fetching latest version of language server {name:?}",);
+            let name = self.name();
+            log::info!("fetching latest version of language server {:?}", name.0);
             delegate.update_status(
-                language.clone(),
+                name.clone(),
                 LanguageServerBinaryStatus::CheckingForUpdate,
             );
             let version_info = self.fetch_latest_server_version(delegate.as_ref()).await?;
 
-            log::info!("downloading language server {name:?}",);
-            delegate.update_status(language.clone(), LanguageServerBinaryStatus::Downloading);
+            log::info!("downloading language server {:?}", name.0);
+            delegate.update_status(self.name(), LanguageServerBinaryStatus::Downloading);
             let mut binary = self
                 .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate.as_ref())
                 .await;
 
-            delegate.update_status(language.clone(), LanguageServerBinaryStatus::Downloaded);
+            delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
 
             if let Err(error) = binary.as_ref() {
                 if let Some(prev_downloaded_binary) = self
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
-                    delegate.update_status(language.clone(), LanguageServerBinaryStatus::Cached);
+                    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Cached);
                     log::info!(
-                        "failed to fetch newest version of language server {name:?}. falling back to using {:?}",
+                        "failed to fetch newest version of language server {:?}. falling back to using {:?}",
+                        name.clone(),
                         prev_downloaded_binary.path.display()
                     );
                     binary = Ok(prev_downloaded_binary);
                 } else {
                     delegate.update_status(
-                        language.clone(),
+                        name.clone(),
                         LanguageServerBinaryStatus::Failed {
                             error: format!("{:?}", error),
                         },

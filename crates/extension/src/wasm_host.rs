@@ -10,7 +10,7 @@ use futures::{
     Future, FutureExt, StreamExt as _,
 };
 use gpui::BackgroundExecutor;
-use language::WASM_ENGINE;
+use language::{LanguageRegistry, LanguageServerBinaryStatus, WASM_ENGINE};
 use node_runtime::NodeRuntime;
 use std::{path::PathBuf, sync::Arc};
 use util::{http::HttpClient, SemanticVersion};
@@ -37,6 +37,7 @@ pub(crate) struct WasmHost {
     linker: Arc<wasmtime::component::Linker<WasmState>>,
     http_client: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
+    language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     work_dir: PathBuf,
 }
@@ -64,6 +65,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
+        language_registry: Arc<LanguageRegistry>,
         work_dir: PathBuf,
     ) -> Arc<Self> {
         let engine = WASM_ENGINE.clone();
@@ -77,6 +79,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
+            language_registry,
         })
     }
 
@@ -267,6 +270,33 @@ impl wit::ExtensionImports for WasmState {
                 _ => panic!("unsupported architecture"),
             },
         ))
+    }
+
+    async fn set_language_server_installation_status(
+        &mut self,
+        server_name: String,
+        status: wit::LanguageServerInstallationStatus,
+    ) -> wasmtime::Result<()> {
+        let status = match status {
+            wit::LanguageServerInstallationStatus::CheckingForUpdate => {
+                LanguageServerBinaryStatus::CheckingForUpdate
+            }
+            wit::LanguageServerInstallationStatus::Downloading => {
+                LanguageServerBinaryStatus::Downloading
+            }
+            wit::LanguageServerInstallationStatus::Downloaded => {
+                LanguageServerBinaryStatus::Downloaded
+            }
+            wit::LanguageServerInstallationStatus::Cached => LanguageServerBinaryStatus::Cached,
+            wit::LanguageServerInstallationStatus::Failed(error) => {
+                LanguageServerBinaryStatus::Failed { error }
+            }
+        };
+
+        self.host
+            .language_registry
+            .update_lsp_status(language::LanguageServerName(server_name.into()), status);
+        Ok(())
     }
 
     async fn download_file(

@@ -50,7 +50,7 @@ struct LanguageRegistryState {
     reload_count: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LanguageServerBinaryStatus {
     CheckingForUpdate,
     Downloading,
@@ -112,7 +112,7 @@ pub struct LanguageQueries {
 
 #[derive(Clone, Default)]
 struct LspBinaryStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(Arc<Language>, LanguageServerBinaryStatus)>>>>,
+    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, LanguageServerBinaryStatus)>>>>,
 }
 
 impl LanguageRegistry {
@@ -490,8 +490,12 @@ impl LanguageRegistry {
         self.state.read().languages.iter().cloned().collect()
     }
 
-    pub fn update_lsp_status(&self, language: Arc<Language>, status: LanguageServerBinaryStatus) {
-        self.lsp_binary_status_tx.send(language, status);
+    pub fn update_lsp_status(
+        &self,
+        server_name: LanguageServerName,
+        status: LanguageServerBinaryStatus,
+    ) {
+        self.lsp_binary_status_tx.send(server_name, status);
     }
 
     pub fn create_pending_language_server(
@@ -598,7 +602,7 @@ impl LanguageRegistry {
 
     pub fn language_server_binary_statuses(
         &self,
-    ) -> mpsc::UnboundedReceiver<(Arc<Language>, LanguageServerBinaryStatus)> {
+    ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
         self.lsp_binary_status_tx.subscribe()
     }
 
@@ -695,17 +699,16 @@ impl LanguageRegistryState {
 }
 
 impl LspBinaryStatusSender {
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<(Arc<Language>, LanguageServerBinaryStatus)> {
+    fn subscribe(
+        &self,
+    ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
         let (tx, rx) = mpsc::unbounded();
         self.txs.lock().push(tx);
         rx
     }
 
-    fn send(&self, language: Arc<Language>, status: LanguageServerBinaryStatus) {
+    fn send(&self, name: LanguageServerName, status: LanguageServerBinaryStatus) {
         let mut txs = self.txs.lock();
-        txs.retain(|tx| {
-            tx.unbounded_send((language.clone(), status.clone()))
-                .is_ok()
-        });
+        txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
     }
 }
