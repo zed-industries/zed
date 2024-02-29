@@ -915,7 +915,7 @@ impl CollabPanel {
                 this.workspace
                     .update(cx, |workspace, cx| {
                         let app_state = workspace.app_state().clone();
-                        workspace::join_remote_project(project_id, host_user_id, app_state, cx)
+                        workspace::join_in_room_project(project_id, host_user_id, app_state, cx)
                             .detach_and_prompt_err("Failed to join project", cx, |_, _| None);
                     })
                     .ok();
@@ -1472,7 +1472,7 @@ impl CollabPanel {
                     } => {
                         if let Some(workspace) = self.workspace.upgrade() {
                             let app_state = workspace.read(cx).app_state().clone();
-                            workspace::join_remote_project(
+                            workspace::join_in_room_project(
                                 *project_id,
                                 *host_user_id,
                                 app_state,

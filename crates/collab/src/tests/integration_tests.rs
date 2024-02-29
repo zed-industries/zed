@@ -3742,7 +3742,6 @@ async fn test_leaving_project(
             client_b.user_store().clone(),
             client_b.language_registry().clone(),
             FakeFs::new(cx.background_executor().clone()),
-            ChannelRole::Member,
             cx,
         )
     })

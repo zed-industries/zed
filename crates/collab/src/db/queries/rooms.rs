@@ -859,7 +859,7 @@ impl Database {
                     }
 
                     if collaborator.is_host {
-                        left_project.host_user_id = collaborator.user_id;
+                        left_project.host_user_id = Some(collaborator.user_id);
                         left_project.host_connection_id = Some(collaborator_connection_id);
                     }
                 }

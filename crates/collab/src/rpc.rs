@@ -1589,17 +1589,31 @@ async fn join_project(
     let (project, replica_id) = &mut *session
         .db()
         .await
-        .join_project(project_id, session.connection_id)
+        .join_project_in_room(project_id, session.connection_id)
         .await?;
 
-    send_join_project_response(response, session, project, replica_id).await
+    join_project_internal(response, session, project, replica_id)
 }
 
-async fn send_join_project_response(
-    response: Response<proto::JoinProject>,
+trait JoinProjectInternalResponse {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()>;
+}
+impl JoinProjectInternalResponse for Response<proto::JoinProject> {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
+        Response::<proto::JoinProject>::send(self, result)
+    }
+}
+impl JoinProjectInternalResponse for Response<proto::JoinHostedProject> {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
+        Response::<proto::JoinHostedProject>::send(self, result)
+    }
+}
+
+fn join_project_internal(
+    response: impl JoinProjectInternalResponse,
     session: Session,
     project: &mut Project,
-    replica_id: &mut ReplicaId,
+    replica_id: &ReplicaId,
 ) -> Result<()> {
     let collaborators = project
         .collaborators
@@ -1640,12 +1654,12 @@ async fn send_join_project_response(
 
     // First, we send the metadata associated with each worktree.
     response.send(proto::JoinProjectResponse {
-        project_id: project_id.0 as u64,
+        project_id: project.id.0 as u64,
         worktrees: worktrees.clone(),
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
-        role: ChannelRole::Member.into(), // todo
+        role: project.role.into(), // todo
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -1718,6 +1732,12 @@ async fn send_join_project_response(
 async fn leave_project(request: proto::LeaveProject, session: Session) -> Result<()> {
     let sender_id = session.connection_id;
     let project_id = ProjectId::from_proto(request.project_id);
+    let db = session.db().await;
+    if db.is_hosted_project(project_id).await? {
+        let project = db.leave_hosted_project(project_id, sender_id).await?;
+        project_left(&project, &session);
+        return Ok(());
+    }
 
     let (room, project) = &*session
         .db()
@@ -1726,7 +1746,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
         .await?;
     tracing::info!(
         %project_id,
-        host_user_id = %project.host_user_id,
+        host_user_id = ?project.host_user_id,
         host_connection_id = ?project.host_connection_id,
         "leave project"
     );
@@ -1742,7 +1762,7 @@ async fn join_hosted_project(
     response: Response<proto::JoinHostedProject>,
     session: Session,
 ) -> Result<()> {
-    let (project, replica_id) = &mut *session
+    let (mut project, replica_id) = session
         .db()
         .await
         .join_hosted_project(
@@ -1752,7 +1772,7 @@ async fn join_hosted_project(
         )
         .await?;
 
-    send_join_project_response(response, session, project, replica_id).await
+    join_project_internal(response, session, &mut project, &replica_id)
 }
 
 /// Updates other participants with changes to the project
@@ -3654,7 +3674,7 @@ async fn leave_channel_buffers_for_session(session: &Session) -> Result<()> {
 
 fn project_left(project: &db::LeftProject, session: &Session) {
     for connection_id in &project.connection_ids {
-        if project.host_user_id == session.user_id {
+        if project.host_user_id == Some(session.user_id) {
             session
                 .peer
                 .send(

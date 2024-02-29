@@ -56,7 +56,7 @@ use project_core::project_settings::{LspSettings, ProjectSettings};
 pub use project_core::{DiagnosticSummary, ProjectEntryId};
 use rand::prelude::*;
 
-use rpc::{proto::ChannelRole, ErrorCode, ErrorExt as _};
+use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{Settings, SettingsStore};
@@ -159,6 +159,7 @@ pub struct Project {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
+    hosted_project_id: Option<HostedProjectId>,
 }
 
 pub enum LanguageServerToQuery {
@@ -603,6 +604,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                hosted_project_id: None,
             }
         })
     }
@@ -613,7 +615,6 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        role: proto::ChannelRole,
         cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
@@ -623,20 +624,12 @@ impl Project {
                 project_id: remote_id,
             })
             .await?;
-        Self::from_join_project_response(
-            response,
-            Some(role),
-            client,
-            user_store,
-            languages,
-            fs,
-            cx,
-        )
-        .await
+        Self::from_join_project_response(response, None, client, user_store, languages, fs, cx)
+            .await
     }
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        role: Option<ChannelRole>, // todo calculate this on the server.
+        hosted_project_id: Option<HostedProjectId>,
         client: Arc<Client>,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
@@ -644,7 +637,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         let remote_id = response.payload.project_id;
-        let role = role.unwrap_or(response.payload.role());
+        let role = response.payload.role();
         let subscription = client.subscribe_to_entity(remote_id)?;
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
@@ -734,6 +727,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                hosted_project_id,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -775,8 +769,16 @@ impl Project {
                 id: hosted_project_id.0,
             })
             .await?;
-        Self::from_join_project_response(response, None, client, user_store, languages, fs, cx)
-            .await
+        Self::from_join_project_response(
+            response,
+            Some(hosted_project_id),
+            client,
+            user_store,
+            languages,
+            fs,
+            cx,
+        )
+        .await
     }
 
     fn release(&mut self, cx: &mut AppContext) {
@@ -1018,6 +1020,10 @@ impl Project {
             ProjectClientState::Shared { remote_id, .. }
             | ProjectClientState::Remote { remote_id, .. } => Some(remote_id),
         }
+    }
+
+    pub fn hosted_project_id(&self) -> Option<HostedProjectId> {
+        self.hosted_project_id
     }
 
     pub fn replica_id(&self) -> ReplicaId {

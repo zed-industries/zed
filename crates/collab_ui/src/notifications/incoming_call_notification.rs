@@ -82,7 +82,7 @@ impl IncomingCallNotificationState {
                 if let Some(project_id) = initial_project_id {
                     cx.update(|cx| {
                         if let Some(app_state) = app_state.upgrade() {
-                            workspace::join_remote_project(
+                            workspace::join_in_room_project(
                                 project_id,
                                 caller_user_id,
                                 app_state,

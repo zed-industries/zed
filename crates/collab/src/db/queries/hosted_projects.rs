@@ -68,4 +68,15 @@ impl Database {
 
         Ok((project, role))
     }
+
+    pub async fn is_hosted_project(&self, project_id: ProjectId) -> Result<bool> {
+        self.transaction(|tx| async move {
+            Ok(project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .map(|project| project.hosted_project_id.is_some())
+                .ok_or_else(|| anyhow!(ErrorCode::NoSuchProject))?)
+        })
+        .await
+    }
 }
