@@ -56,13 +56,13 @@ pub trait Task {
 ///
 /// Implementations of this trait could be e.g. [`StaticSource`] that parses tasks from a .json files and provides process templates to be spawned;
 /// another one could be a language server providing lenses with tests or build server listing all targets for a given project.
-pub trait Source: Any {
+pub trait TaskSource: Any {
     /// A way to erase the type of the source, processing and storing them generically.
     fn as_any(&mut self) -> &mut dyn Any;
     /// Collects all tasks available for scheduling, for the path given.
     fn tasks_for_path(
         &mut self,
         path: Option<&Path>,
-        cx: &mut ModelContext<Box<dyn Source>>,
+        cx: &mut ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>>;
 }

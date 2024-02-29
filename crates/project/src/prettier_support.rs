@@ -522,6 +522,9 @@ impl Project {
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<(Option<PathBuf>, PrettierTask)>> {
+        if !self.is_local() {
+            return Task::ready(None);
+        }
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
         let Some(buffer_language) = buffer.language() else {
@@ -530,119 +533,105 @@ impl Project {
         if buffer_language.prettier_parser_name().is_none() {
             return Task::ready(None);
         }
-
-        if self.is_local() {
-            let Some(node) = self.node.as_ref().map(Arc::clone) else {
-                return Task::ready(None);
-            };
-            match File::from_dyn(buffer_file).map(|file| (file.worktree_id(cx), file.abs_path(cx)))
-            {
-                Some((worktree_id, buffer_path)) => {
-                    let fs = Arc::clone(&self.fs);
-                    let installed_prettiers = self.prettier_instances.keys().cloned().collect();
-                    return cx.spawn(|project, mut cx| async move {
-                        match cx
-                            .background_executor()
-                            .spawn(async move {
-                                Prettier::locate_prettier_installation(
-                                    fs.as_ref(),
-                                    &installed_prettiers,
-                                    &buffer_path,
-                                )
-                                .await
-                            })
-                            .await
-                        {
-                            Ok(ControlFlow::Break(())) => {
-                                return None;
-                            }
-                            Ok(ControlFlow::Continue(None)) => {
-                                let default_instance = project
-                                    .update(&mut cx, |project, cx| {
-                                        project
-                                            .prettiers_per_worktree
-                                            .entry(worktree_id)
-                                            .or_default()
-                                            .insert(None);
-                                        project.default_prettier.prettier_task(
-                                            &node,
-                                            Some(worktree_id),
-                                            cx,
-                                        )
-                                    })
-                                    .ok()?;
-                                Some((None, default_instance?.log_err().await?))
-                            }
-                            Ok(ControlFlow::Continue(Some(prettier_dir))) => {
-                                project
-                                    .update(&mut cx, |project, _| {
-                                        project
-                                            .prettiers_per_worktree
-                                            .entry(worktree_id)
-                                            .or_default()
-                                            .insert(Some(prettier_dir.clone()))
-                                    })
-                                    .ok()?;
-                                if let Some(prettier_task) = project
-                                    .update(&mut cx, |project, cx| {
-                                        project.prettier_instances.get_mut(&prettier_dir).map(
-                                            |existing_instance| {
-                                                existing_instance.prettier_task(
-                                                    &node,
-                                                    Some(&prettier_dir),
-                                                    Some(worktree_id),
-                                                    cx,
-                                                )
-                                            },
-                                        )
-                                    })
-                                    .ok()?
-                                {
-                                    log::debug!(
-                                        "Found already started prettier in {prettier_dir:?}"
-                                    );
-                                    return Some((
-                                        Some(prettier_dir),
-                                        prettier_task?.await.log_err()?,
-                                    ));
-                                }
-
-                                log::info!("Found prettier in {prettier_dir:?}, starting.");
-                                let new_prettier_task = project
-                                    .update(&mut cx, |project, cx| {
-                                        let new_prettier_task = start_prettier(
-                                            node,
-                                            prettier_dir.clone(),
-                                            Some(worktree_id),
-                                            cx,
-                                        );
-                                        project.prettier_instances.insert(
-                                            prettier_dir.clone(),
-                                            PrettierInstance {
-                                                attempt: 0,
-                                                prettier: Some(new_prettier_task.clone()),
-                                            },
-                                        );
-                                        new_prettier_task
-                                    })
-                                    .ok()?;
-                                Some((Some(prettier_dir), new_prettier_task))
-                            }
-                            Err(e) => {
-                                log::error!("Failed to determine prettier path for buffer: {e:#}");
-                                return None;
-                            }
-                        }
-                    });
-                }
-                None => {
-                    let new_task = self.default_prettier.prettier_task(&node, None, cx);
-                    return cx
-                        .spawn(|_, _| async move { Some((None, new_task?.log_err().await?)) });
-                }
-            }
-        } else {
+        let Some(node) = self.node.as_ref().map(Arc::clone) else {
             return Task::ready(None);
+        };
+        match File::from_dyn(buffer_file).map(|file| (file.worktree_id(cx), file.abs_path(cx))) {
+            Some((worktree_id, buffer_path)) => {
+                let fs = Arc::clone(&self.fs);
+                let installed_prettiers = self.prettier_instances.keys().cloned().collect();
+                cx.spawn(|project, mut cx| async move {
+                    match cx
+                        .background_executor()
+                        .spawn(async move {
+                            Prettier::locate_prettier_installation(
+                                fs.as_ref(),
+                                &installed_prettiers,
+                                &buffer_path,
+                            )
+                            .await
+                        })
+                        .await
+                    {
+                        Ok(ControlFlow::Break(())) => None,
+                        Ok(ControlFlow::Continue(None)) => {
+                            let default_instance = project
+                                .update(&mut cx, |project, cx| {
+                                    project
+                                        .prettiers_per_worktree
+                                        .entry(worktree_id)
+                                        .or_default()
+                                        .insert(None);
+                                    project.default_prettier.prettier_task(
+                                        &node,
+                                        Some(worktree_id),
+                                        cx,
+                                    )
+                                })
+                                .ok()?;
+                            Some((None, default_instance?.log_err().await?))
+                        }
+                        Ok(ControlFlow::Continue(Some(prettier_dir))) => {
+                            project
+                                .update(&mut cx, |project, _| {
+                                    project
+                                        .prettiers_per_worktree
+                                        .entry(worktree_id)
+                                        .or_default()
+                                        .insert(Some(prettier_dir.clone()))
+                                })
+                                .ok()?;
+                            if let Some(prettier_task) = project
+                                .update(&mut cx, |project, cx| {
+                                    project.prettier_instances.get_mut(&prettier_dir).map(
+                                        |existing_instance| {
+                                            existing_instance.prettier_task(
+                                                &node,
+                                                Some(&prettier_dir),
+                                                Some(worktree_id),
+                                                cx,
+                                            )
+                                        },
+                                    )
+                                })
+                                .ok()?
+                            {
+                                log::debug!("Found already started prettier in {prettier_dir:?}");
+                                return Some((Some(prettier_dir), prettier_task?.await.log_err()?));
+                            }
+
+                            log::info!("Found prettier in {prettier_dir:?}, starting.");
+                            let new_prettier_task = project
+                                .update(&mut cx, |project, cx| {
+                                    let new_prettier_task = start_prettier(
+                                        node,
+                                        prettier_dir.clone(),
+                                        Some(worktree_id),
+                                        cx,
+                                    );
+                                    project.prettier_instances.insert(
+                                        prettier_dir.clone(),
+                                        PrettierInstance {
+                                            attempt: 0,
+                                            prettier: Some(new_prettier_task.clone()),
+                                        },
+                                    );
+                                    new_prettier_task
+                                })
+                                .ok()?;
+                            Some((Some(prettier_dir), new_prettier_task))
+                        }
+                        Err(e) => {
+                            log::error!("Failed to determine prettier path for buffer: {e:#}");
+                            None
+                        }
+                    }
+                })
+            }
+            None => {
+                let new_task = self.default_prettier.prettier_task(&node, None, cx);
+                cx.spawn(|_, _| async move { Some((None, new_task?.log_err().await?)) })
+            }
         }
     }
 

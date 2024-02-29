@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use std::cell::RefCell;
 use std::env;
 use std::{
     path::{Path, PathBuf},
@@ -10,6 +11,7 @@ use std::{
 
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
+use calloop::{EventLoop, LoopHandle, LoopSignal};
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
@@ -17,9 +19,7 @@ use time::UtcOffset;
 use wayland_client::Connection;
 
 use crate::platform::linux::client::Client;
-use crate::platform::linux::client_dispatcher::ClientDispatcher;
-use crate::platform::linux::wayland::{WaylandClient, WaylandClientDispatcher};
-use crate::platform::{X11Client, X11ClientDispatcher, XcbAtoms};
+use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
@@ -27,12 +27,14 @@ use crate::{
     SemanticVersion, Task, WindowOptions,
 };
 
+use super::x11::X11Client;
+
 #[derive(Default)]
 pub(crate) struct Callbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
-    pub(crate) quit: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
@@ -41,21 +43,18 @@ pub(crate) struct Callbacks {
 }
 
 pub(crate) struct LinuxPlatformInner {
+    pub(crate) event_loop: RefCell<EventLoop<'static, ()>>,
+    pub(crate) loop_handle: Rc<LoopHandle<'static, ()>>,
+    pub(crate) loop_signal: LoopSignal,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) text_system: Arc<LinuxTextSystem>,
-    pub(crate) callbacks: Mutex<Callbacks>,
-    pub(crate) state: Mutex<LinuxPlatformState>,
+    pub(crate) callbacks: RefCell<Callbacks>,
 }
 
 pub(crate) struct LinuxPlatform {
     client: Rc<dyn Client>,
     inner: Rc<LinuxPlatformInner>,
-}
-
-pub(crate) struct LinuxPlatformState {
-    pub(crate) quit_requested: bool,
 }
 
 impl Default for LinuxPlatform {
@@ -69,90 +68,41 @@ impl LinuxPlatform {
         let wayland_display = env::var_os("WAYLAND_DISPLAY");
         let use_wayland = wayland_display.is_some() && !wayland_display.unwrap().is_empty();
 
-        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
+        let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(LinuxTextSystem::new());
-        let callbacks = Mutex::new(Callbacks::default());
-        let state = Mutex::new(LinuxPlatformState {
-            quit_requested: false,
+        let callbacks = RefCell::new(Callbacks::default());
+
+        let event_loop = EventLoop::try_new().unwrap();
+        event_loop
+            .handle()
+            .insert_source(main_receiver, |event, _, _| {
+                if let calloop::channel::Event::Msg(runnable) = event {
+                    runnable.run();
+                }
+            });
+
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
+
+        let inner = Rc::new(LinuxPlatformInner {
+            loop_handle: Rc::new(event_loop.handle()),
+            loop_signal: event_loop.get_signal(),
+            event_loop: RefCell::new(event_loop),
+            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
+            text_system,
+            callbacks,
         });
 
         if use_wayland {
-            Self::new_wayland(main_sender, main_receiver, text_system, callbacks, state)
+            Self {
+                client: Rc::new(WaylandClient::new(Rc::clone(&inner))),
+                inner,
+            }
         } else {
-            Self::new_x11(main_sender, main_receiver, text_system, callbacks, state)
-        }
-    }
-
-    fn new_wayland(
-        main_sender: Sender<Runnable>,
-        main_receiver: Receiver<Runnable>,
-        text_system: Arc<LinuxTextSystem>,
-        callbacks: Mutex<Callbacks>,
-        state: Mutex<LinuxPlatformState>,
-    ) -> Self {
-        let conn = Arc::new(Connection::connect_to_env().unwrap());
-        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
-            Arc::new(WaylandClientDispatcher::new(&conn));
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
-        let inner = Rc::new(LinuxPlatformInner {
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
-            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
-            main_receiver,
-            text_system,
-            callbacks,
-            state,
-        });
-        let client = Rc::new(WaylandClient::new(Rc::clone(&inner), Arc::clone(&conn)));
-        Self {
-            client,
-            inner: Rc::clone(&inner),
-        }
-    }
-
-    fn new_x11(
-        main_sender: Sender<Runnable>,
-        main_receiver: Receiver<Runnable>,
-        text_system: Arc<LinuxTextSystem>,
-        callbacks: Mutex<Callbacks>,
-        state: Mutex<LinuxPlatformState>,
-    ) -> Self {
-        let (xcb_connection, x_root_index) = xcb::Connection::connect_with_extensions(
-            None,
-            &[xcb::Extension::Present, xcb::Extension::Xkb],
-            &[],
-        )
-        .unwrap();
-
-        let xkb_ver = xcb_connection
-            .wait_for_reply(xcb_connection.send_request(&xcb::xkb::UseExtension {
-                wanted_major: xcb::xkb::MAJOR_VERSION as u16,
-                wanted_minor: xcb::xkb::MINOR_VERSION as u16,
-            }))
-            .unwrap();
-        assert!(xkb_ver.supported());
-
-        let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
-        let xcb_connection = Arc::new(xcb_connection);
-        let client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync> =
-            Arc::new(X11ClientDispatcher::new(&xcb_connection, x_root_index));
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender, &client_dispatcher));
-        let inner = Rc::new(LinuxPlatformInner {
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
-            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
-            main_receiver,
-            text_system,
-            callbacks,
-            state,
-        });
-        let client = Rc::new(X11Client::new(
-            Rc::clone(&inner),
-            xcb_connection,
-            x_root_index,
-            atoms,
-        ));
-        Self {
-            client,
-            inner: Rc::clone(&inner),
+            Self {
+                client: X11Client::new(Rc::clone(&inner)),
+                inner,
+            }
         }
     }
 }
@@ -171,11 +121,24 @@ impl Platform for LinuxPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
-        self.client.run(on_finish_launching)
+        on_finish_launching();
+        self.inner
+            .event_loop
+            .borrow_mut()
+            .run(None, &mut (), |data| {})
+            .expect("Run loop failed");
+
+        let mut lock = self.inner.callbacks.borrow_mut();
+        if let Some(mut fun) = lock.quit.take() {
+            drop(lock);
+            fun();
+            let mut lock = self.inner.callbacks.borrow_mut();
+            lock.quit = Some(fun);
+        }
     }
 
     fn quit(&self) {
-        self.inner.state.lock().quit_requested = true;
+        self.inner.loop_signal.stop();
     }
 
     //todo!(linux)
@@ -219,7 +182,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.callbacks.lock().open_urls = Some(callback);
+        self.inner.callbacks.borrow_mut().open_urls = Some(callback);
     }
 
     fn prompt_for_paths(
@@ -306,35 +269,35 @@ impl Platform for LinuxPlatform {
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().become_active = Some(callback);
+        self.inner.callbacks.borrow_mut().become_active = Some(callback);
     }
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().resign_active = Some(callback);
+        self.inner.callbacks.borrow_mut().resign_active = Some(callback);
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().quit = Some(callback);
+        self.inner.callbacks.borrow_mut().quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().reopen = Some(callback);
+        self.inner.callbacks.borrow_mut().reopen = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.inner.callbacks.lock().event = Some(callback);
+        self.inner.callbacks.borrow_mut().event = Some(callback);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.callbacks.lock().app_menu_action = Some(callback);
+        self.inner.callbacks.borrow_mut().app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().will_open_app_menu = Some(callback);
+        self.inner.callbacks.borrow_mut().will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.inner.callbacks.lock().validate_app_menu_command = Some(callback);
+        self.inner.callbacks.borrow_mut().validate_app_menu_command = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {

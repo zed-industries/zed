@@ -468,7 +468,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| editor.focus(cx))
         });
 

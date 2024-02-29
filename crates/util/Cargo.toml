@@ -31,6 +31,7 @@ serde_json.workspace = true
 smol.workspace = true
 take-until = "0.2.0"
 tempfile = { workspace = true, optional = true }
+unicase.workspace = true
 url.workspace = true
 
 [target.'cfg(windows)'.dependencies]

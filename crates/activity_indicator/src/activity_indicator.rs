@@ -97,7 +97,7 @@ impl ActivityIndicator {
                             cx,
                         );
                     });
-                    workspace.add_item(
+                    workspace.add_item_to_active_pane(
                         Box::new(
                             cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
                         ),

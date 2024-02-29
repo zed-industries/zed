@@ -1360,6 +1360,7 @@ enum InlayHintRefreshReason {
     RefreshRequested,
     ExcerptsRemoved(Vec<ExcerptId>),
 }
+
 impl InlayHintRefreshReason {
     fn description(&self) -> &'static str {
         match self {
@@ -1641,7 +1642,7 @@ impl Editor {
             .update(cx, |project, cx| project.create_buffer("", None, cx))
             .log_err()
         {
-            workspace.add_item(
+            workspace.add_item_to_active_pane(
                 Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
                 cx,
             );
@@ -3029,6 +3030,12 @@ impl Editor {
         }
 
         let reason_description = reason.description();
+        let ignore_debounce = matches!(
+            reason,
+            InlayHintRefreshReason::SettingsChange(_)
+                | InlayHintRefreshReason::Toggle(_)
+                | InlayHintRefreshReason::ExcerptsRemoved(_)
+        );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
@@ -3091,6 +3098,7 @@ impl Editor {
             reason_description,
             self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
             invalidate_cache,
+            ignore_debounce,
             cx,
         ) {
             self.splice_inlay_hints(to_remove, to_insert, cx);
@@ -3631,7 +3639,7 @@ impl Editor {
             let project = workspace.project().clone();
             let editor =
                 cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
-            workspace.add_item(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     ranges_to_highlight,
@@ -4466,6 +4474,9 @@ impl Editor {
     }
 
     pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let mut selections = self.selections.all::<Point>(cx);
         let mut prev_edited_row = 0;
         let mut row_delta = 0;
@@ -4508,7 +4519,7 @@ impl Editor {
 
         // If a selection ends at the beginning of a line, don't indent
         // that last line.
-        if selection.end.column == 0 {
+        if selection.end.column == 0 && selection.end.row > selection.start.row {
             end_row -= 1;
         }
 
@@ -4559,6 +4570,9 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
         let mut deletion_ranges = Vec::new();
@@ -4699,6 +4713,9 @@ impl Editor {
     }
 
     pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let mut row_ranges = Vec::<Range<u32>>::new();
         for selection in self.selections.all::<Point>(cx) {
             let start = selection.start.row;
@@ -7489,11 +7506,13 @@ impl Editor {
                             cx.window_context().defer(move |cx| {
                                 let target_editor: View<Self> =
                                     workspace.update(cx, |workspace, cx| {
-                                        if split {
-                                            workspace.split_project_item(target.buffer.clone(), cx)
+                                        let pane = if split {
+                                            workspace.adjacent_pane(cx)
                                         } else {
-                                            workspace.open_project_item(target.buffer.clone(), cx)
-                                        }
+                                            workspace.active_pane().clone()
+                                        };
+
+                                        workspace.open_project_item(pane, target.buffer.clone(), cx)
                                     });
                                 target_editor.update(cx, |target_editor, cx| {
                                     // When selecting a definition in a different buffer, disable the nav history
@@ -7730,7 +7749,7 @@ impl Editor {
         if split {
             workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
         } else {
-            workspace.add_item(Box::new(editor), cx);
+            workspace.add_item_to_active_pane(Box::new(editor), cx);
         }
     }
 
@@ -9050,7 +9069,15 @@ impl Editor {
         self.searchable
     }
 
+    fn open_excerpts_in_split(&mut self, _: &OpenExcerptsSplit, cx: &mut ViewContext<Self>) {
+        self.open_excerpts_common(true, cx)
+    }
+
     fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
+        self.open_excerpts_common(false, cx)
+    }
+
+    fn open_excerpts_common(&mut self, split: bool, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         if buffer.is_singleton() {
             cx.propagate();
@@ -9077,18 +9104,20 @@ impl Editor {
             }
         }
 
-        self.push_to_nav_history(self.selections.newest_anchor().head(), None, cx);
-
         // We defer the pane interaction because we ourselves are a workspace item
         // and activating a new item causes the pane to call a method on us reentrantly,
         // which panics if we're on the stack.
         cx.window_context().defer(move |cx| {
             workspace.update(cx, |workspace, cx| {
-                let pane = workspace.active_pane().clone();
+                let pane = if split {
+                    workspace.adjacent_pane(cx)
+                } else {
+                    workspace.active_pane().clone()
+                };
                 pane.update(cx, |pane, _| pane.disable_history());
 
                 for (buffer, ranges) in new_selections_by_buffer.into_iter() {
-                    let editor = workspace.open_project_item::<Self>(buffer, cx);
+                    let editor = workspace.open_project_item::<Self>(pane.clone(), buffer, cx);
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
                             s.select_ranges(ranges);

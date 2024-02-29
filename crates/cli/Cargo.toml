@@ -16,10 +16,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap = { version = "3.1", features = ["derive"] }
-dirs = "3.0"
 ipc-channel = "0.16"
 serde.workspace = true
-serde_derive.workspace = true
 util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

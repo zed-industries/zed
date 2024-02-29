@@ -6,10 +6,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use parking_lot::Mutex;
-use smol::Timer;
+use calloop::timer::{TimeoutAction, Timer};
+use calloop::LoopHandle;
+use calloop_wayland_source::WaylandSource;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
+use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
 use wayland_client::{
@@ -20,7 +22,7 @@ use wayland_client::{
         wl_shm_pool,
         wl_surface::{self, WlSurface},
     },
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+    Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
@@ -46,18 +48,17 @@ use crate::{
     WindowOptions,
 };
 
-const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
+/// Used to convert evdev scancode to xkb scancode
+const MIN_KEYCODE: u32 = 8;
 
 pub(crate) struct WaylandClientStateInner {
     serial: u32,
-    compositor: Option<wl_compositor::WlCompositor>,
-    buffer: Option<wl_buffer::WlBuffer>,
-    wl_seat: Option<wl_seat::WlSeat>,
-    wm_base: Option<xdg_wm_base::XdgWmBase>,
+    compositor: wl_compositor::WlCompositor,
+    wm_base: xdg_wm_base::XdgWmBase,
     viewporter: Option<wp_viewporter::WpViewporter>,
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
-    data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
-    data_device: Option<wl_data_device::WlDataDevice>,
+    data_device_manager: wl_data_device_manager::WlDataDeviceManager,
+    data_device: wl_data_device::WlDataDevice,
     data_offers: hashlru::Cache<ObjectId, DataOffer>,
     fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
@@ -71,7 +72,9 @@ pub(crate) struct WaylandClientStateInner {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<Rc<WaylandWindowState>>,
     keyboard_focused_window: Option<Rc<WaylandWindowState>>,
+    loop_handle: Rc<LoopHandle<'static, ()>>,
 }
+
 
 #[derive(Clone)]
 pub(crate) struct WaylandClientState(Rc<RefCell<WaylandClientStateInner>>);
@@ -85,27 +88,55 @@ pub(crate) struct KeyRepeat {
 
 pub(crate) struct WaylandClient {
     platform_inner: Rc<LinuxPlatformInner>,
-    conn: Arc<Connection>,
     state: WaylandClientState,
-    event_queue: Mutex<EventQueue<WaylandClientState>>,
     qh: Arc<QueueHandle<WaylandClientState>>,
 }
 
+const WL_SEAT_VERSION: u32 = 4;
+
 impl WaylandClient {
-    pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>, conn: Arc<Connection>) -> Self {
-        let state = WaylandClientState(Rc::new(RefCell::new(WaylandClientStateInner {
+    pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
+        let conn = Connection::connect_to_env().unwrap();
+
+        let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&conn).unwrap();
+        let qh = event_queue.handle();
+
+        let seat = globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                        global.name,
+                        WL_SEAT_VERSION,
+                        &qh,
+                        (),
+                    );
+
+        let seat: Option<wl_seat::WlSeat> = None;
+        globals.contents().with_list(|list| {
+            for global in list {
+                if global.interface == "wl_seat" {
+                    seat = Some(globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                        global.name,
+                        WL_SEAT_VERSION,
+                        &qh,
+                        (),
+                    ));
+                }
+            }
+        });
+
+
+        let seat = seat.unwrap();
+        let data_device_manager = globals.bind::<wl_data_device_manager::WlDataDeviceManager>(&qh, 1..=1, ()).unwrap();
+
+        let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
             serial: 0,
-            compositor: None,
-            buffer: None,
-            wl_seat: None,
-            wm_base: None,
-            viewporter: None,
-            decoration_manager: None,
-            data_device_manager: None,
-            data_device: None,
+            compositor: globals.bind(&qh, 1..=1, ()).unwrap(),
+            wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
+            viewporter: globals.bind(&qh, 1..=1, ()).ok(),
+            fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            data_device_manager,
+            data_device: data_device_manager.get_data_device(&seat, &qh, ()),
             // At most 3 concurrent offers: primary selection, clipboard selection, DnD
             data_offers: hashlru::Cache::new(3),
-            fractional_scale_manager: None,
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
             keymap_state: None,
@@ -128,14 +159,22 @@ impl WaylandClient {
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
-        })));
-        let event_queue: EventQueue<WaylandClientState> = conn.new_event_queue();
-        let qh = event_queue.handle();
+            loop_handle: Rc::clone(&linux_platform_inner.loop_handle),
+        }));
+
+        let source = WaylandSource::new(conn, event_queue);
+
+        let mut state = WaylandClientState(Rc::clone(&state_inner));
+        linux_platform_inner
+            .loop_handle
+            .insert_source(source, move |_, queue, _| {
+                queue.dispatch_pending(&mut state)
+            })
+            .unwrap();
+
         Self {
             platform_inner: linux_platform_inner,
-            conn,
-            state,
-            event_queue: Mutex::new(event_queue),
+            state: WaylandClientState(state_inner),
             qh: Arc::new(qh),
         }
     }
@@ -153,27 +192,6 @@ impl WaylandClient {
 }
 
 impl Client for WaylandClient {
-    fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
-        let display = self.conn.display();
-        let mut eq = self.event_queue.lock();
-        let _registry = display.get_registry(&self.qh, ());
-
-        eq.roundtrip(&mut self.state.clone()).unwrap();
-
-        on_finish_launching();
-        while !self.platform_inner.state.lock().quit_requested {
-            eq.flush().unwrap();
-            eq.dispatch_pending(&mut self.state.clone()).unwrap();
-            if let Some(guard) = self.conn.prepare_read() {
-                guard.read().unwrap();
-                eq.dispatch_pending(&mut self.state.clone()).unwrap();
-            }
-            if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
-                runnable.run();
-            }
-        }
-    }
-
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         Vec::new()
     }
@@ -189,10 +207,8 @@ impl Client for WaylandClient {
     ) -> Box<dyn PlatformWindow> {
         let mut state = self.state.0.borrow_mut();
 
-        let wm_base = state.wm_base.as_ref().unwrap();
-        let compositor = state.compositor.as_ref().unwrap();
-        let wl_surface = compositor.create_surface(&self.qh, ());
-        let xdg_surface = wm_base.get_xdg_surface(&wl_surface, &self.qh, ());
+        let wl_surface = state.compositor.create_surface(&self.qh, ());
+        let xdg_surface = state.wm_base.get_xdg_surface(&wl_surface, &self.qh, ());
         let toplevel = xdg_surface.get_toplevel(&self.qh, ());
         let wl_surface = Arc::new(wl_surface);
 
@@ -229,8 +245,7 @@ impl Client for WaylandClient {
         wl_surface.frame(&self.qh, wl_surface.clone());
         wl_surface.commit();
 
-        let window_state = Rc::new(WaylandWindowState::new(
-            &self.conn,
+        let window_state: Rc<WaylandWindowState> = Rc::new(WaylandWindowState::new(
             wl_surface.clone(),
             viewport,
             Arc::new(toplevel),
@@ -264,77 +279,27 @@ impl Client for WaylandClient {
     }
 }
 
-impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientState {
     fn event(
         state: &mut Self,
         registry: &wl_registry::WlRegistry,
         event: wl_registry::Event,
-        _: &(),
+        _: &GlobalListContents,
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
-        if let wl_registry::Event::Global {
-            name, interface, ..
-        } = event
-        {
-            match &interface[..] {
-                "wl_compositor" => {
-                    let compositor =
-                        registry.bind::<wl_compositor::WlCompositor, _, _>(name, 1, qh, ());
-                    state.compositor = Some(compositor);
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version: _,
+            } => {
+                if interface.as_str() == "wl_seat" {
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, 4, qh, ());
                 }
-                "xdg_wm_base" => {
-                    let wm_base = registry.bind::<xdg_wm_base::XdgWmBase, _, _>(name, 1, qh, ());
-                    state.wm_base = Some(wm_base);
-                }
-                "wl_seat" => {
-                    let seat = registry.bind::<wl_seat::WlSeat, _, _>(name, 4, qh, ());
-                    state.wl_seat = Some(seat);
-                }
-                "wl_data_device_manager" => {
-                    let manager = registry
-                        .bind::<wl_data_device_manager::WlDataDeviceManager, _, _>(name, 1, qh, ());
-                    state.data_device_manager = Some(manager);
-                }
-                "wp_fractional_scale_manager_v1" => {
-                    let manager = registry
-                        .bind::<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, _, _>(
-                        name,
-                        1,
-                        qh,
-                        (),
-                    );
-                    state.fractional_scale_manager = Some(manager);
-                }
-                "wp_viewporter" => {
-                    let view_porter =
-                        registry.bind::<wp_viewporter::WpViewporter, _, _>(name, 1, qh, ());
-                    state.viewporter = Some(view_porter);
-                }
-                "zxdg_decoration_manager_v1" => {
-                    // Unstable and optional
-                    let decoration_manager = registry
-                        .bind::<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, _, _>(
-                        name,
-                        1,
-                        qh,
-                        (),
-                    );
-                    state.decoration_manager = Some(decoration_manager);
-                }
-                _ => {}
-            };
-
-            if state.data_device.is_none()
-                && state.wl_seat.is_some()
-                && state.data_device_manager.is_some()
-            {
-                let seat = state.wl_seat.as_ref().unwrap().clone();
-                let manager = state.data_device_manager.as_ref().unwrap();
-                let device = manager.get_data_device(&seat, qh, ());
-                state.data_device = Some(device);
             }
+            wl_registry::Event::GlobalRemove { name: _ } => {}
+            _ => {}
         }
     }
 }
@@ -430,7 +395,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
                     true
                 }
             });
-            state.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
+            state.platform_inner.loop_signal.stop();
         }
     }
 }
@@ -596,38 +561,29 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             let input = input.clone();
                             let this = this.clone();
 
+                            let timer = Timer::from_duration(delay);
+                            let state_ = Rc::clone(&this.0);
                             state
-                                .platform_inner
-                                .foreground_executor
-                                .spawn(async move {
-                                    let mut wait_time = delay;
+                                .loop_handle
+                                .insert_source(timer, move |event, _metadata, shared_data| {
+                                    let state_ = state_.borrow_mut();
+                                    let is_repeating = id == state_.repeat.current_id
+                                        && state_.repeat.current_keysym.is_some()
+                                        && state_.keyboard_focused_window.is_some();
 
-                                    loop {
-                                        Timer::after(wait_time).await;
-
-                                        let state = this.0.borrow_mut();
-                                        let is_repeating = id == state.repeat.current_id
-                                            && state.repeat.current_keysym.is_some()
-                                            && state.keyboard_focused_window.is_some();
-
-                                        if !is_repeating {
-                                            return;
-                                        }
-
-                                        let focused_window = &state.keyboard_focused_window;
-                                        let Some(focused_window) = focused_window else {
-                                            return;
-                                        };
-                                        let focused_window = focused_window.clone();
-
-                                        drop(state);
-
-                                        focused_window.handle_input(input.clone());
-
-                                        wait_time = Duration::from_secs(1) / rate;
+                                    if !is_repeating {
+                                        return TimeoutAction::Drop;
                                     }
+
+                                    state_
+                                        .keyboard_focused_window
+                                        .as_ref()
+                                        .unwrap()
+                                        .handle_input(input.clone());
+
+                                    TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
                                 })
-                                .detach();
+                                .unwrap();
                         }
 
                         drop(state);
