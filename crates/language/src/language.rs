@@ -108,11 +108,19 @@ pub trait ToLspPosition {
 /// A name of a language server.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
     pub buffer: Model<Buffer>,
     pub range: Range<Anchor>,
+}
+
+pub struct LanguageContext {
+    pub file: String,
+}
+
+pub trait LanguageContextProvider: Send + Sync {
+    fn build_context(&self, location: Location) -> Result<LanguageContext>;
 }
 
 /// Represents a Language Server, with certain cached sync properties.
@@ -655,6 +663,7 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) adapters: Vec<Arc<CachedLspAdapter>>,
+    pub(crate) context_provider: Option<Arc<dyn LanguageContextProvider>>,
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
@@ -779,11 +788,17 @@ impl Language {
 
             #[cfg(any(test, feature = "test-support"))]
             fake_adapter: None,
+            context_provider: None,
         }
     }
 
     pub fn lsp_adapters(&self) -> &[Arc<CachedLspAdapter>] {
         &self.adapters
+    }
+
+    pub fn with_context_provider(mut self, provider: Arc<dyn LanguageContextProvider>) -> Self {
+        self.context_provider = Some(provider);
+        self
     }
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
@@ -1098,6 +1113,10 @@ impl Language {
 
     pub fn name(&self) -> Arc<str> {
         self.config.name.clone()
+    }
+
+    pub fn context_provider(&self) -> Option<Arc<dyn LanguageContextProvider>> {
+        self.context_provider.clone()
     }
 
     pub async fn disk_based_diagnostic_sources(&self) -> &[String] {
@@ -1522,16 +1541,16 @@ mod tests {
         });
 
         languages
-            .language_for_file("the/script".as_ref(), None)
+            .language_for_file("the/script", None)
             .await
             .unwrap_err();
         languages
-            .language_for_file("the/script".as_ref(), Some(&"nothing".into()))
+            .language_for_file("the/script", Some(&"nothing".into()))
             .await
             .unwrap_err();
         assert_eq!(
             languages
-                .language_for_file("the/script".as_ref(), Some(&"#!/bin/env node".into()))
+                .language_for_file("the/script", Some(&"#!/bin/env node".into()))
                 .await
                 .unwrap()
                 .name()

@@ -38,6 +38,18 @@ pub struct SpawnInTerminal {
     pub separate_shell: bool,
 }
 
+/// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
+pub struct TaskContext {
+    /// A path to a directory in which the task should be executed.
+    pub cwd: Option<PathBuf>,
+    /// Additional environment variables associated with a given task.
+    // todo: po: key should be an enum
+    pub env: HashMap<String, String>,
+}
+
+/// $ZED_CURRENT_FUNCTION -> current function
+/// "ZED_CURENT_FUNCTION"
+
 /// Represents a short lived recipe of a task, whose main purpose
 /// is to get spawned.
 pub trait Task {
@@ -49,7 +61,7 @@ pub trait Task {
     fn cwd(&self) -> Option<&Path>;
     /// Sets up everything needed to spawn the task in the given directory (`cwd`).
     /// If a task is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
-    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal>;
+    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
 }
 
 /// [`Source`] produces tasks that can be scheduled.

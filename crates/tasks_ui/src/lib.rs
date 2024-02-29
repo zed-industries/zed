@@ -1,8 +1,10 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
+use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
 use modal::TasksModal;
-use task::Task;
+use project::Location;
+use task::{Task, TaskContext};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -37,7 +39,50 @@ fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_
         Some(cwd) => Some(cwd.to_path_buf()),
         None => task_cwd(workspace, cx).log_err().flatten(),
     };
-    let spawn_in_terminal = task.exec(cwd);
+    let current_editor = workspace.active_item_as::<Editor>(cx).clone();
+    let task_cx = if let Some(current_editor) = current_editor {
+        (|| {
+            // todo: handle multibuffers
+            let editor = current_editor.read(cx);
+            let buffer = editor.buffer().read(cx).as_singleton()?;
+            let context_provider = buffer.read(cx).language()?.context_provider()?;
+
+            let cursor_offset = editor.selections.newest::<usize>(cx);
+            current_editor.update(cx, |editor, cx| {
+                let start = editor
+                    .snapshot(cx)
+                    .display_snapshot
+                    .buffer_snapshot
+                    .anchor_after(cursor_offset.head())
+                    .text_anchor;
+                let end = editor
+                    .snapshot(cx)
+                    .display_snapshot
+                    .buffer_snapshot
+                    .anchor_after(cursor_offset.tail())
+                    .text_anchor;
+                let location = Location {
+                    buffer,
+                    range: start..end,
+                };
+                let language_context = context_provider.build_context(location).ok()?;
+                Some(TaskContext {
+                    cwd: cwd.clone(),
+                    env: HashMap::from_iter([("ZED_CURRENT_FILE".into(), language_context.file)]),
+                })
+            })
+        })()
+        .unwrap_or_else(|| TaskContext {
+            cwd,
+            env: Default::default(),
+        })
+    } else {
+        TaskContext {
+            cwd,
+            env: Default::default(),
+        }
+    };
+    let spawn_in_terminal = task.exec(task_cx);
     if let Some(spawn_in_terminal) = spawn_in_terminal {
         workspace.project().update(cx, |project, cx| {
             project.task_inventory().update(cx, |inventory, _| {

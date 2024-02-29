@@ -13,7 +13,7 @@ use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::{SpawnInTerminal, Task, TaskId, TaskSource};
+use crate::{SpawnInTerminal, Task, TaskContext, TaskId, TaskSource};
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// A single config file entry with the deserialized task definition.
@@ -24,7 +24,11 @@ struct StaticTask {
 }
 
 impl Task for StaticTask {
-    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal> {
+    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+        let TaskContext { cwd, env} = cx;
+        let cwd = self.definition.cwd.clone().or(cwd);
+        let mut definition_env = self.definition.env.clone();
+        definition_env.extend(env);
         Some(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
@@ -33,7 +37,7 @@ impl Task for StaticTask {
             label: self.definition.label.clone(),
             command: self.definition.command.clone(),
             args: self.definition.args.clone(),
-            env: self.definition.env.clone(),
+            env: definition_env,
             separate_shell: false,
         })
     }

@@ -228,7 +228,7 @@ pub mod test_inventory {
 
     use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
     use project_core::worktree::WorktreeId;
-    use task::{Task, TaskId, TaskSource};
+    use task::{Task, TaskContext, TaskId, TaskSource};
 
     use crate::Inventory;
 
@@ -253,7 +253,7 @@ pub mod test_inventory {
             None
         }
 
-        fn exec(&self, _cwd: Option<PathBuf>) -> Option<task::SpawnInTerminal> {
+        fn exec(&self, _cwd: TaskContext) -> Option<task::SpawnInTerminal> {
             None
         }
     }
