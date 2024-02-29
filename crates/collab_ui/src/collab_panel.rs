@@ -327,7 +327,7 @@ impl CollabPanel {
             let panel = CollabPanel::new(workspace, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width;
+                    panel.width = serialized_panel.width.map(|w| w.round());
                     panel.collapsed_channels = serialized_panel
                         .collapsed_channels
                         .unwrap_or_else(|| Vec::new())
