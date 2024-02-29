@@ -32,12 +32,13 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use crate::platform::linux::client::Client;
+use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
-    KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
+    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, CursorStyle, DisplayId,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
     ScrollWheelEvent, TouchPhase, WindowOptions,
 };
 
@@ -47,6 +48,7 @@ const MIN_KEYCODE: u32 = 8;
 pub(crate) struct WaylandClientStateInner {
     compositor: wl_compositor::WlCompositor,
     wm_base: xdg_wm_base::XdgWmBase,
+    shm: wl_shm::WlShm,
     viewporter: Option<wp_viewporter::WpViewporter>,
     fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
@@ -63,8 +65,13 @@ pub(crate) struct WaylandClientStateInner {
     loop_handle: Rc<LoopHandle<'static, ()>>,
 }
 
+pub(crate) struct CursorStateInner {
+    cursor_icon_name: String,
+    cursor: Option<Cursor>,
+}
+
 #[derive(Clone)]
-pub(crate) struct WaylandClientState(Rc<RefCell<WaylandClientStateInner>>);
+pub(crate) struct WaylandClientState(Rc<RefCell<WaylandClientStateInner>>, Rc<RefCell<CursorStateInner>>);
 
 pub(crate) struct KeyRepeat {
     characters_per_second: u32,
@@ -104,6 +111,7 @@ impl WaylandClient {
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
             compositor: globals.bind(&qh, 1..=1, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
+            shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -131,9 +139,14 @@ impl WaylandClient {
             loop_handle: Rc::clone(&linux_platform_inner.loop_handle),
         }));
 
+        let mut cursor_state_inner = Rc::new(RefCell::new(CursorStateInner{
+            cursor_icon_name: "arrow".to_string(),
+            cursor: None,
+        }));
+
         let source = WaylandSource::new(conn, event_queue);
 
-        let mut state = WaylandClientState(Rc::clone(&state_inner));
+        let mut state = WaylandClientState(Rc::clone(&state_inner), Rc::clone(&cursor_state_inner));
         linux_platform_inner
             .loop_handle
             .insert_source(source, move |_, queue, _| {
@@ -143,7 +156,7 @@ impl WaylandClient {
 
         Self {
             platform_inner: linux_platform_inner,
-            state: WaylandClientState(state_inner),
+            state: WaylandClientState(state_inner, cursor_state_inner),
             qh: Arc::new(qh),
         }
     }
@@ -216,6 +229,32 @@ impl Client for WaylandClient {
 
         state.windows.push((xdg_surface, Rc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let cursor_icon_name = match style {
+            CursorStyle::Arrow => "arrow".to_string(),
+            CursorStyle::IBeam => "text".to_string(),
+            CursorStyle::Crosshair => "crosshair".to_string(),
+            CursorStyle::ClosedHand => "grabbing".to_string(),
+            CursorStyle::OpenHand => "openhand".to_string(),
+            CursorStyle::PointingHand => "hand".to_string(),
+            CursorStyle::ResizeLeft => "w-resize".to_string(),
+            CursorStyle::ResizeRight => "e-resize".to_string(),
+            CursorStyle::ResizeLeftRight => "ew-resize".to_string(),
+            CursorStyle::ResizeUp => "n-resize".to_string(),
+            CursorStyle::ResizeDown => "s-resize".to_string(),
+            CursorStyle::ResizeUpDown => "ns-resize".to_string(),
+            CursorStyle::DisappearingItem => "grabbing".to_string(), // couldn't find equivalent in linux
+            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text".to_string(),
+            CursorStyle::OperationNotAllowed => "not-allowed".to_string(),
+            CursorStyle::DragLink => "dnd-link".to_string(),
+            CursorStyle::DragCopy => "dnd-copy".to_string(),
+            CursorStyle::ContextualMenu => "context-menu".to_string(),
+        };
+
+        let mut cursor_state = self.state.1.borrow_mut();
+        cursor_state.cursor_icon_name = cursor_icon_name;
     }
 }
 
@@ -567,9 +606,18 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let mut cursor_state = state.1.borrow_mut();
         let mut state = state.0.borrow_mut();
+
+        if cursor_state.cursor.is_none() {
+            cursor_state.cursor = Some(Cursor::new(&conn, &state.compositor, &qh, &state.shm, 24));
+        }
+        let cursor_icon_name = cursor_state.cursor_icon_name.clone();
+        let mut cursor: &mut Cursor = cursor_state.cursor.as_mut().unwrap();
+
         match event {
             wl_pointer::Event::Enter {
+                serial,
                 surface,
                 surface_x,
                 surface_y,
@@ -583,6 +631,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 }
                 if mouse_focused_window.is_some() {
                     state.mouse_focused_window = mouse_focused_window;
+                    cursor.set_serial_id(serial);
+                    cursor.set_icon(&wl_pointer, cursor_icon_name);
                 }
 
                 state.mouse_location = Some(Point {
@@ -610,6 +660,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         modifiers: state.modifiers,
                     }),
                 );
+                cursor.set_icon(&wl_pointer, cursor_icon_name);
             }
             wl_pointer::Event::Button {
                 button,

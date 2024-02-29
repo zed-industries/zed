@@ -69,6 +69,7 @@ usvg = { version = "0.14", features = [] }
 util.workspace = true
 uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
+wayland-cursor = "0.31.1"
 
 [dev-dependencies]
 backtrace = "0.3"

@@ -10,8 +10,8 @@ use collections::{HashMap, HashSet};
 use crate::platform::linux::client::Client;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
-    TouchPhase, WindowOptions,
+    AnyWindowHandle, Bounds, CursorStyle, DisplayId, PlatformDisplay, PlatformInput, Point,
+    ScrollDelta, Size, TouchPhase, WindowOptions,
 };
 
 use super::{X11Display, X11Window, X11WindowState, XcbAtoms};
@@ -353,6 +353,9 @@ impl Client for X11Client {
             .insert(x_window, Rc::clone(&window_ptr));
         Box::new(X11Window(window_ptr))
     }
+
+    //todo!(linux)
+    fn set_cursor_style(&self, _style: CursorStyle) {}
 }
 
 // Adatpted from:
