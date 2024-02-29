@@ -8,7 +8,7 @@ enum GitHostingProvider {
     Github,
     Gitlab,
     Gitee,
-    BitbucketCloud,
+    Bitbucket,
     Sourcehut,
     Codeberg,
 }
@@ -19,7 +19,7 @@ impl GitHostingProvider {
             Self::Github => "https://github.com",
             Self::Gitlab => "https://gitlab.com",
             Self::Gitee => "https://gitee.com",
-            Self::BitbucketCloud => "https://bitbucket.org",
+            Self::Bitbucket => "https://bitbucket.org",
             Self::Sourcehut => "https://git.sr.ht",
             Self::Codeberg => "https://codeberg.org",
         };
@@ -37,7 +37,7 @@ impl GitHostingProvider {
                 Self::Github | Self::Gitlab | Self::Gitee | Self::Sourcehut | Self::Codeberg => {
                     format!("L{}", line)
                 }
-                Self::BitbucketCloud => format!("lines-{}", line),
+                Self::Bitbucket => format!("lines-{}", line),
             }
         } else {
             let start_line = selection.start.row + 1;
@@ -48,7 +48,7 @@ impl GitHostingProvider {
                 Self::Gitlab | Self::Gitee | Self::Sourcehut => {
                     format!("L{}-{}", start_line, end_line)
                 }
-                Self::BitbucketCloud => format!("lines-{}:{}", start_line, end_line),
+                Self::Bitbucket => format!("lines-{}:{}", start_line, end_line),
             }
         }
     }
@@ -80,7 +80,7 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
         GitHostingProvider::Github => format!("{owner}/{repo}/blob/{sha}/{path}"),
         GitHostingProvider::Gitlab => format!("{owner}/{repo}/-/blob/{sha}/{path}"),
         GitHostingProvider::Gitee => format!("{owner}/{repo}/blob/{sha}/{path}"),
-        GitHostingProvider::BitbucketCloud => format!("{owner}/{repo}/src/{sha}/{path}"),
+        GitHostingProvider::Bitbucket => format!("{owner}/{repo}/src/{sha}/{path}"),
         GitHostingProvider::Sourcehut => format!("~{owner}/{repo}/tree/{sha}/item/{path}"),
         GitHostingProvider::Codeberg => format!("{owner}/{repo}/src/commit/{sha}/{path}"),
     };
@@ -152,7 +152,7 @@ fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
             .split_once("/")?;
 
         return Some(ParsedGitRemote {
-            provider: GitHostingProvider::BitbucketCloud,
+            provider: GitHostingProvider::Bitbucket,
             owner,
             repo,
         });
@@ -452,10 +452,7 @@ mod tests {
     fn test_parse_git_remote_url_bitbucket_https_with_username() {
         let url = "https://thorstenballzed@bitbucket.org/thorstenzed/testingrepo.git";
         let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(
-            parsed.provider,
-            GitHostingProvider::BitbucketCloud
-        ));
+        assert!(matches!(parsed.provider, GitHostingProvider::Bitbucket));
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }
@@ -464,10 +461,7 @@ mod tests {
     fn test_parse_git_remote_url_bitbucket_https_without_username() {
         let url = "https://bitbucket.org/thorstenzed/testingrepo.git";
         let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(
-            parsed.provider,
-            GitHostingProvider::BitbucketCloud
-        ));
+        assert!(matches!(parsed.provider, GitHostingProvider::Bitbucket));
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }
@@ -476,10 +470,7 @@ mod tests {
     fn test_parse_git_remote_url_bitbucket_git() {
         let url = "git@bitbucket.org:thorstenzed/testingrepo.git";
         let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(
-            parsed.provider,
-            GitHostingProvider::BitbucketCloud
-        ));
+        assert!(matches!(parsed.provider, GitHostingProvider::Bitbucket));
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }
