@@ -118,20 +118,32 @@ pub struct AssistantSettingsContent {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct AiProviderSettings {
-    pub openai: OpenAiProviderSettings,
-    pub azure_openai: AzureOpenAiProviderSettings,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AiProviderSettings {
+    /// The settings for the OpenAI provider.
+    #[serde(rename = "openai")]
+    OpenAi(OpenAiProviderSettings),
+    /// The settings for the Azure OpenAI provider.
+    #[serde(rename = "azure_openai")]
+    AzureOpenAi(AzureOpenAiProviderSettings),
 }
 
 /// The settings for the AI provider used by the Zed Assistant.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct AiProviderSettingsContent {
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AiProviderSettingsContent {
     /// The settings for the OpenAI provider.
-    #[serde(default)]
-    pub openai: OpenAiProviderSettingsContent,
+    #[serde(rename = "openai")]
+    OpenAi(OpenAiProviderSettingsContent),
     /// The settings for the Azure OpenAI provider.
-    #[serde(default)]
-    pub azure_openai: AzureOpenAiProviderSettingsContent,
+    #[serde(rename = "azure_openai")]
+    AzureOpenAi(AzureOpenAiProviderSettingsContent),
+}
+
+impl Default for AiProviderSettingsContent {
+    fn default() -> Self {
+        Self::OpenAi(OpenAiProviderSettingsContent::default())
+    }
 }
 
 #[derive(Debug, Deserialize)]

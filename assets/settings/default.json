@@ -240,17 +240,16 @@
     // 3. "gpt-4-1106-preview"
     "default_open_ai_model": "gpt-4-1106-preview",
     "provider": {
-      "openai": {
-        // The default OpenAI API endpoint to use when starting new conversations.
-        "api_url": "https://api.openai.com/v1",
-        // The default OpenAI model to use when starting new conversations. This
-        // setting can take three values:
-        //
-        // 1. "gpt-3.5-turbo-0613""
-        // 2. "gpt-4-0613""
-        // 3. "gpt-4-1106-preview"
-        "default_model": "gpt-4-1106-preview"
-      }
+      "type": "openai",
+      // The default OpenAI API endpoint to use when starting new conversations.
+      "api_url": "https://api.openai.com/v1",
+      // The default OpenAI model to use when starting new conversations. This
+      // setting can take three values:
+      //
+      // 1. "gpt-3.5-turbo-0613""
+      // 2. "gpt-4-0613""
+      // 3. "gpt-4-1106-preview"
+      "default_model": "gpt-4-1106-preview"
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
