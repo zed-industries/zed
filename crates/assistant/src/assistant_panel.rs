@@ -7,11 +7,13 @@ use crate::{
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
 use ai::prompts::repository_context::PromptCodeSnippet;
-use ai::providers::open_ai::OPEN_AI_API_URL;
 use ai::{
     auth::ProviderCredential,
     completion::{CompletionProvider, CompletionRequest},
-    providers::open_ai::{OpenAiCompletionProvider, OpenAiRequest, RequestMessage},
+    providers::open_ai::{
+        OpenAiCompletionProvider, OpenAiCompletionProviderKind, OpenAiRequest, RequestMessage,
+        OPEN_AI_API_URL,
+    },
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -131,6 +133,7 @@ impl AssistantPanel {
             })?;
             let completion_provider = OpenAiCompletionProvider::new(
                 api_url,
+                OpenAiCompletionProviderKind::OpenAi,
                 model_name,
                 cx.background_executor().clone(),
             )
@@ -1533,6 +1536,7 @@ impl Conversation {
                 api_url
                     .clone()
                     .unwrap_or_else(|| OPEN_AI_API_URL.to_string()),
+                OpenAiCompletionProviderKind::OpenAi,
                 model.full_name().into(),
                 cx.background_executor().clone(),
             )
