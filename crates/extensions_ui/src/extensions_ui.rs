@@ -466,12 +466,6 @@ impl ExtensionsPage {
 
 impl Render for ExtensionsPage {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let toggle_button = |id, title| {
-            ToggleButton::new(id, title)
-                .style(ButtonStyle::Filled)
-                .size(ButtonSize::Large)
-        };
-
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -496,7 +490,9 @@ impl Render for ExtensionsPage {
                             .child(
                                 h_flex()
                                     .child(
-                                        toggle_button("filter-all", "All")
+                                        ToggleButton::new("filter-all", "All")
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Large)
                                             .selected(self.filter == ExtensionFilter::All)
                                             .on_click(cx.listener(|this, _event, _cx| {
                                                 this.filter = ExtensionFilter::All;
@@ -507,7 +503,9 @@ impl Render for ExtensionsPage {
                                             .first(),
                                     )
                                     .child(
-                                        toggle_button("filter-installed", "Installed")
+                                        ToggleButton::new("filter-installed", "Installed")
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Large)
                                             .selected(self.filter == ExtensionFilter::Installed)
                                             .on_click(cx.listener(|this, _event, _cx| {
                                                 this.filter = ExtensionFilter::Installed;
@@ -518,7 +516,9 @@ impl Render for ExtensionsPage {
                                             .middle(),
                                     )
                                     .child(
-                                        toggle_button("filter-not-installed", "Not Installed")
+                                        ToggleButton::new("filter-not-installed", "Not Installed")
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Large)
                                             .selected(self.filter == ExtensionFilter::NotInstalled)
                                             .on_click(cx.listener(|this, _event, _cx| {
                                                 this.filter = ExtensionFilter::NotInstalled;
