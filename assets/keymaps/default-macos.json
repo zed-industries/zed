@@ -49,6 +49,7 @@
       "cmd-backspace": "editor::DeleteToBeginningOfLine",
       "cmd-delete": "editor::DeleteToEndOfLine",
       "alt-backspace": "editor::DeleteToPreviousWordStart",
+      "ctrl-w": "editor::DeleteToPreviousWordStart",
       "alt-delete": "editor::DeleteToNextWordEnd",
       "alt-h": "editor::DeleteToPreviousWordStart",
       "alt-d": "editor::DeleteToNextWordEnd",
