@@ -183,7 +183,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .set_channel_requires_zed_cla(ChannelId::from_proto(parent_channel_id), true)
+        .set_channel_requires_zed_cla(ChannelId::from_proto(parent_channel_id.0), true)
         .await
         .unwrap();
 

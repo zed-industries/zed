@@ -7,7 +7,9 @@ use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
+use project::project_settings::ProjectSettings;
 use serde_json::{json, Value};
+use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
@@ -219,6 +221,7 @@ pub struct EsLintLspAdapter {
 
 impl EsLintLspAdapter {
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
+    const SERVER_NAME: &'static str = "eslint";
 
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
@@ -227,7 +230,34 @@ impl EsLintLspAdapter {
 
 #[async_trait]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(&self, workspace_root: &Path, _: &mut AppContext) -> Value {
+    fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
+        let eslint_user_settings = ProjectSettings::get_global(cx)
+            .lsp
+            .get(Self::SERVER_NAME)
+            .and_then(|s| s.settings.clone())
+            .unwrap_or_default();
+
+        let mut code_action_on_save = json!({
+            // We enable this, but without also configuring `code_actions_on_format`
+            // in the Zed configuration, it doesn't have an effect.
+            "enable": true,
+        });
+
+        if let Some(code_action_settings) = eslint_user_settings
+            .get("codeActionOnSave")
+            .and_then(|settings| settings.as_object())
+        {
+            if let Some(enable) = code_action_settings.get("enable") {
+                code_action_on_save["enable"] = enable.clone();
+            }
+            if let Some(mode) = code_action_settings.get("mode") {
+                code_action_on_save["mode"] = mode.clone();
+            }
+            if let Some(rules) = code_action_settings.get("rules") {
+                code_action_on_save["rules"] = rules.clone();
+            }
+        }
+
         json!({
             "": {
                 "validate": "on",
@@ -241,6 +271,7 @@ impl LspAdapter for EsLintLspAdapter {
                         .unwrap_or_else(|| workspace_root.as_os_str()),
                 },
                 "problems": {},
+                "codeActionOnSave": code_action_on_save,
                 "experimental": {
                     "useFlatConfig": workspace_root.join("eslint.config.js").is_file(),
                 },
@@ -249,7 +280,7 @@ impl LspAdapter for EsLintLspAdapter {
     }
 
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("eslint".into())
+        LanguageServerName(Self::SERVER_NAME.into())
     }
 
     fn short_name(&self) -> &'static str {

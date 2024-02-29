@@ -100,13 +100,13 @@ async fn test_basic_channel_messages(
             Notification::ChannelMessageMention {
                 message_id,
                 sender_id: client_a.id(),
-                channel_id,
+                channel_id: channel_id.0,
             }
         );
         assert_eq!(
             store.notification_at(1).unwrap().notification,
             Notification::ChannelInvitation {
-                channel_id,
+                channel_id: channel_id.0,
                 channel_name: "the-channel".to_string(),
                 inviter_id: client_a.id()
             }

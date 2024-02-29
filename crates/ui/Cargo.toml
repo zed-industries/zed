@@ -10,7 +10,6 @@ name = "ui"
 path = "src/ui.rs"
 
 [dependencies]
-anyhow.workspace = true
 chrono.workspace = true
 gpui.workspace = true
 itertools = { workspace = true, optional = true }

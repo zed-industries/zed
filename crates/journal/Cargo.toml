@@ -12,7 +12,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-dirs = "4.0"
 editor.workspace = true
 gpui.workspace = true
 log.workspace = true
@@ -20,7 +19,6 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
-util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
