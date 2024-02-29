@@ -1,10 +1,11 @@
-use anyhow;
+use ai::providers::open_ai::OPEN_AI_API_URL;
+use anyhow::anyhow;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenAiModel {
     #[serde(rename = "gpt-3.5-turbo-0613")]
@@ -13,6 +14,8 @@ pub enum OpenAiModel {
     Four,
     #[serde(rename = "gpt-4-1106-preview")]
     FourTurbo,
+    // TODO: Not happy with this; revisit.
+    Custom,
 }
 
 impl OpenAiModel {
@@ -21,6 +24,7 @@ impl OpenAiModel {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
             Self::Four => "gpt-4-0613",
             Self::FourTurbo => "gpt-4-1106-preview",
+            Self::Custom => "custom",
         }
     }
 
@@ -29,6 +33,7 @@ impl OpenAiModel {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
+            Self::Custom => "custom",
         }
     }
 
@@ -37,6 +42,7 @@ impl OpenAiModel {
             Self::ThreePointFiveTurbo => Self::Four,
             Self::Four => Self::FourTurbo,
             Self::FourTurbo => Self::ThreePointFiveTurbo,
+            Self::Custom => Self::Custom,
         }
     }
 }
@@ -67,6 +73,44 @@ pub struct AssistantSettings {
     pub openai_api_url: String,
     /// The settings for the AI provider.
     pub provider: AiProviderSettings,
+}
+
+impl AssistantSettings {
+    pub fn provider_api_url(&self) -> anyhow::Result<String> {
+        match &self.provider {
+            AiProviderSettings::OpenAi(settings) => Ok(settings
+                .api_url
+                .clone()
+                .unwrap_or_else(|| OPEN_AI_API_URL.to_string())),
+            AiProviderSettings::AzureOpenAi(settings) => settings
+                .api_url
+                .clone()
+                .ok_or_else(|| anyhow!("no Azure OpenAI API URL")),
+        }
+    }
+
+    pub fn provider_model(&self) -> anyhow::Result<OpenAiModel> {
+        match &self.provider {
+            AiProviderSettings::OpenAi(settings) => {
+                Ok(settings.default_model.unwrap_or(OpenAiModel::FourTurbo))
+            }
+            AiProviderSettings::AzureOpenAi(_settings) => Ok(OpenAiModel::Custom),
+        }
+    }
+
+    pub fn provider_model_name(&self) -> anyhow::Result<String> {
+        match &self.provider {
+            AiProviderSettings::OpenAi(settings) => Ok(settings
+                .default_model
+                .unwrap_or(OpenAiModel::FourTurbo)
+                .full_name()
+                .to_string()),
+            AiProviderSettings::AzureOpenAi(settings) => settings
+                .deployment_id
+                .clone()
+                .ok_or_else(|| anyhow!("no Azure OpenAI deployment ID")),
+        }
+    }
 }
 
 impl Settings for AssistantSettings {
@@ -117,7 +161,7 @@ pub struct AssistantSettingsContent {
     pub provider: AiProviderSettingsContent,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AiProviderSettings {
     /// The settings for the OpenAI provider.
@@ -146,7 +190,7 @@ impl Default for AiProviderSettingsContent {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct OpenAiProviderSettings {
     /// The OpenAI API base URL to use when starting new conversations.
     pub api_url: Option<String>,
@@ -166,7 +210,7 @@ pub struct OpenAiProviderSettingsContent {
     pub default_model: Option<OpenAiModel>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AzureOpenAiProviderSettings {
     /// The Azure OpenAI API base URL to use when starting new conversations.
     pub api_url: Option<String>,
