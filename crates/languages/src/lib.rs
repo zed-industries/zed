@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use gpui::AppContext;
 pub use language::*;
 use node_runtime::NodeRuntime;
@@ -58,6 +58,21 @@ mod zig;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
+struct RustContextProvider;
+impl LanguageContextProvider for RustContextProvider {
+    fn build_context(
+        &self,
+        location: Location,
+        cx: &mut AppContext,
+    ) -> gpui::Result<LanguageContext> {
+        let Some(file) = location.buffer.read(cx).file() else {
+            Err(anyhow!("Cannot build a language context for unnamed file"))?
+        };
+        Ok(LanguageContext {
+            file: file.path().to_string_lossy().to_string(),
+        })
+    }
+}
 pub fn init(
     languages: Arc<LanguageRegistry>,
     node_runtime: Arc<dyn NodeRuntime>,
@@ -122,17 +137,6 @@ pub fn init(
         ("dart", tree_sitter_dart::language()),
     ]);
 
-    // let language = |asset_dir_name: &'static str, adapters| {
-    //     let config = load_config(asset_dir_name);
-    //     languages.register_language(
-    //         config.name.clone(),
-    //         config.grammar.clone(),
-    //         config.matcher.clone(),
-    //         adapters,
-    //         move || Ok((config.clone(), load_queries(asset_dir_name))),
-    //     )
-    // };
-
     macro_rules! language {
         ($name:literal) => {
             let config = load_config($name);
@@ -153,6 +157,17 @@ pub fn init(
                 config.matcher.clone(),
                 $adapters,
                 None,
+                move || Ok((config.clone(), load_queries($name))),
+            );
+        };
+        ($name:literal, $adapters:expr, $context_provider:expr) => {
+            let config = load_config($name);
+            languages.register_language(
+                config.name.clone(),
+                config.grammar.clone(),
+                config.matcher.clone(),
+                $adapters,
+                Some(Arc::new($context_provider)),
                 move || Ok((config.clone(), load_queries($name))),
             );
         };
@@ -236,7 +251,11 @@ pub fn init(
             node_runtime.clone(),
         ))]
     );
-    language!("rust", vec![Arc::new(rust::RustLspAdapter)]);
+    language!(
+        "rust",
+        vec![Arc::new(rust::RustLspAdapter)],
+        RustContextProvider
+    );
     language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {

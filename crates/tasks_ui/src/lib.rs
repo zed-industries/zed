@@ -65,7 +65,7 @@ fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_
                     buffer,
                     range: start..end,
                 };
-                let language_context = context_provider.build_context(location).ok()?;
+                let language_context = context_provider.build_context(location, cx).ok()?;
                 Some(TaskContext {
                     cwd: cwd.clone(),
                     env: HashMap::from_iter([("ZED_CURRENT_FILE".into(), language_context.file)]),

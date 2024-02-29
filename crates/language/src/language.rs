@@ -120,7 +120,7 @@ pub struct LanguageContext {
 }
 
 pub trait LanguageContextProvider: Send + Sync {
-    fn build_context(&self, location: Location) -> Result<LanguageContext>;
+    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<LanguageContext>;
 }
 
 /// Represents a Language Server, with certain cached sync properties.
