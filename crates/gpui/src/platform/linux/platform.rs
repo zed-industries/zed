@@ -339,7 +339,6 @@ impl Platform for LinuxPlatform {
         unimplemented!()
     }
 
-    //todo!(linux)
     fn set_cursor_style(&self, style: CursorStyle) {
         self.client.set_cursor_style(style)
     }
