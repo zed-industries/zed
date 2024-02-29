@@ -22,6 +22,7 @@ pub mod markdown;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
+use futures::{future::Shared, FutureExt as _, TryFutureExt as _};
 use gpui::{AppContext, AsyncAppContext, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
@@ -125,6 +126,8 @@ pub struct CachedLspAdapter {
     pub language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
+    pub cached_binary:
+        Mutex<Option<Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>>,
 }
 
 impl CachedLspAdapter {
@@ -142,8 +145,137 @@ impl CachedLspAdapter {
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
+            cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
         })
+    }
+
+    pub async fn get_language_server_command(
+        self: Arc<Self>,
+        language: Arc<Language>,
+        container_dir: Arc<Path>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<LanguageServerBinary> {
+        // First we check whether the adapter can give us a user-installed binary.
+        // If so, we do *not* want to cache that, because each worktree might give us a different
+        // binary:
+        //
+        //      worktree 1: user-installed at `.bin/gopls`
+        //      worktree 2: user-installed at `~/bin/gopls`
+        //      worktree 3: no gopls found in PATH -> fallback to Zed installation
+        //
+        // We only want to cache when we fall back to the global one,
+        // because we don't want to download and overwrite our global one
+        // for each worktree we might have open.
+        if let Some(task) = self.check_if_user_installed(&delegate, cx) {
+            if let Some(binary) = task.await {
+                log::info!(
+                    "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                    language.name(),
+                    binary.path,
+                    binary.arguments
+                );
+                return Ok(binary);
+            }
+        }
+
+        let entry = self
+            .cached_binary
+            .lock()
+            .get_or_insert_with(|| {
+                cx.spawn(|cx| {
+                    self.clone()
+                        .get_binary(language, delegate.clone(), container_dir, cx)
+                        .map_err(Arc::new)
+                })
+                .shared()
+            })
+            .clone();
+
+        if let Some(task) = self.will_start_server(&delegate, cx) {
+            task.await?;
+        }
+
+        entry.await.map_err(|e| anyhow!("{}", e))
+    }
+
+    async fn get_binary(
+        self: Arc<Self>,
+        language: Arc<Language>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        container_dir: Arc<Path>,
+        mut cx: AsyncAppContext,
+    ) -> Result<LanguageServerBinary> {
+        if !container_dir.exists() {
+            smol::fs::create_dir_all(&container_dir)
+                .await
+                .context("failed to create container directory")?;
+        }
+
+        if let Some(task) = self.will_fetch_server(&delegate, &mut cx) {
+            task.await?;
+        }
+
+        let binary = self
+            .fetch_latest_binary(language.clone(), delegate.as_ref(), &container_dir)
+            .await;
+
+        if let Err(error) = binary.as_ref() {
+            if let Some(binary) = self
+                .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                .await
+            {
+                delegate.update_status(language.clone(), LanguageServerBinaryStatus::Cached);
+                log::info!(
+                    "failed to fetch newest version of language server {:?}. falling back to using {:?}",
+                    self.name,
+                    binary.path.display()
+                );
+                return Ok(binary);
+            }
+
+            delegate.update_status(
+                language.clone(),
+                LanguageServerBinaryStatus::Failed {
+                    error: format!("{:?}", error),
+                },
+            );
+        }
+
+        binary
+    }
+
+    async fn fetch_latest_binary(
+        self: &Arc<Self>,
+        language: Arc<Language>,
+        delegate: &dyn LspAdapterDelegate,
+        container_dir: &Path,
+    ) -> Result<LanguageServerBinary> {
+        let container_dir: Arc<Path> = container_dir.into();
+
+        delegate.update_status(
+            language.clone(),
+            LanguageServerBinaryStatus::CheckingForUpdate,
+        );
+
+        log::info!(
+            "querying GitHub for latest version of language server {:?}",
+            self.name.0
+        );
+        let version_info = self.fetch_latest_server_version(delegate).await?;
+        delegate.update_status(language.clone(), LanguageServerBinaryStatus::Downloading);
+
+        log::info!(
+            "checking if Zed already installed or fetching version for language server {:?}",
+            self.name.0
+        );
+        let binary = self
+            .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate)
+            .await?;
+        delegate.update_status(language.clone(), LanguageServerBinaryStatus::Downloaded);
+
+        Ok(binary)
     }
 
     pub fn check_if_user_installed(
@@ -254,6 +386,7 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn update_status(&self, language: Arc<Language>, status: LanguageServerBinaryStatus);
     fn which_command(
         &self,
         command: OsString,

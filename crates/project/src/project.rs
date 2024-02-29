@@ -9147,6 +9147,7 @@ struct ProjectLspAdapterDelegate {
     project: Model<Project>,
     worktree: Model<Worktree>,
     http_client: Arc<dyn HttpClient>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 impl ProjectLspAdapterDelegate {
@@ -9155,6 +9156,7 @@ impl ProjectLspAdapterDelegate {
             project: cx.handle(),
             worktree: worktree.clone(),
             http_client: project.client.http_client(),
+            language_registry: project.languages.clone(),
         })
     }
 }
@@ -9204,6 +9206,10 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
                 None
             }
         })
+    }
+
+    fn update_status(&self, language: Arc<Language>, status: language::LanguageServerBinaryStatus) {
+        self.language_registry.update_lsp_status(language, status);
     }
 }
 
