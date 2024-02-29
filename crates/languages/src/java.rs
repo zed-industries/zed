@@ -1,10 +1,18 @@
 use anyhow::{anyhow, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use async_trait::async_trait;
+use futures::{io::BufReader, StreamExt};
 pub use language::*;
 use log::warn;
 use lsp::LanguageServerBinary;
+use smol::fs::{self};
 use std::{any::Any, path::PathBuf, sync::Arc};
-use util::paths::HOME;
+use util::{
+    async_maybe,
+    github::{latest_github_release, GitHubLspBinaryVersion},
+    ResultExt,
+};
 
 pub struct JavaLspAdapter;
 
@@ -16,53 +24,87 @@ impl LspAdapter for JavaLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _delegate: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(()))
+        let release =
+            latest_github_release("ABckh/eclipse.jdt.ls", true, false, delegate.http_client())
+                .await?;
+        let asset_name = "eclipse.jdt.ls.tar.gz";
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .ok_or_else(|| anyhow!("no asset found matching {:?} \n", asset_name))?;
+        let version = GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url.clone(),
+        };
+
+        Ok(Box::new(version) as Box<_>)
     }
 
     async fn fetch_server_binary(
         &self,
-        _version: Box<dyn 'static + Send + Any>,
-        _container_dir: PathBuf,
-        _delegate: &dyn LspAdapterDelegate,
+        version: Box<dyn 'static + Send + Any>,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        Err(anyhow!("eclipse.jdt.ls must be installed manually"))
+        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let dir_path = container_dir.join("bin");
+        let binary_path = dir_path.join("jdtls");
+
+        if fs::metadata(&binary_path).await.is_err() {
+            let mut response = delegate
+                .http_client()
+                .get(&version.url, Default::default(), true)
+                .await
+                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(container_dir).await?;
+
+            // todo!("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &binary_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
+        }
+
+        Ok(LanguageServerBinary {
+            path: binary_path,
+            env: None,
+            arguments: Default::default(),
+        })
     }
 
     async fn cached_server_binary(
         &self,
-        _container_dir: PathBuf,
+        container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        Some(LanguageServerBinary {
-            path: "jdtls".into(),
-            env: None,
-            arguments: vec![
-                "-configuration".into(),
-                HOME.join(".cache/jdtls").into(),
-                // Should work but... doesn't
-                // "-data".into(),
-                // ".".into(),
-            ],
-            env: None,
-        })
-    }
-
-    fn can_be_reinstalled(&self) -> bool {
-        false
+        let binary_path = container_dir.join("bin").join("jdtls");
+        if binary_path.exists() {
+            get_cached_server_binary(container_dir).await
+        } else {
+            None
+        }
     }
 
     async fn installation_test_binary(
         &self,
-        _container_dir: PathBuf,
+        container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        Some(LanguageServerBinary {
-            path: "jdtls".into(),
-            env: None,
-            arguments: vec!["--help".into()],
-            env: None,
-        })
+        get_cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--help".into()];
+                binary
+            })
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
@@ -81,7 +123,7 @@ impl LspAdapter for JavaLspAdapter {
                 | lsp::CompletionItemKind::FIELD,
             ) => {
                 if let Some((name, detail)) = completion.label.split_once(" : ") {
-                    let text = format!("{detail} {name}");
+                    let text = format!("{name} {detail}");
                     let source = Rope::from(format!("{} = null;", text).as_str());
                     let runs = language.highlight_text(&source, 0..text.len());
 
@@ -94,7 +136,7 @@ impl LspAdapter for JavaLspAdapter {
             }
             Some(lsp::CompletionItemKind::METHOD) => {
                 if let Some((name, detail)) = completion.label.split_once(" : ") {
-                    let text = format!("{detail} {name}");
+                    let text = format!("{name} {detail}");
                     let source = Rope::from(format!("{} {{}}", text).as_str());
                     let runs = language.highlight_text(&source, 0..text.len());
 
@@ -159,4 +201,35 @@ impl LspAdapter for JavaLspAdapter {
 
         None
     }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async_maybe!({
+        let mut last_binary_path = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            if entry.file_type().await?.is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .map_or(false, |name| name == "eclipse.jdt.ls")
+            {
+                last_binary_path = Some(entry.path());
+            }
+        }
+
+        if let Some(path) = last_binary_path {
+            Ok(LanguageServerBinary {
+                path,
+                arguments: Vec::new(),
+                env: None,
+            })
+        } else {
+            Err(anyhow!("no cached binary"))
+        }
+    })
+    .await
+    .log_err()
 }
