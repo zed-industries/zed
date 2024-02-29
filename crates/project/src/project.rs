@@ -5143,13 +5143,55 @@ impl Project {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Hover>>> {
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::Primary,
-            GetHover { position },
-            cx,
-        )
+        if self.is_local() {
+            let snapshot = buffer.read(cx).snapshot();
+            let offset = position.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            let server_ids: Vec<_> = self
+                .language_servers_for_buffer(buffer.read(cx), cx)
+                .filter(|(_, server)| server.capabilities().hover_provider.is_some())
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .collect();
+
+            let buffer = buffer.clone();
+            cx.spawn(move |this, mut cx| async move {
+                let mut tasks = Vec::with_capacity(server_ids.len());
+                this.update(&mut cx, |this, cx| {
+                    for server_id in server_ids {
+                        tasks.push(this.request_lsp(
+                            buffer.clone(),
+                            LanguageServerToQuery::Other(server_id),
+                            GetHover { position },
+                            cx,
+                        ));
+                    }
+                })?;
+
+                for task in tasks {
+                    if let Ok(Some(hover)) = task.await {
+                        return Ok(Some(hover));
+                    }
+                }
+
+                Ok(None)
+            })
+        } else {
+            self.request_lsp(
+                buffer.clone(),
+                LanguageServerToQuery::Primary,
+                GetHover { position },
+                cx,
+            )
+        }
     }
+
     pub fn hover<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
@@ -5213,6 +5255,7 @@ impl Project {
             Task::ready(Ok(Default::default()))
         }
     }
+
     pub fn completions<T: ToOffset + ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
