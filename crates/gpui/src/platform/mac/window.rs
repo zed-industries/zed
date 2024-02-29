@@ -1060,27 +1060,6 @@ impl PlatformWindow for MacWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
-
-    /// Enables or disables the Metal HUD for debugging purposes. Note that this only works
-    /// when the app is bundled and it has the `MetalHudEnabled` key set to true in Info.plist.
-    fn set_graphics_profiler_enabled(&self, enabled: bool) {
-        let this_lock = self.0.lock();
-        let layer = this_lock.renderer.layer();
-
-        unsafe {
-            if enabled {
-                let hud_properties = NSDictionary::dictionaryWithObject_forKey_(
-                    nil,
-                    ns_string("default"),
-                    ns_string("mode"),
-                );
-                let _: () = msg_send![layer, setDeveloperHUDProperties: hud_properties];
-            } else {
-                let _: () =
-                    msg_send![layer, setDeveloperHUDProperties: NSDictionary::dictionary(nil)];
-            }
-        }
-    }
 }
 
 impl HasWindowHandle for MacWindow {
