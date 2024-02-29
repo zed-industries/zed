@@ -153,6 +153,20 @@ async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // goes to current line end
+    cx.set_state(indoc! {"ˇaa\nbb\ncc"}, Mode::Normal);
+    cx.simulate_keystrokes(["$"]);
+    cx.assert_editor_state("aˇa\nbb\ncc");
+
+    // goes to next line end
+    cx.simulate_keystrokes(["2", "$"]);
+    cx.assert_editor_state("aa\nbˇb\ncc");
+}
+
+#[gpui::test]
 async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 

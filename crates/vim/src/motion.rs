@@ -492,9 +492,10 @@ impl Motion {
                 start_of_line(map, *display_lines, point),
                 SelectionGoal::None,
             ),
-            EndOfLine { display_lines } => {
-                (end_of_line(map, *display_lines, point), SelectionGoal::None)
-            }
+            EndOfLine { display_lines } => (
+                end_of_line_cmd(map, *display_lines, point, times),
+                SelectionGoal::None,
+            ),
             StartOfParagraph => (
                 movement::start_of_paragraph(map, point, times),
                 SelectionGoal::None,
@@ -965,6 +966,18 @@ fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) ->
     let mut new_point = Point::new((line - 1) as u32, 0).to_display_point(map);
     *new_point.column_mut() = point.column();
     map.clip_point(new_point, Bias::Left)
+}
+
+pub(crate) fn end_of_line_cmd(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    mut point: DisplayPoint,
+    times: usize,
+) -> DisplayPoint {
+    if times > 1 {
+        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+    }
+    end_of_line(map, display_lines, point)
 }
 
 fn end_of_document(
