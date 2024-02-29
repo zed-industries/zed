@@ -27,7 +27,7 @@ use std::{cmp::Ordering, ffi::OsStr, ops::Range, path::Path, sync::Arc};
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
@@ -908,7 +908,8 @@ impl ProjectPanel {
                 .to_os_string();
 
             let mut new_path = entry.path.to_path_buf();
-            if entry.is_file() {
+            // If we're pasting into a file, or a directory into itself, go up one level.
+            if entry.is_file() || (entry.is_dir() && entry.id == clipboard_entry.entry_id()) {
                 new_path.pop();
             }
 
@@ -1177,11 +1178,31 @@ impl ProjectPanel {
                             let a_is_file = components_a.peek().is_none() && entry_a.is_file();
                             let b_is_file = components_b.peek().is_none() && entry_b.is_file();
                             let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                                let name_a =
-                                    UniCase::new(component_a.as_os_str().to_string_lossy());
-                                let name_b =
-                                    UniCase::new(component_b.as_os_str().to_string_lossy());
-                                name_a.cmp(&name_b)
+                                let maybe_numeric_ordering = maybe!({
+                                    let num_and_remainder_a = Path::new(component_a.as_os_str())
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .and_then(
+                                            NumericPrefixWithSuffix::from_numeric_prefixed_str,
+                                        )?;
+                                    let num_and_remainder_b = Path::new(component_b.as_os_str())
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .and_then(
+                                            NumericPrefixWithSuffix::from_numeric_prefixed_str,
+                                        )?;
+
+                                    num_and_remainder_a.partial_cmp(&num_and_remainder_b)
+                                });
+
+                                maybe_numeric_ordering.unwrap_or_else(|| {
+                                    let name_a =
+                                        UniCase::new(component_a.as_os_str().to_string_lossy());
+                                    let name_b =
+                                        UniCase::new(component_b.as_os_str().to_string_lossy());
+
+                                    name_a.cmp(&name_b)
+                                })
                             });
                             if !ordering.is_eq() {
                                 return ordering;

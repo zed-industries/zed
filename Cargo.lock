@@ -221,12 +221,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "any_ascii"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea50b14b7a4b9343f8c627a7a53c52076482bd4bdad0a24fd3ec533ed616cc2c"
-
-[[package]]
 name = "anyhow"
 version = "1.0.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -331,7 +325,6 @@ dependencies = [
  "ai",
  "anyhow",
  "chrono",
- "client",
  "collections",
  "ctor",
  "editor",
@@ -340,13 +333,11 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "indoc",
- "isahc",
  "language",
  "log",
  "menu",
  "multi_buffer",
  "ordered-float 2.10.0",
- "parking_lot 0.11.2",
  "project",
  "rand 0.8.5",
  "regex",
@@ -1125,7 +1116,7 @@ dependencies = [
  "serde",
  "time",
  "tokio",
- "tokio-util 0.7.9",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1464,7 +1455,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive",
- "hashbrown 0.12.3",
+ "hashbrown 0.13.2",
 ]
 
 [[package]]
@@ -1638,6 +1629,32 @@ dependencies = [
  "serde_derive",
  "settings",
  "util",
+]
+
+[[package]]
+name = "calloop"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fba7adb4dd5aa98e5553510223000e7148f621165ec5f9acd7113f6ca4995298"
+dependencies = [
+ "bitflags 2.4.1",
+ "log",
+ "polling 3.3.2",
+ "rustix 0.38.30",
+ "slab",
+ "thiserror",
+]
+
+[[package]]
+name = "calloop-wayland-source"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f0ea9b9476c7fad82841a8dbb380e2eae480c21910feba80725b46931ed8f02"
+dependencies = [
+ "calloop",
+ "rustix 0.38.30",
+ "wayland-backend",
+ "wayland-client",
 ]
 
 [[package]]
@@ -1851,11 +1868,9 @@ dependencies = [
  "clap 3.2.25",
  "core-foundation",
  "core-services",
- "dirs 3.0.2",
  "ipc-channel",
  "plist",
  "serde",
- "serde_derive",
  "util",
 ]
 
@@ -1912,11 +1927,9 @@ dependencies = [
  "chrono",
  "clock",
  "collections",
- "db",
  "feature_flags",
  "futures 0.3.28",
  "gpui",
- "image",
  "lazy_static",
  "log",
  "once_cell",
@@ -1927,12 +1940,10 @@ dependencies = [
  "rpc",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "sha2 0.10.7",
  "smol",
- "sum_tree",
  "sysinfo",
  "telemetry_events",
  "tempfile",
@@ -1942,7 +1953,6 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
- "uuid",
 ]
 
 [[package]]
@@ -2015,11 +2025,9 @@ dependencies = [
  "aws-sdk-s3",
  "axum",
  "axum-extra",
- "base64 0.13.1",
  "call",
  "channel",
  "chrono",
- "clap 3.2.25",
  "clickhouse",
  "client",
  "clock",
@@ -2040,7 +2048,6 @@ dependencies = [
  "indoc",
  "language",
  "lazy_static",
- "lipsum",
  "live_kit_client",
  "live_kit_server",
  "log",
@@ -2065,18 +2072,14 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "sha-1 0.9.8",
  "sha2 0.10.7",
- "smallvec",
  "sqlx",
  "telemetry_events",
  "text",
  "theme",
  "time",
  "tokio",
- "tokio-tungstenite",
  "toml 0.8.10",
- "tonic",
  "tower",
  "tower-http 0.4.4",
  "tracing",
@@ -2147,9 +2150,7 @@ dependencies = [
 name = "color"
 version = "0.1.0"
 dependencies = [
- "itertools 0.11.0",
  "palette",
- "story",
 ]
 
 [[package]]
@@ -2178,7 +2179,6 @@ dependencies = [
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "client",
  "collections",
  "command_palette_hooks",
@@ -2276,16 +2276,13 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "language",
- "log",
  "lsp",
  "node_runtime",
  "parking_lot 0.11.2",
  "rpc",
  "serde",
- "serde_derive",
  "settings",
  "smol",
- "theme",
  "util",
 ]
 
@@ -2297,12 +2294,9 @@ dependencies = [
  "copilot",
  "editor",
  "fs",
- "futures 0.3.28",
  "gpui",
  "language",
  "settings",
- "smol",
- "theme",
  "ui",
  "util",
  "workspace",
@@ -2875,14 +2869,11 @@ dependencies = [
  "language",
  "log",
  "lsp",
- "postage",
  "project",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
- "smallvec",
  "theme",
  "ui",
  "unindent",
@@ -3360,22 +3351,16 @@ dependencies = [
  "human_bytes",
  "isahc",
  "language",
- "lazy_static",
  "log",
  "menu",
- "postage",
  "project",
  "regex",
  "release_channel",
  "serde",
  "serde_derive",
  "serde_json",
- "settings",
- "smallvec",
  "smol",
  "sysinfo",
- "theme",
- "tree-sitter-markdown",
  "ui",
  "urlencoding",
  "util",
@@ -4043,6 +4028,8 @@ dependencies = [
  "blade-macros",
  "block",
  "bytemuck",
+ "calloop",
+ "calloop-wayland-source",
  "cbindgen",
  "cocoa",
  "collections",
@@ -4145,7 +4132,7 @@ dependencies = [
  "indexmap 1.9.3",
  "slab",
  "tokio",
- "tokio-util 0.7.9",
+ "tokio-util",
  "tracing",
 ]
 
@@ -4410,18 +4397,6 @@ dependencies = [
  "rustls-native-certs",
  "tokio",
  "tokio-rustls",
-]
-
-[[package]]
-name = "hyper-timeout"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbb958482e8c7be4bc3cf272a766a2b0bf1a6755e7a6ae777f017a31d11b13b1"
-dependencies = [
- "hyper",
- "pin-project-lite",
- "tokio",
- "tokio-io-timeout",
 ]
 
 [[package]]
@@ -4738,7 +4713,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "dirs 4.0.0",
  "editor",
  "gpui",
  "log",
@@ -4746,7 +4720,6 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand",
- "util",
  "workspace",
 ]
 
@@ -5163,16 +5136,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4cd1a83af159aa67994778be9070f0ae1bd732942279cabb14f86f986a21456"
 
 [[package]]
-name = "lipsum"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8451846f1f337e44486666989fbce40be804da139d5a4477d6b88ece5dc69f4"
-dependencies = [
- "rand 0.8.5",
- "rand_chacha 0.3.1",
-]
-
-[[package]]
 name = "live_kit_client"
 version = "0.1.0"
 dependencies = [
@@ -5546,18 +5509,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mio-extras"
-version = "2.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52403fe290012ce777c4626790c8951324a2b9e3316b3143779c72b029742f19"
-dependencies = [
- "lazycell",
- "log",
- "mio 0.6.23",
- "slab",
-]
-
-[[package]]
 name = "miow"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5588,8 +5539,6 @@ dependencies = [
  "futures 0.3.28",
  "git",
  "gpui",
- "indoc",
- "itertools 0.11.0",
  "language",
  "log",
  "parking_lot 0.11.2",
@@ -5766,9 +5715,7 @@ dependencies = [
  "async-trait",
  "futures 0.3.28",
  "log",
- "parking_lot 0.11.2",
  "serde",
- "serde_derive",
  "serde_json",
  "smol",
  "util",
@@ -5791,15 +5738,12 @@ dependencies = [
  "anyhow",
  "channel",
  "client",
- "clock",
  "collections",
  "db",
- "feature_flags",
  "gpui",
  "rpc",
  "settings",
  "sum_tree",
- "text",
  "time",
  "util",
 ]
@@ -6039,7 +5983,7 @@ dependencies = [
  "rmp",
  "rmpv",
  "tokio",
- "tokio-util 0.7.9",
+ "tokio-util",
 ]
 
 [[package]]
@@ -6264,21 +6208,20 @@ dependencies = [
 
 [[package]]
 name = "palette"
-version = "0.7.3"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2e2f34147767aa758aa649415b50a69eeb46a67f9dc7db8011eeb3d84b351dc"
+checksum = "ebfc23a4b76642983d57e4ad00bb4504eb30a8ce3c70f4aee1f725610e36d97a"
 dependencies = [
  "approx",
  "fast-srgb8",
  "palette_derive",
- "phf",
 ]
 
 [[package]]
 name = "palette_derive"
-version = "0.7.3"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7db010ec5ff3d4385e4f133916faacd9dad0f6a09394c92d825b3aed310fa0a"
+checksum = "e8890702dbec0bad9116041ae586f84805b13eecd1d8b1df27c29998a9969d6d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6388,15 +6331,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8835116a5c179084a830efb3adc117ab007512b535bc1a21c991d3b32a6b44dd"
 
 [[package]]
-name = "pathfinder_color"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69bdc0d277d559e35e1b374de56df9262a6b71e091ca04a8831a239f8c7f0c62"
-dependencies = [
- "pathfinder_simd",
-]
-
-[[package]]
 name = "pathfinder_geometry"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6466,48 +6400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phf"
-version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade2d8b8f33c7333b51bcf0428d37e217e9f32192ae4772156f65063b8ce03dc"
-dependencies = [
- "phf_macros",
- "phf_shared",
-]
-
-[[package]]
-name = "phf_generator"
-version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48e4cc64c2ad9ebe670cb8fd69dd50ae301650392e81c05f9bfcb2d5bdbc24b0"
-dependencies = [
- "phf_shared",
- "rand 0.8.5",
-]
-
-[[package]]
-name = "phf_macros"
-version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3444646e286606587e49f3bcf1679b8cef1dc2c5ecc29ddacaffc305180d464b"
-dependencies = [
- "phf_generator",
- "phf_shared",
- "proc-macro2",
- "quote",
- "syn 2.0.48",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90fcb95eef784c2ac79119d1dd819e162b5da872ce6f3c3abe1e8ca1c082f72b"
-dependencies = [
- "siphasher 0.3.11",
-]
-
-[[package]]
 name = "picker"
 version = "0.1.0"
 dependencies = [
@@ -6516,12 +6408,8 @@ dependencies = [
  "env_logger",
  "gpui",
  "menu",
- "parking_lot 0.11.2",
  "serde_json",
- "settings",
- "theme",
  "ui",
- "util",
  "workspace",
 ]
 
@@ -6831,11 +6719,9 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "fuzzy",
- "git",
  "git2",
  "globset",
  "gpui",
- "ignore",
  "itertools 0.11.0",
  "language",
  "log",
@@ -6850,14 +6736,12 @@ dependencies = [
  "regex",
  "release_channel",
  "rpc",
- "schemars",
  "serde",
  "serde_json",
  "settings",
  "sha2 0.10.7",
  "similar",
  "smol",
- "sum_tree",
  "task",
  "terminal",
  "text",
@@ -7288,18 +7172,12 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
- "futures 0.3.28",
  "fuzzy",
  "gpui",
- "language",
  "menu",
  "ordered-float 2.10.0",
  "picker",
- "postage",
- "settings",
  "smol",
- "text",
- "theme",
  "ui",
  "util",
  "workspace",
@@ -7513,17 +7391,11 @@ dependencies = [
 name = "rich_text"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "collections",
  "futures 0.3.28",
  "gpui",
  "language",
- "lazy_static",
  "linkify",
  "pulldown-cmark",
- "smallvec",
- "smol",
- "sum_tree",
  "theme",
  "ui",
  "util",
@@ -8569,12 +8441,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b8de496cf83d4ed58b6be86c3a275b8602f6ffe98d3024a869e124147a9a3ac"
 
 [[package]]
-name = "siphasher"
-version = "0.3.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
-
-[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9161,7 +9027,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c536faaff1a10837cfe373142583f6e27d81e96beba339147e77b67c9f260ff"
 dependencies = [
  "float-cmp",
- "siphasher 0.2.3",
+ "siphasher",
 ]
 
 [[package]]
@@ -9275,20 +9141,16 @@ name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "db",
- "fs",
- "futures 0.3.28",
+ "editor",
  "fuzzy",
  "gpui",
- "log",
+ "language",
  "menu",
  "picker",
  "project",
- "schemars",
  "serde",
  "serde_json",
  "task",
- "theme",
  "ui",
  "util",
  "workspace",
@@ -9345,8 +9207,6 @@ dependencies = [
  "dirs 4.0.0",
  "futures 0.3.28",
  "gpui",
- "itertools 0.11.0",
- "lazy_static",
  "libc",
  "procinfo",
  "rand 0.8.5",
@@ -9376,25 +9236,17 @@ dependencies = [
  "gpui",
  "itertools 0.11.0",
  "language",
- "lazy_static",
- "libc",
- "mio-extras",
- "ordered-float 2.10.0",
- "procinfo",
  "project",
  "rand 0.8.5",
  "search",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "shellexpand",
- "smallvec",
  "smol",
  "task",
  "terminal",
  "theme",
- "thiserror",
  "ui",
  "util",
  "workspace",
@@ -9440,7 +9292,6 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "indexmap 1.9.3",
- "itertools 0.11.0",
  "palette",
  "parking_lot 0.11.2",
  "refineable",
@@ -9452,7 +9303,6 @@ dependencies = [
  "serde_repr",
  "settings",
  "story",
- "toml 0.8.10",
  "util",
  "uuid",
 ]
@@ -9461,16 +9311,12 @@ dependencies = [
 name = "theme_importer"
 version = "0.1.0"
 dependencies = [
- "any_ascii",
  "anyhow",
  "clap 4.4.4",
- "convert_case 0.6.0",
  "gpui",
  "indexmap 1.9.3",
- "indoc",
  "log",
  "palette",
- "pathfinder_color",
  "rust-embed",
  "schemars",
  "serde",
@@ -9479,7 +9325,6 @@ dependencies = [
  "simplelog",
  "strum",
  "theme",
- "uuid",
  "vscode_theme",
 ]
 
@@ -9595,7 +9440,6 @@ dependencies = [
  "lazy_static",
  "sys-locale",
  "time",
- "util",
 ]
 
 [[package]]
@@ -9671,16 +9515,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-io-timeout"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30b74022ada614a1b4834de765f9bb43877f910cc8ce4be40e89042c9223a8bf"
-dependencies = [
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
 name = "tokio-macros"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9732,20 +9566,6 @@ dependencies = [
  "log",
  "tokio",
  "tungstenite 0.17.3",
-]
-
-[[package]]
-name = "tokio-util"
-version = "0.6.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36943ee01a6d67977dd3f84a5a1d2efeb4ada3a1ae771cadfaa535d9d9fc6507"
-dependencies = [
- "bytes 1.5.0",
- "futures-core",
- "futures-sink",
- "log",
- "pin-project-lite",
- "tokio",
 ]
 
 [[package]]
@@ -9818,37 +9638,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tonic"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff08f4649d10a70ffa3522ca559031285d8e421d727ac85c60825761818f5d0a"
-dependencies = [
- "async-stream",
- "async-trait",
- "base64 0.13.1",
- "bytes 1.5.0",
- "futures-core",
- "futures-util",
- "h2",
- "http 0.2.9",
- "http-body",
- "hyper",
- "hyper-timeout",
- "percent-encoding",
- "pin-project",
- "prost 0.9.0",
- "prost-derive 0.9.0",
- "tokio",
- "tokio-stream",
- "tokio-util 0.6.10",
- "tower",
- "tower-layer",
- "tower-service",
- "tracing",
- "tracing-futures",
-]
-
-[[package]]
 name = "tower"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9856,13 +9645,9 @@ checksum = "b8fa9be0de6cf49e536ce1851f987bd21a43b771b09473c3549a6c853db37c1c"
 dependencies = [
  "futures-core",
  "futures-util",
- "indexmap 1.9.3",
  "pin-project",
  "pin-project-lite",
- "rand 0.8.5",
- "slab",
  "tokio",
- "tokio-util 0.7.9",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -10529,7 +10314,6 @@ dependencies = [
 name = "ui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "chrono",
  "gpui",
  "itertools 0.11.0",
@@ -10691,7 +10475,7 @@ dependencies = [
  "roxmltree 0.14.1",
  "rustybuzz 0.3.0",
  "simplecss",
- "siphasher 0.2.3",
+ "siphasher",
  "svgtypes",
  "ttf-parser 0.12.3",
  "unicode-bidi",
@@ -10735,6 +10519,7 @@ dependencies = [
  "take-until",
  "tempfile",
  "tendril",
+ "unicase",
  "url",
 ]
 
@@ -10843,7 +10628,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "theme",
  "tokio",
  "ui",
  "util",
@@ -11880,7 +11664,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -11930,6 +11714,7 @@ dependencies = [
  "notifications",
  "outline",
  "parking_lot 0.11.2",
+ "profiling",
  "project",
  "project_panel",
  "project_symbols",

@@ -4,47 +4,88 @@
 //todo!(linux): remove
 #![allow(unused_variables)]
 
-use crate::platform::linux::client_dispatcher::ClientDispatcher;
 use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
+use calloop::{
+    channel::{self, Sender},
+    timer::TimeoutAction,
+    EventLoop,
+};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
-use std::{
-    panic,
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{thread, time::Duration};
+use util::ResultExt;
+
+struct TimerAfter {
+    duration: Duration,
+    runnable: Runnable,
+}
 
 pub(crate) struct LinuxDispatcher {
-    client_dispatcher: Arc<dyn ClientDispatcher + Send + Sync>,
     parker: Mutex<Parker>,
-    timed_tasks: Mutex<Vec<(Instant, Runnable)>>,
-    main_sender: flume::Sender<Runnable>,
+    main_sender: Sender<Runnable>,
+    timer_sender: Sender<TimerAfter>,
     background_sender: flume::Sender<Runnable>,
-    _background_thread: thread::JoinHandle<()>,
+    _background_threads: Vec<thread::JoinHandle<()>>,
     main_thread_id: thread::ThreadId,
 }
 
 impl LinuxDispatcher {
-    pub fn new(
-        main_sender: flume::Sender<Runnable>,
-        client_dispatcher: &Arc<dyn ClientDispatcher + Send + Sync>,
-    ) -> Self {
+    pub fn new(main_sender: Sender<Runnable>) -> Self {
         let (background_sender, background_receiver) = flume::unbounded::<Runnable>();
-        let background_thread = thread::spawn(move || {
-            profiling::register_thread!("background");
-            for runnable in background_receiver {
-                let _ignore_panic = panic::catch_unwind(|| runnable.run());
-            }
+        let thread_count = std::thread::available_parallelism()
+            .map(|i| i.get())
+            .unwrap_or(1);
+
+        let mut background_threads = (0..thread_count)
+            .map(|_| {
+                let receiver = background_receiver.clone();
+                std::thread::spawn(move || {
+                    for runnable in receiver {
+                        runnable.run();
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let (timer_sender, timer_channel) = calloop::channel::channel::<TimerAfter>();
+        let timer_thread = std::thread::spawn(|| {
+            let mut event_loop: EventLoop<()> =
+                EventLoop::try_new().expect("Failed to initialize timer loop!");
+
+            let handle = event_loop.handle();
+            let timer_handle = event_loop.handle();
+            handle
+                .insert_source(timer_channel, move |e, _, _| {
+                    if let channel::Event::Msg(timer) = e {
+                        // This has to be in an option to satisfy the borrow checker. The callback below should only be scheduled once.
+                        let mut runnable = Some(timer.runnable);
+                        timer_handle
+                            .insert_source(
+                                calloop::timer::Timer::from_duration(timer.duration),
+                                move |e, _, _| {
+                                    if let Some(runnable) = runnable.take() {
+                                        runnable.run();
+                                    }
+                                    TimeoutAction::Drop
+                                },
+                            )
+                            .expect("Failed to start timer");
+                    }
+                })
+                .expect("Failed to start timer thread");
+
+            event_loop.run(None, &mut (), |_| {}).log_err();
         });
+
+        background_threads.push(timer_thread);
+
         Self {
-            client_dispatcher: Arc::clone(client_dispatcher),
             parker: Mutex::new(Parker::new()),
-            timed_tasks: Mutex::new(Vec::new()),
             main_sender,
+            timer_sender,
             background_sender,
-            _background_thread: background_thread,
+            _background_threads: background_threads,
             main_thread_id: thread::current().id(),
         }
     }
@@ -60,29 +101,19 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        self.main_sender.send(runnable).unwrap();
-        self.client_dispatcher.dispatch_on_main_thread();
+        self.main_sender
+            .send(runnable)
+            .expect("Main thread is gone");
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-        let moment = Instant::now() + duration;
-        let mut timed_tasks = self.timed_tasks.lock();
-        timed_tasks.push((moment, runnable));
-        timed_tasks.sort_unstable_by(|(a, _), (b, _)| b.cmp(a));
+        self.timer_sender
+            .send(TimerAfter { duration, runnable })
+            .expect("Timer thread has died");
     }
 
     fn tick(&self, background_only: bool) -> bool {
-        let mut timed_tasks = self.timed_tasks.lock();
-        let old_count = timed_tasks.len();
-        while let Some(&(moment, _)) = timed_tasks.last() {
-            if moment <= Instant::now() {
-                let (_, runnable) = timed_tasks.pop().unwrap();
-                runnable.run();
-            } else {
-                break;
-            }
-        }
-        timed_tasks.len() != old_count
+        false
     }
 
     fn park(&self) {

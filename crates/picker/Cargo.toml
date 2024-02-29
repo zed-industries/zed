@@ -13,11 +13,7 @@ doctest = false
 editor.workspace = true
 gpui.workspace = true
 menu.workspace = true
-parking_lot.workspace = true
-settings.workspace = true
-theme.workspace = true
 ui.workspace = true
-util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]

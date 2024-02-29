@@ -216,6 +216,7 @@ lazy_static = "1.4.0"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = "2.1.1"
+palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.11.1"
 profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
@@ -293,6 +294,7 @@ tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", r
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
 unindent = "0.1.7"
+unicase = "2.6"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmtime = "18.0"

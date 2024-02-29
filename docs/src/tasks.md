@@ -4,6 +4,8 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
 
 Currently, two kinds of tasks are supported, but more will be added in the future.
 
+All tasks are are sorted in LRU order and their names can be used (with `menu::UseSelectedQuery`, `shift-enter` by default) as an input text for quicker oneshot task edit-spawn cycle.
+
 ## Static tasks
 
 Tasks, defined in a config file (`tasks.json` in the Zed config directory) that do not depend on the current editor or its content.
