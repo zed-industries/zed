@@ -31,7 +31,11 @@ impl LspAdapter for ServeDAdapter {
         let prefix = if OS == "windows" { "zip" } else { "tar.xz" };
         let release =
             latest_github_release("Pure-D/serve-d", true, false, delegate.http_client()).await?;
-        let asset_name = format!("serve-d_{}-{OS}-{ARCH}.{}", release.tag_name.replace("v", ""), prefix);
+        let asset_name = format!(
+            "serve-d_{}-{OS}-{ARCH}.{}",
+            release.tag_name.replace("v", ""),
+            prefix
+        );
         let asset = release
             .assets
             .iter()
