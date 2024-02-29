@@ -8,6 +8,7 @@ use std::{
     any::{type_name, TypeId},
     fmt,
     hash::{Hash, Hasher},
+    ops::Range,
 };
 
 /// A view is a piece of state that can be presented on screen by implementing the [Render] trait.
@@ -21,6 +22,7 @@ impl<V> Sealed for View<V> {}
 
 struct AnyViewState {
     root_style: Style,
+    occlusion_range: Range<usize>,
     cache_key: ViewCacheKey,
 }
 
@@ -309,6 +311,7 @@ impl Element for AnyView {
                         let element_state = Some(AnyViewState {
                             root_style: cx.layout_style(layout_id).unwrap().clone(),
                             cache_key: ViewCacheKey::default(),
+                            occlusion_range: 0..0,
                         });
                         ((layout_id, Some(element)), element_state)
                     },
@@ -337,16 +340,19 @@ impl Element for AnyView {
                         let mut element_state = element_state.unwrap().unwrap();
 
                         if let Some(mut element) = element.take() {
+                            let occlusion_start = cx.window.next_frame.occlusions.len();
                             element.after_layout(cx);
+                            let occlusion_end = cx.window.next_frame.occlusions.len();
                             element_state.cache_key.bounds = bounds;
                             element_state.cache_key.content_mask = cx.content_mask();
                             element_state.cache_key.text_style = cx.text_style();
+                            element_state.occlusion_range = occlusion_start..occlusion_end;
                             (Some(element), Some(element_state))
                         } else if element_state.cache_key.bounds == bounds
                             && element_state.cache_key.content_mask == cx.content_mask()
                             && element_state.cache_key.text_style == cx.text_style()
                         {
-                            todo!("reuse entries in the depth map");
+                            cx.reuse_occlusions(element_state.occlusion_range.clone());
                             (None, Some(element_state))
                         } else {
                             element_state.cache_key.bounds = bounds;
@@ -357,7 +363,12 @@ impl Element for AnyView {
                             let layout_id = element.before_layout(cx);
                             cx.compute_layout(layout_id, bounds.size.into());
                             element_state.root_style = cx.layout_style(layout_id).unwrap().clone();
+
+                            let occlusion_start = cx.window.next_frame.occlusions.len();
                             element.after_layout(cx);
+                            let occlusion_end = cx.window.next_frame.occlusions.len();
+                            element_state.occlusion_range = occlusion_start..occlusion_end;
+
                             (Some(element), Some(element_state))
                         }
                     },
@@ -378,7 +389,7 @@ impl Element for AnyView {
                 if let Some(element) = element.as_mut() {
                     element.paint(cx);
                 } else {
-                    cx.reuse_view();
+                    cx.reuse_paint();
                 }
             })
         })

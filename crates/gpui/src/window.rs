@@ -256,6 +256,7 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    pub(crate) next_occlusion_id: OcclusionId,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
@@ -451,6 +452,7 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
+            next_occlusion_id: OcclusionId::default(),
             dirty_views: FxHashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
@@ -862,36 +864,7 @@ impl<'a> WindowContext<'a> {
     /// on top of the given level. Layers who are extensions of the queried layer
     /// are not considered to be on top of queried layer.
     pub fn was_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
-        // Precondition: the depth map is ordered from topmost to bottomost.
-
-        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if layer >= opaque_layer {
-                // The queried layer is either above or is the same as the this opaque layer.
-                // Anything after this point is guaranteed to be below the queried layer.
-                return true;
-            }
-
-            if !bounds.contains(point) {
-                // This opaque layer is above the queried layer but it doesn't contain
-                // the given position, so we can ignore it even if it's above.
-                continue;
-            }
-
-            // At this point, we've established that this opaque layer is on top of the queried layer
-            // and contains the position:
-            // If neither the opaque layer or the queried layer is an extension of the other then
-            // we know they are on different stacking orders, and return false.
-            let is_on_same_layer = opaque_layer
-                .iter()
-                .zip(layer.iter())
-                .all(|(a, b)| a.z_index == b.z_index);
-
-            if !is_on_same_layer {
-                return false;
-            }
-        }
-
-        true
+        todo!()
     }
 
     pub(crate) fn was_top_layer_under_active_drag(
@@ -899,52 +872,12 @@ impl<'a> WindowContext<'a> {
         point: &Point<Pixels>,
         layer: &StackingOrder,
     ) -> bool {
-        // Precondition: the depth map is ordered from topmost to bottomost.
-
-        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if layer >= opaque_layer {
-                // The queried layer is either above or is the same as the this opaque layer.
-                // Anything after this point is guaranteed to be below the queried layer.
-                return true;
-            }
-
-            if !bounds.contains(point) {
-                // This opaque layer is above the queried layer but it doesn't contain
-                // the given position, so we can ignore it even if it's above.
-                continue;
-            }
-
-            // All normal content is rendered with a base z-index of 0, we know that if the root of this opaque layer
-            // equals `ACTIVE_DRAG_Z_INDEX` then it must be the drag layer and we can ignore it as we are
-            // looking to see if the queried layer was the topmost underneath the drag layer.
-            if opaque_layer
-                .first()
-                .map(|c| c.z_index == ACTIVE_DRAG_Z_INDEX)
-                .unwrap_or(false)
-            {
-                continue;
-            }
-
-            // At this point, we've established that this opaque layer is on top of the queried layer
-            // and contains the position:
-            // If neither the opaque layer or the queried layer is an extension of the other then
-            // we know they are on different stacking orders, and return false.
-            let is_on_same_layer = opaque_layer
-                .iter()
-                .zip(layer.iter())
-                .all(|(a, b)| a.z_index == b.z_index);
-
-            if !is_on_same_layer {
-                return false;
-            }
-        }
-
-        true
+        todo!()
     }
 
     /// Called during painting to get the current stacking order.
     pub fn stacking_order(&self) -> &StackingOrder {
-        &self.window.next_frame.z_index_stack
+        todo!()
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -974,14 +907,8 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.window_active = self.window.active.get();
 
         // Set the cursor only if we're the active window.
-        let cursor_style = self
-            .window
-            .next_frame
-            .requested_cursor_style
-            .take()
-            .unwrap_or(CursorStyle::Arrow);
         if self.is_window_active() {
-            self.platform.set_cursor_style(cursor_style);
+            self.compute_cursor_style();
         }
 
         // Register requested input handler with the platform window.
@@ -1051,6 +978,19 @@ impl<'a> WindowContext<'a> {
             .draw(&self.window.rendered_frame.scene);
         self.window.needs_present.set(false);
         profiling::finish_frame!();
+    }
+
+    fn compute_cursor_style(&mut self) -> Option<CursorStyle> {
+        let mouse_position = self.mouse_position();
+
+        // TODO: maybe we should have a HashMap keyed by OcclusionId.
+        let cursor_style = self
+            .window
+            .next_frame
+            .cursor_styles
+            .iter()
+            .take()
+            .unwrap_or(CursorStyle::Arrow);
     }
 
     /// Dispatch a given keystroke as though the user had typed it.

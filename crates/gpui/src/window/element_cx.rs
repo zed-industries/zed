@@ -15,7 +15,7 @@
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
-    mem,
+    ops::Range,
     rc::Rc,
     sync::Arc,
 };
@@ -26,7 +26,6 @@ use derive_more::{Deref, DerefMut};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
-use util::post_inc;
 
 use crate::{
     prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
@@ -34,9 +33,9 @@ use crate::{
     EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
     InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
     Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
-    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle,
+    Style, TextStyleRefinement, Underline, UnderlineStyle, Window, WindowContext,
+    SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -51,28 +50,44 @@ pub(crate) struct TooltipRequest {
     pub(crate) tooltip: AnyTooltip,
 }
 
+/// Identifies an occlusion, see [ElementContext::insert_occlusion] for more details.
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub struct OcclusionId(usize);
+
+#[derive(Clone)]
+pub(crate) struct Occlusion {
+    pub(crate) id: OcclusionId,
+    pub(crate) bounds: Bounds<Pixels>,
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    pub(crate) mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
+    pub(crate) mouse_listeners: Vec<AnyMouseListener>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
-    pub(crate) z_index_stack: StackingOrder,
-    pub(crate) next_stacking_order_ids: Vec<u16>,
-    pub(crate) next_root_z_index: u16,
+    pub(crate) occlusions: Vec<Occlusion>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
     pub(crate) tooltip_request: Option<TooltipRequest>,
-    pub(crate) cursor_styles: FxHashMap<EntityId, CursorStyle>,
-    pub(crate) requested_cursor_style: Option<CursorStyle>,
+    pub(crate) cursor_styles: Vec<(OcclusionId, CursorStyle)>,
     pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
-
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+}
+
+pub(crate) struct LayoutIndex {
+    occlusion_index: usize,
+}
+
+pub(crate) struct PaintIndex {
+    scene_index: usize,
+    mouse_listeners_index: usize,
+    cursor_styles_index: usize,
+    dispatch_tree_index: usize,
 }
 
 impl Frame {
@@ -81,19 +96,15 @@ impl Frame {
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
-            mouse_listeners: FxHashMap::default(),
+            mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
-            depth_map: Vec::new(),
-            z_index_stack: StackingOrder::default(),
-            next_stacking_order_ids: vec![0],
-            next_root_z_index: 0,
+            occlusions: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
             tooltip_request: None,
-            cursor_styles: FxHashMap::default(),
-            requested_cursor_style: None,
+            cursor_styles: Vec::new(),
             view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
 
@@ -104,18 +115,29 @@ impl Frame {
 
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
-        self.mouse_listeners.values_mut().for_each(Vec::clear);
+        self.mouse_listeners.clear();
         self.dispatch_tree.clear();
-        self.depth_map.clear();
-        self.next_stacking_order_ids = vec![0];
-        self.next_root_z_index = 0;
         self.reused_views.clear();
         self.scene.clear();
         self.requested_input_handler.take();
         self.tooltip_request.take();
         self.cursor_styles.clear();
-        self.requested_cursor_style.take();
+        self.occlusions.clear();
         debug_assert_eq!(self.view_stack.len(), 0);
+    }
+
+    pub(crate) fn layout_index(&self) -> LayoutIndex {
+        LayoutIndex {
+            occlusion_index: self.occlusions.len(),
+        }
+    }
+
+    pub(crate) fn paint_index(&self) -> PaintIndex {
+        PaintIndex {
+            scene_index: self.scene.len(),
+            mouse_listeners_index: self.mouse_listeners.len(),
+            cursor_styles_index: self.cursor_styles.len(),
+        }
     }
 
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -125,28 +147,6 @@ impl Frame {
     }
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        // Reuse mouse listeners that didn't change since the last frame.
-        for (type_id, listeners) in &mut prev_frame.mouse_listeners {
-            let next_listeners = self.mouse_listeners.entry(*type_id).or_default();
-            for (order, view_id, listener) in listeners.drain(..) {
-                if self.reused_views.contains(&view_id) {
-                    next_listeners.push((order, view_id, listener));
-                }
-            }
-        }
-
-        // Reuse entries in the depth map that didn't change since the last frame.
-        for (order, view_id, bounds) in prev_frame.depth_map.drain(..) {
-            if self.reused_views.contains(&view_id) {
-                match self
-                    .depth_map
-                    .binary_search_by(|(level, _, _)| order.cmp(level))
-                {
-                    Ok(i) | Err(i) => self.depth_map.insert(i, (order, view_id, bounds)),
-                }
-            }
-        }
-
         // Retain element states for views that didn't change since the last frame.
         for (element_id, state) in prev_frame.element_states.drain() {
             if self.reused_views.contains(&state.parent_view_id) {
@@ -154,9 +154,6 @@ impl Frame {
             }
         }
 
-        // Reuse geometry that didn't change since the last frame.
-        self.scene
-            .reuse_views(&self.reused_views, &mut prev_frame.scene);
         self.scene.finish();
     }
 }
@@ -356,7 +353,17 @@ impl<'a> ElementContext<'a> {
         }
     }
 
-    pub(crate) fn reuse_view(&mut self) {
+    pub(crate) fn reuse_layout(&mut self, range: Range<LayoutIndex>) {
+        let window = &mut self.window;
+
+        for occlusion in &window.rendered_frame.occlusions
+            [range.start.occlusion_index..range.end.occlusion_index]
+        {
+            window.next_frame.occlusions.push(occlusion.clone());
+        }
+    }
+
+    pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
         todo!()
         // let view_id = self.parent_view_id();
         // let grafted_view_ids = self
@@ -398,23 +405,6 @@ impl<'a> ElementContext<'a> {
         //         self.window.next_frame.requested_cursor_style = Some(style);
         //     }
         // }
-
-        // debug_assert!(
-        //     next_stacking_order_id
-        //         >= self
-        //             .window
-        //             .next_frame
-        //             .next_stacking_order_ids
-        //             .last()
-        //             .copied()
-        //             .unwrap()
-        // );
-        // *self
-        //     .window
-        //     .next_frame
-        //     .next_stacking_order_ids
-        //     .last_mut()
-        //     .unwrap() = next_stacking_order_id;
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -435,9 +425,11 @@ impl<'a> ElementContext<'a> {
 
     /// Updates the cursor style at the platform level.
     pub fn set_cursor_style(&mut self, style: CursorStyle) {
-        let view_id = self.parent_view_id();
-        self.window.next_frame.cursor_styles.insert(view_id, style);
-        self.window.next_frame.requested_cursor_style = Some(style);
+        let occlusion_id = todo!();
+        self.window
+            .next_frame
+            .cursor_styles
+            .push((occlusion_id, style));
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame
@@ -488,35 +480,36 @@ impl<'a> ElementContext<'a> {
     /// Invoke the given function with the content mask reset to that
     /// of the window.
     pub fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let mask = ContentMask {
-            bounds: Bounds {
-                origin: Point::default(),
-                size: self.window().viewport_size,
-            },
-        };
+        todo!()
+        // let mask = ContentMask {
+        //     bounds: Bounds {
+        //         origin: Point::default(),
+        //         size: self.window().viewport_size,
+        //     },
+        // };
 
-        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
-        let new_stacking_order_id = post_inc(
-            self.window_mut()
-                .next_frame
-                .next_stacking_order_ids
-                .last_mut()
-                .unwrap(),
-        );
-        let new_context = StackingContext {
-            z_index: new_root_z_index,
-            id: new_stacking_order_id,
-        };
+        // let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
+        // let new_stacking_order_id = post_inc(
+        //     self.window_mut()
+        //         .next_frame
+        //         .next_stacking_order_ids
+        //         .last_mut()
+        //         .unwrap(),
+        // );
+        // let new_context = StackingContext {
+        //     z_index: new_root_z_index,
+        //     id: new_stacking_order_id,
+        // };
 
-        let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
+        // let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
 
-        self.window_mut().next_frame.z_index_stack.push(new_context);
-        self.window_mut().next_frame.content_mask_stack.push(mask);
-        let result = f(self);
-        self.window_mut().next_frame.content_mask_stack.pop();
-        self.window_mut().next_frame.z_index_stack = old_stacking_order;
+        // self.window_mut().next_frame.z_index_stack.push(new_context);
+        // self.window_mut().next_frame.content_mask_stack.push(mask);
+        // let result = f(self);
+        // self.window_mut().next_frame.content_mask_stack.pop();
+        // self.window_mut().next_frame.z_index_stack = old_stacking_order;
 
-        result
+        // result
     }
 
     /// Updates the global element offset relative to the current offset. This is used to implement
@@ -691,26 +684,19 @@ impl<'a> ElementContext<'a> {
     ) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-        let window = &mut *self.window;
         for shadow in shadows {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                Shadow {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
-                    bounds: shadow_bounds.scale(scale_factor),
-                    content_mask: content_mask.scale(scale_factor),
-                    corner_radii: corner_radii.scale(scale_factor),
-                    color: shadow.color,
-                    blur_radius: shadow.blur_radius.scale(scale_factor),
-                    pad: 0,
-                },
-            );
+            self.window.next_frame.scene.push(Shadow {
+                order: 0,
+                bounds: shadow_bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                corner_radii: corner_radii.scale(scale_factor),
+                color: shadow.color,
+                blur_radius: shadow.blur_radius.scale(scale_factor),
+                pad: 0,
+            });
         }
     }
 
@@ -720,39 +706,24 @@ impl<'a> ElementContext<'a> {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Quad {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: quad.bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                background: quad.background,
-                border_color: quad.border_color,
-                corner_radii: quad.corner_radii.scale(scale_factor),
-                border_widths: quad.border_widths.scale(scale_factor),
-            },
-        );
+        self.window.next_frame.scene.push(Quad {
+            order: 0,
+            bounds: quad.bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            background: quad.background,
+            border_color: quad.border_color,
+            corner_radii: quad.corner_radii.scale(scale_factor),
+            border_widths: quad.border_widths.scale(scale_factor),
+        });
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-
         path.content_mask = content_mask;
         path.color = color.into();
-        path.view_id = view_id.into();
-        let window = &mut *self.window;
-        window
-            .next_frame
-            .scene
-            .insert(&window.next_frame.z_index_stack, path.scale(scale_factor));
+        self.window.next_frame.scene.push(path.scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -773,22 +744,15 @@ impl<'a> ElementContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
 
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Underline {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                color: style.color.unwrap_or_default(),
-                thickness: style.thickness.scale(scale_factor),
-                wavy: style.wavy,
-            },
-        );
+        self.window.next_frame.scene.push(Underline {
+            order: 0,
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            color: style.color.unwrap_or_default(),
+            thickness: style.thickness.scale(scale_factor),
+            wavy: style.wavy,
+        });
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.
@@ -805,22 +769,15 @@ impl<'a> ElementContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
 
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Underline {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                thickness: style.thickness.scale(scale_factor),
-                color: style.color.unwrap_or_default(),
-                wavy: false,
-            },
-        );
+        self.window.next_frame.scene.push(Underline {
+            order: 0,
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            thickness: style.thickness.scale(scale_factor),
+            color: style.color.unwrap_or_default(),
+            wavy: false,
+        });
     }
 
     /// Paints a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
@@ -866,20 +823,13 @@ impl<'a> ElementContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.parent_view_id();
-            let window = &mut *self.window;
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                MonochromeSprite {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
-                    bounds,
-                    content_mask,
-                    color,
-                    tile,
-                },
-            );
+            self.window.next_frame.scene.push(MonochromeSprite {
+                order: 0,
+                bounds,
+                content_mask,
+                color,
+                tile,
+            });
         }
         Ok(())
     }
@@ -923,23 +873,16 @@ impl<'a> ElementContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.parent_view_id();
-            let window = &mut *self.window;
 
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                PolychromeSprite {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
-                    bounds,
-                    corner_radii: Default::default(),
-                    content_mask,
-                    tile,
-                    grayscale: false,
-                    pad: 0,
-                },
-            );
+            self.window.next_frame.scene.push(PolychromeSprite {
+                order: 0,
+                bounds,
+                corner_radii: Default::default(),
+                content_mask,
+                tile,
+                grayscale: false,
+                pad: 0,
+            });
         }
         Ok(())
     }
@@ -969,21 +912,14 @@ impl<'a> ElementContext<'a> {
                     Ok((params.size, Cow::Owned(bytes)))
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.parent_view_id();
 
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            MonochromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds,
-                content_mask,
-                color,
-                tile,
-            },
-        );
+        self.window.next_frame.scene.push(MonochromeSprite {
+            order: 0,
+            bounds,
+            content_mask,
+            color,
+            tile,
+        });
 
         Ok(())
     }
@@ -1008,23 +944,16 @@ impl<'a> ElementContext<'a> {
             })?;
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
-        let view_id = self.parent_view_id();
 
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            PolychromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds,
-                content_mask,
-                corner_radii,
-                tile,
-                grayscale,
-                pad: 0,
-            },
-        );
+        self.window.next_frame.scene.push(PolychromeSprite {
+            order: 0,
+            bounds,
+            content_mask,
+            corner_radii,
+            tile,
+            grayscale,
+            pad: 0,
+        });
         Ok(())
     }
 
@@ -1034,19 +963,12 @@ impl<'a> ElementContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.parent_view_id();
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            crate::Surface {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds,
-                content_mask,
-                image_buffer,
-            },
-        );
+        self.window.next_frame.scene.push(crate::Surface {
+            order: 0,
+            bounds,
+            content_mask,
+            image_buffer,
+        });
     }
 
     #[must_use]
@@ -1123,14 +1045,15 @@ impl<'a> ElementContext<'a> {
             .requested_style(layout_id)
     }
 
-    /// Called during painting to track which z-index is on top at each pixel position
-    pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
-        let stacking_order = self.window.next_frame.z_index_stack.clone();
-        let view_id = self.parent_view_id();
-        let depth_map = &mut self.window.next_frame.depth_map;
-        match depth_map.binary_search_by(|(level, _, _)| stacking_order.cmp(level)) {
-            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, view_id, bounds)),
-        }
+    /// This method should be called during `after_layout`. You can use
+    /// the returned [OcclusionId] during `paint` or in an event handler
+    /// to determine whether the inserted occlusion was the topmost.
+    pub fn insert_occlusion(&mut self, bounds: Bounds<Pixels>) -> OcclusionId {
+        let window = &mut self.window;
+        let id = window.next_occlusion_id;
+        window.next_occlusion_id.0 += 1;
+        window.next_frame.occlusions.push(Occlusion { id, bounds });
+        id
     }
 
     /// Invoke the given function with the given focus handle present on the key dispatch stack.
@@ -1218,22 +1141,13 @@ impl<'a> ElementContext<'a> {
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
-        let view_id = self.parent_view_id();
-        let order = self.window.next_frame.z_index_stack.clone();
-        self.window
-            .next_frame
-            .mouse_listeners
-            .entry(TypeId::of::<Event>())
-            .or_default()
-            .push((
-                order,
-                view_id,
-                Box::new(
-                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
-                        handler(event.downcast_ref().unwrap(), phase, cx)
-                    },
-                ),
-            ))
+        self.window.next_frame.mouse_listeners.push(Box::new(
+            move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
+                if let Some(event) = event.downcast_ref() {
+                    handler(event, phase, cx)
+                }
+            },
+        ));
     }
 
     /// Register a key event listener on the window for the next frame. The type of event

@@ -763,7 +763,7 @@ mod element {
                 })
             }
 
-            cx.add_opaque_layer(handle_bounds);
+            cx.insert_occlusion(handle_bounds);
             cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border));
 
             cx.on_mouse_event({

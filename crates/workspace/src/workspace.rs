@@ -4629,7 +4629,7 @@ impl Element for DisconnectedOverlay {
         overlay: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
-        cx.add_opaque_layer(bounds);
+        cx.insert_occlusion(bounds);
         overlay.after_layout(cx);
     }
 
