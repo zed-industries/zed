@@ -531,7 +531,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
-                        workspace.add_item(
+                        workspace.add_item_to_active_pane(
                             Box::new(
                                 cx.new_view(|cx| {
                                     Editor::for_multibuffer(buffer, Some(project), cx)
@@ -747,7 +747,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                 let buffer = cx.new_model(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
-                workspace.add_item(
+                workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
                     cx,
                 );
@@ -781,7 +781,7 @@ fn open_bundled_file(
                     let buffer = cx.new_model(|cx| {
                         MultiBuffer::singleton(buffer, cx).with_title(title.into())
                     });
-                    workspace.add_item(
+                    workspace.add_item_to_active_pane(
                         Box::new(cx.new_view(|cx| {
                             Editor::for_multibuffer(buffer, Some(project.clone()), cx)
                         })),

@@ -24,7 +24,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
         workspace.register_action(move |workspace, _: &Extensions, cx| {
             let extensions_page = ExtensionsPage::new(workspace, cx);
-            workspace.add_item(Box::new(extensions_page), cx)
+            workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
         });
     })
     .detach();
