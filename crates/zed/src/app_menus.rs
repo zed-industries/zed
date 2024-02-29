@@ -156,10 +156,6 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
-                MenuItem::action(
-                    "Toggle Graphics Profiler",
-                    workspace::ToggleGraphicsProfiler,
-                ),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
