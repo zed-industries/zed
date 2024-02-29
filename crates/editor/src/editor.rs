@@ -8625,6 +8625,8 @@ impl Editor {
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
+        use git::permalink::{build_permalink, BuildPermalinkParams};
+
         let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
         let project = project.read(cx);
 
@@ -8649,6 +8651,7 @@ impl Editor {
             .lock()
             .head_sha()
             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
+
         let path = maybe!({
             let buffer = self.buffer().read(cx).as_singleton()?;
             let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
@@ -8659,12 +8662,12 @@ impl Editor {
         let selections = self.selections.all::<Point>(cx);
         let selection = selections.iter().peekable().next();
 
-        git::permalink::build_permalink(
-            &origin_url,
-            &sha,
-            &path,
-            selection.map(|selection| selection.range()),
-        )
+        build_permalink(BuildPermalinkParams {
+            remote_url: &origin_url,
+            sha: &sha,
+            path: &path,
+            selection: selection.map(|selection| selection.range()),
+        })
     }
 
     pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
