@@ -176,7 +176,7 @@ impl AppState {
             db: Arc::new(db),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            clickhouse_client: build_clickhouse_client(&config).log_err(),
+            clickhouse_client: build_clickhouse_client(&config),
             config,
         };
         Ok(Arc::new(this))
@@ -218,30 +218,30 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
     Ok(aws_sdk_s3::Client::new(&s3_config))
 }
 
-fn build_clickhouse_client(config: &Config) -> anyhow::Result<clickhouse::Client> {
-    Ok(clickhouse::Client::default()
-        .with_url(
-            config
-                .clickhouse_url
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing clickhouse_url"))?,
-        )
-        .with_user(
-            config
-                .clickhouse_user
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing clickhouse_user"))?,
-        )
-        .with_password(
-            config
-                .clickhouse_password
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing clickhouse_password"))?,
-        )
-        .with_database(
-            config
-                .clickhouse_database
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing clickhouse_database"))?,
-        ))
+fn build_clickhouse_client(config: &Config) -> Option<clickhouse::Client> {
+    let Some(url) = config.clickhouse_url.as_ref() else {
+        return None;
+    };
+    Some(
+        clickhouse::Client::default()
+            .with_url(url)
+            .with_user(
+                config
+                    .clickhouse_user
+                    .as_ref()
+                    .expect("missing clickhouse_user"),
+            )
+            .with_password(
+                config
+                    .clickhouse_password
+                    .as_ref()
+                    .expect("missing clickhouse_password"),
+            )
+            .with_database(
+                config
+                    .clickhouse_database
+                    .as_ref()
+                    .expect("missing clickhouse_database"),
+            ),
+    )
 }
