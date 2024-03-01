@@ -1,4 +1,4 @@
-use crate::{log_windows_error, PlatformDispatcher, TaskLabel};
+use crate::{log_windows_error, log_windows_error_with_message, PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
@@ -114,10 +114,10 @@ fn dispatcher_init() -> anyhow::Result<(PTP_POOL, HANDLE)> {
     let threadpool = unsafe {
         let mut threadpool_handle = CreateThreadpool(None);
         if threadpool_handle.0 == 0 {
-            log::error!("Windows error: {}", std::io::Error::last_os_error());
+            log_windows_error_with_message!("Error creating threadpool");
             threadpool_handle = CreateThreadpool(None);
             if threadpool_handle.0 == 0 {
-                log::error!("Windows error: {}", std::io::Error::last_os_error());
+                log_windows_error_with_message!("Error creating threadpool");
                 return anyhow::Result::Err(anyhow::anyhow!("Error init dispatcher"));
             }
         }

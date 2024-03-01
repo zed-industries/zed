@@ -1,4 +1,4 @@
-use std::{iter::once, panic::Location};
+use std::iter::once;
 
 use collections::VecDeque;
 use windows::Win32::{
@@ -11,7 +11,7 @@ use windows::Win32::{
     UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_USERDATA},
 };
 
-use crate::MonitorHandle;
+use crate::{log_windows_error_with_message, MonitorHandle};
 
 pub fn encode_wide(input: &str) -> Vec<u16> {
     input.encode_utf16().chain(once(0)).collect::<Vec<u16>>()
@@ -91,18 +91,37 @@ pub unsafe fn get_windowdata(handle: HWND) -> isize {
     GetWindowLongPtrW(handle, GWL_USERDATA)
 }
 
-pub fn log_windows_error(e: &windows::core::Error) {
-    let caller = Location::caller();
-    log::error!(
-        "Windows error at {}:{}: {}",
-        caller.file(),
-        caller.line(),
-        std::io::Error::last_os_error()
-    );
+pub fn log_windows_error(_e: &windows::core::Error) {
+    log_windows_error_with_message!(None);
 }
 
-pub fn log_anyhow_error(_: &anyhow::Error) {
-    log::error!("Windows error: {}", std::io::Error::last_os_error());
+/// Log windows errors.
+///
+/// # examples
+/// ```rust
+/// log_windows_error_with_message!("Error");
+/// log_windows_error_with_message!(None);
+/// ```
+#[macro_export]
+macro_rules! log_windows_error_with_message {
+    ($s: literal) => {{
+        let caller = std::panic::Location::caller();
+        log::error!(
+            "$s at {}:{}: {}",
+            caller.file(),
+            caller.line(),
+            std::io::Error::last_os_error()
+        );
+    }};
+    (None) => {{
+        let caller = std::panic::Location::caller();
+        log::error!(
+            "Windows error at {}:{}: {}",
+            caller.file(),
+            caller.line(),
+            std::io::Error::last_os_error()
+        );
+    }};
 }
 
 unsafe extern "system" fn monitor_enum_proc(

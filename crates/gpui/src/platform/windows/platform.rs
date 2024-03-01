@@ -64,10 +64,11 @@ use windows::{
 };
 
 use crate::{
-    encode_wide, log_windows_error, platform::cross_platform::CosmicTextSystem, set_windowdata,
-    Keystroke, WindowsWindow, WindowsWindowBase, WindowsWinodwDataWrapper, ACCEL_FALT,
-    ACCEL_FCONTROL, ACCEL_FSHIFT, ACCEL_FVIRTKEY, CF_UNICODETEXT, DISPATCH_WINDOW_CLASS,
-    DISPATCH_WINDOW_EXSTYLE, DISPATCH_WINDOW_STYLE, MAIN_DISPATCH, MENU_ACTIONS, WINDOW_CLOSE,
+    encode_wide, log_windows_error, log_windows_error_with_message,
+    platform::cross_platform::CosmicTextSystem, set_windowdata, Keystroke, WindowsWindow,
+    WindowsWindowBase, WindowsWinodwDataWrapper, ACCEL_FALT, ACCEL_FCONTROL, ACCEL_FSHIFT,
+    ACCEL_FVIRTKEY, CF_UNICODETEXT, DISPATCH_WINDOW_CLASS, DISPATCH_WINDOW_EXSTYLE,
+    DISPATCH_WINDOW_STYLE, MAIN_DISPATCH, MENU_ACTIONS, WINDOW_CLOSE,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
@@ -276,42 +277,29 @@ impl Platform for WindowsPlatform {
                     let dialog = show_openfile_dialog(options).expect("error show openfile dialog");
                     if let Ok(_) = dialog.Show(None) {
                         let Ok(items) = dialog.GetResults() else {
-                            log::error!(
-                                "Error get result from dialog {}",
-                                std::io::Error::last_os_error()
-                            );
+                            log_windows_error_with_message!("Error get result from dialog");
                             let _ = tx.send(None);
                             return;
                         };
                         let Ok(count) = items.GetCount() else {
-                            log::error!(
-                                "Error get results count from dialog {}",
-                                std::io::Error::last_os_error()
-                            );
+                            log_windows_error_with_message!("Error get results count from dialog");
                             let _ = tx.send(None);
                             return;
                         };
                         let mut path_vec = Vec::new();
                         for index in 0..count {
                             let Ok(item) = items.GetItemAt(index) else {
-                                log::error!(
-                                    "Error get item dialog {}",
-                                    std::io::Error::last_os_error()
-                                );
+                                log_windows_error_with_message!("Error get item dialog");
                                 continue;
                             };
                             let Ok(item_string) = item.GetDisplayName(SIGDN_PARENTRELATIVEPARSING)
                             else {
-                                log::error!(
-                                    "Error parsing item name {}",
-                                    std::io::Error::last_os_error()
-                                );
+                                log_windows_error_with_message!("Error parsing item name");
                                 continue;
                             };
                             let Ok(path_string) = item_string.to_string() else {
-                                log::error!(
-                                    "Error parsing item name from utf16 to string {}",
-                                    std::io::Error::last_os_error()
+                                log_windows_error_with_message!(
+                                    "Error parsing item name from utf16 to string"
                                 );
                                 continue;
                             };
@@ -456,11 +444,7 @@ impl Platform for WindowsPlatform {
         let mut info = unsafe { std::mem::zeroed() };
         let ret = unsafe { GetTimeZoneInformation(&mut info) };
         if ret == TIME_ZONE_ID_INVALID {
-            log::error!(
-                "Unable to get local timezone: {}",
-                std::io::Error::last_os_error()
-            );
-
+            log_windows_error_with_message!("Unable to get local timezone");
             return UtcOffset::UTC;
         }
         // Windows treat offset as:
@@ -502,7 +486,7 @@ impl Platform for WindowsPlatform {
                 _ => LoadImageW(None, IDC_ARROW, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE),
             };
             if handle.is_err() {
-                log::error!("Windows error: {}", std::io::Error::last_os_error());
+                log_windows_error_with_message!("Error loading cursor image");
                 return;
             }
             let _ = SetCursor(HCURSOR(handle.unwrap().0));
@@ -517,12 +501,13 @@ impl Platform for WindowsPlatform {
     //todo!(windows)
     fn write_to_clipboard(&self, item: ClipboardItem) {
         unsafe {
-            if OpenClipboard(self.inner.dispatch_window_handle).is_err() {
-                log::error!("Windows error: {}", std::io::Error::last_os_error());
+            if OpenClipboard(self.inner.dispatch_window_handle)
+                .inspect_err(log_windows_error)
+                .is_err()
+            {
                 return;
             }
-            if EmptyClipboard().is_err() {
-                log::error!("Windows error: {}", std::io::Error::last_os_error());
+            if EmptyClipboard().inspect_err(log_windows_error).is_err() {
                 return;
             }
             // MultiByteToWideChar(codepage, dwflags, lpmultibytestr, lpwidecharstr);
@@ -532,8 +517,10 @@ impl Platform for WindowsPlatform {
             let handle = GlobalLock(global);
             u_memcpy(handle as _, data_ptr.as_ptr() as _, count as _);
             let _ = GlobalUnlock(global);
-            if SetClipboardData(CF_UNICODETEXT, HANDLE(global.0 as isize)).is_err() {
-                log::error!("Windows error: {}", std::io::Error::last_os_error());
+            if SetClipboardData(CF_UNICODETEXT, HANDLE(global.0 as isize))
+                .inspect_err(log_windows_error)
+                .is_err()
+            {
                 return;
             }
             let _ = CloseClipboard();
@@ -542,26 +529,6 @@ impl Platform for WindowsPlatform {
 
     //todo!(windows)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        // unsafe {
-        //     if OpenClipboard(self.inner.dispatch_window_handle).is_err() {
-        //         log::error!("Windows error: {}", std::io::Error::last_os_error());
-        //         return None;
-        //     }
-        //     let ret = GetClipboardData(CF_UNICODETEXT);
-        //     if ret.is_err() {
-        //         log::error!("Windows error: {}", std::io::Error::last_os_error());
-        //         return None;
-        //     }
-        //     let data_ptr = GlobalLock(HGLOBAL(ret.unwrap().0 as _)) as *mut Vec<u16>;
-        //     // let x: *mut Vec<u16> = data_ptr as _;
-        //     let data = String::from_utf16_lossy(&*data_ptr);
-        //     let _ = CloseClipboard();
-
-        //     Some(ClipboardItem {
-        //         text: data,
-        //         metadata: None,
-        //     })
-        // }
         unsafe {
             let Ok(clipboard) = OleGetClipboard().inspect_err(log_windows_error) else {
                 return None;
@@ -648,10 +615,6 @@ fn platform_init() -> anyhow::Result<()> {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE)
             .inspect_err(log_windows_error)?;
-        // if CoInitializeEx(None, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE).is_err() {
-        //     log::error!("Windows error: {}", std::io::Error::last_os_error());
-        //     return anyhow::Result::Err(anyhow::anyhow!("Set dpi awareness failed"));
-        // }
         OleInitialize(None).inspect_err(log_windows_error)?;
         Ok(())
     }
@@ -670,7 +633,7 @@ fn open_target(target: String) {
             SW_SHOWDEFAULT,
         );
         if ret.0 <= 32 {
-            log::error!("Unable to open: {}", std::io::Error::last_os_error());
+            log_windows_error_with_message!("Unable to open target");
             return;
         }
     }

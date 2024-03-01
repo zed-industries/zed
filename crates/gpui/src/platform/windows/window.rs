@@ -68,14 +68,14 @@ use windows::{
 };
 
 use crate::{
-    available_monitors, encode_wide, get_module_handle, hiword, log_windows_error, loword,
-    parse_dropfiles, parse_keyboard_input, parse_mouse_button, parse_mouse_movement,
-    parse_mouse_wheel, parse_system_key, platform::cross_platform::BladeRenderer, set_windowdata,
-    Action, Bounds, DisplayId, ForegroundExecutor, Modifiers, Pixels, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, Size, WindowKind, WindowOptions,
-    WindowsWindowBase, WindowsWinodwDataWrapper, DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH,
-    MENU_ACTIONS, WINDOW_CLOSE, WINDOW_REFRESH_TIMER, WINODW_EXTRA_EXSTYLE,
-    WINODW_REFRESH_INTERVAL, WINODW_STYLE,
+    available_monitors, encode_wide, get_module_handle, hiword, log_windows_error,
+    log_windows_error_with_message, loword, parse_dropfiles, parse_keyboard_input,
+    parse_mouse_button, parse_mouse_movement, parse_mouse_wheel, parse_system_key,
+    platform::cross_platform::BladeRenderer, set_windowdata, Action, Bounds, DisplayId,
+    ForegroundExecutor, Modifiers, Pixels, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, Size, WindowKind, WindowOptions, WindowsWindowBase,
+    WindowsWinodwDataWrapper, DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH, MENU_ACTIONS, WINDOW_CLOSE,
+    WINDOW_REFRESH_TIMER, WINODW_EXTRA_EXSTYLE, WINODW_REFRESH_INTERVAL, WINODW_STYLE,
 };
 
 use super::{display::WindowsDisplay, WINDOW_CLASS};
@@ -360,7 +360,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 if let Some(func) = self.callbacks.borrow_mut().close.take() {
                     func();
                 }
-                KillTimer(self.window_handle.hwnd(), WINDOW_REFRESH_TIMER);
+                let _ = KillTimer(self.window_handle.hwnd(), WINDOW_REFRESH_TIMER);
                 PostQuitMessage(0);
                 LRESULT(0)
             }
@@ -401,7 +401,6 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let modifiers = self.modifiers.borrow();
                 let key = parse_mouse_button(message, wparam, lparam, &modifiers);
                 self.handle_input(key);
-
                 self.update();
                 LRESULT(0)
             }
@@ -410,7 +409,6 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let (new_pos, input) = parse_mouse_movement(wparam, lparam, modifiers);
                 *self.mouse_position.borrow_mut() = new_pos;
                 self.handle_input(input);
-                self.update();
                 LRESULT(0)
             }
             WM_CHAR => {
@@ -475,7 +473,7 @@ impl IDropTarget_Impl for WindowsDragDropTarget {
     ) -> windows::core::Result<()> {
         unsafe {
             let Some(idata_obj) = pdataobj else {
-                log::error!("no file detected while dragging");
+                log_windows_error_with_message!("no file detected while dragging");
                 return Ok(());
             };
             let config = FORMATETC {
@@ -503,7 +501,7 @@ impl IDropTarget_Impl for WindowsDragDropTarget {
                     let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
                     let ret = DragQueryFileW(*hdrop, file_index, Some(&mut buffer));
                     if ret == 0 {
-                        log::error!("unable to read file name");
+                        log_windows_error_with_message!("unable to read file name");
                         continue;
                     }
                     if let Ok(file_name) = String::from_utf16(&buffer[0..filename_length]) {
