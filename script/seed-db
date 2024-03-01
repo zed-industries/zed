@@ -1,4 +1,4 @@
 #!/bin/bash
 set -e
 
-cargo run --quiet --package=collab --features seed-support --bin seed -- $@
+cargo run --quiet --package=collab --bin seed -- $@
