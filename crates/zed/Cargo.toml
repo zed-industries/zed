@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.125.0"
+version = "0.126.0"
 publish = false
 license = "GPL-3.0-or-later"
 
@@ -64,6 +64,7 @@ node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
 parking_lot.workspace = true
+profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
@@ -131,3 +132,6 @@ name = "Zed"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
+
+[package.metadata.cargo-machete]
+ignored = ["profiling"]

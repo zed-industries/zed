@@ -8098,6 +8098,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             "Some other server name".into(),
             LspSettings {
+                settings: None,
                 initialization_options: Some(json!({
                     "some other init value": false
                 })),
@@ -8115,6 +8116,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                settings: None,
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
@@ -8132,6 +8134,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                settings: None,
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
@@ -8149,6 +8152,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                settings: None,
                 initialization_options: None,
             },
         );
@@ -8424,6 +8428,105 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         buffer_text.to_string() + prettier_format_suffix + "\n" + prettier_format_suffix,
         "Autoformatting (via test prettier) was not applied to the original buffer text",
     );
+}
+
+#[gpui::test]
+async fn test_find_all_references(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn foo(«paramˇ»: i64) {
+            println!(param);
+        }
+    "});
+
+    cx.lsp
+        .handle_request::<lsp::request::References, _, _>(move |_, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
+                    range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 12)),
+                },
+                lsp::Location {
+                    uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
+                    range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 18)),
+                },
+            ]))
+        });
+
+    let references = cx
+        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
+        .unwrap();
+
+    cx.executor().run_until_parked();
+
+    cx.executor().start_waiting();
+    references.await.unwrap();
+
+    cx.assert_editor_state(indoc! {"
+        fn foo(param: i64) {
+            println!(«paramˇ»);
+        }
+    "});
+
+    let references = cx
+        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
+        .unwrap();
+
+    cx.executor().run_until_parked();
+
+    cx.executor().start_waiting();
+    references.await.unwrap();
+
+    cx.assert_editor_state(indoc! {"
+        fn foo(«paramˇ»: i64) {
+            println!(param);
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn foo(param: i64) {
+            let a = param;
+            let aˇ = param;
+            let a = param;
+            println!(param);
+        }
+    "});
+
+    cx.lsp
+        .handle_request::<lsp::request::References, _, _>(move |_, _| async move {
+            Ok(Some(vec![lsp::Location {
+                uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
+                range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 9)),
+            }]))
+        });
+
+    let references = cx
+        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
+        .unwrap();
+
+    cx.executor().run_until_parked();
+
+    cx.executor().start_waiting();
+    references.await.unwrap();
+
+    cx.assert_editor_state(indoc! {"
+        fn foo(param: i64) {
+            let a = param;
+            let «aˇ» = param;
+            let a = param;
+            println!(param);
+        }
+    "});
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

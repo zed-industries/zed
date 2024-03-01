@@ -288,6 +288,13 @@
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w n": ["workspace::NewFileInDirection", "Up"],
       "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"],
+
+      "ctrl-w d": "editor::GoToDefinitionSplit",
+      "ctrl-w g d": "editor::GoToDefinitionSplit",
+      "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
+      "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
+      "ctrl-w space": "editor::OpenExcerptsSplit",
+      "ctrl-w g space": "editor::OpenExcerptsSplit",
       "-": "pane::RevealInProjectPanel"
     }
   },
@@ -342,8 +349,8 @@
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
-      "> >": "editor::Indent",
-      "< <": "editor::Outdent",
+      "> >": "vim::Indent",
+      "< <": "vim::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem"
     }
@@ -460,8 +467,8 @@
       "ctrl-c": ["vim::SwitchMode", "Normal"],
       "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"],
-      ">": "editor::Indent",
-      "<": "editor::Outdent",
+      ">": "vim::Indent",
+      "<": "vim::Outdent",
       "i": [
         "vim::PushOperator",
         {
@@ -492,7 +499,9 @@
       "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
       "ctrl-x ctrl-z": "editor::Cancel",
       "ctrl-w": "editor::DeleteToPreviousWordStart",
-      "ctrl-u": "editor::DeleteToBeginningOfLine"
+      "ctrl-u": "editor::DeleteToBeginningOfLine",
+      "ctrl-t": "vim::Indent",
+      "ctrl-d": "vim::Outdent"
     }
   },
   {

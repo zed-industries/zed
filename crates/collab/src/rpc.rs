@@ -36,7 +36,6 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
-use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -57,7 +56,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
+        Arc, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -73,16 +72,6 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
 const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
-
-lazy_static! {
-    static ref METRIC_CONNECTIONS: IntGauge =
-        register_int_gauge!("connections", "number of connections").unwrap();
-    static ref METRIC_SHARED_PROJECTS: IntGauge = register_int_gauge!(
-        "shared_projects",
-        "number of open projects with one or more guests"
-    )
-    .unwrap();
-}
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session) -> BoxFuture<'static, ()>>;
@@ -159,7 +148,7 @@ pub struct Server {
     app_state: Arc<AppState>,
     executor: Executor,
     handlers: HashMap<TypeId, MessageHandler>,
-    teardown: watch::Sender<()>,
+    teardown: watch::Sender<bool>,
 }
 
 pub(crate) struct ConnectionPoolGuard<'a> {
@@ -192,7 +181,7 @@ impl Server {
             executor,
             connection_pool: Default::default(),
             handlers: Default::default(),
-            teardown: watch::channel(()).0,
+            teardown: watch::channel(false).0,
         };
 
         server
@@ -449,7 +438,7 @@ impl Server {
     pub fn teardown(&self) {
         self.peer.teardown();
         self.connection_pool.lock().reset();
-        let _ = self.teardown.send(());
+        let _ = self.teardown.send(true);
     }
 
     #[cfg(test)]
@@ -457,6 +446,7 @@ impl Server {
         self.teardown();
         *self.id.lock() = id;
         self.peer.reset(id.0 as u32);
+        let _ = self.teardown.send(false);
     }
 
     #[cfg(test)]
@@ -574,6 +564,9 @@ impl Server {
         }
         let mut teardown = self.teardown.subscribe();
         async move {
+            if *teardown.borrow() {
+                return Err(anyhow!("server is tearing down"))?;
+            }
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
                 .add_connection(connection, {
@@ -795,16 +788,12 @@ fn broadcast<F>(
     }
 }
 
-lazy_static! {
-    static ref ZED_PROTOCOL_VERSION: HeaderName = HeaderName::from_static("x-zed-protocol-version");
-    static ref ZED_APP_VERSION: HeaderName = HeaderName::from_static("x-zed-app-version");
-}
-
 pub struct ProtocolVersion(u32);
 
 impl Header for ProtocolVersion {
     fn name() -> &'static HeaderName {
-        &ZED_PROTOCOL_VERSION
+        static ZED_PROTOCOL_VERSION: OnceLock<HeaderName> = OnceLock::new();
+        ZED_PROTOCOL_VERSION.get_or_init(|| HeaderName::from_static("x-zed-protocol-version"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
@@ -830,7 +819,8 @@ impl Header for ProtocolVersion {
 pub struct AppVersionHeader(SemanticVersion);
 impl Header for AppVersionHeader {
     fn name() -> &'static HeaderName {
-        &ZED_APP_VERSION
+        static ZED_APP_VERSION: OnceLock<HeaderName> = OnceLock::new();
+        ZED_APP_VERSION.get_or_init(|| HeaderName::from_static("x-zed-app-version"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
@@ -924,17 +914,29 @@ pub async fn handle_websocket_request(
 }
 
 pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result<String> {
+    static CONNECTIONS_METRIC: OnceLock<IntGauge> = OnceLock::new();
+    let connections_metric = CONNECTIONS_METRIC
+        .get_or_init(|| register_int_gauge!("connections", "number of connections").unwrap());
+
     let connections = server
         .connection_pool
         .lock()
         .connections()
         .filter(|connection| !connection.admin)
         .count();
+    connections_metric.set(connections as _);
 
-    METRIC_CONNECTIONS.set(connections as _);
+    static SHARED_PROJECTS_METRIC: OnceLock<IntGauge> = OnceLock::new();
+    let shared_projects_metric = SHARED_PROJECTS_METRIC.get_or_init(|| {
+        register_int_gauge!(
+            "shared_projects",
+            "number of open projects with one or more guests"
+        )
+        .unwrap()
+    });
 
     let shared_projects = server.app_state.db.project_count_excluding_admins().await?;
-    METRIC_SHARED_PROJECTS.set(shared_projects as _);
+    shared_projects_metric.set(shared_projects as _);
 
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
@@ -947,7 +949,7 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
 #[instrument(err, skip(executor))]
 async fn connection_lost(
     session: Session,
-    mut teardown: watch::Receiver<()>,
+    mut teardown: watch::Receiver<bool>,
     executor: Executor,
 ) -> Result<()> {
     session.peer.disconnect(session.connection_id);

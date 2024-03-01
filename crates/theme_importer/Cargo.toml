@@ -6,16 +6,12 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-any_ascii = "0.3.2"
 anyhow.workspace = true
 clap = { version = "4.4", features = ["derive"] }
-convert_case = "0.6.0"
 gpui.workspace = true
 indexmap = { version = "1.6.2", features = ["serde"] }
-indoc.workspace = true
 log.workspace = true
-palette = { version = "0.7.3", default-features = false, features = ["std"] }
-pathfinder_color = "0.5"
+palette.workspace = true
 rust-embed.workspace = true
 schemars = { workspace = true, features = ["indexmap"] }
 serde.workspace = true
@@ -24,5 +20,4 @@ serde_json_lenient.workspace = true
 simplelog = "0.9"
 strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
-uuid.workspace = true
 vscode_theme = "0.2.0"

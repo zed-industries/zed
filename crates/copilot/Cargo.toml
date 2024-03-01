@@ -28,15 +28,12 @@ command_palette_hooks.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
-log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 settings.workspace = true
 smol.workspace = true
-theme.workspace = true
 util.workspace = true
 
 [target.'cfg(windows)'.dependencies]

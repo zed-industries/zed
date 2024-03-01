@@ -268,7 +268,7 @@ fn main() {
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
-            //todo!(linux): unblock this
+            // todo(linux): unblock this
             #[cfg(not(target_os = "linux"))]
             upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);
@@ -493,6 +493,8 @@ fn init_paths() {
     std::fs::create_dir_all(&*util::paths::LANGUAGES_DIR).expect("could not create languages path");
     std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
     std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
+    #[cfg(target_os = "linux")]
+    std::fs::create_dir_all(&*util::paths::TEMP_DIR).expect("could not create tmp path");
 }
 
 fn init_logger() {
@@ -805,7 +807,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = http.build_url("/api/crash");
+    let crash_report_url = http.build_zed_api_url("/telemetry/crashes");
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
@@ -995,7 +997,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-//todo!(linux): Port fsevents to linux
+// todo(linux): Port fsevents to linux
 /// Spawns a background task to watch the themes directory for changes.
 #[cfg(target_os = "macos")]
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {

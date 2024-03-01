@@ -197,7 +197,7 @@ pub struct ColorStates {
 
 /// Returns a set of colors for different states of an element.
 ///
-/// todo!("This should take a theme and use appropriate colors from it")
+/// todo("This should take a theme and use appropriate colors from it")
 pub fn states_for_color(color: RGBAColor, is_light: bool) -> ColorStates {
     let adjustment_factor = if is_light { 0.1 } else { -0.1 };
     let hover_adjustment = 1.0 - adjustment_factor;

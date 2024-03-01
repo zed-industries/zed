@@ -22,7 +22,6 @@ use project::{
     search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
-use rpc::proto::ChannelRole;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{

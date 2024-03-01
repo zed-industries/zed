@@ -16,6 +16,7 @@
       "ctrl-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
+      "shift-enter": "menu::UseSelectedQuery",
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "ctrl-o": "workspace::Open",
@@ -72,7 +73,7 @@
       "ctrl-n": "editor::MoveDown",
       "ctrl-b": "editor::MoveLeft",
       "ctrl-f": "editor::MoveRight",
-      "ctrl-shift-l": "editor::NextScreen", // todo!(linux): What is this
+      "ctrl-shift-l": "editor::NextScreen", // todo(linux): What is this
       "alt-left": "editor::MoveToPreviousWordStart",
       "alt-b": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
@@ -116,7 +117,8 @@
         {
           "stop_at_soft_wraps": true
         }
-      ]
+      ],
+      "ctrl-;": "editor::ToggleLineNumbers"
     }
   },
   {
@@ -341,6 +343,13 @@
   {
     "context": "Workspace",
     "bindings": {
+      // Change the default action on `menu::Confirm` by setting the parameter
+      // "alt-cmd-o": [
+      //     "projects::OpenRecent",
+      //     {
+      //         "create_new_window": true
+      //     }
+      // ]
       "ctrl-alt-o": "projects::OpenRecent",
       "ctrl-alt-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
@@ -387,7 +396,7 @@
     }
   },
   // Bindings from Sublime Text
-  // todo!(linux) make sure these match linux bindings or remove above comment?
+  // todo(linux) make sure these match linux bindings or remove above comment?
   {
     "context": "Editor",
     "bindings": {
@@ -411,7 +420,7 @@
     }
   },
   // Bindings from Atom
-  // todo!(linux) make sure these match linux bindings or remove above comment?
+  // todo(linux) make sure these match linux bindings or remove above comment?
   {
     "context": "Pane",
     "bindings": {
@@ -466,6 +475,7 @@
     "context": "Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
+      "ctrl-k enter": "editor::OpenExcerptsSplit",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"

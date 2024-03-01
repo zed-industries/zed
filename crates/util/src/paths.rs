@@ -44,11 +44,13 @@ lazy_static::lazy_static! {
     pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
+    pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
+    pub static ref TEMP_DIR: PathBuf = HOME.join(".cache").join("zed");
 }
 
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
-    fn icon_suffix(&self) -> Option<&str>;
+    fn icon_stem_or_suffix(&self) -> Option<&str>;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
@@ -100,17 +102,17 @@ impl<T: AsRef<Path>> PathExt for T {
         }
     }
 
-    /// Returns a suffix of the path that is used to determine which file icon to use
-    fn icon_suffix(&self) -> Option<&str> {
-        let file_name = self.as_ref().file_name()?.to_str()?;
-
+    /// Returns either the suffix if available, or the file stem otherwise to determine which file icon to use
+    fn icon_stem_or_suffix(&self) -> Option<&str> {
+        let path = self.as_ref();
+        let file_name = path.file_name()?.to_str()?;
         if file_name.starts_with('.') {
             return file_name.strip_prefix('.');
         }
 
-        self.as_ref()
-            .extension()
-            .and_then(|extension| extension.to_str())
+        path.extension()
+            .and_then(|e| e.to_str())
+            .or_else(|| path.file_stem()?.to_str())
     }
 
     /// Returns a file's extension or, if the file is hidden, its name without the leading dot
@@ -403,26 +405,30 @@ mod tests {
     }
 
     #[test]
-    fn test_icon_suffix() {
+    fn test_icon_stem_or_suffix() {
         // No dots in name
         let path = Path::new("/a/b/c/file_name.rs");
-        assert_eq!(path.icon_suffix(), Some("rs"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
 
         // Single dot in name
         let path = Path::new("/a/b/c/file.name.rs");
-        assert_eq!(path.icon_suffix(), Some("rs"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
+
+        // No suffix
+        let path = Path::new("/a/b/c/file");
+        assert_eq!(path.icon_stem_or_suffix(), Some("file"));
 
         // Multiple dots in name
         let path = Path::new("/a/b/c/long.file.name.rs");
-        assert_eq!(path.icon_suffix(), Some("rs"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
 
         // Hidden file, no extension
         let path = Path::new("/a/b/c/.gitignore");
-        assert_eq!(path.icon_suffix(), Some("gitignore"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("gitignore"));
 
         // Hidden file, with extension
         let path = Path::new("/a/b/c/.eslintrc.js");
-        assert_eq!(path.icon_suffix(), Some("eslintrc.js"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("eslintrc.js"));
     }
 
     #[test]
