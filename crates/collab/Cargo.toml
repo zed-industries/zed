@@ -33,7 +33,6 @@ envy = "0.4.2"
 futures.workspace = true
 hex.workspace = true
 hyper = "0.14"
-lazy_static.workspace = true
 live_kit_server.workspace = true
 log.workspace = true
 nanoid = "0.4"
