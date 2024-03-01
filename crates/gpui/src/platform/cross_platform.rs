@@ -9,4 +9,4 @@ pub(crate) use blade_renderer::*;
 
 use blade_belt::*;
 #[cfg(not(feature = "macos-blade"))]
-use text_system::*;
+pub(crate) use text_system::*;

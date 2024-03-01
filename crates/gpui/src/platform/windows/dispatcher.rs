@@ -1,123 +1,100 @@
-use std::{
-    cmp::Ordering,
-    thread::{current, JoinHandle, ThreadId},
-    time::{Duration, Instant},
+use crate::{log_windows_error, PlatformDispatcher, TaskLabel};
+use async_task::Runnable;
+use parking::{Parker, Unparker};
+use parking_lot::Mutex;
+use std::{panic, thread, time::Duration};
+use windows::Win32::{
+    Foundation::{BOOLEAN, HANDLE, HWND, LPARAM, WPARAM},
+    System::Threading::{
+        CreateThreadpool, CreateThreadpoolWork, CreateTimerQueue, CreateTimerQueueTimer,
+        SetThreadpoolThreadMinimum, SubmitThreadpoolWork, PTP_CALLBACK_INSTANCE, PTP_POOL,
+        PTP_WORK, WT_EXECUTEONLYONCE,
+    },
+    UI::WindowsAndMessaging::PostMessageW,
 };
 
-use async_task::Runnable;
-use collections::BinaryHeap;
-use flume::{RecvTimeoutError, Sender};
-use parking::Parker;
-use parking_lot::Mutex;
-use windows::Win32::{Foundation::HANDLE, System::Threading::SetEvent};
-
-use crate::{PlatformDispatcher, TaskLabel};
-
 pub(crate) struct WindowsDispatcher {
-    background_sender: Sender<(Runnable, Option<TaskLabel>)>,
-    main_sender: Sender<Runnable>,
-    timer_sender: Sender<(Runnable, Duration)>,
-    background_threads: Vec<JoinHandle<()>>,
-    timer_thread: JoinHandle<()>,
+    dispatch_window: HWND,
     parker: Mutex<Parker>,
-    main_thread_id: ThreadId,
-    event: HANDLE,
+    main_sender: flume::Sender<Runnable>,
+    main_thread_id: thread::ThreadId,
+    threadpool: PTP_POOL,
+    // timer queue maybe not accuracy
+    // https://www.virtualdub.org/blog2/entry_272.html
+    timer_queue: HANDLE,
 }
 
 impl WindowsDispatcher {
-    pub(crate) fn new(main_sender: Sender<Runnable>, event: HANDLE) -> Self {
-        let parker = Mutex::new(Parker::new());
-        let (background_sender, background_receiver) =
-            flume::unbounded::<(Runnable, Option<TaskLabel>)>();
-        let background_threads = (0..std::thread::available_parallelism()
-            .map(|i| i.get())
-            .unwrap_or(1))
-            .map(|_| {
-                let receiver = background_receiver.clone();
-                std::thread::spawn(move || {
-                    for (runnable, label) in receiver {
-                        if let Some(label) = label {
-                            log::debug!("TaskLabel: {label:?}");
-                        }
-                        runnable.run();
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-        let (timer_sender, timer_receiver) = flume::unbounded::<(Runnable, Duration)>();
-        let timer_thread = std::thread::spawn(move || {
-            let mut runnables = BinaryHeap::<RunnableAfter>::new();
-            let mut timeout_dur = None;
-            loop {
-                let recv = if let Some(dur) = timeout_dur {
-                    match timer_receiver.recv_timeout(dur) {
-                        Ok(recv) => Some(recv),
-                        Err(RecvTimeoutError::Timeout) => None,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    }
-                } else if let Ok(recv) = timer_receiver.recv() {
-                    Some(recv)
-                } else {
-                    break;
-                };
-                let now = Instant::now();
-                if let Some((runnable, dur)) = recv {
-                    runnables.push(RunnableAfter {
-                        runnable,
-                        instant: now + dur,
-                    });
-                    while let Ok((runnable, dur)) = timer_receiver.try_recv() {
-                        runnables.push(RunnableAfter {
-                            runnable,
-                            instant: now + dur,
-                        })
-                    }
-                }
-                while runnables.peek().is_some_and(|entry| entry.instant <= now) {
-                    runnables.pop().unwrap().runnable.run();
-                }
-                timeout_dur = runnables.peek().map(|entry| entry.instant - now);
-            }
-        });
-        let main_thread_id = current().id();
+    pub fn new(main_sender: flume::Sender<Runnable>, dispatch_window_handle: HWND) -> Self {
+        let (threadpool, timer_queue) = dispatcher_init().expect("error init dispatcher");
+
         Self {
-            background_sender,
+            dispatch_window: dispatch_window_handle,
+            parker: Mutex::new(Parker::new()),
             main_sender,
-            timer_sender,
-            background_threads,
-            timer_thread,
-            parker,
-            main_thread_id,
-            event,
+            main_thread_id: thread::current().id(),
+            threadpool,
+            timer_queue,
         }
+    }
+
+    fn send_dispatch_message(&self) -> anyhow::Result<()> {
+        unsafe {
+            PostMessageW(
+                self.dispatch_window,
+                super::MAIN_DISPATCH,
+                WPARAM::default(),
+                LPARAM::default(),
+            )
+            .inspect_err(log_windows_error)?;
+        }
+        Ok(())
+    }
+
+    fn dispatch_on_threadpool(&self, runnable: Runnable) -> anyhow::Result<()> {
+        unsafe {
+            let ptr = Box::into_raw(Box::new(runnable));
+            let work = CreateThreadpoolWork(Some(background_runner), Some(ptr as _), None)
+                .inspect_err(log_windows_error)?;
+            SubmitThreadpoolWork(work);
+        }
+        Ok(())
     }
 }
 
 impl PlatformDispatcher for WindowsDispatcher {
     fn is_main_thread(&self) -> bool {
-        current().id() == self.main_thread_id
+        thread::current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
-        self.background_sender
-            .send((runnable, label))
-            .inspect_err(|e| log::error!("Dispatch failed: {e}"))
-            .ok();
+    fn dispatch(&self, runnable: Runnable, _: Option<TaskLabel>) {
+        // should panic ?
+        let _ = self.dispatch_on_threadpool(runnable);
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        self.main_sender
-            .send(runnable)
-            .inspect_err(|e| log::error!("Dispatch failed: {e}"))
-            .ok();
-        unsafe { SetEvent(self.event) }.ok();
+        self.main_sender.send(runnable).unwrap();
+        if self.send_dispatch_message().is_err() {
+            self.send_dispatch_message().expect("Error sending message");
+        }
     }
 
-    fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
-        self.timer_sender
-            .send((runnable, duration))
-            .inspect_err(|e| log::error!("Dispatch failed: {e}"))
-            .ok();
+    fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
+        // println!("Dispatched timed task {:#?}", duration);
+        unsafe {
+            let mut handle = std::mem::zeroed();
+            let ptr = Box::into_raw(Box::new(runnable));
+            CreateTimerQueueTimer(
+                &mut handle,
+                self.timer_queue,
+                Some(timer_runner),
+                Some(ptr as _),
+                duration.as_millis() as u32,
+                0,
+                WT_EXECUTEONLYONCE,
+            )
+            .expect("error create timer task");
+        }
     }
 
     fn tick(&self, _background_only: bool) -> bool {
@@ -125,35 +102,46 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn park(&self) {
-        self.parker.lock().park();
+        self.parker.lock().park()
     }
 
-    fn unparker(&self) -> parking::Unparker {
+    fn unparker(&self) -> Unparker {
         self.parker.lock().unparker()
     }
 }
 
-struct RunnableAfter {
-    runnable: Runnable,
-    instant: Instant,
+fn dispatcher_init() -> anyhow::Result<(PTP_POOL, HANDLE)> {
+    let threadpool = unsafe {
+        let mut threadpool_handle = CreateThreadpool(None);
+        if threadpool_handle.0 == 0 {
+            log::error!("Windows error: {}", std::io::Error::last_os_error());
+            threadpool_handle = CreateThreadpool(None);
+            if threadpool_handle.0 == 0 {
+                log::error!("Windows error: {}", std::io::Error::last_os_error());
+                return anyhow::Result::Err(anyhow::anyhow!("Error init dispatcher"));
+            }
+        }
+        SetThreadpoolThreadMinimum(threadpool_handle, 1).inspect_err(log_windows_error)?;
+        threadpool_handle
+    };
+    let timer_queue = unsafe { CreateTimerQueue().inspect_err(log_windows_error)? };
+    Ok((threadpool, timer_queue))
 }
 
-impl PartialEq for RunnableAfter {
-    fn eq(&self, other: &Self) -> bool {
-        self.instant == other.instant
+extern "system" fn background_runner(
+    _: PTP_CALLBACK_INSTANCE,
+    ptr: *mut std::ffi::c_void,
+    _: PTP_WORK,
+) {
+    unsafe {
+        let runnable = Box::from_raw(ptr as *mut Runnable);
+        panic::catch_unwind(|| runnable.run()).expect("error running runnable");
     }
 }
 
-impl Eq for RunnableAfter {}
-
-impl Ord for RunnableAfter {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.instant.cmp(&other.instant).reverse()
-    }
-}
-
-impl PartialOrd for RunnableAfter {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+unsafe extern "system" fn timer_runner(ptr: *mut std::ffi::c_void, _: BOOLEAN) {
+    unsafe {
+        let runnable = Box::from_raw(ptr as *mut Runnable);
+        panic::catch_unwind(|| runnable.run()).expect("error running runnable");
     }
 }

@@ -23,6 +23,10 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-ObjC");
     }
 
+    if cfg!(target_os = "windows") {
+        println!("cargo:rustc-link-arg=/stack:{}", 4 * 1024 * 1024);
+    }
+
     // Populate git sha environment variable if git is available
     println!("cargo:rerun-if-changed=../../.git/logs/HEAD");
     if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output() {

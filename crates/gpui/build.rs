@@ -21,6 +21,22 @@ fn main() {
     #[cfg(all(target_os = "macos", not(feature = "macos-blade")))]
     #[cfg(not(feature = "runtime_shaders"))]
     compile_metal_shaders(&header_path);
+
+    // We are using Windows Visita+, right..?
+    if cfg!(target_os = "windows") {
+        println!("cargo:rerun-if-changed=assets/windows/manifest.xml");
+        let mut res = winresource::WindowsResource::new();
+        let manifest_path = std::env::current_dir()
+            .unwrap()
+            .join("assets")
+            .join("windows")
+            .join("manifest.xml");
+        res.set_manifest_file(manifest_path.to_str().unwrap());
+        if let Err(e) = res.compile() {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn generate_dispatch_bindings() {

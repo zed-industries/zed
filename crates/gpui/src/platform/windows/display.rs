@@ -1,36 +1,58 @@
-use anyhow::{anyhow, Result};
+use std::rc::Rc;
+
+use anyhow::Result;
 use uuid::Uuid;
 
-use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
+use crate::{available_monitors, Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
 
 #[derive(Debug)]
-pub(crate) struct WindowsDisplay;
+pub(crate) struct WindowsDisplay {
+    pub display_id: DisplayId,
+    bounds: Bounds<GlobalPixels>,
+    uuid: Uuid,
+}
 
 impl WindowsDisplay {
-    pub(crate) fn new() -> Self {
-        Self
+    pub(crate) fn new(display_id: DisplayId) -> Self {
+        let screen = available_monitors()
+            .into_iter()
+            .nth(display_id.0 as _)
+            .unwrap();
+
+        Self {
+            display_id,
+            bounds: Bounds {
+                origin: Default::default(),
+                size: Size {
+                    width: GlobalPixels(screen.size().width as f32),
+                    height: GlobalPixels(screen.size().height as f32),
+                },
+            },
+            uuid: Uuid::from_bytes([0; 16]),
+        }
+    }
+
+    pub fn displays() -> Vec<Rc<dyn PlatformDisplay>> {
+        available_monitors()
+            .into_iter()
+            .enumerate()
+            .map(|(id, _)| {
+                Rc::new(WindowsDisplay::new(DisplayId(id as _))) as Rc<dyn PlatformDisplay>
+            })
+            .collect()
     }
 }
 
 impl PlatformDisplay for WindowsDisplay {
-    // todo!("windows")
     fn id(&self) -> DisplayId {
-        DisplayId(1)
+        self.display_id
     }
 
-    // todo!("windows")
     fn uuid(&self) -> Result<Uuid> {
-        Err(anyhow!("not implemented yet."))
+        Ok(self.uuid)
     }
 
-    // todo!("windows")
     fn bounds(&self) -> Bounds<GlobalPixels> {
-        Bounds::new(
-            Point::new(0.0.into(), 0.0.into()),
-            Size {
-                width: 1920.0.into(),
-                height: 1280.0.into(),
-            },
-        )
+        self.bounds
     }
 }
