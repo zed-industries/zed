@@ -35,7 +35,6 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
-use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -72,16 +71,6 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
 const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
-
-lazy_static! {
-    static ref METRIC_CONNECTIONS: IntGauge =
-        register_int_gauge!("connections", "number of connections").unwrap();
-    static ref METRIC_SHARED_PROJECTS: IntGauge = register_int_gauge!(
-        "shared_projects",
-        "number of open projects with one or more guests"
-    )
-    .unwrap();
-}
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session) -> BoxFuture<'static, ()>>;
@@ -919,17 +908,29 @@ pub async fn handle_websocket_request(
 }
 
 pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result<String> {
+    static CONNECTIONS_METRIC: OnceLock<IntGauge> = OnceLock::new();
+    let connections_metric = CONNECTIONS_METRIC
+        .get_or_init(|| register_int_gauge!("connections", "number of connections").unwrap());
+
     let connections = server
         .connection_pool
         .lock()
         .connections()
         .filter(|connection| !connection.admin)
         .count();
+    connections_metric.set(connections as _);
 
-    METRIC_CONNECTIONS.set(connections as _);
+    static SHARED_PROJECTS_METRIC: OnceLock<IntGauge> = OnceLock::new();
+    let shared_projects_metric = SHARED_PROJECTS_METRIC.get_or_init(|| {
+        register_int_gauge!(
+            "shared_projects",
+            "number of open projects with one or more guests"
+        )
+        .unwrap()
+    });
 
     let shared_projects = server.app_state.db.project_count_excluding_admins().await?;
-    METRIC_SHARED_PROJECTS.set(shared_projects as _);
+    shared_projects_metric.set(shared_projects as _);
 
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
