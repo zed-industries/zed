@@ -9,6 +9,8 @@ enum GitHostingProvider {
     Gitlab,
     Gitee,
     Bitbucket,
+    Sourcehut,
+    Codeberg,
 }
 
 impl GitHostingProvider {
@@ -18,6 +20,8 @@ impl GitHostingProvider {
             Self::Gitlab => "https://gitlab.com",
             Self::Gitee => "https://gitee.com",
             Self::Bitbucket => "https://bitbucket.org",
+            Self::Sourcehut => "https://git.sr.ht",
+            Self::Codeberg => "https://codeberg.org",
         };
 
         Url::parse(&base_url).unwrap()
@@ -30,7 +34,9 @@ impl GitHostingProvider {
             let line = selection.start.row + 1;
 
             match self {
-                Self::Github | Self::Gitlab | Self::Gitee => format!("L{}", line),
+                Self::Github | Self::Gitlab | Self::Gitee | Self::Sourcehut | Self::Codeberg => {
+                    format!("L{}", line)
+                }
                 Self::Bitbucket => format!("lines-{}", line),
             }
         } else {
@@ -38,8 +44,10 @@ impl GitHostingProvider {
             let end_line = selection.end.row + 1;
 
             match self {
-                Self::Github => format!("L{}-L{}", start_line, end_line),
-                Self::Gitlab | Self::Gitee => format!("L{}-{}", start_line, end_line),
+                Self::Github | Self::Codeberg => format!("L{}-L{}", start_line, end_line),
+                Self::Gitlab | Self::Gitee | Self::Sourcehut => {
+                    format!("L{}-{}", start_line, end_line)
+                }
                 Self::Bitbucket => format!("lines-{}:{}", start_line, end_line),
             }
         }
@@ -73,6 +81,8 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
         GitHostingProvider::Gitlab => format!("{owner}/{repo}/-/blob/{sha}/{path}"),
         GitHostingProvider::Gitee => format!("{owner}/{repo}/blob/{sha}/{path}"),
         GitHostingProvider::Bitbucket => format!("{owner}/{repo}/src/{sha}/{path}"),
+        GitHostingProvider::Sourcehut => format!("~{owner}/{repo}/tree/{sha}/item/{path}"),
+        GitHostingProvider::Codeberg => format!("{owner}/{repo}/src/commit/{sha}/{path}"),
     };
     let line_fragment = selection.map(|selection| provider.line_fragment(&selection));
 
@@ -143,6 +153,38 @@ fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
 
         return Some(ParsedGitRemote {
             provider: GitHostingProvider::Bitbucket,
+            owner,
+            repo,
+        });
+    }
+
+    if url.starts_with("git@git.sr.ht:") || url.starts_with("https://git.sr.ht/") {
+        // sourcehut indicates a repo with '.git' suffix as a separate repo.
+        // For example, "git@git.sr.ht:~username/repo" and "git@git.sr.ht:~username/repo.git"
+        // are two distinct repositories.
+        let repo_with_owner = url
+            .trim_start_matches("git@git.sr.ht:~")
+            .trim_start_matches("https://git.sr.ht/~");
+
+        let (owner, repo) = repo_with_owner.split_once("/")?;
+
+        return Some(ParsedGitRemote {
+            provider: GitHostingProvider::Sourcehut,
+            owner,
+            repo,
+        });
+    }
+
+    if url.starts_with("git@codeberg.org:") || url.starts_with("https://codeberg.org/") {
+        let repo_with_owner = url
+            .trim_start_matches("git@codeberg.org:")
+            .trim_start_matches("https://codeberg.org/")
+            .trim_end_matches(".git");
+
+        let (owner, repo) = repo_with_owner.split_once("/")?;
+
+        return Some(ParsedGitRemote {
+            provider: GitHostingProvider::Codeberg,
             owner,
             repo,
         });
@@ -474,6 +516,188 @@ mod tests {
 
         let expected_url =
             "https://bitbucket.org/thorstenzed/testingrepo/src/f00b4r/main.rs#lines-24:48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_sourcehut_permalink_from_ssh_url() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@git.sr.ht:~rajveermalviya/zed",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: None,
+        })
+        .unwrap();
+
+        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_sourcehut_permalink_from_ssh_url_with_git_prefix() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@git.sr.ht:~rajveermalviya/zed.git",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: None,
+        })
+        .unwrap();
+
+        let expected_url = "https://git.sr.ht/~rajveermalviya/zed.git/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_sourcehut_permalink_from_ssh_url_single_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@git.sr.ht:~rajveermalviya/zed",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: Some(Point::new(6, 1)..Point::new(6, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_sourcehut_permalink_from_ssh_url_multi_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@git.sr.ht:~rajveermalviya/zed",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: Some(Point::new(23, 1)..Point::new(47, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L24-48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_sourcehut_permalink_from_https_url() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://git.sr.ht/~rajveermalviya/zed",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/zed/src/main.rs",
+            selection: None,
+        })
+        .unwrap();
+
+        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/zed/src/main.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_sourcehut_permalink_from_https_url_single_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://git.sr.ht/~rajveermalviya/zed",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/zed/src/main.rs",
+            selection: Some(Point::new(6, 1)..Point::new(6, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/zed/src/main.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_sourcehut_permalink_from_https_url_multi_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://git.sr.ht/~rajveermalviya/zed",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/zed/src/main.rs",
+            selection: Some(Point::new(23, 1)..Point::new(47, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/zed/src/main.rs#L24-48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_ssh_url() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@codeberg.org:rajveermalviya/zed.git",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: None,
+        })
+        .unwrap();
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_ssh_url_single_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@codeberg.org:rajveermalviya/zed.git",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: Some(Point::new(6, 1)..Point::new(6, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_ssh_url_multi_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "git@codeberg.org:rajveermalviya/zed.git",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/editor/src/git/permalink.rs",
+            selection: Some(Point::new(23, 1)..Point::new(47, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_https_url() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://codeberg.org/rajveermalviya/zed.git",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/zed/src/main.rs",
+            selection: None,
+        })
+        .unwrap();
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_https_url_single_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://codeberg.org/rajveermalviya/zed.git",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/zed/src/main.rs",
+            selection: Some(Point::new(6, 1)..Point::new(6, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_https_url_multi_line_selection() {
+        let permalink = build_permalink(BuildPermalinkParams {
+            remote_url: "https://codeberg.org/rajveermalviya/zed.git",
+            sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+            path: "crates/zed/src/main.rs",
+            selection: Some(Point::new(23, 1)..Point::new(47, 10)),
+        })
+        .unwrap();
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

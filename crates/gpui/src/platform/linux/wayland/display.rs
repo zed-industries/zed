@@ -8,17 +8,17 @@ use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
 pub(crate) struct WaylandDisplay {}
 
 impl PlatformDisplay for WaylandDisplay {
-    // todo!(linux)
+    // todo(linux)
     fn id(&self) -> DisplayId {
         DisplayId(123) // return some fake data so it doesn't panic
     }
 
-    // todo!(linux)
+    // todo(linux)
     fn uuid(&self) -> anyhow::Result<Uuid> {
         Ok(Uuid::from_bytes([0; 16])) // return some fake data so it doesn't panic
     }
 
-    // todo!(linux)
+    // todo(linux)
     fn bounds(&self) -> Bounds<GlobalPixels> {
         Bounds {
             origin: Default::default(),

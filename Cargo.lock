@@ -84,7 +84,6 @@ dependencies = [
  "gpui",
  "isahc",
  "language",
- "lazy_static",
  "log",
  "matrixmultiply",
  "ordered-float 2.10.0",
@@ -93,6 +92,7 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "tiktoken-rs",
@@ -9436,7 +9436,6 @@ dependencies = [
  "anyhow",
  "core-foundation",
  "core-foundation-sys 0.8.6",
- "lazy_static",
  "sys-locale",
  "time",
 ]

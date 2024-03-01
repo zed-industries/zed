@@ -1,4 +1,4 @@
-//todo!(linux): remove
+// todo(linux): remove
 #![allow(unused)]
 
 use crate::{
@@ -99,7 +99,7 @@ pub(crate) struct X11WindowState {
 #[derive(Clone)]
 pub(crate) struct X11Window(pub(crate) Rc<X11WindowState>);
 
-//todo!(linux): Remove other RawWindowHandle implementation
+// todo(linux): Remove other RawWindowHandle implementation
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
     fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
         let mut wh = blade_rwh::XcbWindowHandle::empty();
@@ -301,7 +301,7 @@ impl X11WindowState {
             let mut inner = self.inner.borrow_mut();
             let old_bounds = mem::replace(&mut inner.bounds, bounds);
             do_move = old_bounds.origin != bounds.origin;
-            //todo!(linux): use normal GPUI types here, refactor out the double
+            // todo(linux): use normal GPUI types here, refactor out the double
             // viewport check and extra casts ( )
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
             if inner.renderer.viewport_size() != gpu_size {
@@ -377,12 +377,12 @@ impl PlatformWindow for X11Window {
         self.0.inner.borrow_mut().scale_factor
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn titlebar_height(&self) -> Pixels {
         unimplemented!()
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn appearance(&self) -> WindowAppearance {
         WindowAppearance::Light
     }
@@ -402,7 +402,7 @@ impl PlatformWindow for X11Window {
         )
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn modifiers(&self) -> Modifiers {
         Modifiers::default()
     }
@@ -419,7 +419,7 @@ impl PlatformWindow for X11Window {
         self.0.inner.borrow_mut().input_handler.take()
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn prompt(
         &self,
         _level: PromptLevel,
@@ -447,10 +447,10 @@ impl PlatformWindow for X11Window {
         });
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn set_edited(&mut self, edited: bool) {}
 
-    //todo!(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
+    // todo(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
     // but it looks like the equivalent for Linux is GTK specific:
     //
     // https://docs.gtk.org/gtk3/signal.Entry.insert-emoji.html
@@ -460,17 +460,17 @@ impl PlatformWindow for X11Window {
         unimplemented!()
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn minimize(&self) {
         unimplemented!()
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn zoom(&self) {
         unimplemented!()
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn toggle_full_screen(&self) {
         unimplemented!()
     }
@@ -511,7 +511,7 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn is_topmost_for_position(&self, _position: Point<Pixels>) -> bool {
         unimplemented!()
     }

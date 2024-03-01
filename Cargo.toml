@@ -310,7 +310,7 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fc
 split-debuginfo = "unpacked"
 debug = "limited"
 
-# todo!(linux) - Remove this
+# todo(linux) - Remove this
 [profile.dev.package.blade-graphics]
 split-debuginfo = "off"
 debug = "full"

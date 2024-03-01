@@ -73,7 +73,7 @@
       "ctrl-n": "editor::MoveDown",
       "ctrl-b": "editor::MoveLeft",
       "ctrl-f": "editor::MoveRight",
-      "ctrl-shift-l": "editor::NextScreen", // todo!(linux): What is this
+      "ctrl-shift-l": "editor::NextScreen", // todo(linux): What is this
       "alt-left": "editor::MoveToPreviousWordStart",
       "alt-b": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
@@ -117,7 +117,8 @@
         {
           "stop_at_soft_wraps": true
         }
-      ]
+      ],
+      "ctrl-;": "editor::ToggleLineNumbers"
     }
   },
   {
@@ -388,7 +389,7 @@
     }
   },
   // Bindings from Sublime Text
-  // todo!(linux) make sure these match linux bindings or remove above comment?
+  // todo(linux) make sure these match linux bindings or remove above comment?
   {
     "context": "Editor",
     "bindings": {
@@ -412,7 +413,7 @@
     }
   },
   // Bindings from Atom
-  // todo!(linux) make sure these match linux bindings or remove above comment?
+  // todo(linux) make sure these match linux bindings or remove above comment?
   {
     "context": "Pane",
     "bindings": {
