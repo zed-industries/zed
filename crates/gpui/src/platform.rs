@@ -12,8 +12,11 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 
+#[cfg(target_os = "windows")]
+mod windows;
+
 #[cfg(any(target_os = "linux", target_os = "windows", feature = "macos-blade"))]
-mod blade;
+mod cross_platform;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;
