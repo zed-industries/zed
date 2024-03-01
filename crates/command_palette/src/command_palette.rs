@@ -37,6 +37,24 @@ pub struct CommandPalette {
     picker: View<Picker<CommandPaletteDelegate>>,
 }
 
+fn trim_consecutive_whitespaces(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut last_char_was_whitespace = false;
+
+    for char in input.trim().chars() {
+        if char.is_whitespace() {
+            if !last_char_was_whitespace {
+                result.push(char);
+            }
+            last_char_was_whitespace = true;
+        } else {
+            result.push(char);
+            last_char_was_whitespace = false;
+        }
+    }
+    result
+}
+
 impl CommandPalette {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &Toggle, cx| {
@@ -247,7 +265,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = query.clone();
+            let query = trim_consecutive_whitespaces(&query.as_str());
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -265,7 +283,6 @@ impl PickerDelegate for CommandPaletteDelegate {
                         char_bag: command.name.chars().collect(),
                     })
                     .collect::<Vec<_>>();
-
                 let matches = if query.is_empty() {
                     candidates
                         .into_iter()
@@ -468,7 +485,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| editor.focus(cx))
         });
 

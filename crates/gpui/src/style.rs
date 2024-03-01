@@ -208,7 +208,7 @@ impl Default for TextStyle {
     fn default() -> Self {
         TextStyle {
             color: black(),
-            // todo!(linux) make this configurable or choose better default
+            // todo(linux) make this configurable or choose better default
             font_family: if cfg!(target_os = "linux") {
                 "FreeMono".into()
             } else {

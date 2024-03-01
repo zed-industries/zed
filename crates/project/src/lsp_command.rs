@@ -1405,6 +1405,13 @@ impl LspCommand for GetHover {
         } else {
             None
         };
+        if let Some(range) = range.as_ref() {
+            buffer
+                .update(&mut cx, |buffer, _| {
+                    buffer.wait_for_anchors([range.start.clone(), range.end.clone()])
+                })?
+                .await?;
+        }
 
         Ok(Some(Hover {
             contents,

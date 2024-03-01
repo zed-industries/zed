@@ -117,7 +117,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                     // Highlight the selected symbol using a background highlight
                     this.highlight_inlay_background::<HoverState>(
                         vec![inlay_hover.range],
-                        |theme| theme.element_hover, // todo!("use a proper background here")
+                        |theme| theme.element_hover, // todo("use a proper background here")
                         cx,
                     );
                     this.hover_state.info_popover = Some(hover_popover);
@@ -332,7 +332,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     this.highlight_background::<HoverState>(
                         vec![symbol_range],
-                        |theme| theme.element_hover, // todo! update theme
+                        |theme| theme.element_hover, // todo update theme
                         cx,
                     );
                 } else {
@@ -1066,6 +1066,8 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,

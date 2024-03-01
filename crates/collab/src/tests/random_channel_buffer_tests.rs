@@ -253,7 +253,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                         .channel_buffers()
                         .deref()
                         .iter()
-                        .find(|b| b.read(cx).channel_id == channel_id.to_proto())
+                        .find(|b| b.read(cx).channel_id.0 == channel_id.to_proto())
                     {
                         let channel_buffer = channel_buffer.read(cx);
 

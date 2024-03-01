@@ -9,6 +9,11 @@
       "format_on_save": "off"
     },
     "YAML": {
+      "tab_size": 2,
+      "formatter": "prettier"
+    },
+    "JSON": {
+      "tab_size": 2,
       "formatter": "prettier"
     }
   },

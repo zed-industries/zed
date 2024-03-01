@@ -1477,7 +1477,7 @@ mod tests {
                 buffer_text,
             )
         });
-        let window = cx.add_window(|_| ());
+        let window = cx.add_window(|_| gpui::Empty);
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 

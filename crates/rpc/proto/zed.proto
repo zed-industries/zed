@@ -12,7 +12,7 @@ message Envelope {
     uint32 id = 1;
     optional uint32 responding_to = 2;
     optional PeerId original_sender_id = 3;
-    
+
     /*
         When you are adding a new message type, instead of adding it in semantic order
         and bumping the message ID's of everything that follows, add it at the end of the
@@ -56,7 +56,7 @@ message Envelope {
         GetDefinitionResponse get_definition_response = 33;
         GetTypeDefinition get_type_definition = 34;
         GetTypeDefinitionResponse get_type_definition_response = 35;
-        
+
         GetReferences get_references = 36;
         GetReferencesResponse get_references_response = 37;
         GetDocumentHighlights get_document_highlights = 38;
@@ -192,7 +192,7 @@ message Envelope {
         LspExtExpandMacroResponse lsp_ext_expand_macro_response = 155;
         SetRoomParticipantRole set_room_participant_role = 156;
 
-        UpdateUserChannels update_user_channels = 157; 
+        UpdateUserChannels update_user_channels = 157;
 
         GetImplementation get_implementation = 162;
         GetImplementationResponse get_implementation_response = 163;
@@ -1026,6 +1026,9 @@ message UpdateChannels {
     repeated ChannelParticipants channel_participants = 7;
     repeated ChannelMessageId latest_channel_message_ids = 8;
     repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
+
+    repeated HostedProject hosted_projects = 10;
+    repeated uint64 deleted_hosted_projects = 11;
 }
 
 message UpdateUserChannels {
@@ -1052,6 +1055,13 @@ message ChannelPermission {
 message ChannelParticipants {
     uint64 channel_id = 1;
     repeated uint64 participant_user_ids = 2;
+}
+
+message HostedProject {
+    uint64 id = 1;
+    uint64 channel_id = 2;
+    string name = 3;
+    ChannelVisibility visibility = 4;
 }
 
 message JoinChannel {
