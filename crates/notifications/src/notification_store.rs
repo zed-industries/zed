@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
-use client::{Client, UserStore};
+use client::{ChannelId, Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
 use gpui::{
@@ -413,7 +413,7 @@ impl NotificationStore {
             Notification::ChannelInvitation { channel_id, .. } => {
                 self.channel_store
                     .update(cx, |store, cx| {
-                        store.respond_to_channel_invite(channel_id, response, cx)
+                        store.respond_to_channel_invite(ChannelId(channel_id), response, cx)
                     })
                     .detach();
             }

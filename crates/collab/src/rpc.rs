@@ -3396,6 +3396,9 @@ fn build_channels_update(
     for channel in channel_invites {
         update.channel_invitations.push(channel.to_proto());
     }
+    for project in channels.hosted_projects {
+        update.hosted_projects.push(project);
+    }
 
     update
 }

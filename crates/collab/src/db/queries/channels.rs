@@ -652,9 +652,14 @@ impl Database {
             .observed_channel_messages(&channel_ids, user_id, &*tx)
             .await?;
 
+        let hosted_projects = self
+            .get_hosted_projects(&channel_ids, &roles_by_channel_id, &*tx)
+            .await?;
+
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
+            hosted_projects,
             channel_participants,
             latest_buffer_versions,
             latest_channel_messages,

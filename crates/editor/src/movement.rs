@@ -12,7 +12,7 @@ use std::{ops::Range, sync::Arc};
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
 /// `FindRange::MultiLine` keeps going until the end of a string.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FindRange {
     SingleLine,
     MultiLine,

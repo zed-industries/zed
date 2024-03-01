@@ -21,6 +21,7 @@ test-support = [
     "workspace/test-support",
     "tree-sitter-rust",
     "tree-sitter-typescript",
+    "tree-sitter-html"
 ]
 
 [dependencies]
