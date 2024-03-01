@@ -40,7 +40,7 @@ pub struct ProjectSettings {
     /// Default: [ "**/.env*" ]
     pub private_files: Option<Vec<String>>,
 
-    /// Maximum file size in bytes to open in the editor.
+    /// Maximum file size in kilobytes to open in the editor.
     pub max_file_size: usize,
 }
 
