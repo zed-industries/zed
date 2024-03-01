@@ -57,7 +57,7 @@ use windows::{
                 DispatchMessageW, GetMessageW, LoadCursorW, LoadImageW, PostQuitMessage, SetCursor,
                 TranslateMessage, ACCEL, ACCEL_VIRT_FLAGS, HCURSOR, HMENU, IDC_ARROW, IDC_CROSS,
                 IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE,
-                MF_POPUP, MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_DESTROY,
+                LR_SHARED, MF_POPUP, MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_DESTROY,
             },
         },
     },
@@ -463,27 +463,61 @@ impl Platform for WindowsPlatform {
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
             let handle = match style {
-                CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => {
-                    LoadImageW(None, IDC_IBEAM, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE)
-                }
-                CursorStyle::Crosshair => {
-                    LoadImageW(None, IDC_CROSS, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE)
-                }
-                CursorStyle::PointingHand | CursorStyle::DragLink => {
-                    LoadImageW(None, IDC_HAND, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE)
-                }
+                CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => LoadImageW(
+                    None,
+                    IDC_IBEAM,
+                    IMAGE_CURSOR,
+                    0,
+                    0,
+                    LR_DEFAULTSIZE | LR_SHARED,
+                ),
+                CursorStyle::Crosshair => LoadImageW(
+                    None,
+                    IDC_CROSS,
+                    IMAGE_CURSOR,
+                    0,
+                    0,
+                    LR_DEFAULTSIZE | LR_SHARED,
+                ),
+                CursorStyle::PointingHand | CursorStyle::DragLink => LoadImageW(
+                    None,
+                    IDC_HAND,
+                    IMAGE_CURSOR,
+                    0,
+                    0,
+                    LR_DEFAULTSIZE | LR_SHARED,
+                ),
                 CursorStyle::ResizeLeft
                 | CursorStyle::ResizeRight
-                | CursorStyle::ResizeLeftRight => {
-                    LoadImageW(None, IDC_SIZEWE, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE)
-                }
+                | CursorStyle::ResizeLeftRight => LoadImageW(
+                    None,
+                    IDC_SIZEWE,
+                    IMAGE_CURSOR,
+                    0,
+                    0,
+                    LR_DEFAULTSIZE | LR_SHARED,
+                ),
                 CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => {
-                    LoadImageW(None, IDC_SIZENS, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE)
+                    LoadImageW(
+                        None,
+                        IDC_SIZENS,
+                        IMAGE_CURSOR,
+                        0,
+                        0,
+                        LR_DEFAULTSIZE | LR_SHARED,
+                    )
                 }
                 CursorStyle::OperationNotAllowed => {
-                    LoadImageW(None, IDC_NO, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE)
+                    LoadImageW(None, IDC_NO, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED)
                 }
-                _ => LoadImageW(None, IDC_ARROW, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE),
+                _ => LoadImageW(
+                    None,
+                    IDC_ARROW,
+                    IMAGE_CURSOR,
+                    0,
+                    0,
+                    LR_DEFAULTSIZE | LR_SHARED,
+                ),
             };
             if handle.is_err() {
                 log_windows_error_with_message!("Error loading cursor image");

@@ -25,7 +25,7 @@ use windows::{
         },
         Graphics::Gdi::{
             GetMonitorInfoW, MonitorFromWindow, RedrawWindow, UpdateWindow, ValidateRect, HRGN,
-            MONITORINFO, MONITOR_DEFAULTTONEAREST, RDW_INVALIDATE,
+            MONITORINFO, MONITOR_DEFAULTTONEAREST, RDW_ERASENOW, RDW_INVALIDATE, RDW_UPDATENOW,
         },
         System::{
             Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
@@ -262,7 +262,18 @@ impl WindowsWindowinner {
                 self.window_handle.hwnd(),
                 None,
                 HRGN::default(),
-                RDW_INVALIDATE,
+                RDW_INVALIDATE | RDW_ERASENOW,
+            );
+        }
+    }
+
+    pub fn update_now(&self) {
+        unsafe {
+            RedrawWindow(
+                self.window_handle.hwnd(),
+                None,
+                HRGN::default(),
+                RDW_INVALIDATE | RDW_UPDATENOW,
             );
         }
     }
@@ -375,7 +386,6 @@ impl WindowsWindowBase for WindowsWindowinner {
                     )
                     .inspect_err(log_windows_error);
                 }
-                self.update();
                 LRESULT(0)
             }
             WM_ACTIVATE => {
@@ -390,7 +400,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let mut modifiers = self.modifiers.borrow().clone();
                 if let Some(key) = parse_system_key(message, wparam, lparam, &mut modifiers) {
                     self.handle_input(key);
-                    self.update();
+                    self.update_now();
                 }
                 (*self.modifiers.borrow_mut()) = modifiers;
                 LRESULT(0)
@@ -401,7 +411,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let modifiers = self.modifiers.borrow();
                 let key = parse_mouse_button(message, wparam, lparam, &modifiers);
                 self.handle_input(key);
-                self.update();
+                self.update_now();
                 LRESULT(0)
             }
             WM_MOUSEMOVE => {
@@ -416,7 +426,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let keycode = parse_keyboard_input(wparam, lparam, &*modifiers);
                 if let Some(key) = keycode {
                     self.handle_input(key);
-                    self.update();
+                    self.update_now();
                 }
                 LRESULT(0)
             }
@@ -424,7 +434,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let modifiers = self.modifiers.borrow().clone();
                 let input = parse_mouse_wheel(wparam, lparam, modifiers);
                 self.handle_input(input);
-                self.update();
+                self.update_now();
                 LRESULT(0)
             }
             WM_SIZE => {

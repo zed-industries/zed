@@ -107,7 +107,7 @@ macro_rules! log_windows_error_with_message {
     ($s: literal) => {{
         let caller = std::panic::Location::caller();
         log::error!(
-            "$s at {}:{}: {}",
+            concat!($s, " at {}:{}: {}"),
             caller.file(),
             caller.line(),
             std::io::Error::last_os_error()
