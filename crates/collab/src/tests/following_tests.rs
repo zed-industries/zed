@@ -1578,7 +1578,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 
 #[gpui::test]
 async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    let (_, client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+    let (_server, client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
 
     let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
     client_a
@@ -2024,7 +2024,7 @@ async fn test_following_to_channel_notes_other_workspace(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    let (_, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
+    let (_server, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
 
     let mut cx_a2 = cx_a.clone();
     let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
@@ -2081,7 +2081,7 @@ async fn test_following_to_channel_notes_other_workspace(
 
 #[gpui::test]
 async fn test_following_while_deactivated(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    let (_, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
+    let (_server, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
 
     let mut cx_a2 = cx_a.clone();
     let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;

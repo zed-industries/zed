@@ -75,6 +75,18 @@
 
 (constant) @type
 
+(superclass
+  (constant) @type.super)
+
+(superclass
+  (scope_resolution
+    (constant) @type.super))
+
+(superclass
+  (scope_resolution
+    (scope_resolution
+      (constant) @type.super)))
+
 (self) @variable.special
 (super) @variable.special
 
@@ -169,6 +181,7 @@
   ","
   ";"
   "."
+  "::"
 ] @punctuation.delimiter
 
 [

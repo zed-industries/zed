@@ -37,7 +37,12 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action("New Window", workspace::NewWindow),
                 MenuItem::separator(),
                 MenuItem::action("Open…", workspace::Open),
-                MenuItem::action("Open Recent...", recent_projects::OpenRecent),
+                MenuItem::action(
+                    "Open Recent...",
+                    recent_projects::OpenRecent {
+                        create_new_window: false,
+                    },
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
                 MenuItem::action("Save", workspace::Save { save_intent: None }),

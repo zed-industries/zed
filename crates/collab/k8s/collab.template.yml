@@ -156,6 +156,11 @@ spec:
                 secretKeyRef:
                   name: clickhouse
                   key: database
+            - name: SLACK_PANICS_WEBHOOK
+              valueFrom:
+                secretKeyRef:
+                  name: slack
+                  key: panics_webhook
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE

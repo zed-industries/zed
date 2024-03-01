@@ -2065,6 +2065,7 @@ dependencies = [
  "release_channel",
  "reqwest",
  "rpc",
+ "rustc-demangle",
  "scrypt",
  "sea-orm",
  "semver",
@@ -7171,11 +7172,16 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "fuzzy",
  "gpui",
+ "language",
  "menu",
  "ordered-float 2.10.0",
  "picker",
+ "project",
+ "serde",
+ "serde_json",
  "smol",
  "ui",
  "util",

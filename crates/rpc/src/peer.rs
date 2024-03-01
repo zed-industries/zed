@@ -361,8 +361,8 @@ impl Peer {
         self.connections.write().remove(&connection_id);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn reset(&self, epoch: u32) {
-        self.teardown();
         self.next_connection_id.store(0, SeqCst);
         self.epoch.store(epoch, SeqCst);
     }
