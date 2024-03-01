@@ -66,10 +66,10 @@ pub struct AssistantSettings {
     /// Default height in pixels when the assistant is docked to the bottom.
     pub default_height: Pixels,
     /// The default OpenAI model to use when starting new conversations.
-    #[deprecated = "Please use `provider.openai.default_model` instead."]
+    #[deprecated = "Please use `provider.default_model` instead."]
     pub default_open_ai_model: OpenAiModel,
     /// OpenAI API base URL to use when starting new conversations.
-    #[deprecated = "Please use `provider.openai.api_url` instead."]
+    #[deprecated = "Please use `provider.api_url` instead."]
     pub openai_api_url: String,
     /// The settings for the AI provider.
     pub provider: AiProviderSettings,
