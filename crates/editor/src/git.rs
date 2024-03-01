@@ -1,8 +1,12 @@
 pub mod permalink;
 
+use core::fmt;
 use std::ops::Range;
 
-use git::diff::{DiffHunk, DiffHunkStatus};
+use git::{
+    blame::BlameHunk,
+    diff::{DiffHunk, DiffHunkStatus},
+};
 use language::Point;
 
 use crate::{
@@ -87,6 +91,56 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
             display_row_range: start..end,
             status: hunk.status(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplayBlameHunk {
+    Folded {
+        display_row: u32,
+    },
+
+    Unfolded {
+        display_row_range: Range<u32>,
+        blame_hunk: BlameHunk<u32>,
+    },
+}
+
+impl fmt::Display for DisplayBlameHunk {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DisplayBlameHunk::Folded { .. } => Ok(()),
+            DisplayBlameHunk::Unfolded { blame_hunk, .. } => {
+                let datetime = blame_hunk.time.format("%Y-%m-%d %H:%M").to_string();
+
+                let pretty_commit_id = format!("{}", blame_hunk.oid);
+                let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+
+                let name = blame_hunk.name.as_deref().unwrap_or("<no name>");
+                let name = if name.len() > 20 {
+                    format!("{}...", &name[..16])
+                } else {
+                    name.to_string()
+                };
+
+                write!(f, "{:6} {:20} ({})", short_commit_id, name, datetime)
+            }
+        }
+    }
+}
+
+pub fn blame_hunk_to_display(hunk: BlameHunk<u32>, snapshot: &DisplaySnapshot) -> DisplayBlameHunk {
+    // TODO: This is all wrong, I bet
+    let hunk_start_point = Point::new(hunk.buffer_range.start, 0);
+
+    let start = hunk_start_point.to_display_point(snapshot).row();
+    let hunk_end_row = hunk.buffer_range.end.max(hunk.buffer_range.start);
+    let hunk_end_point = Point::new(hunk_end_row, 0);
+    let end = hunk_end_point.to_display_point(snapshot).row();
+
+    DisplayBlameHunk::Unfolded {
+        display_row_range: start..end,
+        blame_hunk: hunk,
     }
 }
 

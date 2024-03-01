@@ -12,7 +12,7 @@ use std::{
 use sum_tree::{MapSeekTarget, TreeMap};
 use util::{paths::PathExt, ResultExt};
 
-pub use git2::Repository as LibGitRepository;
+pub use git2::{BlameOptions as LibGitBlameOptions, Repository as LibGitRepository};
 
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct Branch {

@@ -4184,14 +4184,22 @@ dependencies = [
 name = "git"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "clock",
+ "fs",
  "git2",
  "lazy_static",
  "log",
+ "parking_lot",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
  "smol",
  "sum_tree",
  "text",
  "unindent",
+ "util",
 ]
 
 [[package]]
@@ -5178,6 +5186,7 @@ dependencies = [
  "collections",
  "ctor",
  "env_logger",
+ "fs",
  "futures 0.3.28",
  "fuzzy",
  "git",
@@ -6070,7 +6079,11 @@ dependencies = [
  "kqueue",
  "libc",
  "log",
+<<<<<<< HEAD
  "mio",
+=======
+ "mio 0.8.8",
+>>>>>>> f16f6ac43 (WIP: git blame prototype)
  "walkdir",
  "windows-sys 0.48.0",
 ]
@@ -9824,7 +9837,11 @@ dependencies = [
  "backtrace",
  "bytes 1.5.0",
  "libc",
+<<<<<<< HEAD
  "mio",
+=======
+ "mio 0.8.8",
+>>>>>>> f16f6ac43 (WIP: git blame prototype)
  "num_cpus",
  "parking_lot",
  "pin-project-lite",

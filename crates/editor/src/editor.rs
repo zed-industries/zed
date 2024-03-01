@@ -37,6 +37,7 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+use ::git::blame::BufferBlame;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
@@ -92,8 +93,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use project::Item;
-use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
@@ -432,6 +432,8 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
+    show_git_blame: bool,
+    blame: Option<BlameState>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -440,15 +442,24 @@ pub struct Editor {
     >,
 }
 
+// TODO: Make this a model
+struct BlameState {
+    blame: BufferBlame,
+    refresh_subscription: Subscription,
+}
+
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
+    show_git_blame: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
 }
+
+pub(crate) const GIT_BLAME_GUTTER_WIDTH_CHARS: Pixels = Pixels(55.0);
 
 pub struct GutterDimensions {
     pub left_padding: Pixels,
@@ -1471,6 +1482,8 @@ impl Editor {
             vim_replace_map: Default::default(),
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
+            show_git_blame: false,
+            blame: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1616,6 +1629,7 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
+            show_git_blame: self.blame.is_some(),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -8824,6 +8838,61 @@ impl Editor {
         }
     }
 
+    pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
+        self.show_git_blame = !self.show_git_blame;
+
+        if self.show_git_blame {
+            if self.show_git_blame_internal(cx).is_none() {
+                log::error!("failed to toggle on 'git blame'");
+            }
+        } else {
+            self.blame.take();
+        }
+
+        cx.notify();
+    }
+
+    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        let project_handle = self.project.as_ref()?.clone();
+        let project = project_handle.read(cx);
+        let buffer = self.buffer().read(cx).as_singleton()?;
+        let file = buffer.read(cx).file()?.as_local()?.path();
+
+        let buffer_project_path = buffer.read(cx).project_path(cx)?;
+        let working_directory = project.get_workspace_root(&buffer_project_path, cx)?;
+        let buffer_snapshot = buffer.read(cx).snapshot();
+
+        let git_blame_generation = cx.background_executor().spawn({
+            let file = file.clone();
+            async move { BufferBlame::new_with_cli(&working_directory, &file, &buffer_snapshot) }
+        });
+
+        let refresh_subscription = cx.subscribe(&project_handle, |_, _, event, _| match event {
+            project::Event::WorktreeUpdatedGitRepositories(_) => {
+                println!(
+                    "WorktreeUpdatedGitRepositories. Update blame data. event: {:?}",
+                    event
+                );
+            }
+            _ => {}
+        });
+
+        cx.spawn(move |this, mut cx| async move {
+            git_blame_generation.await.and_then(|blame| {
+                this.update(&mut cx, |editor, cx| {
+                    editor.blame = Some(BlameState {
+                        blame,
+                        refresh_subscription,
+                    });
+                    cx.notify();
+                })
+            })
+        })
+        .detach();
+
+        Some(())
+    }
+
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
@@ -9960,6 +10029,7 @@ impl EditorSnapshot {
             ProjectSettings::get_global(cx).git.git_gutter,
             Some(GitGutterSetting::TrackedFiles)
         );
+        let show_git_blame = self.show_git_blame;
         let gutter_settings = EditorSettings::get_global(cx).gutter;
 
         let line_gutter_width = if gutter_settings.line_numbers {
@@ -9970,7 +10040,9 @@ impl EditorSnapshot {
             0.0.into()
         };
 
-        let left_padding = if gutter_settings.code_actions {
+        let left_padding = if show_git_blame {
+            em_width * GIT_BLAME_GUTTER_WIDTH_CHARS
+        } else if gutter_settings.code_actions {
             em_width * 3.0
         } else if show_git_gutter && gutter_settings.line_numbers {
             em_width * 2.0

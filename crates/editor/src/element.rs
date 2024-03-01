@@ -4,7 +4,7 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{diff_hunk_to_display, DisplayDiffHunk},
+    git::{blame_hunk_to_display, diff_hunk_to_display, DisplayBlameHunk, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -14,11 +14,11 @@ use crate::{
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, GutterDimensions, HalfPageDown, HalfPageUp,
     HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, GIT_BLAME_GUTTER_WIDTH_CHARS, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use git::diff::DiffHunkStatus;
+use git::{blame::BufferBlame, diff::DiffHunkStatus};
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
@@ -300,6 +300,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
+        register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -1081,6 +1082,30 @@ impl EditorElement {
             .collect()
     }
 
+    fn layout_git_blame_gutters(
+        &self,
+        blame: &BufferBlame,
+        display_rows: Range<u32>,
+        snapshot: &EditorSnapshot,
+    ) -> Vec<DisplayBlameHunk> {
+        // TODO: Doesn't work in multibuffer then?
+        if let Some((_, _, buffer_snapshot)) = &snapshot.buffer_snapshot.as_singleton() {
+            let buffer_start_row = DisplayPoint::new(display_rows.start, 0)
+                .to_point(snapshot)
+                .row;
+            let buffer_end_row = DisplayPoint::new(display_rows.end, 0)
+                .to_point(snapshot)
+                .row;
+
+            blame
+                .hunks_in_row_range(buffer_start_row..buffer_end_row, buffer_snapshot)
+                .map(|hunk| blame_hunk_to_display(hunk, snapshot))
+                .collect()
+        } else {
+            Vec::default()
+        }
+    }
+
     fn layout_code_actions_indicator(
         &self,
         line_height: Pixels,
@@ -1106,6 +1131,21 @@ impl EditorElement {
             AvailableSpace::Definite(line_height),
         );
         let indicator_size = button.measure(available_space, cx);
+
+        // let mut x = if layout.display_blame_hunks.is_some() {
+        //     GIT_BLAME_GUTTER_WIDTH_CHARS * layout.position_map.em_width
+        // } else {
+        //     Pixels::ZERO
+        // };
+        // let mut available_width = layout.gutter_dimensions.margin
+        //     + layout.gutter_dimensions.left_padding
+        //     - indicator_size.width;
+        // if layout.display_blame_hunks.is_some() {
+        //     available_width -= GIT_BLAME_GUTTER_WIDTH_CHARS * layout.position_map.em_width;
+        // }
+        // let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
+        // Center indicator.
+        // x += available_width / 2.;
 
         let mut x = Pixels::ZERO;
         let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
@@ -1985,6 +2025,10 @@ impl EditorElement {
             Self::paint_diff_hunks(layout, cx);
         }
 
+        if layout.display_blame_hunks.is_some() {
+            self.paint_blame_hunks(layout, cx);
+        }
+
         for (ix, line) in layout.line_numbers.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = layout.gutter_hitbox.origin
@@ -2114,6 +2158,78 @@ impl EditorElement {
                     Edges::default(),
                     transparent_black(),
                 ));
+            }
+        })
+    }
+
+    fn paint_blame_hunks(&self, layout: &EditorLayout, cx: &mut ElementContext) {
+        let Some(display_blame_hunks) = layout.display_blame_hunks.as_ref() else {
+            return;
+        };
+        if display_blame_hunks.is_empty() {
+            return;
+        }
+
+        let line_height = layout.position_map.line_height;
+
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_top = scroll_position.y * line_height;
+
+        cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
+            for hunk in display_blame_hunks {
+                let (blame_hunk, display_row_range) = match hunk {
+                    &DisplayBlameHunk::Folded { .. } => {
+                        // TODO: what?
+                        continue;
+                    }
+                    DisplayBlameHunk::Unfolded {
+                        display_row_range,
+                        blame_hunk,
+                    } => (blame_hunk, display_row_range),
+                };
+
+                let blame_line = format!("{}", hunk);
+
+                let sha_bytes = blame_hunk.oid.as_bytes();
+                debug_assert!(sha_bytes.len() > 4);
+
+                let sha_number = u32::from_ne_bytes(sha_bytes[..4].try_into().unwrap());
+                let sha_color = cx.theme().players().color_for_participant(sha_number);
+
+                let commit_sha_run = TextRun {
+                    len: 6,
+                    font: self.style.text.font(),
+                    color: sha_color.cursor,
+                    background_color: None,
+                    underline: Default::default(),
+                    strikethrough: None,
+                };
+
+                let info_run = TextRun {
+                    len: blame_line.len() - 6,
+                    font: self.style.text.font(),
+                    color: cx.theme().status().hint,
+                    background_color: None,
+                    underline: Default::default(),
+                    strikethrough: None,
+                };
+                let runs = [commit_sha_run, info_run];
+
+                for row in display_row_range.start..display_row_range.end {
+                    let start_y = row as f32 * line_height - scroll_top;
+                    let start_x = layout.position_map.em_width * 1;
+
+                    let origin = layout.gutter_hitbox.origin + point(start_x, start_y);
+
+                    let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
+                    if let Some(line) = cx
+                        .text_system()
+                        .shape_line(blame_line.clone().into(), font_size, &runs)
+                        .log_err()
+                    {
+                        line.paint(origin, line_height, cx).log_err();
+                    }
+                }
             }
         })
     }
@@ -3171,6 +3287,9 @@ impl Element for EditorElement {
                 );
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
+                let display_blame_hunks = self.editor.read(cx).blame.as_ref().map(|blame_state| {
+                    self.layout_git_blame_gutters(&blame_state.blame, start_row..end_row, &snapshot)
+                });
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
@@ -3399,6 +3518,7 @@ impl Element for EditorElement {
                     redacted_ranges,
                     line_numbers,
                     display_hunks,
+                    display_blame_hunks,
                     folds,
                     blocks,
                     cursors,
@@ -3485,6 +3605,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
+    display_blame_hunks: Option<Vec<DisplayBlameHunk>>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
