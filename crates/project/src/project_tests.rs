@@ -1280,17 +1280,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
-    language_registry.add(Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    )));
+    language_registry.add(rust_lang());
     let mut fake_servers =
         language_registry.register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
 
@@ -1330,29 +1320,6 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
-    let rust = Language::new(
-        LanguageConfig {
-            name: Arc::from("Rust"),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        None,
-    );
-    let js = Language::new(
-        LanguageConfig {
-            name: Arc::from("JavaScript"),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        None,
-    );
-
     let mut fake_rust_servers = language_registry.register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
@@ -1361,14 +1328,14 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         },
     );
     let mut fake_js_servers = language_registry.register_fake_lsp_adapter(
-        "Rust",
+        "JavaScript",
         FakeLspAdapter {
-            name: "rust-lsp",
+            name: "js-lsp",
             ..Default::default()
         },
     );
-    language_registry.add(Arc::new(rust));
-    language_registry.add(Arc::new(js));
+    language_registry.add(rust_lang());
+    language_registry.add(js_lang());
 
     let _rs_buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
@@ -1473,17 +1440,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
-    language_registry.add(Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    )));
+    language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
@@ -2806,16 +2763,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
     let languages = project.update(cx, |project, _| project.languages().clone());
-    languages.register_native_grammars([("rust", tree_sitter_rust::language())]);
-    languages.register_test_language(LanguageConfig {
-        name: "Rust".into(),
-        grammar: Some("rust".into()),
-        matcher: LanguageMatcher {
-            path_suffixes: vec!["rs".into()],
-            ..Default::default()
-        },
-        ..Default::default()
-    });
+    languages.add(rust_lang());
 
     let buffer = project.update(cx, |project, cx| {
         project.create_buffer("", None, cx).unwrap()
@@ -4376,6 +4324,20 @@ fn json_lang() -> Arc<Language> {
             name: "JSON".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["json".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None,
+    ))
+}
+
+fn js_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: Arc::from("JavaScript"),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["js".to_string()],
                 ..Default::default()
             },
             ..Default::default()

@@ -147,7 +147,9 @@ impl LanguageRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
-        Self::new(Task::ready(()))
+        let mut this = Self::new(Task::ready(()));
+        this.language_server_download_dir = Some(Path::new("/the-download-dir").into());
+        this
     }
 
     pub fn set_executor(&mut self, executor: BackgroundExecutor) {
