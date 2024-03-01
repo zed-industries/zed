@@ -22,7 +22,6 @@ use calloop::{
 
 struct WindowRef {
     state: Rc<X11WindowState>,
-    needs_refresh: bool,
     refresh_event_token: RegistrationToken,
 }
 
@@ -150,12 +149,6 @@ impl X11Client {
                 };
                 let window = self.get_window(event.window())?;
                 window.configure(bounds);
-            }
-            xcb::Event::X(x::Event::Expose(event)) => {
-                let mut state = self.state.borrow_mut();
-                if let Some(ref mut window_ref) = state.windows.get_mut(&event.window()) {
-                    window_ref.needs_refresh = true;
-                }
             }
             xcb::Event::X(x::Event::FocusIn(event)) => {
                 let window = self.get_window(event.event())?;
@@ -328,15 +321,9 @@ impl Client for X11Client {
             .loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
                 let refresh_duration = mode_refresh_rate(mode);
-                let xcb_connection = Rc::clone(&self.xcb_connection);
+                let window_ptr = Rc::clone(&window_ptr);
                 move |instant, (), _| {
-                    xcb_connection.send_request(&x::SendEvent {
-                        propagate: false,
-                        destination: x::SendEventDest::Window(x_window),
-                        event_mask: x::EventMask::EXPOSURE,
-                        event: &x::ExposeEvent::new(x_window, 0, 0, 0, 0, 1),
-                    });
-                    let _ = xcb_connection.flush();
+                    window_ptr.mark_for_refresh();
                     calloop::timer::TimeoutAction::ToInstant(instant + refresh_duration)
                 }
             })
@@ -344,7 +331,6 @@ impl Client for X11Client {
 
         let window_ref = WindowRef {
             state: Rc::clone(&window_ptr),
-            needs_refresh: true,
             refresh_event_token,
         };
         self.state.borrow_mut().windows.insert(x_window, window_ref);
@@ -352,10 +338,16 @@ impl Client for X11Client {
     }
 
     fn handle_idle(&self) {
+        let mut talked_to_x11 = false;
         for window_ref in self.state.borrow_mut().windows.values_mut() {
-            if window_ref.needs_refresh {
-                window_ref.needs_refresh = false;
-                window_ref.state.refresh();
+            talked_to_x11 |= window_ref.state.refresh_if_needed();
+        }
+        // We may be in a situation where X11 got some events, but the connection
+        // was read by the driver during our presentation, hence the file descriptor
+        // event will not trigger.
+        if talked_to_x11 {
+            while let Ok(Some(event)) = self.xcb_connection.poll_for_event() {
+                self.handle_event(event);
             }
         }
     }

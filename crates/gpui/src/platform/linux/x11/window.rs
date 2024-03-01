@@ -56,6 +56,7 @@ struct LinuxWindowInner {
     scale_factor: f32,
     renderer: BladeRenderer,
     input_handler: Option<PlatformInputHandler>,
+    needs_refresh: bool,
 }
 
 impl LinuxWindowInner {
@@ -156,8 +157,7 @@ impl X11WindowState {
         let xcb_values = [
             x::Cw::BackPixel(screen.white_pixel()),
             x::Cw::EventMask(
-                x::EventMask::EXPOSURE
-                    | x::EventMask::STRUCTURE_NOTIFY
+                x::EventMask::STRUCTURE_NOTIFY
                     | x::EventMask::ENTER_WINDOW
                     | x::EventMask::LEAVE_WINDOW
                     | x::EventMask::FOCUS_CHANGE
@@ -258,6 +258,7 @@ impl X11WindowState {
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
                 input_handler: None,
+                needs_refresh: true,
             }),
         }
     }
@@ -276,11 +277,19 @@ impl X11WindowState {
         self.xcb_connection.flush().unwrap();
     }
 
-    pub fn refresh(&self) {
-        let mut cb = self.callbacks.borrow_mut();
-        if let Some(ref mut fun) = cb.request_frame {
-            fun();
+    pub fn mark_for_refresh(&self) {
+        self.inner.borrow_mut().needs_refresh = true;
+    }
+
+    pub fn refresh_if_needed(&self) -> bool {
+        let refresh = mem::take(&mut self.inner.borrow_mut().needs_refresh);
+        if refresh {
+            let mut cb = self.callbacks.borrow_mut();
+            if let Some(ref mut fun) = cb.request_frame {
+                fun();
+            }
         }
+        refresh
     }
 
     pub fn configure(&self, bounds: Bounds<i32>) {
