@@ -1,4 +1,5 @@
-use lazy_static::lazy_static;
+use std::sync::OnceLock;
+
 use time::{OffsetDateTime, UtcOffset};
 
 /// Formats a timestamp, which respects the user's date and time preferences/custom format.
@@ -25,8 +26,8 @@ pub fn format_localized_timestamp(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        //todo!(linux) respect user's date/time preferences
-        //todo!(windows) respect user's date/time preferences
+        // todo(linux) respect user's date/time preferences
+        // todo(windows) respect user's date/time preferences
         format_timestamp_fallback(reference, timestamp, timezone)
     }
 }
@@ -36,18 +37,18 @@ fn format_timestamp_fallback(
     timestamp: OffsetDateTime,
     timezone: UtcOffset,
 ) -> String {
-    lazy_static! {
-        static ref CURRENT_LOCALE: String =
-            sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
-    }
-    let is_12_hour_time = is_12_hour_time_by_locale(CURRENT_LOCALE.as_str());
+    static CURRENT_LOCALE: OnceLock<String> = OnceLock::new();
+    let current_locale = CURRENT_LOCALE
+        .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
+
+    let is_12_hour_time = is_12_hour_time_by_locale(current_locale.as_str());
     format_timestamp_naive(reference, timestamp, timezone, is_12_hour_time)
 }
 
 /// Formats a timestamp, which is either in 12-hour or 24-hour time format.
 /// Note:
 /// This function does not respect the user's date and time preferences.
-/// This should only be used as a fallback mechanism when the os time formatting fails.
+/// This should only be used as a fallback mechanism when the OS time formatting fails.
 pub fn format_timestamp_naive(
     reference: OffsetDateTime,
     timestamp: OffsetDateTime,
@@ -109,7 +110,7 @@ pub fn format_timestamp_naive(
     }
 }
 
-/// Returns true if the locale is recognized as a 12-hour time locale.
+/// Returns `true` if the locale is recognized as a 12-hour time locale.
 fn is_12_hour_time_by_locale(locale: &str) -> bool {
     [
         "es-MX", "es-CO", "es-SV", "es-NI",

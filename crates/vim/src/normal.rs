@@ -301,7 +301,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
                         let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
-                        let insert_point = motion::end_of_line(map, false, previous_line);
+                        let insert_point = motion::end_of_line(map, false, previous_line, 1);
                         (insert_point, SelectionGoal::None)
                     });
                 });
@@ -326,7 +326,8 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                 let edits = selection_end_rows.into_iter().map(|row| {
                     let (indent, _) = map.line_indent(row);
                     let end_of_line =
-                        motion::end_of_line(&map, false, DisplayPoint::new(row, 0)).to_point(&map);
+                        motion::end_of_line(&map, false, DisplayPoint::new(row, 0), 1)
+                            .to_point(&map);
 
                     let mut new_text = "\n".to_string();
                     new_text.push_str(&" ".repeat(indent as usize));
@@ -1025,5 +1026,23 @@ mod test {
         cx.assert_all("ˇconsole.logˇ(ˇ'var', ˇ[ˇ1, ˇ2, 3ˇ]ˇ)ˇ;")
             .await;
         cx.assert_all("let result = curried_funˇ(ˇ)ˇ(ˇ)ˇ;").await;
+    }
+
+    #[gpui::test]
+    async fn test_end_of_line_with_neovim(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // goes to current line end
+        cx.set_shared_state(indoc! {"ˇaa\nbb\ncc"}).await;
+        cx.simulate_shared_keystrokes(["$"]).await;
+        cx.assert_shared_state(indoc! {"aˇa\nbb\ncc"}).await;
+
+        // goes to next line end
+        cx.simulate_shared_keystrokes(["2", "$"]).await;
+        cx.assert_shared_state("aa\nbˇb\ncc").await;
+
+        // try to exceed the final line.
+        cx.simulate_shared_keystrokes(["4", "$"]).await;
+        cx.assert_shared_state("aa\nbb\ncˇc").await;
     }
 }

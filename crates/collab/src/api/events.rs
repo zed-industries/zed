@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{anyhow, Context};
 use aws_sdk_s3::primitives::ByteStream;
@@ -6,7 +6,6 @@ use axum::{
     body::Bytes, headers::Header, http::HeaderName, routing::post, Extension, Router, TypedHeader,
 };
 use hyper::{HeaderMap, StatusCode};
-use lazy_static::lazy_static;
 use serde::{Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use telemetry_events::{
@@ -25,16 +24,12 @@ pub fn router() -> Router {
         .route("/telemetry/crashes", post(post_crash))
 }
 
-lazy_static! {
-    static ref ZED_CHECKSUM_HEADER: HeaderName = HeaderName::from_static("x-zed-checksum");
-    static ref CLOUDFLARE_IP_COUNTRY_HEADER: HeaderName = HeaderName::from_static("cf-ipcountry");
-}
-
 pub struct ZedChecksumHeader(Vec<u8>);
 
 impl Header for ZedChecksumHeader {
     fn name() -> &'static HeaderName {
-        &ZED_CHECKSUM_HEADER
+        static ZED_CHECKSUM_HEADER: OnceLock<HeaderName> = OnceLock::new();
+        ZED_CHECKSUM_HEADER.get_or_init(|| HeaderName::from_static("x-zed-checksum"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
@@ -61,7 +56,8 @@ pub struct CloudflareIpCountryHeader(String);
 
 impl Header for CloudflareIpCountryHeader {
     fn name() -> &'static HeaderName {
-        &CLOUDFLARE_IP_COUNTRY_HEADER
+        static CLOUDFLARE_IP_COUNTRY_HEADER: OnceLock<HeaderName> = OnceLock::new();
+        CLOUDFLARE_IP_COUNTRY_HEADER.get_or_init(|| HeaderName::from_static("cf-ipcountry"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
