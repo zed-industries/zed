@@ -191,6 +191,12 @@
     }
   },
   {
+    "context": "Editor && copilot_suggestion",
+    "bindings": {
+      "cmd-right": "editor::AcceptPartialCopilotSuggestion"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
