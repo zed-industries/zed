@@ -47,9 +47,6 @@ pub struct TaskContext {
     pub env: HashMap<String, String>,
 }
 
-/// $ZED_CURRENT_FUNCTION -> current function
-/// "ZED_CURENT_FUNCTION"
-
 /// Represents a short lived recipe of a task, whose main purpose
 /// is to get spawned.
 pub trait Task {

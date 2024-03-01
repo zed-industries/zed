@@ -170,6 +170,7 @@ impl LanguageRegistry {
             config.grammar.clone(),
             config.matcher.clone(),
             vec![],
+            None,
             move || Ok((config.clone(), Default::default())),
         )
     }
