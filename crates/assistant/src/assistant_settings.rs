@@ -166,11 +166,13 @@ pub struct AssistantSettingsContent {
     ///
     /// Default: 320
     pub default_height: Option<f32>,
+    /// Deprecated: Please use `provider.default_model` instead.
     /// The default OpenAI model to use when starting new conversations.
     ///
     /// Default: gpt-4-1106-preview
     #[deprecated = "Please use `provider.default_model` instead."]
     pub default_open_ai_model: Option<OpenAiModel>,
+    /// Deprecated: Please use `provider.api_url` instead.
     /// OpenAI API base URL to use when starting new conversations.
     ///
     /// Default: https://api.openai.com/v1
