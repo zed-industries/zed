@@ -1,3 +1,4 @@
+mod extension_lsp_adapter;
 mod wasm_host;
 
 #[cfg(test)]
@@ -11,7 +12,8 @@ use fs::{Fs, RemoveOptions};
 use futures::{channel::mpsc::unbounded, io::BufReader, AsyncReadExt as _, StreamExt as _};
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, LanguageServerName,
+    QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
@@ -29,6 +31,8 @@ use util::{
     ResultExt, TryFutureExt,
 };
 use wasm_host::{WasmExtension, WasmHost};
+
+use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 
 #[derive(Deserialize)]
 pub struct ExtensionsApiResponse {
@@ -68,7 +72,7 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
     #[serde(default)]
-    pub language_servers: BTreeMap<Arc<str>, LanguageServerManifestEntry>,
+    pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -85,8 +89,7 @@ pub struct GrammarManifestEntry {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
-    name: String,
-    language: String,
+    language: Arc<str>,
 }
 
 #[derive(Clone)]
@@ -476,6 +479,18 @@ impl ExtensionStore {
             })
             .collect::<Vec<_>>();
 
+        self.wasm_extensions
+            .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
+
+        for extension_id in &extensions_to_unload {
+            if let Some(extension) = old_index.extensions.get(extension_id) {
+                for (language_server_name, config) in extension.language_servers.iter() {
+                    self.language_registry
+                        .remove_lsp_adapter(config.language.as_ref(), language_server_name);
+                }
+            }
+        }
+
         self.theme_registry.remove_user_themes(&themes_to_remove);
         self.language_registry
             .remove_languages(&languages_to_remove, &grammars_to_remove);
@@ -506,7 +521,6 @@ impl ExtensionStore {
             }));
         }
 
-        // let languages_to_add = extensions_to_load.iter().flat_map(|extension_id|)
         self.language_registry
             .register_wasm_grammars(grammars_to_add);
 
@@ -567,25 +581,42 @@ impl ExtensionStore {
                     Path::new(extension_manifest.id.as_ref()),
                     wasm_path.as_path(),
                 ]);
-                let mut wasm_file = fs.open_sync(&path).await.expect("failed to open wasm file");
+                let mut wasm_file = fs
+                    .open_sync(&path)
+                    .await
+                    .context("failed to open wasm file")?;
                 let mut wasm_bytes = Vec::new();
                 wasm_file
                     .read_to_end(&mut wasm_bytes)
-                    .expect("failed to read wasm");
-                wasm_extensions.push((
-                    extension_manifest.clone(),
-                    wasm_host
-                        .load_extension(
-                            wasm_bytes,
-                            extension_manifest,
-                            cx.background_executor().clone(),
-                        )
-                        .await
-                        .expect("failed to load wasm extension"),
-                ));
+                    .context("failed to read wasm")?;
+                let wasm_extension = wasm_host
+                    .load_extension(
+                        wasm_bytes,
+                        extension_manifest.clone(),
+                        cx.background_executor().clone(),
+                    )
+                    .await
+                    .context("failed to load wasm extension")?;
+                wasm_extensions.push((extension_manifest.clone(), wasm_extension));
             }
 
             this.update(&mut cx, |this, cx| {
+                for (manifest, wasm_extension) in &wasm_extensions {
+                    for (language_server_name, language_server_config) in &manifest.language_servers
+                    {
+                        this.language_registry.register_lsp_adapter(
+                            language_server_config.language.clone(),
+                            Arc::new(ExtensionLspAdapter {
+                                extension: wasm_extension.clone(),
+                                work_dir: this.wasm_host.work_dir.join(manifest.id.as_ref()),
+                                config: wit::LanguageServerConfig {
+                                    name: language_server_name.0.to_string(),
+                                    language_name: language_server_config.language.to_string(),
+                                },
+                            }),
+                        );
+                    }
+                }
                 this.wasm_extensions.extend(wasm_extensions);
                 ThemeSettings::reload_current_theme(cx)
             })
@@ -644,6 +675,7 @@ impl ExtensionStore {
         }
 
         let fs = self.fs.clone();
+        let work_dir = self.wasm_host.work_dir.clone();
         let extensions_dir = self.extensions_dir.clone();
         let manifest_path = self.manifest_path.clone();
         self.needs_reload = false;
@@ -654,6 +686,7 @@ impl ExtensionStore {
                     .spawn(async move {
                         let mut index = ExtensionIndex::default();
 
+                        fs.create_dir(&work_dir).await.log_err();
                         fs.create_dir(&extensions_dir).await.log_err();
 
                         let extension_paths = fs.read_dir(&extensions_dir).await;
@@ -711,21 +744,25 @@ impl ExtensionStore {
             .ok_or_else(|| anyhow!("invalid extension name"))?;
 
         let mut extension_manifest_path = extension_dir.join("extension.json");
-        let mut extension_manifest: ExtensionManifest =
-            if fs.is_file(&extension_manifest_path).await {
-                let extension_manifest = fs
-                    .load(&extension_manifest_path)
-                    .await
-                    .context("failed to load extension.json")?;
-                serde_json::from_str(&extension_manifest).context("invalid extension.json")?
-            } else {
-                extension_manifest_path.set_extension("toml");
-                let extension_manifest = fs
-                    .load(&extension_manifest_path)
-                    .await
-                    .context("failed to load extension.toml")?;
-                ::toml::from_str(&extension_manifest).context("invalid extension.json")?
-            };
+        let mut extension_manifest: ExtensionManifest = if fs
+            .is_file(&extension_manifest_path)
+            .await
+        {
+            let extension_manifest = fs
+                .load(&extension_manifest_path)
+                .await
+                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
+            serde_json::from_str(&extension_manifest)
+                .with_context(|| format!("invalid extension.json for extension {extension_name}"))?
+        } else {
+            extension_manifest_path.set_extension("toml");
+            let extension_manifest = fs
+                .load(&extension_manifest_path)
+                .await
+                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
+            ::toml::from_str(&extension_manifest)
+                .with_context(|| format!("invalid extension.json for extension {extension_name}"))?
+        };
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
             while let Some(language_path) = language_paths.next().await {

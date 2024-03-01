@@ -36,10 +36,6 @@ impl LspAdapter for DockerfileLspAdapter {
         LanguageServerName("docker-langserver".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "dockerfile"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

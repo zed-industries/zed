@@ -39,10 +39,6 @@ impl LspAdapter for PurescriptLspAdapter {
         LanguageServerName("purescript-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "purescript"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

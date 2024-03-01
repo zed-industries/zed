@@ -36,10 +36,6 @@ impl LspAdapter for AstroLspAdapter {
         LanguageServerName("astro-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "astro"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

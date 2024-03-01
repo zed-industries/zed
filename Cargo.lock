@@ -3370,6 +3370,7 @@ dependencies = [
  "gpui",
  "language",
  "log",
+ "lsp",
  "node_runtime",
  "parking_lot 0.11.2",
  "project",

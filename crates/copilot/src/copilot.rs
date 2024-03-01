@@ -383,8 +383,16 @@ impl Copilot {
         use lsp::FakeLanguageServer;
         use node_runtime::FakeNodeRuntime;
 
-        let (server, fake_server) =
-            FakeLanguageServer::new("copilot".into(), Default::default(), cx.to_async());
+        let (server, fake_server) = FakeLanguageServer::new(
+            LanguageServerBinary {
+                path: "path/to/copilot".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "copilot".into(),
+            Default::default(),
+            cx.to_async(),
+        );
         let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
         let this = cx.new_model(|cx| Self {

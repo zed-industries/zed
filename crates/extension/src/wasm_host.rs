@@ -1,3 +1,4 @@
+use crate::ExtensionManifest;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -10,9 +11,12 @@ use futures::{
     Future, FutureExt, StreamExt as _,
 };
 use gpui::BackgroundExecutor;
-use language::{LanguageRegistry, LanguageServerBinaryStatus, WASM_ENGINE};
+use language::{LanguageRegistry, LanguageServerBinaryStatus, LspAdapterDelegate};
 use node_runtime::NodeRuntime;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 use util::{http::HttpClient, SemanticVersion};
 use wasmtime::{
     component::{Component, Linker, Resource, ResourceTable},
@@ -20,17 +24,17 @@ use wasmtime::{
 };
 use wasmtime_wasi::preview2::{command as wasi_command, WasiCtx, WasiCtxBuilder, WasiView};
 
-use crate::ExtensionManifest;
-
 pub mod wit {
     wasmtime::component::bindgen!({
         async: true,
         path: "../extension_api/wit",
         with: {
-             "worktree": project::worktree::Snapshot,
+             "worktree": super::ExtensionWorktree,
         },
     });
 }
+
+pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 
 pub(crate) struct WasmHost {
     engine: Engine,
@@ -39,12 +43,13 @@ pub(crate) struct WasmHost {
     node_runtime: Arc<dyn NodeRuntime>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
-    work_dir: PathBuf,
+    pub(crate) work_dir: PathBuf,
 }
 
 #[derive(Clone)]
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
+    #[allow(unused)]
     zed_api_version: SemanticVersion,
 }
 
@@ -60,6 +65,8 @@ type ExtensionCall = Box<
         + for<'a> FnOnce(&'a mut wit::Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
 >;
 
+static WASM_ENGINE: OnceLock<wasmtime::Engine> = OnceLock::new();
+
 impl WasmHost {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -68,7 +75,14 @@ impl WasmHost {
         language_registry: Arc<LanguageRegistry>,
         work_dir: PathBuf,
     ) -> Arc<Self> {
-        let engine = WASM_ENGINE.clone();
+        let engine = WASM_ENGINE
+            .get_or_init(|| {
+                let mut config = wasmtime::Config::new();
+                config.wasm_component_model(true);
+                config.async_support(true);
+                wasmtime::Engine::new(&config).unwrap()
+            })
+            .clone();
         let mut linker = Linker::new(&engine);
         wasi_command::add_to_linker(&mut linker).unwrap();
         wit::Extension::add_to_linker(&mut linker, |state: &mut WasmState| state).unwrap();
@@ -184,16 +198,14 @@ impl WasmExtension {
 impl wit::HostWorktree for WasmState {
     async fn read_text_file(
         &mut self,
-        worktree: Resource<project::worktree::Snapshot>,
+        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        let tree = self.table().get(&worktree)?;
-        if tree.entry_for_path(&path).is_none() {
-            return Ok(Err(format!("no such path '{path}'")));
-        }
-        let path = tree.absolutize(path.as_ref())?;
-        let content = self.host.fs.load(&path).await?;
-        Ok(Ok(content))
+        let delegate = self.table().get(&delegate)?;
+        Ok(delegate
+            .read_text_file(path.into())
+            .await
+            .map_err(|error| error.to_string()))
     }
 
     fn drop(&mut self, _worktree: Resource<wit::Worktree>) -> Result<()> {
@@ -311,6 +323,7 @@ impl wit::ExtensionImports for WasmState {
             filename: String,
             file_type: wit::DownloadedFileType,
         ) -> anyhow::Result<()> {
+            this.host.fs.create_dir(&this.host.work_dir).await?;
             let container_dir = this.host.work_dir.join(this.manifest.id.as_ref());
             let destination_path = container_dir.join(&filename);
 

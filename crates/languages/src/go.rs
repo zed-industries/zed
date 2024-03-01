@@ -38,10 +38,6 @@ impl super::LspAdapter for GoLspAdapter {
         LanguageServerName("gopls".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "gopls"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -58,23 +54,16 @@ impl super::LspAdapter for GoLspAdapter {
         Ok(Box::new(version) as Box<_>)
     }
 
-    fn check_if_user_installed(
+    async fn check_if_user_installed(
         &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Option<Task<Option<LanguageServerBinary>>> {
-        let delegate = delegate.clone();
-
-        Some(cx.spawn(|cx| async move {
-            match cx.update(|cx| delegate.which_command(OsString::from("gopls"), cx)) {
-                Ok(task) => task.await.map(|(path, env)| LanguageServerBinary {
-                    path,
-                    arguments: server_binary_arguments(),
-                    env: Some(env),
-                }),
-                Err(_) => None,
-            }
-        }))
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let (path, env) = delegate.which_command(OsString::from("gopls")).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: server_binary_arguments(),
+            env: Some(env),
+        })
     }
 
     fn will_fetch_server(

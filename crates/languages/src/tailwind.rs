@@ -38,10 +38,6 @@ impl LspAdapter for TailwindLspAdapter {
         LanguageServerName("tailwindcss-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "tailwind"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

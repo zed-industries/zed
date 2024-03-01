@@ -35,10 +35,6 @@ impl LspAdapter for PrismaLspAdapter {
         LanguageServerName("prisma-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "prisma-language-server"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

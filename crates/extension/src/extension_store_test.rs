@@ -1,12 +1,11 @@
 use crate::{
-    wasm_host::{wit, WasmState},
     ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionManifest,
     ExtensionStore, GrammarManifestEntry,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use fs::{FakeFs, Fs};
-use futures::{io::BufReader, AsyncReadExt, FutureExt, StreamExt};
+use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, TestAppContext};
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
@@ -14,13 +13,12 @@ use project::Project;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
+    ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use theme::ThemeRegistry;
 use util::http::{FakeHttpClient, Response};
-use wasmtime::Store;
-use wasmtime_wasi::preview2::WasiView;
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
@@ -455,7 +453,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     fs.insert_tree_from_real_fs("/the-extension-dir/installed/gleam", gleam_extension_dir)
         .await;
 
-    let store = cx.new_model(|cx| {
+    let _store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             fs.clone(),
@@ -468,52 +466,28 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     });
 
     cx.executor().run_until_parked();
-    let extension = store.read_with(cx, |store, _| store.wasm_extensions[0].clone());
 
     fs.insert_tree(
         "/the-project-dir",
         json!({
             ".tool-versions": "rust 1.73.0",
+            "test.gleam": ""
         }),
     )
     .await;
 
     let project = Project::test(fs.clone(), ["/the-project-dir".as_ref()], cx).await;
-    let worktree = project.read_with(cx, |project, cx| {
-        project.worktrees().next().unwrap().read(cx).snapshot()
-    });
 
-    let config = extension
-        .0
-        .language_servers
-        .values()
-        .next()
-        .unwrap()
-        .clone();
-    let command = extension
-        .1
-        .call(
-            |extension: &mut wit::Extension, store: &mut Store<WasmState>| {
-                async move {
-                    let resource = store.data_mut().table().push(worktree).unwrap();
-                    let command = extension
-                        .call_language_server_command(
-                            store,
-                            &wit::LanguageServerConfig {
-                                name: config.name,
-                                language_name: config.language,
-                            },
-                            resource,
-                        )
-                        .await;
-                    command
-                }
-                .boxed()
-            },
-        )
+    let mut fake_servers = language_registry.fake_language_servers("Gleam");
+
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/the-project-dir/test.gleam", cx)
+        })
         .await
-        .unwrap()
         .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
 
     assert_eq!(
         fs.load("/the-extension-dir/work/gleam/gleam-v1.2.3/gleam".as_ref())
@@ -522,8 +496,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         "the-gleam-binary-contents"
     );
 
-    assert_eq!(command.command, "gleam-v1.2.3/gleam");
-    assert_eq!(command.args, ["lsp".to_string()]);
+    assert_eq!(fake_server.binary.path, PathBuf::from("gleam-v1.2.3/gleam"));
+    assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
 
     assert_eq!(
         [

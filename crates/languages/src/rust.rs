@@ -23,10 +23,6 @@ impl LspAdapter for RustLspAdapter {
         LanguageServerName("rust-analyzer".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "rust"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,

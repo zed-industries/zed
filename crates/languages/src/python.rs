@@ -34,10 +34,6 @@ impl LspAdapter for PythonLspAdapter {
         LanguageServerName("pyright".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "pyright"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

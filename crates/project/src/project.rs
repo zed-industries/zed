@@ -10,6 +10,7 @@ pub mod terminals;
 mod project_tests;
 
 use anyhow::{anyhow, bail, Context as _, Result};
+use async_trait::async_trait;
 use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
@@ -2051,7 +2052,7 @@ impl Project {
             }
 
             if let Some(language) = language {
-                for adapter in self.languages.lsp_adapters(&language).into_iter() {
+                for adapter in self.languages.lsp_adapters(&language) {
                     let language_id = adapter.language_ids.get(language.name().as_ref()).cloned();
                     let server = self
                         .language_server_ids
@@ -2123,7 +2124,7 @@ impl Project {
             let ids = &self.language_server_ids;
 
             if let Some(language) = buffer.language().cloned() {
-                for adapter in self.languages.lsp_adapters(&language).into_iter() {
+                for adapter in self.languages.lsp_adapters(&language) {
                     if let Some(server_id) = ids.get(&(worktree_id, adapter.name.clone())) {
                         buffer.update_diagnostics(*server_id, Default::default(), cx);
                     }
@@ -2734,7 +2735,7 @@ impl Project {
             return;
         }
 
-        for adapter in self.languages.clone().lsp_adapters(&language).into_iter() {
+        for adapter in self.languages.clone().lsp_adapters(&language) {
             self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
     }
@@ -9221,7 +9222,8 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
 
 struct ProjectLspAdapterDelegate {
     project: Model<Project>,
-    worktree: Model<Worktree>,
+    worktree: worktree::Snapshot,
+    fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
 }
@@ -9230,13 +9232,15 @@ impl ProjectLspAdapterDelegate {
     fn new(project: &Project, worktree: &Model<Worktree>, cx: &ModelContext<Project>) -> Arc<Self> {
         Arc::new(Self {
             project: cx.handle(),
-            worktree: worktree.clone(),
+            worktree: worktree.read(cx).snapshot(),
+            fs: project.fs.clone(),
             http_client: project.client.http_client(),
             language_registry: project.languages.clone(),
         })
     }
 }
 
+#[async_trait]
 impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn show_notification(&self, message: &str, cx: &mut AppContext) {
         self.project
@@ -9247,41 +9251,32 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.http_client.clone()
     }
 
-    fn which_command(
-        &self,
-        command: OsString,
-        cx: &AppContext,
-    ) -> Task<Option<(PathBuf, HashMap<String, String>)>> {
-        let worktree_abs_path = self.worktree.read(cx).abs_path();
-        let command = command.to_owned();
+    async fn which_command(&self, command: OsString) -> Option<(PathBuf, HashMap<String, String>)> {
+        let worktree_abs_path = self.worktree.abs_path();
 
-        cx.background_executor().spawn(async move {
-            let shell_env = load_shell_environment(&worktree_abs_path)
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to determine load login shell environment in {worktree_abs_path:?}"
-                    )
-                })
-                .log_err();
+        let shell_env = load_shell_environment(&worktree_abs_path)
+            .await
+            .with_context(|| {
+                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
+            })
+            .log_err();
 
-            if let Some(shell_env) = shell_env {
-                let shell_path = shell_env.get("PATH");
-                match which::which_in(&command, shell_path, &worktree_abs_path) {
-                    Ok(command_path) => Some((command_path, shell_env)),
-                    Err(error) => {
-                        log::warn!(
-                            "failed to determine path for command {:?} in shell PATH {:?}: {error}",
-                            command.to_string_lossy(),
-                            shell_path.map(String::as_str).unwrap_or("")
-                        );
-                        None
-                    }
+        if let Some(shell_env) = shell_env {
+            let shell_path = shell_env.get("PATH");
+            match which::which_in(&command, shell_path, &worktree_abs_path) {
+                Ok(command_path) => Some((command_path, shell_env)),
+                Err(error) => {
+                    log::warn!(
+                        "failed to determine path for command {:?} in shell PATH {:?}: {error}",
+                        command.to_string_lossy(),
+                        shell_path.map(String::as_str).unwrap_or("")
+                    );
+                    None
                 }
-            } else {
-                None
             }
-        })
+        } else {
+            None
+        }
     }
 
     fn update_status(
@@ -9291,6 +9286,15 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     ) {
         self.language_registry
             .update_lsp_status(server_name, status);
+    }
+
+    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+        if self.worktree.entry_for_path(&path).is_none() {
+            return Err(anyhow!("no such path {path:?}"));
+        }
+        let path = self.worktree.absolutize(path.as_ref())?;
+        let content = self.fs.load(&path).await?;
+        Ok(content)
     }
 }
 

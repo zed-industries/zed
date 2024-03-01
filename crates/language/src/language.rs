@@ -89,11 +89,8 @@ thread_local! {
 lazy_static! {
     static ref NEXT_LANGUAGE_ID: AtomicUsize = Default::default();
     static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
-    pub static ref WASM_ENGINE: wasmtime::Engine = {
-        let mut config = wasmtime::Config::new();
-        config.wasm_component_model(true);
-        config.async_support(true);
-        wasmtime::Engine::new(&config).unwrap()
+    static ref WASM_ENGINE: wasmtime::Engine = {
+        wasmtime::Engine::new(&wasmtime::Config::new()).unwrap()
     };
 
     /// A shared grammar for plain text, exposed for reuse by downstream crates.
@@ -114,10 +111,10 @@ pub trait ToLspPosition {
 }
 
 /// A name of a language server.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct LanguageServerName(pub Arc<str>);
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
     pub buffer: Model<Buffer>,
     pub range: Range<Anchor>,
@@ -128,7 +125,6 @@ pub struct Location {
 /// once at startup, and caches the results.
 pub struct CachedLspAdapter {
     pub name: LanguageServerName,
-    pub short_name: &'static str,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub language_ids: HashMap<String, String>,
@@ -140,14 +136,12 @@ pub struct CachedLspAdapter {
 impl CachedLspAdapter {
     pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name();
-        let short_name = adapter.short_name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
         let language_ids = adapter.language_ids();
 
         Arc::new(CachedLspAdapter {
             name,
-            short_name,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
@@ -230,34 +224,26 @@ impl CachedLspAdapter {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(
-        &self,
-    ) -> Option<(
-        Arc<FakeLspAdapter>,
-        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-    )> {
+    fn as_fake(&self) -> Option<&FakeLspAdapter> {
         self.adapter.as_fake()
     }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
 // e.g. to display a notification or fetch data from the web.
+#[async_trait]
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
-    fn which_command(
-        &self,
-        command: OsString,
-        cx: &AppContext,
-    ) -> Task<Option<(PathBuf, HashMap<String, String>)>>;
+
+    async fn which_command(&self, command: OsString) -> Option<(PathBuf, HashMap<String, String>)>;
+    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
 }
 
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
     fn name(&self) -> LanguageServerName;
-
-    fn short_name(&self) -> &'static str;
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
@@ -279,16 +265,14 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if let Some(task) = self.check_if_user_installed(&delegate, cx) {
-                if let Some(binary) = task.await {
-                    log::info!(
-                        "found user-installed language server for {}. path: {:?}, arguments: {:?}",
-                        language.name(),
-                        binary.path,
-                        binary.arguments
-                    );
-                    return Ok(binary);
-                }
+            if let Some(binary) = self.check_if_user_installed(delegate.as_ref()).await {
+                log::info!(
+                    "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                    language.name(),
+                    binary.path,
+                    binary.arguments
+                );
+                return Ok(binary);
             }
 
             if let Some(cached_binary) = cached_binary.as_ref() {
@@ -352,11 +336,10 @@ pub trait LspAdapter: 'static + Send + Sync {
         .boxed_local()
     }
 
-    fn check_if_user_installed(
+    async fn check_if_user_installed(
         &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncAppContext,
-    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         None
     }
 
@@ -470,12 +453,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(
-        &self,
-    ) -> Option<(
-        Arc<FakeLspAdapter>,
-        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-    )> {
+    fn as_fake(&self) -> Option<&FakeLspAdapter> {
         None
     }
 }
@@ -672,6 +650,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub prettier_plugins: Vec<&'static str>,
+    pub language_server_binary: LanguageServerBinary,
 }
 
 /// Configuration of handling bracket pairs for a given language.
@@ -1417,24 +1396,31 @@ impl Default for FakeLspAdapter {
             initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),
             prettier_plugins: Vec::new(),
+            language_server_binary: LanguageServerBinary {
+                path: "/the/fake/lsp/path".into(),
+                arguments: vec![],
+                env: Default::default(),
+            },
         }
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
-impl LspAdapter
-    for (
-        Arc<FakeLspAdapter>,
-        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-    )
-{
+impl LspAdapter for FakeLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(self.0.name.into())
+        LanguageServerName(self.name.into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "FakeLspAdapter"
+    fn get_language_server_command<'a>(
+        self: Arc<Self>,
+        _: Arc<Language>,
+        _: Arc<Path>,
+        _: Arc<dyn LspAdapterDelegate>,
+        _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
+        _: &'a mut AsyncAppContext,
+    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
+        async move { Ok(self.language_server_binary.clone()) }.boxed_local()
     }
 
     async fn fetch_latest_server_version(
@@ -1468,28 +1454,23 @@ impl LspAdapter
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
-        self.0.disk_based_diagnostics_sources.clone()
+        self.disk_based_diagnostics_sources.clone()
     }
 
     fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
-        self.0.disk_based_diagnostics_progress_token.clone()
+        self.disk_based_diagnostics_progress_token.clone()
     }
 
     fn initialization_options(&self) -> Option<Value> {
-        self.0.initialization_options.clone()
+        self.initialization_options.clone()
     }
 
     fn prettier_plugins(&self) -> &[&'static str] {
-        &self.0.prettier_plugins
+        &self.prettier_plugins
     }
 
-    fn as_fake(
-        &self,
-    ) -> Option<(
-        Arc<FakeLspAdapter>,
-        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-    )> {
-        Some((self.0.clone(), self.1.clone()))
+    fn as_fake(&self) -> Option<&FakeLspAdapter> {
+        Some(self)
     }
 }
 
