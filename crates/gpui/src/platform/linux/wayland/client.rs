@@ -626,6 +626,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 let mut mouse_focused_window = None;
                 for window in &state.windows {
                     if window.1.surface.id() == surface.id() {
+                        window.1.set_focused(true);
                         mouse_focused_window = Some(Rc::clone(&window.1));
                     }
                 }
@@ -744,6 +745,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         pressed_button: None,
                         modifiers: Modifiers::default(),
                     }));
+                    focused_window.set_focused(false);
                 }
                 state.mouse_focused_window = None;
                 state.mouse_location = None;
