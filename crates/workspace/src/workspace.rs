@@ -4634,7 +4634,7 @@ impl Element for DisconnectedOverlay {
         overlay: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
-        cx.occlude(bounds);
+        cx.insert_hitbox(bounds, true);
         overlay.after_layout(cx);
     }
 

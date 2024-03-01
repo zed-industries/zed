@@ -8,8 +8,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, ElementContext, IntoElement, OcclusionId, Pixels, Point, ScrollWheelEvent, Size,
-    Style, StyleRefinement, Styled, WindowContext,
+    Element, ElementContext, HitboxId, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
+    StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -525,7 +525,7 @@ pub struct ListOffset {
 
 impl Element for List {
     type BeforeLayout = ListFrameState;
-    type AfterLayout = OcclusionId;
+    type AfterLayout = HitboxId;
 
     fn before_layout(
         &mut self,
@@ -596,7 +596,7 @@ impl Element for List {
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> OcclusionId {
+    ) -> HitboxId {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
@@ -635,14 +635,14 @@ impl Element for List {
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
 
-        cx.occlude(bounds).id
+        cx.insert_hitbox(bounds, false).id
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        occlusion_id: &mut OcclusionId,
+        hitbox_id: &mut HitboxId,
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
@@ -654,19 +654,17 @@ impl Element for List {
         let list_state = self.state.clone();
         let height = bounds.size.height;
         let scroll_top = before_layout.scroll_top;
-        let occlusion_id = *occlusion_id;
-        cx.on_mouse_event(
-            move |event: &ScrollWheelEvent, moused_occlusion, phase, cx| {
-                if phase == DispatchPhase::Bubble && moused_occlusion == Some(occlusion_id) {
-                    list_state.0.borrow_mut().scroll(
-                        &scroll_top,
-                        height,
-                        event.delta.pixel_delta(px(20.)),
-                        cx,
-                    )
-                }
-            },
-        );
+        let hitbox_id = *hitbox_id;
+        cx.on_mouse_event(move |event: &ScrollWheelEvent, moused_hitbox, phase, cx| {
+            if phase == DispatchPhase::Bubble && moused_hitbox == Some(hitbox_id) {
+                list_state.0.borrow_mut().scroll(
+                    &scroll_top,
+                    height,
+                    event.delta.pixel_delta(px(20.)),
+                    cx,
+                )
+            }
+        });
     }
 }
 

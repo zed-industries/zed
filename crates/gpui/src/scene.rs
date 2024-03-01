@@ -5,11 +5,7 @@ use crate::{
     bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
     Hsla, Pixels, Point, ScaledPixels,
 };
-use std::{
-    fmt::Debug,
-    iter::{self, Peekable},
-    slice,
-};
+use std::{fmt::Debug, iter::Peekable, slice};
 
 #[allow(non_camel_case_types, unused)]
 pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;

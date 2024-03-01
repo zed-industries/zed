@@ -1,6 +1,6 @@
 use crate::{
     ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementContext, ElementId,
-    HighlightStyle, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Occlusion,
+    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine,
     TOOLTIP_DELAY,
 };
@@ -403,7 +403,7 @@ impl InteractiveText {
 
 impl Element for InteractiveText {
     type BeforeLayout = TextState;
-    type AfterLayout = Occlusion;
+    type AfterLayout = Hitbox;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         self.text.before_layout(cx)
@@ -414,16 +414,16 @@ impl Element for InteractiveText {
         bounds: Bounds<Pixels>,
         state: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Occlusion {
+    ) -> Hitbox {
         self.text.after_layout(bounds, state, cx);
-        cx.occlude(bounds)
+        cx.insert_hitbox(bounds, false)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         text_state: &mut Self::BeforeLayout,
-        occlusion: &mut Occlusion,
+        hitbox: &mut Hitbox,
         cx: &mut ElementContext,
     ) {
         cx.with_element_state::<InteractiveTextState, _>(
@@ -438,7 +438,7 @@ impl Element for InteractiveText {
                             .iter()
                             .any(|range| range.contains(&ix))
                         {
-                            cx.set_cursor_style(crate::CursorStyle::PointingHand, occlusion)
+                            cx.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
                         }
                     }
 
@@ -446,30 +446,28 @@ impl Element for InteractiveText {
                     let mouse_down = interactive_state.mouse_down_index.clone();
                     if let Some(mouse_down_index) = mouse_down.get() {
                         let clickable_ranges = mem::take(&mut self.clickable_ranges);
-                        cx.on_mouse_event(
-                            move |event: &MouseUpEvent, moused_occlusion, phase, cx| {
-                                if phase == DispatchPhase::Bubble {
-                                    if let Some(mouse_up_index) =
-                                        text_state.index_for_position(bounds, event.position)
-                                    {
-                                        click_listener(
-                                            &clickable_ranges,
-                                            InteractiveTextClickEvent {
-                                                mouse_down_index,
-                                                mouse_up_index,
-                                            },
-                                            cx,
-                                        )
-                                    }
-
-                                    mouse_down.take();
-                                    cx.refresh();
+                        cx.on_mouse_event(move |event: &MouseUpEvent, moused_hitbox, phase, cx| {
+                            if phase == DispatchPhase::Bubble {
+                                if let Some(mouse_up_index) =
+                                    text_state.index_for_position(bounds, event.position)
+                                {
+                                    click_listener(
+                                        &clickable_ranges,
+                                        InteractiveTextClickEvent {
+                                            mouse_down_index,
+                                            mouse_up_index,
+                                        },
+                                        cx,
+                                    )
                                 }
-                            },
-                        );
+
+                                mouse_down.take();
+                                cx.refresh();
+                            }
+                        });
                     } else {
                         cx.on_mouse_event(
-                            move |event: &MouseDownEvent, moused_occlusion, phase, cx| {
+                            move |event: &MouseDownEvent, moused_hitbox, phase, cx| {
                                 if phase == DispatchPhase::Bubble {
                                     if let Some(mouse_down_index) =
                                         text_state.index_for_position(bounds, event.position)
@@ -486,19 +484,17 @@ impl Element for InteractiveText {
                 if let Some(hover_listener) = self.hover_listener.take() {
                     let text_state = text_state.clone();
                     let hovered_index = interactive_state.hovered_index.clone();
-                    cx.on_mouse_event(
-                        move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                            if phase == DispatchPhase::Bubble {
-                                let current = hovered_index.get();
-                                let updated = text_state.index_for_position(bounds, event.position);
-                                if current != updated {
-                                    hovered_index.set(updated);
-                                    hover_listener(updated, event.clone(), cx);
-                                    cx.refresh();
-                                }
+                    cx.on_mouse_event(move |event: &MouseMoveEvent, moused_hitbox, phase, cx| {
+                        if phase == DispatchPhase::Bubble {
+                            let current = hovered_index.get();
+                            let updated = text_state.index_for_position(bounds, event.position);
+                            if current != updated {
+                                hovered_index.set(updated);
+                                hover_listener(updated, event.clone(), cx);
+                                cx.refresh();
                             }
-                        },
-                    );
+                        }
+                    });
                 }
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
@@ -506,54 +502,52 @@ impl Element for InteractiveText {
                     let pending_mouse_down = interactive_state.mouse_down_index.clone();
                     let text_state = text_state.clone();
 
-                    cx.on_mouse_event(
-                        move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                            let position = text_state.index_for_position(bounds, event.position);
-                            let is_hovered =
-                                position.is_some() && pending_mouse_down.get().is_none();
-                            if !is_hovered {
-                                active_tooltip.take();
-                                return;
-                            }
-                            let position = position.unwrap();
+                    cx.on_mouse_event(move |event: &MouseMoveEvent, moused_hitbox, phase, cx| {
+                        let position = text_state.index_for_position(bounds, event.position);
+                        let is_hovered = position.is_some() && pending_mouse_down.get().is_none();
+                        if !is_hovered {
+                            active_tooltip.take();
+                            return;
+                        }
+                        let position = position.unwrap();
 
-                            if phase != DispatchPhase::Bubble {
-                                return;
-                            }
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
 
-                            if active_tooltip.borrow().is_none() {
-                                let task =
-                                    cx.spawn({
-                                        let active_tooltip = active_tooltip.clone();
-                                        let tooltip_builder = tooltip_builder.clone();
+                        if active_tooltip.borrow().is_none() {
+                            let task = cx.spawn({
+                                let active_tooltip = active_tooltip.clone();
+                                let tooltip_builder = tooltip_builder.clone();
 
-                                        move |mut cx| async move {
-                                            cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                            cx.update(|cx| {
-                                                let new_tooltip = tooltip_builder(position, cx)
-                                                    .map(|tooltip| ActiveTooltip {
-                                                        tooltip: Some(AnyTooltip {
-                                                            view: tooltip,
-                                                            cursor_offset: cx.mouse_position(),
-                                                        }),
-                                                        _task: None,
-                                                    });
-                                                *active_tooltip.borrow_mut() = new_tooltip;
-                                                cx.refresh();
-                                            })
-                                            .ok();
-                                        }
-                                    });
-                                *active_tooltip.borrow_mut() = Some(ActiveTooltip {
-                                    tooltip: None,
-                                    _task: Some(task),
-                                });
-                            }
-                        },
-                    );
+                                move |mut cx| async move {
+                                    cx.background_executor().timer(TOOLTIP_DELAY).await;
+                                    cx.update(|cx| {
+                                        let new_tooltip =
+                                            tooltip_builder(position, cx).map(|tooltip| {
+                                                ActiveTooltip {
+                                                    tooltip: Some(AnyTooltip {
+                                                        view: tooltip,
+                                                        cursor_offset: cx.mouse_position(),
+                                                    }),
+                                                    _task: None,
+                                                }
+                                            });
+                                        *active_tooltip.borrow_mut() = new_tooltip;
+                                        cx.refresh();
+                                    })
+                                    .ok();
+                                }
+                            });
+                            *active_tooltip.borrow_mut() = Some(ActiveTooltip {
+                                tooltip: None,
+                                _task: Some(task),
+                            });
+                        }
+                    });
 
                     let active_tooltip = interactive_state.active_tooltip.clone();
-                    cx.on_mouse_event(move |_: &MouseDownEvent, moused_occlusion, _, _| {
+                    cx.on_mouse_event(move |_: &MouseDownEvent, moused_hitbox, _, _| {
                         active_tooltip.take();
                     });
 

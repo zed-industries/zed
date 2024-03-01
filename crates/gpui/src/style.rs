@@ -124,21 +124,6 @@ pub struct Style {
     pub debug_below: bool,
 }
 
-impl StyleRefinement {
-    /// Returns true if the style is visible and the background is opaque.
-    pub fn has_opaque_background(&self) -> bool {
-        self.background
-            .as_ref()
-            .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
-    }
-
-    /// Determines if the given `StyleRefinement` should occlude elements behind it.
-    pub fn should_occlude(&self) -> bool {
-        self.visibility.unwrap_or_default() == Visibility::Visible
-            && (self.has_opaque_background() || self.mouse_cursor.is_some())
-    }
-}
-
 impl Styled for StyleRefinement {
     fn style(&mut self) -> &mut StyleRefinement {
         self
@@ -340,12 +325,6 @@ impl Style {
         self.background
             .as_ref()
             .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
-    }
-
-    /// Determines if the given `Style` should occlude elements behind it.
-    pub fn should_occlude(&self) -> bool {
-        self.visibility == Visibility::Visible
-            && (self.has_opaque_background() || self.mouse_cursor.is_some())
     }
 
     /// Get the text style in this element style.

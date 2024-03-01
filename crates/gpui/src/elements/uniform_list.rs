@@ -6,7 +6,7 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
-    ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Occlusion, Pixels, Render,
+    ElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Render,
     Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
@@ -104,7 +104,7 @@ impl Styled for UniformList {
 
 impl Element for UniformList {
     type BeforeLayout = UniformListFrameState;
-    type AfterLayout = Option<Occlusion>;
+    type AfterLayout = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let max_items = self.item_count;
@@ -141,7 +141,7 @@ impl Element for UniformList {
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Option<Occlusion> {
+    ) -> Option<Hitbox> {
         let style = self.interactivity.compute_style(None, cx);
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
@@ -169,7 +169,7 @@ impl Element for UniformList {
             bounds,
             content_size,
             cx,
-            |style, mut scroll_offset, occlusion, cx| {
+            |style, mut scroll_offset, hitbox, cx| {
                 let border = style.border_widths.to_pixels(cx.rem_size());
                 let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -227,7 +227,7 @@ impl Element for UniformList {
                     });
                 }
 
-                occlusion
+                hitbox
             },
         )
     }
@@ -236,11 +236,11 @@ impl Element for UniformList {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        occlusion: &mut Option<Occlusion>,
+        hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) {
         self.interactivity
-            .paint(bounds, occlusion.as_ref(), cx, |_, cx| {
+            .paint(bounds, hitbox.as_ref(), cx, |_, cx| {
                 for item in &mut before_layout.items {
                     item.paint(cx);
                 }

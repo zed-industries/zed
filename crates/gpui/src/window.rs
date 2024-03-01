@@ -254,7 +254,7 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
-    pub(crate) next_occlusion_id: OcclusionId,
+    pub(crate) next_hitbox_id: HitboxId,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
@@ -449,7 +449,7 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
-            next_occlusion_id: OcclusionId::default(),
+            next_hitbox_id: HitboxId::default(),
             dirty_views: FxHashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
@@ -852,25 +852,25 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Finds the topmost [Occlusion] containing the given position in the upcoming frame.
-    pub fn topmost_occlusion(&self, position: Point<Pixels>) -> Option<Occlusion> {
+    pub fn hit_test(&self, position: Point<Pixels>) -> Option<Hitbox> {
         let frame = if self.window.drawing {
             &self.window.next_frame
         } else {
             &self.window.rendered_frame
         };
 
-        // TODO: consider reversing the occlusions array so that we can iterate it forwards.
+        // TODO: consider reversing the hitboxs array so that we can iterate it forwards.
         frame
-            .occlusions
+            .hitboxs
             .iter()
             .rev()
-            .find(|occlusion| occlusion.bounds.contains(&position))
+            .find(|hitbox| hitbox.bounds.contains(&position))
             .cloned()
     }
 
     /// Finds the topmost [Occlusion] under the mouse cursor in the upcoming frame.
-    pub fn moused_occlusion(&self) -> Option<Occlusion> {
-        self.topmost_occlusion(self.mouse_position())
+    pub fn moused_hitbox(&self) -> Option<Hitbox> {
+        self.hit_test(self.mouse_position())
     }
 
     /// The current state of the keyboard's modifiers
@@ -981,14 +981,14 @@ impl<'a> WindowContext<'a> {
 
     fn compute_cursor_style(&mut self) -> Option<CursorStyle> {
         let mouse_position = self.mouse_position();
-        let occlusion = self.topmost_occlusion(mouse_position)?;
-        // TODO: maybe we should have a HashMap keyed by OcclusionId.
+        let hitbox = self.hit_test(mouse_position)?;
+        // TODO: maybe we should have a HashMap keyed by HitboxId.
         let request = self
             .window
             .next_frame
             .cursor_styles
             .iter()
-            .find(|request| request.occlusion_id == occlusion.id)?;
+            .find(|request| request.hitbox_id == hitbox.id)?;
         Some(request.style)
     }
 
@@ -1126,9 +1126,7 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
-        let moused_occlusion_id = self
-            .topmost_occlusion(self.mouse_position())
-            .map(|moused| moused.id);
+        let moused_hitbox_id = self.hit_test(self.mouse_position()).map(|moused| moused.id);
 
         let mut mouse_listeners = mem::take(&mut self.window.rendered_frame.mouse_listeners);
         self.with_element_context(|cx| {
@@ -1136,7 +1134,7 @@ impl<'a> WindowContext<'a> {
             // special purposes, such as detecting events outside of a given Bounds.
             for listener in &mut mouse_listeners {
                 let listener = listener.as_mut().unwrap();
-                listener(event, moused_occlusion_id, DispatchPhase::Capture, cx);
+                listener(event, moused_hitbox_id, DispatchPhase::Capture, cx);
                 if !cx.app.propagate_event {
                     break;
                 }
@@ -1146,7 +1144,7 @@ impl<'a> WindowContext<'a> {
             if cx.app.propagate_event {
                 for listener in mouse_listeners.iter_mut().rev() {
                     let listener = listener.as_mut().unwrap();
-                    listener(event, moused_occlusion_id, DispatchPhase::Bubble, cx);
+                    listener(event, moused_hitbox_id, DispatchPhase::Bubble, cx);
                     if !cx.app.propagate_event {
                         break;
                     }

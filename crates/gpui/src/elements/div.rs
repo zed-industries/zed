@@ -17,11 +17,11 @@
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
-    ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global,
-    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Occlusion, OcclusionId, ParentElement, Pixels,
-    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
-    View, Visibility, WindowContext,
+    ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global, Hitbox,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
+    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, View, Visibility,
+    WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1050,7 +1050,7 @@ impl ParentElement for Div {
 
 impl Element for Div {
     type BeforeLayout = DivFrameState;
-    type AfterLayout = Option<Occlusion>;
+    type AfterLayout = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut child_layout_ids = SmallVec::new();
@@ -1072,7 +1072,7 @@ impl Element for Div {
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Option<Occlusion> {
+    ) -> Option<Hitbox> {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         let content_size = if before_layout.child_layout_ids.is_empty() {
@@ -1110,13 +1110,13 @@ impl Element for Div {
             bounds,
             content_size,
             cx,
-            |_style, scroll_offset, occlusion, cx| {
+            |_style, scroll_offset, hitbox, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
                         child.after_layout(cx);
                     }
                 });
-                occlusion
+                hitbox
             },
         )
     }
@@ -1125,11 +1125,11 @@ impl Element for Div {
         &mut self,
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        occlusion: &mut Option<Occlusion>,
+        hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) {
         self.interactivity
-            .paint(bounds, occlusion.as_ref(), cx, |_style, cx| {
+            .paint(bounds, hitbox.as_ref(), cx, |_style, cx| {
                 for child in &mut self.children {
                     child.paint(cx);
                 }
@@ -1264,7 +1264,7 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, Option<Occlusion>, &mut ElementContext) -> R,
+        f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut ElementContext) -> R,
     ) -> R {
         self.content_size = content_size;
         cx.with_element_state::<InteractiveElementState, _>(
@@ -1276,13 +1276,17 @@ impl Interactivity {
 
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                        let should_occlude = self.occlude_mouse
-                            || style.should_occlude()
+                        let occlude_mouse = self.occlude_mouse || style.has_opaque_background();
+                        let hitbox = if occlude_mouse
                             || self.hover_style.is_some()
-                            || self.group_hover_style.is_some();
-                        let occlusion = should_occlude.then(|| cx.occlude(bounds));
+                            || self.group_hover_style.is_some()
+                        {
+                            Some(cx.insert_hitbox(bounds, occlude_mouse))
+                        } else {
+                            None
+                        };
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
-                        let result = f(&style, scroll_offset, occlusion, cx);
+                        let result = f(&style, scroll_offset, hitbox, cx);
                         (result, element_state)
                     })
                 })
@@ -1343,7 +1347,7 @@ impl Interactivity {
     pub fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        occlusion: Option<&Occlusion>,
+        hitbox: Option<&Hitbox>,
         cx: &mut ElementContext,
         f: impl FnOnce(&Style, &mut ElementContext),
     ) {
@@ -1353,7 +1357,7 @@ impl Interactivity {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
-                let style = self.compute_style_internal(occlusion, element_state.as_mut(), cx);
+                let style = self.compute_style_internal(hitbox, element_state.as_mut(), cx);
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
@@ -1373,28 +1377,28 @@ impl Interactivity {
                         cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                             self.paint_hover_group_handler(cx);
 
-                            if let Some(occlusion) = occlusion {
-                                self.paint_debug_info(occlusion, &style, cx);
+                            if let Some(hitbox) = hitbox {
+                                self.paint_debug_info(hitbox, &style, cx);
 
                                 if !cx.has_active_drag() {
                                     if let Some(mouse_cursor) = style.mouse_cursor {
-                                        cx.set_cursor_style(mouse_cursor, occlusion);
+                                        cx.set_cursor_style(mouse_cursor, hitbox);
                                     }
                                 }
 
                                 if let Some(group) = self.group.clone() {
-                                    GroupOcclusions::push(group, occlusion.id, cx);
+                                    GroupHitboxes::push(group, hitbox.id, cx);
                                 }
 
-                                self.paint_mouse_listeners(occlusion, element_state.as_mut(), cx);
-                                self.paint_scroll_listener(occlusion, &style, cx);
+                                self.paint_mouse_listeners(hitbox, element_state.as_mut(), cx);
+                                self.paint_scroll_listener(hitbox, &style, cx);
                             }
 
                             self.paint_keyboard_listeners(&style, cx, f);
 
-                            if occlusion.is_some() {
+                            if hitbox.is_some() {
                                 if let Some(group) = self.group.as_ref() {
-                                    GroupOcclusions::pop(group, cx);
+                                    GroupHitboxes::pop(group, cx);
                                 }
                             }
                         });
@@ -1406,14 +1410,14 @@ impl Interactivity {
         );
     }
 
-    fn paint_debug_info(&mut self, occlusion: &Occlusion, style: &Style, cx: &mut ElementContext) {
-        // todo!("ensure that an occlusion is present when painting debug info").
-        let occlusion_id = occlusion.id;
+    fn paint_debug_info(&mut self, hitbox: &Hitbox, style: &Style, cx: &mut ElementContext) {
+        // todo!("ensure that an hitbox is present when painting debug info").
+        let hitbox_id = hitbox.id;
 
         #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
-            && Some(occlusion) == cx.moused_occlusion().as_ref()
+            && Some(hitbox) == cx.moused_hitbox().as_ref()
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
             let element_id = format!("{:?}", self.element_id.as_ref().unwrap());
@@ -1431,10 +1435,10 @@ impl Interactivity {
                     .ok()
                     .and_then(|mut text| text.pop())
                 {
-                    text.paint(occlusion.bounds.origin, FONT_SIZE, cx).ok();
+                    text.paint(hitbox.bounds.origin, FONT_SIZE, cx).ok();
 
                     let text_bounds = crate::Bounds {
-                        origin: occlusion.bounds.origin,
+                        origin: hitbox.bounds.origin,
                         size: text.size(FONT_SIZE),
                     };
                     if self.location.is_some()
@@ -1452,26 +1456,24 @@ impl Interactivity {
                             }
                         });
 
-                        let moused_occlusion = cx.moused_occlusion();
+                        let moused_hitbox = cx.moused_hitbox();
                         let was_hovered =
-                            moused_occlusion.map_or(false, |moused| moused.id == occlusion_id);
-                        cx.on_mouse_event(
-                            move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                                if phase == DispatchPhase::Capture {
-                                    let hovered = moused_occlusion == Some(occlusion_id);
-                                    if hovered != was_hovered {
-                                        cx.refresh();
-                                    }
+                            moused_hitbox.map_or(false, |moused| moused.id == hitbox_id);
+                        cx.on_mouse_event(move |_: &MouseMoveEvent, moused_hitbox, phase, cx| {
+                            if phase == DispatchPhase::Capture {
+                                let hovered = moused_hitbox == Some(hitbox_id);
+                                if hovered != was_hovered {
+                                    cx.refresh();
                                 }
-                            },
-                        );
+                            }
+                        });
 
                         cx.on_mouse_event({
                             let location = self.location.unwrap();
-                            move |e: &crate::MouseDownEvent, moused_occlusion, phase, cx| {
+                            move |e: &crate::MouseDownEvent, moused_hitbox, phase, cx| {
                                 if text_bounds.contains(&e.position)
                                     && phase.capture()
-                                    && moused_occlusion == Some(occlusion_id)
+                                    && moused_hitbox == Some(hitbox_id)
                                 {
                                     cx.stop_propagation();
                                     let Ok(dir) = std::env::current_dir() else {
@@ -1489,7 +1491,7 @@ impl Interactivity {
                         });
                         cx.paint_quad(crate::outline(
                             crate::Bounds {
-                                origin: occlusion.bounds.origin
+                                origin: hitbox.bounds.origin
                                     + crate::point(crate::px(0.), FONT_SIZE - px(2.)),
                                 size: crate::Size {
                                     width: text_bounds.size.width,
@@ -1516,19 +1518,19 @@ impl Interactivity {
 
     fn paint_mouse_listeners(
         &mut self,
-        occlusion: &Occlusion,
+        hitbox: &Hitbox,
         element_state: Option<&mut InteractiveElementState>,
         cx: &mut ElementContext,
     ) {
-        let occlusion_id = occlusion.id;
+        let hitbox_id = hitbox.id;
 
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
         // This behavior can be suppressed by using `cx.prevent_default()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
-            cx.on_mouse_event(move |_: &MouseDownEvent, moused_occlusion, phase, cx| {
+            cx.on_mouse_event(move |_: &MouseDownEvent, moused_hitbox, phase, cx| {
                 if phase == DispatchPhase::Bubble
-                    && moused_occlusion == Some(occlusion_id)
+                    && moused_hitbox == Some(hitbox_id)
                     && !cx.default_prevented()
                 {
                     cx.focus(&focus_handle);
@@ -1540,37 +1542,35 @@ impl Interactivity {
         }
 
         for listener in self.mouse_down_listeners.drain(..) {
-            cx.on_mouse_event(move |event: &MouseDownEvent, moused_occlusion, phase, cx| {
-                if moused_occlusion == Some(occlusion_id) {
+            cx.on_mouse_event(move |event: &MouseDownEvent, moused_hitbox, phase, cx| {
+                if moused_hitbox == Some(hitbox_id) {
                     listener(event, phase, cx);
                 }
             })
         }
 
         for listener in self.mouse_up_listeners.drain(..) {
-            cx.on_mouse_event(move |event: &MouseUpEvent, moused_occlusion, phase, cx| {
-                if moused_occlusion == Some(occlusion_id) {
+            cx.on_mouse_event(move |event: &MouseUpEvent, moused_hitbox, phase, cx| {
+                if moused_hitbox == Some(hitbox_id) {
                     listener(event, phase, cx);
                 }
             })
         }
 
         for listener in self.mouse_move_listeners.drain(..) {
-            cx.on_mouse_event(move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                if moused_occlusion == Some(occlusion_id) {
+            cx.on_mouse_event(move |event: &MouseMoveEvent, moused_hitbox, phase, cx| {
+                if moused_hitbox == Some(hitbox_id) {
                     listener(event, phase, cx);
                 }
             })
         }
 
         for listener in self.scroll_wheel_listeners.drain(..) {
-            cx.on_mouse_event(
-                move |event: &ScrollWheelEvent, moused_occlusion, phase, cx| {
-                    if moused_occlusion == Some(occlusion_id) {
-                        listener(event, phase, cx);
-                    }
-                },
-            )
+            cx.on_mouse_event(move |event: &ScrollWheelEvent, moused_hitbox, phase, cx| {
+                if moused_hitbox == Some(hitbox_id) {
+                    listener(event, phase, cx);
+                }
+            })
         }
 
         if self.hover_style.is_some()
@@ -1578,10 +1578,10 @@ impl Interactivity {
             || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
             let was_hovered = cx
-                .moused_occlusion()
-                .map_or(false, |occlusion| occlusion.id == occlusion_id);
-            cx.on_mouse_event(move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                let hovered = moused_occlusion == Some(occlusion_id);
+                .moused_hitbox()
+                .map_or(false, |hitbox| hitbox.id == hitbox_id);
+            cx.on_mouse_event(move |_: &MouseMoveEvent, moused_hitbox, phase, cx| {
+                let hovered = moused_hitbox == Some(hitbox_id);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     cx.refresh();
                 }
@@ -1595,10 +1595,9 @@ impl Interactivity {
 
         if !drop_listeners.is_empty() {
             cx.on_mouse_event({
-                move |_: &MouseUpEvent, moused_occlusion, phase, cx| {
+                move |_: &MouseUpEvent, moused_hitbox, phase, cx| {
                     if let Some(drag) = &cx.active_drag {
-                        if phase == DispatchPhase::Bubble && moused_occlusion == Some(occlusion_id)
-                        {
+                        if phase == DispatchPhase::Bubble && moused_hitbox == Some(hitbox_id) {
                             let drag_state_type = drag.value.as_ref().type_id();
                             for (drop_state_type, listener) in &drop_listeners {
                                 if *drop_state_type == drag_state_type {
@@ -1639,10 +1638,10 @@ impl Interactivity {
 
                 cx.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
-                    move |event: &MouseDownEvent, moused_occlusion, phase, cx| {
+                    move |event: &MouseDownEvent, moused_hitbox, phase, cx| {
                         if phase == DispatchPhase::Bubble
                             && event.button == MouseButton::Left
-                            && moused_occlusion == Some(occlusion_id)
+                            && moused_hitbox == Some(hitbox_id)
                         {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
                             cx.refresh();
@@ -1652,8 +1651,8 @@ impl Interactivity {
 
                 cx.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
-                    let occlusion = occlusion.clone();
-                    move |event: &MouseMoveEvent, _moused_occlusion, phase, cx| {
+                    let hitbox = hitbox.clone();
+                    move |event: &MouseMoveEvent, _moused_hitbox, phase, cx| {
                         if phase == DispatchPhase::Capture {
                             return;
                         }
@@ -1666,7 +1665,7 @@ impl Interactivity {
                             {
                                 if let Some((drag_value, drag_listener)) = drag_listener.take() {
                                     *clicked_state.borrow_mut() = ElementClickedState::default();
-                                    let cursor_offset = event.position - occlusion.bounds.origin;
+                                    let cursor_offset = event.position - hitbox.bounds.origin;
                                     let drag = (drag_listener)(drag_value.as_ref(), cx);
                                     cx.active_drag = Some(AnyDrag {
                                         view: drag,
@@ -1684,7 +1683,7 @@ impl Interactivity {
 
                 cx.on_mouse_event({
                     let mut captured_mouse_down = None;
-                    move |event: &MouseUpEvent, moused_occlusion, phase, cx| match phase {
+                    move |event: &MouseUpEvent, moused_hitbox, phase, cx| match phase {
                         // Clear the pending mouse down during the capture phase,
                         // so that it happens even if another event handler stops
                         // propagation.
@@ -1698,7 +1697,7 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
-                                if moused_occlusion == Some(occlusion_id) {
+                                if moused_hitbox == Some(hitbox_id) {
                                     let mouse_click = ClickEvent {
                                         down: mouse_down,
                                         up: event.clone(),
@@ -1723,13 +1722,13 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
 
-                cx.on_mouse_event(move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
+                cx.on_mouse_event(move |_: &MouseMoveEvent, moused_hitbox, phase, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
                     let is_hovered = has_mouse_down.borrow().is_none()
                         && !cx.has_active_drag()
-                        && moused_occlusion == Some(occlusion_id);
+                        && moused_hitbox == Some(hitbox_id);
                     let mut was_hovered = was_hovered.borrow_mut();
 
                     if is_hovered != *was_hovered {
@@ -1751,9 +1750,9 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
 
-                cx.on_mouse_event(move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                    let is_hovered = pending_mouse_down.borrow().is_none()
-                        && moused_occlusion == Some(occlusion_id);
+                cx.on_mouse_event(move |_: &MouseMoveEvent, moused_hitbox, phase, cx| {
+                    let is_hovered =
+                        pending_mouse_down.borrow().is_none() && moused_hitbox == Some(hitbox_id);
                     if !is_hovered {
                         active_tooltip.borrow_mut().take();
                         return;
@@ -1815,22 +1814,22 @@ impl Interactivity {
                 .get_or_insert_with(Default::default)
                 .clone();
             if active_state.borrow().is_clicked() {
-                cx.on_mouse_event(move |_: &MouseUpEvent, _moused_occlusion, phase, cx| {
+                cx.on_mouse_event(move |_: &MouseUpEvent, _moused_hitbox, phase, cx| {
                     if phase == DispatchPhase::Capture {
                         *active_state.borrow_mut() = ElementClickedState::default();
                         cx.refresh();
                     }
                 });
             } else {
-                let active_group_occlusion = self
+                let active_group_hitbox = self
                     .group_active_style
                     .as_ref()
-                    .and_then(|group_active| GroupOcclusions::get(&group_active.group, cx));
-                let occlusion = occlusion.clone();
-                cx.on_mouse_event(move |_: &MouseDownEvent, moused_occlusion, phase, cx| {
+                    .and_then(|group_active| GroupHitboxes::get(&group_active.group, cx));
+                let hitbox = hitbox.clone();
+                cx.on_mouse_event(move |_: &MouseDownEvent, moused_hitbox, phase, cx| {
                     if phase == DispatchPhase::Bubble && !cx.default_prevented() {
-                        let group_hovered = moused_occlusion == active_group_occlusion;
-                        let element_hovered = moused_occlusion == Some(occlusion.id);
+                        let group_hovered = moused_hitbox == active_group_hitbox;
+                        let element_hovered = moused_hitbox == Some(hitbox.id);
                         if group_hovered || element_hovered {
                             *active_state.borrow_mut() = ElementClickedState {
                                 group: group_hovered,
@@ -1879,17 +1878,17 @@ impl Interactivity {
     }
 
     fn paint_hover_group_handler(&self, cx: &mut ElementContext) {
-        let group_occlusion = self
+        let group_hitbox = self
             .group_hover_style
             .as_ref()
-            .and_then(|group_hover| GroupOcclusions::get(&group_hover.group, cx));
+            .and_then(|group_hover| GroupHitboxes::get(&group_hover.group, cx));
 
-        if let Some(group_occlusion) = group_occlusion {
+        if let Some(group_hitbox) = group_hitbox {
             let was_hovered = cx
-                .moused_occlusion()
-                .map_or(false, |moused| moused.id == group_occlusion);
-            cx.on_mouse_event(move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                let hovered = moused_occlusion == Some(group_occlusion);
+                .moused_hitbox()
+                .map_or(false, |moused| moused.id == group_hitbox);
+            cx.on_mouse_event(move |_: &MouseMoveEvent, moused_hitbox, phase, cx| {
+                let hovered = moused_hitbox == Some(group_hitbox);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     cx.refresh();
                 }
@@ -1897,56 +1896,54 @@ impl Interactivity {
         }
     }
 
-    fn paint_scroll_listener(&self, occlusion: &Occlusion, style: &Style, cx: &mut ElementContext) {
+    fn paint_scroll_listener(&self, hitbox: &Hitbox, style: &Style, cx: &mut ElementContext) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
             let line_height = cx.line_height();
-            let occlusion_id = occlusion.id;
-            cx.on_mouse_event(
-                move |event: &ScrollWheelEvent, mouse_occlusion, phase, cx| {
-                    if phase == DispatchPhase::Bubble && mouse_occlusion == Some(occlusion_id) {
-                        let mut scroll_offset = scroll_offset.borrow_mut();
-                        let old_scroll_offset = *scroll_offset;
-                        let delta = event.delta.pixel_delta(line_height);
+            let hitbox_id = hitbox.id;
+            cx.on_mouse_event(move |event: &ScrollWheelEvent, mouse_hitbox, phase, cx| {
+                if phase == DispatchPhase::Bubble && mouse_hitbox == Some(hitbox_id) {
+                    let mut scroll_offset = scroll_offset.borrow_mut();
+                    let old_scroll_offset = *scroll_offset;
+                    let delta = event.delta.pixel_delta(line_height);
 
-                        if overflow.x == Overflow::Scroll {
-                            let mut delta_x = Pixels::ZERO;
-                            if !delta.x.is_zero() {
-                                delta_x = delta.x;
-                            } else if overflow.y != Overflow::Scroll {
-                                delta_x = delta.y;
-                            }
-
-                            scroll_offset.x += delta_x;
+                    if overflow.x == Overflow::Scroll {
+                        let mut delta_x = Pixels::ZERO;
+                        if !delta.x.is_zero() {
+                            delta_x = delta.x;
+                        } else if overflow.y != Overflow::Scroll {
+                            delta_x = delta.y;
                         }
 
-                        if overflow.y == Overflow::Scroll {
-                            let mut delta_y = Pixels::ZERO;
-                            if !delta.y.is_zero() {
-                                delta_y = delta.y;
-                            } else if overflow.x != Overflow::Scroll {
-                                delta_y = delta.x;
-                            }
-
-                            scroll_offset.y += delta_y;
-                        }
-
-                        if *scroll_offset != old_scroll_offset {
-                            cx.refresh();
-                            cx.stop_propagation();
-                        }
+                        scroll_offset.x += delta_x;
                     }
-                },
-            );
+
+                    if overflow.y == Overflow::Scroll {
+                        let mut delta_y = Pixels::ZERO;
+                        if !delta.y.is_zero() {
+                            delta_y = delta.y;
+                        } else if overflow.x != Overflow::Scroll {
+                            delta_y = delta.x;
+                        }
+
+                        scroll_offset.y += delta_y;
+                    }
+
+                    if *scroll_offset != old_scroll_offset {
+                        cx.refresh();
+                        cx.stop_propagation();
+                    }
+                }
+            });
         }
     }
 
     /// Compute the visual style for this element, based on the current bounds and the element's state.
-    pub fn compute_style(&self, occlusion: Option<&Occlusion>, cx: &mut ElementContext) -> Style {
+    pub fn compute_style(&self, hitbox: Option<&Hitbox>, cx: &mut ElementContext) -> Style {
         cx.with_element_state(self.element_id.clone(), |element_state, cx| {
             let mut element_state =
                 element_state.map(|element_state| element_state.unwrap_or_default());
-            let style = self.compute_style_internal(occlusion, element_state.as_mut(), cx);
+            let style = self.compute_style_internal(hitbox, element_state.as_mut(), cx);
             (style, element_state)
         })
     }
@@ -1954,7 +1951,7 @@ impl Interactivity {
     /// Called from internal methods that have already called with_element_state.
     fn compute_style_internal(
         &self,
-        occlusion: Option<&Occlusion>,
+        hitbox: Option<&Hitbox>,
         element_state: Option<&mut InteractiveElementState>,
         cx: &mut ElementContext,
     ) -> Style {
@@ -1975,21 +1972,19 @@ impl Interactivity {
             }
         }
 
-        if let Some(occlusion) = occlusion {
-            let occlusion_id = occlusion.id;
-            let moused_occlusion = cx.moused_occlusion().map(|moused| moused.id);
+        if let Some(hitbox) = hitbox {
+            let hitbox_id = hitbox.id;
+            let moused_hitbox = cx.moused_hitbox().map(|moused| moused.id);
 
             if !cx.has_active_drag() {
                 if let Some(group_hover) = self.group_hover_style.as_ref() {
-                    if GroupOcclusions::get(&group_hover.group, cx.deref_mut())
-                        == Some(occlusion_id)
-                    {
+                    if GroupHitboxes::get(&group_hover.group, cx.deref_mut()) == Some(hitbox_id) {
                         style.refine(&group_hover.style);
                     }
                 }
 
                 if let Some(hover_style) = self.hover_style.as_ref() {
-                    if moused_occlusion == Some(occlusion_id) {
+                    if moused_hitbox == Some(hitbox_id) {
                         style.refine(hover_style);
                     }
                 }
@@ -2003,11 +1998,11 @@ impl Interactivity {
 
                 if can_drop {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
-                        if let Some(group_occlusion) =
-                            GroupOcclusions::get(&group_drag_style.group, cx.deref_mut())
+                        if let Some(group_hitbox) =
+                            GroupHitboxes::get(&group_drag_style.group, cx.deref_mut())
                         {
                             if *state_type == drag.value.as_ref().type_id()
-                                && moused_occlusion == Some(group_occlusion)
+                                && moused_hitbox == Some(group_hitbox)
                             {
                                 style.refine(&group_drag_style.style);
                             }
@@ -2016,7 +2011,7 @@ impl Interactivity {
 
                     for (state_type, build_drag_over_style) in &self.drag_over_styles {
                         if *state_type == drag.value.as_ref().type_id()
-                            && moused_occlusion == Some(occlusion_id)
+                            && moused_hitbox == Some(hitbox_id)
                         {
                             style.refine(&build_drag_over_style(drag.value.as_ref(), cx));
                         }
@@ -2084,12 +2079,12 @@ impl ElementClickedState {
 }
 
 #[derive(Default)]
-pub(crate) struct GroupOcclusions(HashMap<SharedString, SmallVec<[OcclusionId; 1]>>);
+pub(crate) struct GroupHitboxes(HashMap<SharedString, SmallVec<[HitboxId; 1]>>);
 
-impl Global for GroupOcclusions {}
+impl Global for GroupHitboxes {}
 
-impl GroupOcclusions {
-    pub fn get(name: &SharedString, cx: &mut AppContext) -> Option<OcclusionId> {
+impl GroupHitboxes {
+    pub fn get(name: &SharedString, cx: &mut AppContext) -> Option<HitboxId> {
         cx.default_global::<Self>()
             .0
             .get(name)
@@ -2097,12 +2092,12 @@ impl GroupOcclusions {
             .cloned()
     }
 
-    pub fn push(name: SharedString, occlusion_id: OcclusionId, cx: &mut AppContext) {
+    pub fn push(name: SharedString, hitbox_id: HitboxId, cx: &mut AppContext) {
         cx.default_global::<Self>()
             .0
             .entry(name)
             .or_default()
-            .push(occlusion_id);
+            .push(hitbox_id);
     }
 
     pub fn pop(name: &SharedString, cx: &mut AppContext) {

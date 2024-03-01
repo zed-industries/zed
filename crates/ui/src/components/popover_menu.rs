@@ -2,9 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     overlay, point, prelude::FluentBuilder, px, rems, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, IntoElement, LayoutId,
-    ManagedView, MouseDownEvent, Occlusion, OcclusionId, ParentElement, Pixels, Point, View,
-    VisualContext, WindowContext,
+    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, Hitbox, HitboxId, IntoElement,
+    LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
+    WindowContext,
 };
 
 use crate::{Clickable, Selectable};
@@ -167,7 +167,7 @@ pub struct PopoverMenuFrameState {
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
     type BeforeLayout = PopoverMenuFrameState;
-    type AfterLayout = Option<OcclusionId>;
+    type AfterLayout = Option<HitboxId>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::BeforeLayout) {
         self.with_element_state(cx, |this, element_state, cx| {
@@ -216,7 +216,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         _bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Option<OcclusionId> {
+    ) -> Option<HitboxId> {
         self.with_element_state(cx, |_this, element_state, cx| {
             if let Some(child) = before_layout.child_element.as_mut() {
                 child.after_layout(cx);
@@ -229,7 +229,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             before_layout.child_layout_id.map(|layout_id| {
                 let bounds = cx.layout_bounds(layout_id);
                 element_state.child_bounds = Some(bounds);
-                cx.occlude(bounds).id
+                cx.insert_hitbox(bounds, false).id
             })
         })
     }
@@ -238,7 +238,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         &mut self,
         _: Bounds<gpui::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        child_occlusion: &mut Option<OcclusionId>,
+        child_hitbox: &mut Option<HitboxId>,
         cx: &mut ElementContext,
     ) {
         self.with_element_state(cx, |_this, _element_state, cx| {
@@ -249,13 +249,11 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             if let Some(mut menu) = before_layout.menu_element.take() {
                 menu.paint(cx);
 
-                if let Some(child_occlusion) = *child_occlusion {
+                if let Some(child_hitbox) = *child_hitbox {
                     // Mouse-downing outside the menu dismisses it, so we don't
                     // want a click on the toggle to re-open it.
-                    cx.on_mouse_event(move |e: &MouseDownEvent, moused_occlusion, phase, cx| {
-                        if phase == DispatchPhase::Bubble
-                            && moused_occlusion == Some(child_occlusion)
-                        {
+                    cx.on_mouse_event(move |e: &MouseDownEvent, moused_hitbox, phase, cx| {
+                        if phase == DispatchPhase::Bubble && moused_hitbox == Some(child_hitbox) {
                             cx.stop_propagation()
                         }
                     })

@@ -56,7 +56,7 @@ pub trait Element: 'static + IntoElement {
     /// Use this method to request a layout from Taffy and initialize the element's state.
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout);
 
-    /// After laying out an element, we need to commit its bounds to the current frame for occlusion
+    /// After laying out an element, we need to commit its bounds to the current frame for hitbox
     /// purposes. The state argument is the same state that was returned from [`Element::before_layout()`].
     fn after_layout(
         &mut self,
@@ -414,7 +414,7 @@ impl AnyElement {
         self.0.before_layout(cx)
     }
 
-    /// Commits the element bounds of this [AnyElement] for occlusion purposes.
+    /// Commits the element bounds of this [AnyElement] for hitbox purposes.
     pub fn after_layout(&mut self, cx: &mut ElementContext) {
         self.0.after_layout(cx)
     }

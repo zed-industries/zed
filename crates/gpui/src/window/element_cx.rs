@@ -39,7 +39,7 @@ use crate::{
 };
 
 pub(crate) type AnyMouseListener =
-    Box<dyn FnMut(&dyn Any, Option<OcclusionId>, DispatchPhase, &mut ElementContext) + 'static>;
+    Box<dyn FnMut(&dyn Any, Option<HitboxId>, DispatchPhase, &mut ElementContext) + 'static>;
 
 pub(crate) struct RequestedInputHandler {
     pub(crate) view_id: EntityId,
@@ -48,22 +48,24 @@ pub(crate) struct RequestedInputHandler {
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) occlusion_id: OcclusionId,
+    pub(crate) hitbox_id: HitboxId,
     pub(crate) style: CursorStyle,
 }
 
-/// An identifier for an [Occlusion]
+/// An identifier for a [Hitbox].
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub struct OcclusionId(usize);
+pub struct HitboxId(usize);
 
-/// A rectangular region that potentially blocks occlusions inserted prior.
-/// See [ElementContext::occlude] for more details.
+/// A rectangular region that potentially blocks hitboxes inserted prior.
+/// See [ElementContext::insert_hitbox] for more details.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Occlusion {
-    /// A unique identifier for the occlusion
-    pub id: OcclusionId,
-    /// The bounds of the occlusion
+pub struct Hitbox {
+    /// A unique identifier for the hitbox
+    pub id: HitboxId,
+    /// The bounds of the hitbox
     pub bounds: Bounds<Pixels>,
+    /// Whether the hitbox occludes other hitboxes inserted prior.
+    pub occluding: bool,
 }
 
 pub(crate) struct Frame {
@@ -73,7 +75,7 @@ pub(crate) struct Frame {
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) occlusions: Vec<Occlusion>,
+    pub(crate) hitboxs: Vec<Hitbox>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
@@ -87,7 +89,7 @@ pub(crate) struct Frame {
 
 #[derive(Clone, Default)]
 pub(crate) struct AfterLayoutIndex {
-    occlusions_index: usize,
+    hitboxs_index: usize,
     tooltips_index: usize,
 }
 
@@ -108,7 +110,7 @@ impl Frame {
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
-            occlusions: Vec::new(),
+            hitboxs: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
@@ -131,13 +133,13 @@ impl Frame {
         self.requested_input_handler.take();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
-        self.occlusions.clear();
+        self.hitboxs.clear();
         debug_assert_eq!(self.view_stack.len(), 0);
     }
 
     pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
         AfterLayoutIndex {
-            occlusions_index: self.occlusions.len(),
+            hitboxs_index: self.hitboxs.len(),
             tooltips_index: self.tooltip_requests.len(),
         }
     }
@@ -342,23 +344,48 @@ impl<'a> ElementContext<'a> {
             tooltip_element = Some(element);
         }
 
-        for (occlusion_ix, occlusion) in self
-            .window
-            .next_frame
-            .occlusions
-            .iter()
-            .cloned()
-            .enumerate()
-            .collect::<Vec<_>>()
-        {
-            let color = crate::hsla(
-                (occlusion_ix as f32 * 10.0) % 360.0, // Hue based on index
-                0.5,                                  // Saturation at 50%
-                0.5,                                  // Lightness at 50%
-                0.5,                                  // Alpha at 50% for transparency
-            );
-            self.paint_quad(crate::fill(occlusion.bounds.clone(), color));
-        }
+        // let moused_hitbox = self.moused_hitbox();
+        // let hitbox_count = self.window.next_frame.hitboxs.len();
+        // for (hitbox_ix, hitbox) in self
+        //     .window
+        //     .next_frame
+        //     .hitboxs
+        //     .iter()
+        //     .cloned()
+        //     .enumerate()
+        //     .collect::<Vec<_>>()
+        // {
+        //     // let synthwave_colors = [
+        //     //     crate::hsla(327.0, 100.0, 50.0, 1.0), // Hot pink
+        //     //     crate::hsla(213.0, 100.0, 50.0, 1.0), // Neon blue
+        //     //     crate::hsla(261.0, 51.0, 49.0, 1.0),  // Purple
+        //     //     crate::hsla(291.0, 63.0, 68.0, 1.0),  // Magenta
+        //     //     crate::hsla(192.0, 100.0, 50.0, 1.0), // Cyan
+        //     //     crate::hsla(348.0, 95.0, 68.0, 1.0),  // Red
+        //     //     crate::hsla(141.0, 75.0, 60.0, 1.0),  // Bright green
+        //     // ];
+
+        //     // for (i, &color) in synthwave_colors.iter().enumerate() {
+        //     //     let hitbox_color = if Some(hitbox.id) == moused_hitbox {
+        //     //         color.with_alpha(0.5) // If moused over, make the color more transparent
+        //     //     } else {
+        //     //         color
+        //     //     };
+        //     //     self.paint_quad(crate::fill(hitbox.bounds.clone(), hitbox_color));
+        //     // }
+
+        //     let color = if Some(&hitbox) == moused_hitbox.as_ref() {
+        //         crate::hsla(141.0, 75.0, 60.0, 1.0)
+        //     } else {
+        //         crate::hsla(
+        //             0.7 + hitbox_ix as f32 / hitbox_count as f32 * 0.3,
+        //             0.5, // Saturation at 50%
+        //             0.5 + hitbox_ix as f32 / hitbox_count as f32 * 0.1,
+        //             0.2, // Alpha at 50% for transparency
+        //         )
+        //     };
+        //     self.paint_quad(crate::fill(hitbox.bounds.clone(), color));
+        // }
 
         // Now actually paint the elements.
         self.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
@@ -374,21 +401,20 @@ impl<'a> ElementContext<'a> {
                 }
             }
 
-            // root_element.paint(cx)
+            root_element.paint(cx)
         });
 
-        // if let Some(mut drag_element) = active_drag_element {
-        //     drag_element.paint(self);
-        // } else if let Some(mut tooltip_element) = tooltip_element {
-        //     tooltip_element.paint(self);
-        // }
+        if let Some(mut drag_element) = active_drag_element {
+            drag_element.paint(self);
+        } else if let Some(mut tooltip_element) = tooltip_element {
+            tooltip_element.paint(self);
+        }
     }
 
     pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
         let window = &mut self.window;
-        window.next_frame.occlusions.extend(
-            window.rendered_frame.occlusions
-                [range.start.occlusions_index..range.end.occlusions_index]
+        window.next_frame.hitboxs.extend(
+            window.rendered_frame.hitboxs[range.start.hitboxs_index..range.end.hitboxs_index]
                 .iter()
                 .cloned(),
         );
@@ -459,12 +485,12 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Updates the cursor style at the platform level.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, occlusion: &Occlusion) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.window
             .next_frame
             .cursor_styles
             .push(CursorStyleRequest {
-                occlusion_id: occlusion.id,
+                hitbox_id: hitbox.id,
                 style,
             });
     }
@@ -1082,19 +1108,20 @@ impl<'a> ElementContext<'a> {
     }
 
     /// This method should be called during `after_layout`. You can use
-    /// the returned [OcclusionId] during `paint` or in an event handler
-    /// to determine whether the inserted occlusion was the topmost.
-    pub fn occlude(&mut self, bounds: Bounds<Pixels>) -> Occlusion {
+    /// the returned [Hitbox] during `paint` or in an event handler
+    /// to determine whether the inserted hitbox was the topmost.
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, occluding: bool) -> Hitbox {
         let content_mask = self.content_mask();
         let window = &mut self.window;
-        let id = window.next_occlusion_id;
-        window.next_occlusion_id.0 += 1;
-        let occlusion = Occlusion {
+        let id = window.next_hitbox_id;
+        window.next_hitbox_id.0 += 1;
+        let hitbox = Hitbox {
             id,
             bounds: bounds.intersect(&content_mask.bounds),
+            occluding: false,
         };
-        window.next_frame.occlusions.push(occlusion.clone());
-        occlusion
+        window.next_frame.hitboxs.push(hitbox.clone());
+        hitbox
     }
 
     /// Invoke the given function with the given focus handle present on the key dispatch stack.
@@ -1180,16 +1207,15 @@ impl<'a> ElementContext<'a> {
     /// the listener will be cleared.
     pub fn on_mouse_event<Event: MouseEvent>(
         &mut self,
-        mut handler: impl FnMut(&Event, Option<OcclusionId>, DispatchPhase, &mut ElementContext)
-            + 'static,
+        mut handler: impl FnMut(&Event, Option<HitboxId>, DispatchPhase, &mut ElementContext) + 'static,
     ) {
         self.window.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any,
-                  occlusion_id: Option<OcclusionId>,
+                  hitbox_id: Option<HitboxId>,
                   phase: DispatchPhase,
                   cx: &mut ElementContext<'_>| {
                 if let Some(event) = event.downcast_ref() {
-                    handler(event, occlusion_id, phase, cx)
+                    handler(event, hitbox_id, phase, cx)
                 }
             },
         )));

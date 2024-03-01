@@ -1,9 +1,9 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementContext,
-    FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler,
+    FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hitbox, Hsla, InputHandler,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
-    ModifiersChangedEvent, Occlusion, Pixels, Point, ShapedLine, StatefulInteractiveElement,
+    ModifiersChangedEvent, Pixels, Point, ShapedLine, StatefulInteractiveElement,
     StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle, WeakView, WhiteSpace,
     WindowContext, WindowTextSystem,
 };
@@ -29,7 +29,7 @@ use std::{fmt::Debug, ops::RangeInclusive};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
-    occlusion: Occlusion,
+    hitbox: Hitbox,
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
@@ -776,7 +776,7 @@ impl Element for TerminalElement {
             bounds,
             bounds.size,
             cx,
-            |_style, _scroll_offset, _occlusion, cx| {
+            |_style, _scroll_offset, _hitbox, cx| {
                 let settings = ThemeSettings::get_global(cx).clone();
 
                 let buffer_font_size = settings.buffer_font_size(cx);
@@ -875,11 +875,11 @@ impl Element for TerminalElement {
                     }
                 });
 
-                let occlusion = cx.occlude(bounds);
+                let hitbox = cx.insert_hitbox(bounds, false);
                 if self.can_navigate_to_selected_word && last_hovered_word.is_some() {
-                    cx.set_cursor_style(gpui::CursorStyle::PointingHand, &occlusion);
+                    cx.set_cursor_style(gpui::CursorStyle::PointingHand, &hitbox);
                 } else {
-                    cx.set_cursor_style(gpui::CursorStyle::IBeam, &occlusion)
+                    cx.set_cursor_style(gpui::CursorStyle::IBeam, &hitbox)
                 }
 
                 let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
@@ -980,7 +980,7 @@ impl Element for TerminalElement {
                 };
 
                 LayoutState {
-                    occlusion,
+                    hitbox,
                     cells,
                     cursor,
                     background_color,
@@ -1017,9 +1017,9 @@ impl Element for TerminalElement {
 
         self.register_mouse_listeners(origin, after_layout.mode, bounds, cx);
 
-        let occlusion = after_layout.occlusion.clone();
+        let hitbox = after_layout.hitbox.clone();
         self.interactivity
-            .paint(bounds, Some(&occlusion), cx, |_, cx| {
+            .paint(bounds, Some(&hitbox), cx, |_, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
 
                 cx.on_key_event({

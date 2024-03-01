@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Element, ElementContext, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    Occlusion, Pixels, SharedString, StyleRefinement, Styled,
+    Bounds, Element, ElementContext, Hitbox, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Pixels, SharedString, StyleRefinement, Styled,
 };
 use util::ResultExt;
 
@@ -28,7 +28,7 @@ impl Svg {
 
 impl Element for Svg {
     type BeforeLayout = ();
-    type AfterLayout = Option<Occlusion>;
+    type AfterLayout = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self
@@ -42,22 +42,22 @@ impl Element for Svg {
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Option<Occlusion> {
+    ) -> Option<Hitbox> {
         self.interactivity
-            .after_layout(bounds, bounds.size, cx, |_, _, occlusion, _| occlusion)
+            .after_layout(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        occlusion: &mut Option<Occlusion>,
+        hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) where
         Self: Sized,
     {
         self.interactivity
-            .paint(bounds, occlusion.as_ref(), cx, |style, cx| {
+            .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     cx.paint_svg(bounds, path.clone(), color).log_err();
                 }
