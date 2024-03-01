@@ -75,10 +75,8 @@ pub struct AssistantSettings {
 impl AssistantSettings {
     pub fn provider_kind(&self) -> anyhow::Result<OpenAiCompletionProviderKind> {
         match &self.provider {
-            crate::assistant_settings::AiProviderSettings::OpenAi(_) => {
-                Ok(OpenAiCompletionProviderKind::OpenAi)
-            }
-            crate::assistant_settings::AiProviderSettings::AzureOpenAi(settings) => {
+            AiProviderSettings::OpenAi(_) => Ok(OpenAiCompletionProviderKind::OpenAi),
+            AiProviderSettings::AzureOpenAi(settings) => {
                 let deployment_id = settings
                     .deployment_id
                     .clone()
