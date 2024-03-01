@@ -7143,11 +7143,15 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "fuzzy",
  "gpui",
+ "language",
  "menu",
  "ordered-float 2.10.0",
  "picker",
+ "project",
+ "serde_json",
  "smol",
  "ui",
  "util",

@@ -223,11 +223,35 @@ impl PickerDelegate for RecentProjectsDelegate {
             workspace
                 .update(cx, |workspace, cx| {
                     if workspace.database_id() != *candidate_workspace_id {
-                        workspace.open_workspace_for_paths(
-                            replace_current_window,
-                            candidate_workspace_location.paths().as_ref().clone(),
-                            cx,
-                        )
+                        let candidate_paths = candidate_workspace_location.paths().as_ref().clone();
+                        if replace_current_window {
+                            cx.spawn(move |workspace, mut cx| async move {
+                                let continue_replacing = workspace
+                                    .update(&mut cx, |workspace, cx| {
+                                        workspace.prepare_to_close(true, cx)
+                                    })?
+                                    .await?;
+                                if continue_replacing {
+                                    workspace
+                                        .update(&mut cx, |workspace, cx| {
+                                            workspace.open_workspace_for_paths(
+                                                replace_current_window,
+                                                candidate_paths,
+                                                cx,
+                                            )
+                                        })?
+                                        .await
+                                } else {
+                                    Ok(())
+                                }
+                            })
+                        } else {
+                            workspace.open_workspace_for_paths(
+                                replace_current_window,
+                                candidate_paths,
+                                cx,
+                            )
+                        }
                     } else {
                         Task::ready(Ok(()))
                     }
@@ -357,6 +381,139 @@ impl Render for MatchTooltip {
                             .color(Color::Muted)
                     }),
             )
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use editor::Editor;
+    use gpui::{TestAppContext, WindowHandle};
+    use project::Project;
+    use serde_json::json;
+    use workspace::{open_paths, AppState};
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_prompts_on_dirty_before_submit(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/dir",
+                json!({
+                    "main.ts": "a"
+                }),
+            )
+            .await;
+        cx.update(|cx| open_paths(&[PathBuf::from("/dir/main.ts")], &app_state, None, cx))
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        let workspace = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        workspace
+            .update(cx, |workspace, _| assert!(!workspace.is_edited()))
+            .unwrap();
+
+        let editor = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+        workspace
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+            })
+            .unwrap();
+        workspace
+            .update(cx, |workspace, _| assert!(workspace.is_edited(), "After inserting more text into the editor without saving, we should have a dirty project"))
+            .unwrap();
+
+        let recent_projects_picker = open_recent_projects(&workspace, cx);
+        workspace
+            .update(cx, |_, cx| {
+                recent_projects_picker.update(cx, |picker, cx| {
+                    assert_eq!(picker.query(cx), "");
+                    let delegate = &mut picker.delegate;
+                    delegate.matches = vec![StringMatch {
+                        candidate_id: 0,
+                        score: 1.0,
+                        positions: Vec::new(),
+                        string: "fake candidate".to_string(),
+                    }];
+                    delegate.workspaces = vec![(0, WorkspaceLocation::new(vec!["/test/path/"]))];
+                });
+            })
+            .unwrap();
+
+        assert!(
+            !cx.has_pending_prompt(),
+            "Should have no pending prompt on dirty project before opening the new recent project"
+        );
+        cx.dispatch_action((*workspace).into(), menu::Confirm);
+        workspace
+            .update(cx, |workspace, cx| {
+                assert!(
+                    workspace.active_modal::<RecentProjects>(cx).is_none(),
+                    "Should remove the modal after selecting new recent project"
+                )
+            })
+            .unwrap();
+        assert!(
+            cx.has_pending_prompt(),
+            "Dirty workspace should prompt before opening the new recent project"
+        );
+        // Cancel
+        cx.simulate_prompt_answer(0);
+        assert!(
+            !cx.has_pending_prompt(),
+            "Should have no pending prompt after cancelling"
+        );
+        workspace
+            .update(cx, |workspace, _| {
+                assert!(
+                    workspace.is_edited(),
+                    "Should be in the same dirty project after cancelling"
+                )
+            })
+            .unwrap();
+    }
+
+    fn open_recent_projects(
+        workspace: &WindowHandle<Workspace>,
+        cx: &mut TestAppContext,
+    ) -> View<Picker<RecentProjectsDelegate>> {
+        cx.dispatch_action((*workspace).into(), OpenRecent);
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_modal::<RecentProjects>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .picker
+                    .clone()
+            })
+            .unwrap()
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            language::init(cx);
+            crate::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            state
         })
     }
 }
