@@ -156,6 +156,7 @@ impl Prettier {
         _: LanguageServerId,
         prettier_dir: PathBuf,
         _: Arc<dyn NodeRuntime>,
+        _: Arc<LanguageRegistry>,
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
@@ -169,6 +170,7 @@ impl Prettier {
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: Arc<dyn NodeRuntime>,
+        language_registry: Arc<LanguageRegistry>,
         cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         use lsp::LanguageServerBinary;
@@ -207,6 +209,7 @@ impl Prettier {
         Ok(Self::Real(RealPrettier {
             server,
             default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+            language_registry,
             prettier_dir,
         }))
     }

@@ -304,15 +304,20 @@ fn start_prettier(
 ) -> PrettierTask {
     cx.spawn(|project, mut cx| async move {
         log::info!("Starting prettier at path {prettier_dir:?}");
-        let new_server_id = project.update(&mut cx, |project, _| {
-            project.languages.next_language_server_id()
-        })?;
+        let language_registry = project.update(&mut cx, |project, _| project.languages.clone())?;
+        let new_server_id = language_registry.next_language_server_id();
 
-        let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
-            .await
-            .context("default prettier spawn")
-            .map(Arc::new)
-            .map_err(Arc::new)?;
+        let new_prettier = Prettier::start(
+            new_server_id,
+            prettier_dir,
+            node,
+            language_registry,
+            cx.clone(),
+        )
+        .await
+        .context("default prettier spawn")
+        .map(Arc::new)
+        .map_err(Arc::new)?;
         register_new_prettier(&project, &new_prettier, worktree_id, new_server_id, &mut cx);
         Ok(new_prettier)
     })
