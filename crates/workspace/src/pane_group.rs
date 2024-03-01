@@ -587,9 +587,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, InteractiveBounds,
-        IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WeakView, WindowContext,
+        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, IntoElement,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
+        WeakView, WindowContext,
     };
     use parking_lot::Mutex;
     use settings::Settings;
@@ -752,17 +752,6 @@ mod element {
                 size: pane_bounds.size.apply_along(axis, |_| px(DIVIDER_SIZE)),
             };
 
-            let interactive_handle_bounds = InteractiveBounds {
-                bounds: handle_bounds,
-                stacking_order: cx.stacking_order().clone(),
-            };
-            if interactive_handle_bounds.visibly_contains(&cx.mouse_position(), cx) {
-                cx.set_cursor_style(match axis {
-                    Axis::Vertical => CursorStyle::ResizeUpDown,
-                    Axis::Horizontal => CursorStyle::ResizeLeftRight,
-                })
-            }
-
             cx.occlude(handle_bounds);
             cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border));
 
@@ -896,7 +885,8 @@ mod element {
 
                 let child_size = bounds
                     .size
-                    .apply_along(self.axis, |_| space_per_flex * child_flex);
+                    .apply_along(self.axis, |_| space_per_flex * child_flex)
+                    .map(|d| d.round());
 
                 let child_bounds = Bounds {
                     origin,

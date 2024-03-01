@@ -1,9 +1,9 @@
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter,
-    ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Empty, Entity,
+    EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
     TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
@@ -177,7 +177,7 @@ impl TestAppContext {
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| ()));
+        let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| Empty));
         drop(cx);
         let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
         cx.run_until_parked();

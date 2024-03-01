@@ -1,5 +1,6 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::{ActiveCall, ParticipantLocation};
+use client::ChannelId;
 use collab_ui::{
     channel_view::ChannelView,
     notifications::project_shared_notification::ProjectSharedNotification,
@@ -309,7 +310,7 @@ async fn test_basic_following(
     let multibuffer_editor_a = workspace_a.update(cx_a, |workspace, cx| {
         let editor =
             cx.new_view(|cx| Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), cx));
-        workspace.add_item(Box::new(editor.clone()), cx);
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
         editor
     });
     executor.run_until_parked();
@@ -2000,7 +2001,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 }
 
 async fn join_channel(
-    channel_id: u64,
+    channel_id: ChannelId,
     client: &TestClient,
     cx: &mut TestAppContext,
 ) -> anyhow::Result<()> {

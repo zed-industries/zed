@@ -7,13 +7,10 @@ license = "GPL-3.0-or-later"
 
 [features]
 default = []
-stories = ["dep:itertools", "dep:story"]
 
 [lib]
 path = "src/color.rs"
 doctest = true
 
 [dependencies]
-itertools = { workspace = true, optional = true }
-palette = "0.7.3"
-story = { workspace = true, optional = true }
+palette.workspace = true

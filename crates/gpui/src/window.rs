@@ -280,7 +280,6 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-    graphics_profiler_enabled: bool,
 }
 
 #[derive(Default, Debug)]
@@ -475,7 +474,6 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
-            graphics_profiler_enabled: false,
         }
     }
     fn new_focus_listener(
@@ -1223,17 +1221,18 @@ impl<'a> WindowContext<'a> {
                     currently_pending.bindings.push(binding);
                 }
 
-                currently_pending.timer = Some(self.spawn(|mut cx| async move {
-                    cx.background_executor.timer(Duration::from_secs(1)).await;
-                    cx.update(move |cx| {
-                        cx.clear_pending_keystrokes();
-                        let Some(currently_pending) = cx.window.pending_input.take() else {
-                            return;
-                        };
-                        cx.replay_pending_input(currently_pending)
-                    })
-                    .log_err();
-                }));
+                // currently_pending.timer = Some(self.spawn(|mut cx| async move {
+                //     cx.background_executor.timer(Duration::from_secs(1)).await;
+                //     cx.update(move |cx| {
+                //         cx.clear_pending_keystrokes();
+                //         let Some(currently_pending) = cx.window.pending_input.take() else {
+                //             return;
+                //         };
+                //         cx.replay_pending_input(currently_pending)
+                //     })
+                //     .log_err();
+                // }));
+
                 self.window.pending_input = Some(currently_pending);
 
                 self.propagate_event = false;
@@ -1412,14 +1411,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-    }
-
-    /// Toggle the graphics profiler to debug your application's rendering performance.
-    pub fn toggle_graphics_profiler(&mut self) {
-        self.window.graphics_profiler_enabled = !self.window.graphics_profiler_enabled;
-        self.window
-            .platform_window
-            .set_graphics_profiler_enabled(self.window.graphics_profiler_enabled);
     }
 
     /// Register the given handler to be invoked whenever the global of the given type

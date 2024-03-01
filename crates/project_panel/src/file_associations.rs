@@ -13,6 +13,7 @@ struct TypeConfig {
 
 #[derive(Deserialize, Debug)]
 pub struct FileAssociations {
+    stems: HashMap<String, String>,
     suffixes: HashMap<String, String>,
     types: HashMap<String, TypeConfig>,
 }
@@ -38,6 +39,7 @@ impl FileAssociations {
                     .map_err(Into::into)
             })
             .unwrap_or_else(|_| FileAssociations {
+                stems: HashMap::default(),
                 suffixes: HashMap::default(),
                 types: HashMap::default(),
             })
@@ -49,7 +51,14 @@ impl FileAssociations {
         // FIXME: Associate a type with the languages and have the file's language
         //        override these associations
         maybe!({
-            let suffix = path.icon_suffix()?;
+            let suffix = path.icon_stem_or_suffix()?;
+
+            if let Some(type_str) = this.stems.get(suffix) {
+                return this
+                    .types
+                    .get(type_str)
+                    .map(|type_config| type_config.icon.clone());
+            }
 
             this.suffixes
                 .get(suffix)

@@ -1,9 +1,10 @@
-use std::{assert_eq, path::Path, time::Duration};
+use std::{assert_eq, future::IntoFuture, path::Path, time::Duration};
 
 use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext};
+use project::worktree::FS_WATCH_LATENCY;
 use serde_json::json;
 use workspace::{AppState, Workspace};
 
@@ -1335,6 +1336,137 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
                 "Should have all opened files in the history, except the ones that do not exist on disk"
             );
         });
+}
+
+#[gpui::test]
+async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "lib.rs": "// Lib file",
+                "main.rs": "// Bar file",
+                "read.me": "// Readme file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+    // Initial state
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("rs");
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_at_position(finder, 0, "lib.rs");
+        assert_match_at_position(finder, 1, "main.rs");
+    });
+
+    // Delete main.rs
+    app_state
+        .fs
+        .remove_file("/src/main.rs".as_ref(), Default::default())
+        .await
+        .expect("unable to remove file");
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    // main.rs is in not among search results anymore
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_match_at_position(finder, 0, "lib.rs");
+    });
+
+    // Create util.rs
+    app_state
+        .fs
+        .create_file("/src/util.rs".as_ref(), Default::default())
+        .await
+        .expect("unable to create file");
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    // util.rs is among search results
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_at_position(finder, 0, "lib.rs");
+        assert_match_at_position(finder, 1, "util.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "project_1": {
+                    "bar.rs": "// Bar file",
+                    "lib.rs": "// Lib file",
+                },
+                "project_2": {
+                    "Cargo.toml": "// Cargo file",
+                    "main.rs": "// Main file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test/project_1".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+    let worktree_1_id = project.update(cx, |project, cx| {
+        let worktree = project.worktrees().last().expect("worktree not found");
+        worktree.read(cx).id()
+    });
+
+    // Initial state
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("rs");
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_at_position(finder, 0, "bar.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
+    });
+
+    // Add new worktree
+    project
+        .update(cx, |project, cx| {
+            project
+                .find_or_create_local_worktree("/test/project_2", true, cx)
+                .into_future()
+        })
+        .await
+        .expect("unable to create workdir");
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    // main.rs is among search results
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "bar.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "main.rs");
+    });
+
+    // Remove the first worktree
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_1_id, cx);
+    });
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    // Files from the first worktree are not in the search results anymore
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_match_at_position(finder, 0, "main.rs");
+    });
 }
 
 async fn open_close_queried_buffer(

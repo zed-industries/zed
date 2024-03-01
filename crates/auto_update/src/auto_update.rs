@@ -20,7 +20,7 @@ use smol::io::AsyncReadExt;
 use settings::{Settings, SettingsStore};
 use smol::{fs::File, process::Command};
 
-use release_channel::{AppCommitSha, ReleaseChannel};
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
     env::consts::{ARCH, OS},
     ffi::OsString,
@@ -190,7 +190,7 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
 
 fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     let release_channel = ReleaseChannel::global(cx);
-    let version = env!("CARGO_PKG_VERSION");
+    let version = AppVersion::global(cx).to_string();
 
     let client = client::Client::global(cx).http_client();
     let url = client.build_url(&format!(
@@ -242,7 +242,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                                 Some(tab_description),
                                 cx,
                             );
-                            workspace.add_item(Box::new(view.clone()), cx);
+                            workspace.add_item_to_active_pane(Box::new(view.clone()), cx);
                             cx.notify();
                         })
                         .log_err();

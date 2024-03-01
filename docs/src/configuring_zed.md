@@ -383,7 +383,9 @@ To override settings for a language, add an entry for that language server's nam
   "enabled": false,
   "show_type_hints": true,
   "show_parameter_hints": true,
-  "show_other_hints": true
+  "show_other_hints": true,
+  "edit_debounce_ms": 700,
+  "scroll_debounce_ms": 50
 }
 ```
 
@@ -401,6 +403,9 @@ The following languages have inlay hints preconfigured by Zed:
 - [Typescript](https://docs.zed.dev/languages/typescript)
 
 Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
+
+Hints are not instantly queried in Zed, two kinds of debounces are used, either may be set to 0 to be disabled.
+Settings-related hint updates are not debounced.
 
 ## Journal
 

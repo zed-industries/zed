@@ -105,8 +105,10 @@ pub trait Render: 'static + Sized {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement;
 }
 
-impl Render for () {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {}
+impl Render for Empty {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Empty
+    }
 }
 
 /// You can derive [`IntoElement`] on any type that implements this trait.
@@ -486,9 +488,9 @@ impl IntoElement for AnyElement {
 }
 
 /// The empty element, which renders nothing.
-pub type Empty = ();
+pub struct Empty;
 
-impl IntoElement for () {
+impl IntoElement for Empty {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -496,7 +498,7 @@ impl IntoElement for () {
     }
 }
 
-impl Element for () {
+impl Element for Empty {
     type BeforeLayout = ();
     type AfterLayout = ();
 
