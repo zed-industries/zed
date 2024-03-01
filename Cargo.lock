@@ -9436,7 +9436,6 @@ dependencies = [
  "anyhow",
  "core-foundation",
  "core-foundation-sys 0.8.6",
- "lazy_static",
  "sys-locale",
  "time",
 ]
