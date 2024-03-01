@@ -587,9 +587,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakView, WindowContext,
+        px, relative, Along, AnyElement, Axis, Bounds, Element, IntoElement, MouseDownEvent,
+        MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style, WeakView,
+        WindowContext,
     };
     use parking_lot::Mutex;
     use settings::Settings;

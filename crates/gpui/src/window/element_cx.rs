@@ -443,13 +443,12 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Updates the cursor style at the platform level.
-    pub fn set_cursor_style(&mut self, style: CursorStyle) {
-        let occlusion_id = todo!();
+    pub fn set_cursor_style(&mut self, style: CursorStyle, occlusion: &Occlusion) {
         self.window
             .next_frame
             .cursor_styles
             .push(CursorStyleRequest {
-                occlusion_id,
+                occlusion_id: occlusion.id,
                 style,
             });
     }

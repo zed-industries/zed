@@ -5,9 +5,7 @@ use crate::{
     },
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hover_popover::{
-        self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
-    },
+    hover_popover::{self, hover_at, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT},
     items::BufferSearchHighlights,
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
@@ -50,7 +48,7 @@ use std::{
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
-use ui::{h_flex, ButtonLike, ButtonStyle, IconButton, Tooltip};
+use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -717,10 +715,7 @@ impl EditorElement {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
 
-        if bounds.contains(&cx.mouse_position()) {
-            let stacking_order = cx.stacking_order().clone();
-            cx.set_cursor_style(CursorStyle::Arrow);
-        }
+        cx.set_cursor_style(CursorStyle::Arrow, todo!());
 
         let show_git_gutter = matches!(
             ProjectSettings::get_global(cx).git.git_gutter,
@@ -934,9 +929,9 @@ impl EditorElement {
                         .as_ref()
                         .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
                     {
-                        cx.set_cursor_style(CursorStyle::PointingHand);
+                        cx.set_cursor_style(CursorStyle::PointingHand, todo!());
                     } else {
-                        cx.set_cursor_style(CursorStyle::IBeam);
+                        cx.set_cursor_style(CursorStyle::IBeam, todo!());
                     }
                 }
 
@@ -1467,7 +1462,7 @@ impl EditorElement {
         };
         let mut mouse_position = cx.mouse_position();
         if track_bounds.contains(&mouse_position) {
-            cx.set_cursor_style(CursorStyle::Arrow);
+            cx.set_cursor_style(CursorStyle::Arrow, todo!());
         }
 
         cx.on_mouse_event({

@@ -36,8 +36,6 @@ use util::{measure, ResultExt};
 mod element_cx;
 pub use element_cx::*;
 
-pub(crate) const ACTIVE_DRAG_Z_INDEX: u16 = 1;
-
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
 #[derive(Debug, Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]

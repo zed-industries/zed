@@ -19,7 +19,7 @@ use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
     ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global,
     IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Occlusion, ParentElement, Pixels, Point, Render,
     ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task,
     View, Visibility, WindowContext,
 };
@@ -483,7 +483,7 @@ impl Interactivity {
     /// Block the mouse from interacting with this element or any of it's children
     /// The imperative API equivalent to [`InteractiveElement::block_mouse`]
     pub fn block_mouse(&mut self) {
-        self.block_mouse = true;
+        self.occlude_mouse = true;
     }
 }
 
@@ -1061,7 +1061,7 @@ impl ParentElement for Div {
 
 impl Element for Div {
     type BeforeLayout = DivFrameState;
-    type AfterLayout = ();
+    type AfterLayout = Option<Occlusion>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut child_layout_ids = SmallVec::new();
@@ -1083,7 +1083,7 @@ impl Element for Div {
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) {
+    ) -> Option<Occlusion> {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         let content_size = if before_layout.child_layout_ids.is_empty() {
@@ -1117,28 +1117,34 @@ impl Element for Div {
             (child_max - child_min).into()
         };
 
-        self.interactivity
-            .after_layout(bounds, content_size, cx, |_style, scroll_offset, cx| {
+        self.interactivity.after_layout(
+            bounds,
+            content_size,
+            cx,
+            |_style, scroll_offset, occlusion, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
                         child.after_layout(cx);
                     }
-                })
-            })
+                });
+                occlusion
+            },
+        )
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        _after_layout: &mut Self::AfterLayout,
+        hover_occlusion: &mut Option<Occlusion>,
         cx: &mut ElementContext,
     ) {
-        self.interactivity.paint(bounds, cx, |_style, cx| {
-            for child in &mut self.children {
-                child.paint(cx);
-            }
-        });
+        self.interactivity
+            .paint(bounds, hover_occlusion.as_ref(), cx, |_style, cx| {
+                for child in &mut self.children {
+                    child.paint(cx);
+                }
+            });
     }
 }
 
@@ -1190,7 +1196,7 @@ pub struct Interactivity {
     pub(crate) drag_listener: Option<(Box<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
-    pub(crate) block_mouse: bool,
+    pub(crate) occlude_mouse: bool,
 
     #[cfg(debug_assertions)]
     pub(crate) location: Option<core::panic::Location<'static>>,
@@ -1295,7 +1301,7 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext) -> R,
+        f: impl FnOnce(&Style, Point<Pixels>, Option<Occlusion>, &mut ElementContext) -> R,
     ) -> R {
         self.content_size = content_size;
         cx.with_element_state::<InteractiveElementState, _>(
@@ -1307,17 +1313,20 @@ impl Interactivity {
 
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                        if self.block_mouse
+                        let occlusion;
+                        if self.occlude_mouse
                             || style.background.as_ref().is_some_and(|fill| {
                                 fill.color().is_some_and(|color| !color.is_transparent())
                             })
                         {
                             let clipped_bounds = bounds.intersect(&cx.content_mask().bounds);
-                            cx.occlude(clipped_bounds);
+                            occlusion = Some(cx.occlude(clipped_bounds));
+                        } else {
+                            occlusion = None;
                         }
 
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
-                        let result = f(&style, scroll_offset, cx);
+                        let result = f(&style, scroll_offset, occlusion, cx);
                         (result, element_state)
                     })
                 })
@@ -1378,6 +1387,7 @@ impl Interactivity {
     pub fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
+        occlusion: Option<&Occlusion>,
         cx: &mut ElementContext,
         f: impl FnOnce(&Style, &mut ElementContext),
     ) {
@@ -1413,13 +1423,10 @@ impl Interactivity {
                             };
 
                             if !cx.has_active_drag() {
-                                if let Some(mouse_cursor) = style.mouse_cursor {
-                                    let mouse_position = &cx.mouse_position();
-                                    let hovered =
-                                        interactive_bounds.visibly_contains(mouse_position, cx);
-                                    if hovered {
-                                        cx.set_cursor_style(mouse_cursor);
-                                    }
+                                if let Some((mouse_cursor, occlusion)) =
+                                    style.mouse_cursor.zip(occlusion)
+                                {
+                                    cx.set_cursor_style(mouse_cursor, &occlusion);
                                 }
                             }
 
@@ -2100,6 +2107,7 @@ pub struct InteractiveElementState {
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
+    pub(crate) occlusion: Option<Occlusion>,
 }
 
 /// The current active tooltip

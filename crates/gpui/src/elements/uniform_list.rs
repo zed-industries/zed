@@ -6,8 +6,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
-    ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Render, Size,
-    StyleRefinement, Styled, View, ViewContext, WindowContext,
+    ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Occlusion, Pixels, Render,
+    Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -48,6 +48,7 @@ where
         interactivity: Interactivity {
             element_id: Some(id),
             base_style: Box::new(base_style),
+            occlude_mouse: true,
 
             #[cfg(debug_assertions)]
             location: Some(*core::panic::Location::caller()),
@@ -103,7 +104,7 @@ impl Styled for UniformList {
 
 impl Element for UniformList {
     type BeforeLayout = UniformListFrameState;
-    type AfterLayout = ();
+    type AfterLayout = Option<Occlusion>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let max_items = self.item_count;
@@ -140,7 +141,7 @@ impl Element for UniformList {
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) {
+    ) -> Option<Occlusion> {
         let style = self.interactivity.compute_style(None, cx);
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
@@ -164,8 +165,11 @@ impl Element for UniformList {
             .as_mut()
             .and_then(|handle| handle.deferred_scroll_to_item.take());
 
-        self.interactivity
-            .after_layout(bounds, content_size, cx, |style, mut scroll_offset, cx| {
+        self.interactivity.after_layout(
+            bounds,
+            content_size,
+            cx,
+            |style, mut scroll_offset, occlusion, cx| {
                 let border = style.border_widths.to_pixels(cx.rem_size());
                 let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -222,24 +226,28 @@ impl Element for UniformList {
                         }
                     });
                 }
-            })
+
+                occlusion
+            },
+        )
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        occlusion: &mut Option<Occlusion>,
         cx: &mut ElementContext,
     ) {
-        self.interactivity.paint(bounds, cx, |_, cx| {
-            let content_mask = ContentMask { bounds };
-            cx.with_content_mask(Some(content_mask), |cx| {
-                for item in &mut before_layout.items {
-                    item.paint(cx);
-                }
-            });
-        })
+        self.interactivity
+            .paint(bounds, occlusion.as_ref(), cx, |_, cx| {
+                let content_mask = ContentMask { bounds };
+                cx.with_content_mask(Some(content_mask), |cx| {
+                    for item in &mut before_layout.items {
+                        item.paint(cx);
+                    }
+                });
+            })
     }
 }
 

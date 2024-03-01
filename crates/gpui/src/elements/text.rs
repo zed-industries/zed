@@ -1,7 +1,7 @@
 use crate::{
     ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementContext, ElementId,
-    HighlightStyle, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine,
+    HighlightStyle, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Occlusion,
+    Pixels, Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine,
     TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
@@ -403,7 +403,7 @@ impl InteractiveText {
 
 impl Element for InteractiveText {
     type BeforeLayout = TextState;
-    type AfterLayout = ();
+    type AfterLayout = Option<Occlusion>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         self.text.before_layout(cx)
@@ -414,15 +414,20 @@ impl Element for InteractiveText {
         bounds: Bounds<Pixels>,
         state: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) {
+    ) -> Option<Occlusion> {
         self.text.after_layout(bounds, state, cx);
+        if !self.clickable_ranges.is_empty() {
+            Some(cx.occlude(bounds))
+        } else {
+            None
+        }
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         text_state: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        hover_occlusion: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         cx.with_element_state::<InteractiveTextState, _>(
@@ -437,9 +442,11 @@ impl Element for InteractiveText {
                             .clickable_ranges
                             .iter()
                             .any(|range| range.contains(&ix))
-                            && cx.was_top_layer(&mouse_position, cx.stacking_order())
                         {
-                            cx.set_cursor_style(crate::CursorStyle::PointingHand)
+                            cx.set_cursor_style(
+                                crate::CursorStyle::PointingHand,
+                                hover_occlusion.as_ref().unwrap(), // We called cx.occlude in after_layout if we have clickable rangess
+                            )
                         }
                     }
 
