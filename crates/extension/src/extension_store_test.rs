@@ -39,7 +39,13 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     "extension.json": r#"{
                         "id": "zed-monokai",
                         "name": "Zed Monokai",
-                        "version": "2.0.0"
+                        "version": "2.0.0",
+                        "themes": {
+                            "Monokai Dark": "themes/monokai.json",
+                            "Monokai Light": "themes/monokai.json",
+                            "Monokai Pro Dark": "themes/monokai-pro.json",
+                            "Monokai Pro Light": "themes/monokai-pro.json"
+                        }
                     }"#,
                     "themes": {
                         "monokai.json": r#"{
@@ -82,8 +88,12 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         "name": "Zed Ruby",
                         "version": "1.0.0",
                         "grammars": {
-                            "ruby": {"repository": "", "commit": ""},
-                            "embedded_template": {"repository": "", "commit": ""},
+                            "ruby": "grammars/ruby.wasm",
+                            "embedded_template": "grammars/embedded_template.wasm"
+                        },
+                        "languages": {
+                            "ruby": "languages/ruby",
+                            "erb": "languages/erb"
                         }
                     }"#,
                     "grammars": {
@@ -120,17 +130,17 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 "zed-ruby".into(),
                 ExtensionManifest {
                     id: "zed-ruby".into(),
-                    name: "Ruby".into(),
+                    name: "Zed Ruby".into(),
                     version: "1.0.0".into(),
                     description: None,
                     authors: Vec::new(),
                     repository: None,
                     themes: Default::default(),
                     lib: Default::default(),
-                    languages: vec!["languages/ruby".into(), "languages/erb".into()].into(),
+                    languages: vec!["languages/erb".into(), "languages/ruby".into()],
                     grammars: [
+                        ("embedded_template".into(), GrammarManifestEntry::default()),
                         ("ruby".into(), GrammarManifestEntry::default()),
-                        ("erb".into(), GrammarManifestEntry::default()),
                     ]
                     .into_iter()
                     .collect(),
@@ -148,10 +158,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     authors: vec![],
                     repository: None,
                     themes: vec![
-                        "themes/monokai.json".into(),
                         "themes/monokai-pro.json".into(),
-                    ]
-                    .into(),
+                        "themes/monokai.json".into(),
+                    ],
                     lib: Default::default(),
                     languages: Default::default(),
                     grammars: BTreeMap::default(),
@@ -269,7 +278,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             "extension.json": r#"{
                 "id": "zed-gruvbox",
                 "name": "Zed Gruvbox",
-                "version": "1.0.0"
+                "version": "1.0.0",
+                "themes": {
+                    "Gruvbox": "themes/gruvbox.json"
+                }
             }"#,
             "themes": {
                 "gruvbox.json": r#"{
@@ -288,6 +300,23 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     )
     .await;
 
+    expected_index.extensions.insert(
+        "zed-gruvbox".into(),
+        ExtensionManifest {
+            id: "zed-gruvbox".into(),
+            name: "Zed Gruvbox".into(),
+            version: "1.0.0".into(),
+            description: None,
+            authors: vec![],
+            repository: None,
+            themes: vec!["themes/gruvbox.json".into()],
+            lib: Default::default(),
+            languages: Default::default(),
+            grammars: BTreeMap::default(),
+            language_servers: BTreeMap::default(),
+        }
+        .into(),
+    );
     expected_index.themes.insert(
         "Gruvbox".into(),
         ExtensionIndexEntry {

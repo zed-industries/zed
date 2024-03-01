@@ -784,8 +784,18 @@ impl ExtensionStore {
                 repository: manifest_json.repository,
                 authors: manifest_json.authors,
                 lib: Default::default(),
-                themes: manifest_json.themes.into_values().collect(),
-                languages: manifest_json.languages.into_values().collect(),
+                themes: {
+                    let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
+                    themes.sort();
+                    themes.dedup();
+                    themes
+                },
+                languages: {
+                    let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
+                    languages.sort();
+                    languages.dedup();
+                    languages
+                },
                 grammars: manifest_json
                     .grammars
                     .into_iter()
@@ -793,8 +803,6 @@ impl ExtensionStore {
                     .collect(),
                 language_servers: Default::default(),
             };
-            extension_manifest.themes.sort();
-            extension_manifest.themes.dedup();
         } else {
             extension_manifest_path.set_extension("toml");
             let manifest_content = fs
@@ -853,7 +861,7 @@ impl ExtensionStore {
                 };
 
                 let relative_path = relative_path.to_path_buf();
-                if extension_manifest.themes.contains(&relative_path) {
+                if !extension_manifest.themes.contains(&relative_path) {
                     extension_manifest.themes.push(relative_path.clone());
                 }
 
