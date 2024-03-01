@@ -46,11 +46,7 @@ pub(crate) struct RequestedInputHandler {
     pub(crate) handler: Option<PlatformInputHandler>,
 }
 
-pub(crate) struct TooltipRequest {
-    pub(crate) view_id: EntityId,
-    pub(crate) tooltip: AnyTooltip,
-}
-
+#[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
     pub(crate) occlusion_id: OcclusionId,
     pub(crate) style: CursorStyle,
@@ -74,19 +70,25 @@ pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    pub(crate) mouse_listeners: Vec<AnyMouseListener>,
+    pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) occlusions: Vec<Occlusion>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
-    pub(crate) tooltip_request: Option<TooltipRequest>,
+    pub(crate) tooltip_requests: Vec<Option<AnyTooltip>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct LayoutIndex {
+    occlusions_index: usize,
+    tooltips_index: usize,
 }
 
 #[derive(Clone, Default)]
@@ -110,7 +112,7 @@ impl Frame {
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
-            tooltip_request: None,
+            tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
             view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
@@ -127,14 +129,17 @@ impl Frame {
         self.reused_views.clear();
         self.scene.clear();
         self.requested_input_handler.take();
-        self.tooltip_request.take();
+        self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.occlusions.clear();
         debug_assert_eq!(self.view_stack.len(), 0);
     }
 
-    pub(crate) fn occlusion_index(&self) -> usize {
-        self.occlusions.len()
+    pub(crate) fn layout_index(&self) -> LayoutIndex {
+        LayoutIndex {
+            occlusions_index: self.occlusions.len(),
+            tooltips_index: self.tooltip_requests.len(),
+        }
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
@@ -327,12 +332,14 @@ impl<'a> ElementContext<'a> {
             element.layout(offset, AvailableSpace::min_size(), self);
             active_drag_element = Some(element);
             self.app.active_drag = Some(active_drag);
-        } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
-            let mut element = tooltip_request.tooltip.view.clone().into_any();
-            let offset = tooltip_request.tooltip.cursor_offset;
+        } else if let Some(tooltip_request) =
+            self.window.next_frame.tooltip_requests.last().cloned()
+        {
+            let tooltip_request = tooltip_request.unwrap();
+            let mut element = tooltip_request.view.clone().into_any();
+            let offset = tooltip_request.cursor_offset;
             element.layout(offset, AvailableSpace::min_size(), self);
             tooltip_element = Some(element);
-            self.window.next_frame.tooltip_request = Some(tooltip_request);
         }
 
         // Now actually paint the elements.
@@ -359,55 +366,61 @@ impl<'a> ElementContext<'a> {
         }
     }
 
-    pub(crate) fn reuse_occlusions(&mut self, range: Range<usize>) {
+    pub(crate) fn reuse_layout(&mut self, range: Range<LayoutIndex>) {
         let window = &mut self.window;
-        for occlusion in &window.rendered_frame.occlusions[range] {
-            window.next_frame.occlusions.push(occlusion.clone());
-        }
+        window.next_frame.occlusions.extend(
+            window.rendered_frame.occlusions
+                [range.start.occlusions_index..range.end.occlusions_index]
+                .iter()
+                .cloned(),
+        );
+        window.next_frame.tooltip_requests.extend(
+            window.rendered_frame.tooltip_requests
+                [range.start.tooltips_index..range.end.tooltips_index]
+                .iter_mut()
+                .map(|request| request.take()),
+        );
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
-        todo!()
-        // let view_id = self.parent_view_id();
-        // let grafted_view_ids = self
-        //     .cx
-        //     .window
-        //     .next_frame
-        //     .dispatch_tree
-        //     .reuse_view(view_id, &mut self.cx.window.rendered_frame.dispatch_tree);
-        // for view_id in grafted_view_ids {
-        //     assert!(self.window.next_frame.reused_views.insert(view_id));
+        let window = &mut self.cx.window;
+        let grafted_view_ids = window.next_frame.dispatch_tree.reuse_subtree(
+            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
+            &mut window.rendered_frame.dispatch_tree,
+        );
+        window.next_frame.cursor_styles.extend(
+            window.rendered_frame.cursor_styles
+                [range.start.cursor_styles_index..range.end.cursor_styles_index]
+                .iter()
+                .cloned(),
+        );
+        window.next_frame.mouse_listeners.extend(
+            window.rendered_frame.mouse_listeners
+                [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
+                .iter_mut()
+                .map(|listener| listener.take()),
+        );
+        for primitive in
+            &window.rendered_frame.scene.primitives[range.start.scene_index..range.end.scene_index]
+        {
+            window.next_frame.scene.push(primitive.clone());
+        }
 
-        //     // Reuse the previous input handler requested during painting of the reused view.
-        //     if self
-        //         .window
-        //         .rendered_frame
-        //         .requested_input_handler
-        //         .as_ref()
-        //         .map_or(false, |requested| requested.view_id == view_id)
-        //     {
-        //         self.window.next_frame.requested_input_handler =
-        //             self.window.rendered_frame.requested_input_handler.take();
-        //     }
+        for view_id in grafted_view_ids {
+            assert!(self.window.next_frame.reused_views.insert(view_id));
 
-        //     // Reuse the tooltip previously requested during painting of the reused view.
-        //     if self
-        //         .window
-        //         .rendered_frame
-        //         .tooltip_request
-        //         .as_ref()
-        //         .map_or(false, |requested| requested.view_id == view_id)
-        //     {
-        //         self.window.next_frame.tooltip_request =
-        //             self.window.rendered_frame.tooltip_request.take();
-        //     }
-
-        //     // Reuse the cursor styles previously requested during painting of the reused view.
-        //     if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
-        //         self.window.next_frame.cursor_styles.insert(view_id, style);
-        //         self.window.next_frame.requested_cursor_style = Some(style);
-        //     }
-        // }
+            // Reuse the previous input handler requested during painting of the reused view.
+            if self
+                .window
+                .rendered_frame
+                .requested_input_handler
+                .as_ref()
+                .map_or(false, |requested| requested.view_id == view_id)
+            {
+                self.window.next_frame.requested_input_handler =
+                    self.window.rendered_frame.requested_input_handler.take();
+            }
+        }
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -439,8 +452,7 @@ impl<'a> ElementContext<'a> {
 
     /// Sets a tooltip to be rendered for the upcoming frame
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) {
-        let view_id = self.parent_view_id();
-        self.window.next_frame.tooltip_request = Some(TooltipRequest { view_id, tooltip });
+        self.window.next_frame.tooltip_requests.push(Some(tooltip));
     }
 
     /// Pushes the given element id onto the global stack and invokes the given closure
@@ -1148,7 +1160,7 @@ impl<'a> ElementContext<'a> {
         mut handler: impl FnMut(&Event, Option<OcclusionId>, DispatchPhase, &mut ElementContext)
             + 'static,
     ) {
-        self.window.next_frame.mouse_listeners.push(Box::new(
+        self.window.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any,
                   occlusion_id: Option<OcclusionId>,
                   phase: DispatchPhase,
@@ -1157,7 +1169,7 @@ impl<'a> ElementContext<'a> {
                     handler(event, occlusion_id, phase, cx)
                 }
             },
-        ));
+        )));
     }
 
     /// Register a key event listener on the window for the next frame. The type of event

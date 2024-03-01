@@ -2,10 +2,10 @@ use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementContext,
     FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler,
-    InteractiveBounds, InteractiveElement, Interactivity, IntoElement, LayoutId, Model,
-    ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Occlusion, Pixels, Point,
-    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Occlusion, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
+    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -628,127 +628,127 @@ impl TerminalElement {
         bounds: Bounds<Pixels>,
         cx: &mut ElementContext,
     ) {
-        let focus = self.focus.clone();
-        let terminal = self.terminal.clone();
-        let interactive_bounds = InteractiveBounds {
-            bounds: bounds.intersect(&cx.content_mask().bounds),
-            stacking_order: cx.stacking_order().clone(),
-        };
+        // let focus = self.focus.clone();
+        // let terminal = self.terminal.clone();
+        // let interactive_bounds = InteractiveBounds {
+        //     bounds: bounds.intersect(&cx.content_mask().bounds),
+        //     stacking_order: cx.stacking_order().clone(),
+        // };
 
-        self.interactivity.on_mouse_down(MouseButton::Left, {
-            let terminal = terminal.clone();
-            let focus = focus.clone();
-            move |e, cx| {
-                cx.focus(&focus);
-                terminal.update(cx, |terminal, cx| {
-                    terminal.mouse_down(&e, origin);
-                    cx.notify();
-                })
-            }
-        });
+        // self.interactivity.on_mouse_down(MouseButton::Left, {
+        //     let terminal = terminal.clone();
+        //     let focus = focus.clone();
+        //     move |e, cx| {
+        //         cx.focus(&focus);
+        //         terminal.update(cx, |terminal, cx| {
+        //             terminal.mouse_down(&e, origin);
+        //             cx.notify();
+        //         })
+        //     }
+        // });
 
-        cx.on_mouse_event({
-            let bounds = bounds.clone();
-            let focus = self.focus.clone();
-            let terminal = self.terminal.clone();
-            move |e: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
-                    return;
-                }
+        // cx.on_mouse_event({
+        //     let bounds = bounds.clone();
+        //     let focus = self.focus.clone();
+        //     let terminal = self.terminal.clone();
+        //     move |e: &MouseMoveEvent, phase, cx| {
+        //         if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
+        //             return;
+        //         }
 
-                if e.pressed_button.is_some() && !cx.has_active_drag() {
-                    let visibly_contains = interactive_bounds.visibly_contains(&e.position, cx);
-                    terminal.update(cx, |terminal, cx| {
-                        if !terminal.selection_started() {
-                            if visibly_contains {
-                                terminal.mouse_drag(e, origin, bounds);
-                                cx.notify();
-                            }
-                        } else {
-                            terminal.mouse_drag(e, origin, bounds);
-                            cx.notify();
-                        }
-                    })
-                }
+        //         if e.pressed_button.is_some() && !cx.has_active_drag() {
+        //             let visibly_contains = interactive_bounds.visibly_contains(&e.position, cx);
+        //             terminal.update(cx, |terminal, cx| {
+        //                 if !terminal.selection_started() {
+        //                     if visibly_contains {
+        //                         terminal.mouse_drag(e, origin, bounds);
+        //                         cx.notify();
+        //                     }
+        //                 } else {
+        //                     terminal.mouse_drag(e, origin, bounds);
+        //                     cx.notify();
+        //                 }
+        //             })
+        //         }
 
-                if interactive_bounds.visibly_contains(&e.position, cx) {
-                    terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_move(&e, origin);
-                        cx.notify();
-                    })
-                }
-            }
-        });
+        //         if interactive_bounds.visibly_contains(&e.position, cx) {
+        //             terminal.update(cx, |terminal, cx| {
+        //                 terminal.mouse_move(&e, origin);
+        //                 cx.notify();
+        //             })
+        //         }
+        //     }
+        // });
 
-        self.interactivity.on_mouse_up(
-            MouseButton::Left,
-            TerminalElement::generic_button_handler(
-                terminal.clone(),
-                origin,
-                focus.clone(),
-                move |terminal, origin, e, cx| {
-                    terminal.mouse_up(&e, origin, cx);
-                },
-            ),
-        );
-        self.interactivity.on_scroll_wheel({
-            let terminal = terminal.clone();
-            move |e, cx| {
-                terminal.update(cx, |terminal, cx| {
-                    terminal.scroll_wheel(e, origin);
-                    cx.notify();
-                })
-            }
-        });
+        // self.interactivity.on_mouse_up(
+        //     MouseButton::Left,
+        //     TerminalElement::generic_button_handler(
+        //         terminal.clone(),
+        //         origin,
+        //         focus.clone(),
+        //         move |terminal, origin, e, cx| {
+        //             terminal.mouse_up(&e, origin, cx);
+        //         },
+        //     ),
+        // );
+        // self.interactivity.on_scroll_wheel({
+        //     let terminal = terminal.clone();
+        //     move |e, cx| {
+        //         terminal.update(cx, |terminal, cx| {
+        //             terminal.scroll_wheel(e, origin);
+        //             cx.notify();
+        //         })
+        //     }
+        // });
 
-        // Mouse mode handlers:
-        // All mouse modes need the extra click handlers
-        if mode.intersects(TermMode::MOUSE_MODE) {
-            self.interactivity.on_mouse_down(
-                MouseButton::Right,
-                TerminalElement::generic_button_handler(
-                    terminal.clone(),
-                    origin,
-                    focus.clone(),
-                    move |terminal, origin, e, _cx| {
-                        terminal.mouse_down(&e, origin);
-                    },
-                ),
-            );
-            self.interactivity.on_mouse_down(
-                MouseButton::Middle,
-                TerminalElement::generic_button_handler(
-                    terminal.clone(),
-                    origin,
-                    focus.clone(),
-                    move |terminal, origin, e, _cx| {
-                        terminal.mouse_down(&e, origin);
-                    },
-                ),
-            );
-            self.interactivity.on_mouse_up(
-                MouseButton::Right,
-                TerminalElement::generic_button_handler(
-                    terminal.clone(),
-                    origin,
-                    focus.clone(),
-                    move |terminal, origin, e, cx| {
-                        terminal.mouse_up(&e, origin, cx);
-                    },
-                ),
-            );
-            self.interactivity.on_mouse_up(
-                MouseButton::Middle,
-                TerminalElement::generic_button_handler(
-                    terminal,
-                    origin,
-                    focus,
-                    move |terminal, origin, e, cx| {
-                        terminal.mouse_up(&e, origin, cx);
-                    },
-                ),
-            );
-        }
+        // // Mouse mode handlers:
+        // // All mouse modes need the extra click handlers
+        // if mode.intersects(TermMode::MOUSE_MODE) {
+        //     self.interactivity.on_mouse_down(
+        //         MouseButton::Right,
+        //         TerminalElement::generic_button_handler(
+        //             terminal.clone(),
+        //             origin,
+        //             focus.clone(),
+        //             move |terminal, origin, e, _cx| {
+        //                 terminal.mouse_down(&e, origin);
+        //             },
+        //         ),
+        //     );
+        //     self.interactivity.on_mouse_down(
+        //         MouseButton::Middle,
+        //         TerminalElement::generic_button_handler(
+        //             terminal.clone(),
+        //             origin,
+        //             focus.clone(),
+        //             move |terminal, origin, e, _cx| {
+        //                 terminal.mouse_down(&e, origin);
+        //             },
+        //         ),
+        //     );
+        //     self.interactivity.on_mouse_up(
+        //         MouseButton::Right,
+        //         TerminalElement::generic_button_handler(
+        //             terminal.clone(),
+        //             origin,
+        //             focus.clone(),
+        //             move |terminal, origin, e, cx| {
+        //                 terminal.mouse_up(&e, origin, cx);
+        //             },
+        //         ),
+        //     );
+        //     self.interactivity.on_mouse_up(
+        //         MouseButton::Middle,
+        //         TerminalElement::generic_button_handler(
+        //             terminal,
+        //             origin,
+        //             focus,
+        //             move |terminal, origin, e, cx| {
+        //                 terminal.mouse_up(&e, origin, cx);
+        //             },
+        //         ),
+        //     );
+        // }
     }
 }
 
@@ -1017,62 +1017,60 @@ impl Element for TerminalElement {
 
         self.register_mouse_listeners(origin, after_layout.mode, bounds, cx);
 
-        self.interactivity
-            .paint(&after_layout.occlusion, cx, |_, cx| {
-                cx.handle_input(&self.focus, terminal_input_handler);
+        let occlusion = after_layout.occlusion.clone();
+        self.interactivity.paint(&occlusion, cx, |_, cx| {
+            cx.handle_input(&self.focus, terminal_input_handler);
 
-                cx.on_key_event({
-                    let this = self.terminal.clone();
-                    move |event: &ModifiersChangedEvent, phase, cx| {
-                        if phase != DispatchPhase::Bubble {
-                            return;
-                        }
-
-                        let handled =
-                            this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
-
-                        if handled {
-                            cx.refresh();
-                        }
+            cx.on_key_event({
+                let this = self.terminal.clone();
+                move |event: &ModifiersChangedEvent, phase, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
                     }
-                });
 
-                for rect in &after_layout.rects {
-                    rect.paint(origin, &after_layout, cx);
-                }
+                    let handled =
+                        this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
 
-                for (relative_highlighted_range, color) in
-                    after_layout.relative_highlighted_ranges.iter()
-                {
-                    if let Some((start_y, highlighted_range_lines)) = to_highlighted_range_lines(
-                        relative_highlighted_range,
-                        &after_layout,
-                        origin,
-                    ) {
-                        let hr = HighlightedRange {
-                            start_y, //Need to change this
-                            line_height: after_layout.dimensions.line_height,
-                            lines: highlighted_range_lines,
-                            color: color.clone(),
-                            //Copied from editor. TODO: move to theme or something
-                            corner_radius: 0.15 * after_layout.dimensions.line_height,
-                        };
-                        hr.paint(bounds, cx);
+                    if handled {
+                        cx.refresh();
                     }
-                }
-
-                for cell in &after_layout.cells {
-                    cell.paint(origin, &after_layout, bounds, cx);
-                }
-
-                if let Some(cursor) = &mut after_layout.cursor {
-                    cursor.paint(origin, cx);
-                }
-
-                if let Some(mut element) = after_layout.hyperlink_tooltip.take() {
-                    element.paint(cx);
                 }
             });
+
+            for rect in &after_layout.rects {
+                rect.paint(origin, &after_layout, cx);
+            }
+
+            for (relative_highlighted_range, color) in
+                after_layout.relative_highlighted_ranges.iter()
+            {
+                if let Some((start_y, highlighted_range_lines)) =
+                    to_highlighted_range_lines(relative_highlighted_range, &after_layout, origin)
+                {
+                    let hr = HighlightedRange {
+                        start_y, //Need to change this
+                        line_height: after_layout.dimensions.line_height,
+                        lines: highlighted_range_lines,
+                        color: color.clone(),
+                        //Copied from editor. TODO: move to theme or something
+                        corner_radius: 0.15 * after_layout.dimensions.line_height,
+                    };
+                    hr.paint(bounds, cx);
+                }
+            }
+
+            for cell in &after_layout.cells {
+                cell.paint(origin, &after_layout, bounds, cx);
+            }
+
+            if let Some(cursor) = &mut after_layout.cursor {
+                cursor.paint(origin, cx);
+            }
+
+            if let Some(mut element) = after_layout.hyperlink_tooltip.take() {
+                element.paint(cx);
+            }
+        });
     }
 }
 

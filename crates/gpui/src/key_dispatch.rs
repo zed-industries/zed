@@ -59,6 +59,7 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     mem,
+    ops::Range,
     rc::Rc,
 };
 
@@ -167,21 +168,19 @@ impl DispatchTree {
         target.action_listeners = mem::take(&mut source.action_listeners);
     }
 
-    pub fn reuse_view(&mut self, view_id: EntityId, source: &mut Self) -> SmallVec<[EntityId; 8]> {
-        let view_source_node_id = source
-            .view_node_ids
-            .get(&view_id)
-            .expect("view should exist in previous dispatch tree");
-        let view_source_node = &mut source.nodes[view_source_node_id.0];
-        self.move_node(view_source_node);
-
-        let mut grafted_view_ids = smallvec![view_id];
-        let mut source_stack = vec![*view_source_node_id];
+    pub fn reuse_subtree(
+        &mut self,
+        range: Range<usize>,
+        source: &mut Self,
+    ) -> SmallVec<[EntityId; 8]> {
+        let mut grafted_view_ids = SmallVec::new();
+        let mut source_stack = vec![];
         for (source_node_id, source_node) in source
             .nodes
             .iter_mut()
             .enumerate()
-            .skip(view_source_node_id.0 + 1)
+            .skip(range.start)
+            .take(range.len())
         {
             let source_node_id = DispatchNodeId(source_node_id);
             while let Some(source_ancestor) = source_stack.last() {
@@ -193,14 +192,10 @@ impl DispatchTree {
                 }
             }
 
-            if source_stack.is_empty() {
-                break;
-            } else {
-                source_stack.push(source_node_id);
-                self.move_node(source_node);
-                if let Some(view_id) = source_node.view_id {
-                    grafted_view_ids.push(view_id);
-                }
+            source_stack.push(source_node_id);
+            self.move_node(source_node);
+            if let Some(view_id) = source_node.view_id {
+                grafted_view_ids.push(view_id);
             }
         }
 

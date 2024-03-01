@@ -20,11 +20,11 @@ use git::diff::DiffHunkStatus;
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Hsla, InteractiveBounds,
-    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun,
-    TextStyle, View, ViewContext, WindowContext,
+    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Hsla, InteractiveElement,
+    IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
+    ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -343,27 +343,27 @@ impl EditorElement {
         text_bounds: Bounds<Pixels>,
         layout: &mut AfterEditorLayout,
     ) {
-        let position_map = layout.position_map.clone();
-        let stacking_order = cx.stacking_order().clone();
-        cx.on_key_event({
-            let editor = self.editor.clone();
-            move |event: &ModifiersChangedEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
+        // let position_map = layout.position_map.clone();
+        // let stacking_order = cx.stacking_order().clone();
+        // cx.on_key_event({
+        //     let editor = self.editor.clone();
+        //     move |event: &ModifiersChangedEvent, phase, cx| {
+        //         if phase != DispatchPhase::Bubble {
+        //             return;
+        //         }
 
-                editor.update(cx, |editor, cx| {
-                    Self::modifiers_changed(
-                        editor,
-                        event,
-                        &position_map,
-                        text_bounds,
-                        &stacking_order,
-                        cx,
-                    )
-                })
-            }
-        });
+        //         editor.update(cx, |editor, cx| {
+        //             Self::modifiers_changed(
+        //                 editor,
+        //                 event,
+        //                 &position_map,
+        //                 text_bounds,
+        //                 &stacking_order,
+        //                 cx,
+        //             )
+        //         })
+        //     }
+        // });
     }
 
     fn modifiers_changed(
@@ -374,19 +374,19 @@ impl EditorElement {
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) {
-        let mouse_position = cx.mouse_position();
-        if !text_bounds.contains(&mouse_position)
-            || !cx.was_top_layer(&mouse_position, stacking_order)
-        {
-            return;
-        }
+        // let mouse_position = cx.mouse_position();
+        // if !text_bounds.contains(&mouse_position)
+        //     || !cx.was_top_layer(&mouse_position, stacking_order)
+        // {
+        //     return;
+        // }
 
-        editor.update_hovered_link(
-            position_map.point_for_position(text_bounds, mouse_position),
-            &position_map.snapshot,
-            event.modifiers,
-            cx,
-        )
+        // editor.update_hovered_link(
+        //     position_map.point_for_position(text_bounds, mouse_position),
+        //     &position_map.snapshot,
+        //     event.modifiers,
+        //     cx,
+        // )
     }
 
     fn mouse_left_down(
@@ -398,50 +398,50 @@ impl EditorElement {
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) {
-        let mut click_count = event.click_count;
-        let modifiers = event.modifiers;
+        // let mut click_count = event.click_count;
+        // let modifiers = event.modifiers;
 
-        if cx.default_prevented() {
-            return;
-        } else if gutter_bounds.contains(&event.position) {
-            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-        } else if !text_bounds.contains(&event.position) {
-            return;
-        }
-        if !cx.was_top_layer(&event.position, stacking_order) {
-            return;
-        }
+        // if cx.default_prevented() {
+        //     return;
+        // } else if gutter_bounds.contains(&event.position) {
+        //     click_count = 3; // Simulate triple-click when clicking the gutter to select lines
+        // } else if !text_bounds.contains(&event.position) {
+        //     return;
+        // }
+        // if !cx.was_top_layer(&event.position, stacking_order) {
+        //     return;
+        // }
 
-        let point_for_position = position_map.point_for_position(text_bounds, event.position);
-        let position = point_for_position.previous_valid;
-        if modifiers.shift && modifiers.alt {
-            editor.select(
-                SelectPhase::BeginColumnar {
-                    position,
-                    goal_column: point_for_position.exact_unclipped.column(),
-                },
-                cx,
-            );
-        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.command {
-            editor.select(
-                SelectPhase::Extend {
-                    position,
-                    click_count,
-                },
-                cx,
-            );
-        } else {
-            editor.select(
-                SelectPhase::Begin {
-                    position,
-                    add: modifiers.alt,
-                    click_count,
-                },
-                cx,
-            );
-        }
+        // let point_for_position = position_map.point_for_position(text_bounds, event.position);
+        // let position = point_for_position.previous_valid;
+        // if modifiers.shift && modifiers.alt {
+        //     editor.select(
+        //         SelectPhase::BeginColumnar {
+        //             position,
+        //             goal_column: point_for_position.exact_unclipped.column(),
+        //         },
+        //         cx,
+        //     );
+        // } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.command {
+        //     editor.select(
+        //         SelectPhase::Extend {
+        //             position,
+        //             click_count,
+        //         },
+        //         cx,
+        //     );
+        // } else {
+        //     editor.select(
+        //         SelectPhase::Begin {
+        //             position,
+        //             add: modifiers.alt,
+        //             click_count,
+        //         },
+        //         cx,
+        //     );
+        // }
 
-        cx.stop_propagation();
+        // cx.stop_propagation();
     }
 
     fn mouse_right_down(
@@ -469,30 +469,30 @@ impl EditorElement {
         event: &MouseUpEvent,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
-        interactive_bounds: &InteractiveBounds,
+        // interactive_bounds: &InteractiveBounds,
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) {
-        let end_selection = editor.has_pending_selection();
-        let pending_nonempty_selections = editor.has_pending_nonempty_selection();
+        // let end_selection = editor.has_pending_selection();
+        // let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
-        if end_selection {
-            editor.select(SelectPhase::End, cx);
-        }
+        // if end_selection {
+        //     editor.select(SelectPhase::End, cx);
+        // }
 
-        if interactive_bounds.visibly_contains(&event.position, cx)
-            && !pending_nonempty_selections
-            && event.modifiers.command
-            && text_bounds.contains(&event.position)
-            && cx.was_top_layer(&event.position, stacking_order)
-        {
-            let point = position_map.point_for_position(text_bounds, event.position);
-            editor.handle_click_hovered_link(point, event.modifiers, cx);
+        // if interactive_bounds.visibly_contains(&event.position, cx)
+        //     && !pending_nonempty_selections
+        //     && event.modifiers.command
+        //     && text_bounds.contains(&event.position)
+        //     && cx.was_top_layer(&event.position, stacking_order)
+        // {
+        //     let point = position_map.point_for_position(text_bounds, event.position);
+        //     editor.handle_click_hovered_link(point, event.modifiers, cx);
 
-            cx.stop_propagation();
-        } else if end_selection {
-            cx.stop_propagation();
-        }
+        //     cx.stop_propagation();
+        // } else if end_selection {
+        //     cx.stop_propagation();
+        // }
     }
 
     fn mouse_dragged(
@@ -549,30 +549,30 @@ impl EditorElement {
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) {
-        let modifiers = event.modifiers;
-        let text_hovered = text_bounds.contains(&event.position);
-        let gutter_hovered = gutter_bounds.contains(&event.position);
-        let was_top = cx.was_top_layer(&event.position, stacking_order);
+        // let modifiers = event.modifiers;
+        // let text_hovered = text_bounds.contains(&event.position);
+        // let gutter_hovered = gutter_bounds.contains(&event.position);
+        // let was_top = cx.was_top_layer(&event.position, stacking_order);
 
-        editor.set_gutter_hovered(gutter_hovered, cx);
+        // editor.set_gutter_hovered(gutter_hovered, cx);
 
-        // Don't trigger hover popover if mouse is hovering over context menu
-        if text_hovered && was_top {
-            let point_for_position = position_map.point_for_position(text_bounds, event.position);
+        // // Don't trigger hover popover if mouse is hovering over context menu
+        // if text_hovered && was_top {
+        //     let point_for_position = position_map.point_for_position(text_bounds, event.position);
 
-            editor.update_hovered_link(point_for_position, &position_map.snapshot, modifiers, cx);
+        //     editor.update_hovered_link(point_for_position, &position_map.snapshot, modifiers, cx);
 
-            if let Some(point) = point_for_position.as_valid() {
-                hover_at(editor, Some(point), cx);
-                Self::update_visible_cursor(editor, point, position_map, cx);
-            }
-        } else {
-            editor.hide_hovered_link(cx);
-            hover_at(editor, None, cx);
-            if gutter_hovered && was_top {
-                cx.stop_propagation();
-            }
-        }
+        //     if let Some(point) = point_for_position.as_valid() {
+        //         hover_at(editor, Some(point), cx);
+        //         Self::update_visible_cursor(editor, point, position_map, cx);
+        //     }
+        // } else {
+        //     editor.hide_hovered_link(cx);
+        //     hover_at(editor, None, cx);
+        //     if gutter_hovered && was_top {
+        //         cx.stop_propagation();
+        //     }
+        // }
     }
 
     fn update_visible_cursor(
@@ -899,177 +899,177 @@ impl EditorElement {
         layout: &mut AfterEditorLayout,
         cx: &mut ElementContext,
     ) {
-        let start_row = layout.visible_display_row_range.start;
-        // Offset the content_bounds from the text_bounds by the gutter margin (which is roughly half a character wide) to make hit testing work more like how we want.
-        let content_origin =
-            text_bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
-        let line_end_overshoot = 0.15 * layout.position_map.line_height;
-        let whitespace_setting = self
-            .editor
-            .read(cx)
-            .buffer
-            .read(cx)
-            .settings_at(0, cx)
-            .show_whitespaces;
+        // let start_row = layout.visible_display_row_range.start;
+        // // Offset the content_bounds from the text_bounds by the gutter margin (which is roughly half a character wide) to make hit testing work more like how we want.
+        // let content_origin =
+        //     text_bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
+        // let line_end_overshoot = 0.15 * layout.position_map.line_height;
+        // let whitespace_setting = self
+        //     .editor
+        //     .read(cx)
+        //     .buffer
+        //     .read(cx)
+        //     .settings_at(0, cx)
+        //     .show_whitespaces;
 
-        cx.with_content_mask(
-            Some(ContentMask {
-                bounds: text_bounds,
-            }),
-            |cx| {
-                let interactive_text_bounds = InteractiveBounds {
-                    bounds: text_bounds,
-                    stacking_order: cx.stacking_order().clone(),
-                };
-                if text_bounds.contains(&cx.mouse_position()) {
-                    if self
-                        .editor
-                        .read(cx)
-                        .hovered_link_state
-                        .as_ref()
-                        .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
-                    {
-                        cx.set_cursor_style(CursorStyle::PointingHand, todo!());
-                    } else {
-                        cx.set_cursor_style(CursorStyle::IBeam, todo!());
-                    }
-                }
+        // cx.with_content_mask(
+        //     Some(ContentMask {
+        //         bounds: text_bounds,
+        //     }),
+        //     |cx| {
+        //         let interactive_text_bounds = InteractiveBounds {
+        //             bounds: text_bounds,
+        //             stacking_order: cx.stacking_order().clone(),
+        //         };
+        //         if text_bounds.contains(&cx.mouse_position()) {
+        //             if self
+        //                 .editor
+        //                 .read(cx)
+        //                 .hovered_link_state
+        //                 .as_ref()
+        //                 .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
+        //             {
+        //                 cx.set_cursor_style(CursorStyle::PointingHand, todo!());
+        //             } else {
+        //                 cx.set_cursor_style(CursorStyle::IBeam, todo!());
+        //             }
+        //         }
 
-                let fold_corner_radius = 0.15 * layout.position_map.line_height;
-                cx.with_element_id(Some("folds"), |cx| {
-                    let snapshot = &layout.position_map.snapshot;
+        //         let fold_corner_radius = 0.15 * layout.position_map.line_height;
+        //         cx.with_element_id(Some("folds"), |cx| {
+        //             let snapshot = &layout.position_map.snapshot;
 
-                    for fold in snapshot.folds_in_range(layout.visible_anchor_range.clone()) {
-                        let fold_range = fold.range.clone();
-                        let display_range = fold.range.start.to_display_point(&snapshot)
-                            ..fold.range.end.to_display_point(&snapshot);
-                        debug_assert_eq!(display_range.start.row(), display_range.end.row());
-                        let row = display_range.start.row();
-                        debug_assert!(row < layout.visible_display_row_range.end);
-                        let Some(line_layout) = &layout
-                            .position_map
-                            .line_layouts
-                            .get((row - layout.visible_display_row_range.start) as usize)
-                            .map(|l| &l.line)
-                        else {
-                            continue;
-                        };
+        //             for fold in snapshot.folds_in_range(layout.visible_anchor_range.clone()) {
+        //                 let fold_range = fold.range.clone();
+        //                 let display_range = fold.range.start.to_display_point(&snapshot)
+        //                     ..fold.range.end.to_display_point(&snapshot);
+        //                 debug_assert_eq!(display_range.start.row(), display_range.end.row());
+        //                 let row = display_range.start.row();
+        //                 debug_assert!(row < layout.visible_display_row_range.end);
+        //                 let Some(line_layout) = &layout
+        //                     .position_map
+        //                     .line_layouts
+        //                     .get((row - layout.visible_display_row_range.start) as usize)
+        //                     .map(|l| &l.line)
+        //                 else {
+        //                     continue;
+        //                 };
 
-                        let start_x = content_origin.x
-                            + line_layout.x_for_index(display_range.start.column() as usize)
-                            - layout.position_map.scroll_position.x;
-                        let start_y = content_origin.y
-                            + row as f32 * layout.position_map.line_height
-                            - layout.position_map.scroll_position.y;
-                        let end_x = content_origin.x
-                            + line_layout.x_for_index(display_range.end.column() as usize)
-                            - layout.position_map.scroll_position.x;
+        //                 let start_x = content_origin.x
+        //                     + line_layout.x_for_index(display_range.start.column() as usize)
+        //                     - layout.position_map.scroll_position.x;
+        //                 let start_y = content_origin.y
+        //                     + row as f32 * layout.position_map.line_height
+        //                     - layout.position_map.scroll_position.y;
+        //                 let end_x = content_origin.x
+        //                     + line_layout.x_for_index(display_range.end.column() as usize)
+        //                     - layout.position_map.scroll_position.x;
 
-                        let fold_bounds = Bounds {
-                            origin: point(start_x, start_y),
-                            size: size(end_x - start_x, layout.position_map.line_height),
-                        };
+        //                 let fold_bounds = Bounds {
+        //                     origin: point(start_x, start_y),
+        //                     size: size(end_x - start_x, layout.position_map.line_height),
+        //                 };
 
-                        let fold_background = {
-                            // let _fold_frame_state = div()
-                            //     .id(fold.id)
-                            //     .size_full()
-                            //     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                            //     .on_click(cx.listener_for(
-                            //         &self.editor,
-                            //         move |editor: &mut Editor, _, cx| {
-                            //             editor.unfold_ranges(
-                            //                 [fold_range.start..fold_range.end],
-                            //                 true,
-                            //                 false,
-                            //                 cx,
-                            //             );
-                            //             cx.stop_propagation();
-                            //         },
-                            //     ))
-                            //     .draw(fold_bounds.origin, fold_bounds.size, cx);
+        //                 let fold_background = {
+        //                     // let _fold_frame_state = div()
+        //                     //     .id(fold.id)
+        //                     //     .size_full()
+        //                     //     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+        //                     //     .on_click(cx.listener_for(
+        //                     //         &self.editor,
+        //                     //         move |editor: &mut Editor, _, cx| {
+        //                     //             editor.unfold_ranges(
+        //                     //                 [fold_range.start..fold_range.end],
+        //                     //                 true,
+        //                     //                 false,
+        //                     //                 cx,
+        //                     //             );
+        //                     //             cx.stop_propagation();
+        //                     //         },
+        //                     //     ))
+        //                     //     .draw(fold_bounds.origin, fold_bounds.size, cx);
 
-                            todo!("FOLD FRAME STATE, RE-ENABLE ME!!!")
-                            // if fold_frame_state.is_active() {
-                            //     cx.theme().colors().ghost_element_active
-                            // } else if fold_bounds.contains(&cx.mouse_position()) {
-                            //     cx.theme().colors().ghost_element_hover
-                            // } else {
-                            //     cx.theme().colors().ghost_element_background
-                            // }
-                        };
+        //                     todo!("FOLD FRAME STATE, RE-ENABLE ME!!!")
+        //                     // if fold_frame_state.is_active() {
+        //                     //     cx.theme().colors().ghost_element_active
+        //                     // } else if fold_bounds.contains(&cx.mouse_position()) {
+        //                     //     cx.theme().colors().ghost_element_hover
+        //                     // } else {
+        //                     //     cx.theme().colors().ghost_element_background
+        //                     // }
+        //                 };
 
-                        self.paint_highlighted_range(
-                            display_range.clone(),
-                            fold_background,
-                            fold_corner_radius,
-                            fold_corner_radius * 2.,
-                            layout,
-                            content_origin,
-                            text_bounds,
-                            cx,
-                        );
-                    }
-                });
+        //                 self.paint_highlighted_range(
+        //                     display_range.clone(),
+        //                     fold_background,
+        //                     fold_corner_radius,
+        //                     fold_corner_radius * 2.,
+        //                     layout,
+        //                     content_origin,
+        //                     text_bounds,
+        //                     cx,
+        //                 );
+        //             }
+        //         });
 
-                for (range, color) in &layout.highlighted_ranges {
-                    self.paint_highlighted_range(
-                        range.clone(),
-                        *color,
-                        Pixels::ZERO,
-                        line_end_overshoot,
-                        layout,
-                        content_origin,
-                        text_bounds,
-                        cx,
-                    );
-                }
+        //         for (range, color) in &layout.highlighted_ranges {
+        //             self.paint_highlighted_range(
+        //                 range.clone(),
+        //                 *color,
+        //                 Pixels::ZERO,
+        //                 line_end_overshoot,
+        //                 layout,
+        //                 content_origin,
+        //                 text_bounds,
+        //                 cx,
+        //             );
+        //         }
 
-                let corner_radius = 0.15 * layout.position_map.line_height;
-                let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
+        //         let corner_radius = 0.15 * layout.position_map.line_height;
+        //         let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
-                for (participant_ix, (player_color, selections)) in
-                    layout.selections.iter().enumerate()
-                {
-                    for selection in selections.into_iter() {
-                        self.paint_highlighted_range(
-                            selection.range.clone(),
-                            player_color.selection,
-                            corner_radius,
-                            corner_radius * 2.,
-                            layout,
-                            content_origin,
-                            text_bounds,
-                            cx,
-                        );
+        //         for (participant_ix, (player_color, selections)) in
+        //             layout.selections.iter().enumerate()
+        //         {
+        //             for selection in selections.into_iter() {
+        //                 self.paint_highlighted_range(
+        //                     selection.range.clone(),
+        //                     player_color.selection,
+        //                     corner_radius,
+        //                     corner_radius * 2.,
+        //                     layout,
+        //                     content_origin,
+        //                     text_bounds,
+        //                     cx,
+        //                 );
 
-                        if selection.is_local && !selection.range.is_empty() {
-                            invisible_display_ranges.push(selection.range.clone());
-                        }
-                    }
-                }
+        //                 if selection.is_local && !selection.range.is_empty() {
+        //                     invisible_display_ranges.push(selection.range.clone());
+        //                 }
+        //             }
+        //         }
 
-                for (ix, line_with_invisibles) in
-                    layout.position_map.line_layouts.iter().enumerate()
-                {
-                    let row = start_row + ix as u32;
-                    line_with_invisibles.draw(
-                        layout,
-                        row,
-                        content_origin,
-                        whitespace_setting,
-                        &invisible_display_ranges,
-                        cx,
-                    )
-                }
+        //         for (ix, line_with_invisibles) in
+        //             layout.position_map.line_layouts.iter().enumerate()
+        //         {
+        //             let row = start_row + ix as u32;
+        //             line_with_invisibles.draw(
+        //                 layout,
+        //                 row,
+        //                 content_origin,
+        //                 whitespace_setting,
+        //                 &invisible_display_ranges,
+        //                 cx,
+        //             )
+        //         }
 
-                self.paint_redactions(text_bounds, &layout, cx);
+        //         self.paint_redactions(text_bounds, &layout, cx);
 
-                for cursor in &mut layout.cursors {
-                    cursor.paint(content_origin, cx);
-                }
-            },
-        )
+        //         for cursor in &mut layout.cursors {
+        //             cursor.paint(content_origin, cx);
+        //         }
+        //     },
+        // )
     }
 
     fn paint_redactions(
@@ -1078,25 +1078,25 @@ impl EditorElement {
         layout: &AfterEditorLayout,
         cx: &mut ElementContext,
     ) {
-        let content_origin =
-            text_bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
-        let line_end_overshoot = layout.line_end_overshoot();
+        // let content_origin =
+        //     text_bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
+        // let line_end_overshoot = layout.line_end_overshoot();
 
-        // A softer than perfect black
-        let redaction_color = gpui::rgb(0x0e1111);
+        // // A softer than perfect black
+        // let redaction_color = gpui::rgb(0x0e1111);
 
-        for range in layout.redacted_ranges.iter() {
-            self.paint_highlighted_range(
-                range.clone(),
-                redaction_color.into(),
-                Pixels::ZERO,
-                line_end_overshoot,
-                layout,
-                content_origin,
-                text_bounds,
-                cx,
-            );
-        }
+        // for range in layout.redacted_ranges.iter() {
+        //     self.paint_highlighted_range(
+        //         range.clone(),
+        //         redaction_color.into(),
+        //         Pixels::ZERO,
+        //         line_end_overshoot,
+        //         layout,
+        //         content_origin,
+        //         text_bounds,
+        //         cx,
+        //     );
+        // }
     }
 
     fn paint_overlays(
@@ -1456,94 +1456,94 @@ impl EditorElement {
             ));
         }
 
-        let interactive_track_bounds = InteractiveBounds {
-            bounds: track_bounds,
-            stacking_order: cx.stacking_order().clone(),
-        };
-        let mut mouse_position = cx.mouse_position();
-        if track_bounds.contains(&mouse_position) {
-            cx.set_cursor_style(CursorStyle::Arrow, todo!());
-        }
+        // let interactive_track_bounds = InteractiveBounds {
+        //     bounds: track_bounds,
+        //     stacking_order: cx.stacking_order().clone(),
+        // };
+        // let mut mouse_position = cx.mouse_position();
+        // if track_bounds.contains(&mouse_position) {
+        //     cx.set_cursor_style(CursorStyle::Arrow, todo!());
+        // }
 
-        cx.on_mouse_event({
-            let editor = self.editor.clone();
-            move |event: &MouseMoveEvent, phase, cx| {
-                if phase == DispatchPhase::Capture {
-                    return;
-                }
+        // cx.on_mouse_event({
+        //     let editor = self.editor.clone();
+        //     move |event: &MouseMoveEvent, phase, cx| {
+        //         if phase == DispatchPhase::Capture {
+        //             return;
+        //         }
 
-                editor.update(cx, |editor, cx| {
-                    if event.pressed_button == Some(MouseButton::Left)
-                        && editor.scroll_manager.is_dragging_scrollbar()
-                    {
-                        let y = mouse_position.y;
-                        let new_y = event.position.y;
-                        if (track_bounds.top()..track_bounds.bottom()).contains(&y) {
-                            let mut position = editor.scroll_position(cx);
-                            position.y += (new_y - y) * (max_row as f32) / height;
-                            if position.y < 0.0 {
-                                position.y = 0.0;
-                            }
-                            editor.set_scroll_position(position, cx);
-                        }
+        //         editor.update(cx, |editor, cx| {
+        //             if event.pressed_button == Some(MouseButton::Left)
+        //                 && editor.scroll_manager.is_dragging_scrollbar()
+        //             {
+        //                 let y = mouse_position.y;
+        //                 let new_y = event.position.y;
+        //                 if (track_bounds.top()..track_bounds.bottom()).contains(&y) {
+        //                     let mut position = editor.scroll_position(cx);
+        //                     position.y += (new_y - y) * (max_row as f32) / height;
+        //                     if position.y < 0.0 {
+        //                         position.y = 0.0;
+        //                     }
+        //                     editor.set_scroll_position(position, cx);
+        //                 }
 
-                        mouse_position = event.position;
-                        cx.stop_propagation();
-                    } else {
-                        editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
-                        if interactive_track_bounds.visibly_contains(&event.position, cx) {
-                            editor.scroll_manager.show_scrollbar(cx);
-                        }
-                    }
-                })
-            }
-        });
+        //                 mouse_position = event.position;
+        //                 cx.stop_propagation();
+        //             } else {
+        //                 editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+        //                 if interactive_track_bounds.visibly_contains(&event.position, cx) {
+        //                     editor.scroll_manager.show_scrollbar(cx);
+        //                 }
+        //             }
+        //         })
+        //     }
+        // });
 
-        if self.editor.read(cx).scroll_manager.is_dragging_scrollbar() {
-            cx.on_mouse_event({
-                let editor = self.editor.clone();
-                move |_: &MouseUpEvent, phase, cx| {
-                    if phase == DispatchPhase::Capture {
-                        return;
-                    }
+        // if self.editor.read(cx).scroll_manager.is_dragging_scrollbar() {
+        //     cx.on_mouse_event({
+        //         let editor = self.editor.clone();
+        //         move |_: &MouseUpEvent, phase, cx| {
+        //             if phase == DispatchPhase::Capture {
+        //                 return;
+        //             }
 
-                    editor.update(cx, |editor, cx| {
-                        editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
-                        cx.stop_propagation();
-                    });
-                }
-            });
-        } else {
-            cx.on_mouse_event({
-                let editor = self.editor.clone();
-                move |event: &MouseDownEvent, phase, cx| {
-                    if phase == DispatchPhase::Capture {
-                        return;
-                    }
+        //             editor.update(cx, |editor, cx| {
+        //                 editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+        //                 cx.stop_propagation();
+        //             });
+        //         }
+        //     });
+        // } else {
+        //     cx.on_mouse_event({
+        //         let editor = self.editor.clone();
+        //         move |event: &MouseDownEvent, phase, cx| {
+        //             if phase == DispatchPhase::Capture {
+        //                 return;
+        //             }
 
-                    editor.update(cx, |editor, cx| {
-                        if track_bounds.contains(&event.position) {
-                            editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
+        //             editor.update(cx, |editor, cx| {
+        //                 if track_bounds.contains(&event.position) {
+        //                     editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
 
-                            let y = event.position.y;
-                            if y < thumb_top || thumb_bottom < y {
-                                let center_row =
-                                    ((y - top) * max_row as f32 / height).round() as u32;
-                                let top_row = center_row
-                                    .saturating_sub((row_range.end - row_range.start) as u32 / 2);
-                                let mut position = editor.scroll_position(cx);
-                                position.y = top_row as f32;
-                                editor.set_scroll_position(position, cx);
-                            } else {
-                                editor.scroll_manager.show_scrollbar(cx);
-                            }
+        //                     let y = event.position.y;
+        //                     if y < thumb_top || thumb_bottom < y {
+        //                         let center_row =
+        //                             ((y - top) * max_row as f32 / height).round() as u32;
+        //                         let top_row = center_row
+        //                             .saturating_sub((row_range.end - row_range.start) as u32 / 2);
+        //                         let mut position = editor.scroll_position(cx);
+        //                         position.y = top_row as f32;
+        //                         editor.set_scroll_position(position, cx);
+        //                     } else {
+        //                         editor.scroll_manager.show_scrollbar(cx);
+        //                     }
 
-                            cx.stop_propagation();
-                        }
-                    });
-                }
-            });
-        }
+        //                     cx.stop_propagation();
+        //                 }
+        //             });
+        //         }
+        //     });
+        // }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2113,60 +2113,60 @@ impl EditorElement {
 
     fn paint_scroll_wheel_listener(
         &mut self,
-        interactive_bounds: &InteractiveBounds,
+        // interactive_bounds: &InteractiveBounds,
         layout: &AfterEditorLayout,
         cx: &mut ElementContext,
     ) {
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            let editor = self.editor.clone();
-            let interactive_bounds = interactive_bounds.clone();
-            let mut delta = ScrollDelta::default();
+        // cx.on_mouse_event({
+        //     let position_map = layout.position_map.clone();
+        //     let editor = self.editor.clone();
+        //     let interactive_bounds = interactive_bounds.clone();
+        //     let mut delta = ScrollDelta::default();
 
-            move |event: &ScrollWheelEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
-                {
-                    delta = delta.coalesce(event.delta);
-                    editor.update(cx, |editor, cx| {
-                        let position = event.position;
-                        let position_map: &PositionMap = &position_map;
-                        let bounds = &interactive_bounds;
-                        if !bounds.visibly_contains(&position, cx) {
-                            return;
-                        }
+        //     move |event: &ScrollWheelEvent, phase, cx| {
+        //         if phase == DispatchPhase::Bubble
+        //             && interactive_bounds.visibly_contains(&event.position, cx)
+        //         {
+        //             delta = delta.coalesce(event.delta);
+        //             editor.update(cx, |editor, cx| {
+        //                 let position = event.position;
+        //                 let position_map: &PositionMap = &position_map;
+        //                 let bounds = &interactive_bounds;
+        //                 if !bounds.visibly_contains(&position, cx) {
+        //                     return;
+        //                 }
 
-                        let line_height = position_map.line_height;
-                        let max_glyph_width = position_map.em_width;
-                        let (delta, axis) = match delta {
-                            gpui::ScrollDelta::Pixels(mut pixels) => {
-                                //Trackpad
-                                let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
-                                (pixels, axis)
-                            }
+        //                 let line_height = position_map.line_height;
+        //                 let max_glyph_width = position_map.em_width;
+        //                 let (delta, axis) = match delta {
+        //                     gpui::ScrollDelta::Pixels(mut pixels) => {
+        //                         //Trackpad
+        //                         let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
+        //                         (pixels, axis)
+        //                     }
 
-                            gpui::ScrollDelta::Lines(lines) => {
-                                //Not trackpad
-                                let pixels =
-                                    point(lines.x * max_glyph_width, lines.y * line_height);
-                                (pixels, None)
-                            }
-                        };
+        //                     gpui::ScrollDelta::Lines(lines) => {
+        //                         //Not trackpad
+        //                         let pixels =
+        //                             point(lines.x * max_glyph_width, lines.y * line_height);
+        //                         (pixels, None)
+        //                     }
+        //                 };
 
-                        let scroll_position = position_map.snapshot.scroll_position();
-                        let x = f32::from(
-                            (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width,
-                        );
-                        let y =
-                            f32::from((scroll_position.y * line_height - delta.y) / line_height);
-                        let scroll_position =
-                            point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
-                        editor.scroll(scroll_position, axis, cx);
-                        cx.stop_propagation();
-                    });
-                }
-            }
-        });
+        //                 let scroll_position = position_map.snapshot.scroll_position();
+        //                 let x = f32::from(
+        //                     (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width,
+        //                 );
+        //                 let y =
+        //                     f32::from((scroll_position.y * line_height - delta.y) / line_height);
+        //                 let scroll_position =
+        //                     point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
+        //                 editor.scroll(scroll_position, axis, cx);
+        //                 cx.stop_propagation();
+        //             });
+        //         }
+        //     }
+        // });
     }
 
     fn paint_mouse_listeners(
@@ -2177,103 +2177,103 @@ impl EditorElement {
         layout: &AfterEditorLayout,
         cx: &mut ElementContext,
     ) {
-        let interactive_bounds = InteractiveBounds {
-            bounds: bounds.intersect(&cx.content_mask().bounds),
-            stacking_order: cx.stacking_order().clone(),
-        };
+        // let interactive_bounds = InteractiveBounds {
+        //     bounds: bounds.intersect(&cx.content_mask().bounds),
+        //     stacking_order: cx.stacking_order().clone(),
+        // };
 
-        self.paint_scroll_wheel_listener(&interactive_bounds, layout, cx);
+        // self.paint_scroll_wheel_listener(&interactive_bounds, layout, cx);
 
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            let editor = self.editor.clone();
-            let stacking_order = cx.stacking_order().clone();
-            let interactive_bounds = interactive_bounds.clone();
+        // cx.on_mouse_event({
+        //     let position_map = layout.position_map.clone();
+        //     let editor = self.editor.clone();
+        //     let stacking_order = cx.stacking_order().clone();
+        //     let interactive_bounds = interactive_bounds.clone();
 
-            move |event: &MouseDownEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
-                {
-                    match event.button {
-                        MouseButton::Left => editor.update(cx, |editor, cx| {
-                            Self::mouse_left_down(
-                                editor,
-                                event,
-                                &position_map,
-                                text_bounds,
-                                gutter_bounds,
-                                &stacking_order,
-                                cx,
-                            );
-                        }),
-                        MouseButton::Right => editor.update(cx, |editor, cx| {
-                            Self::mouse_right_down(editor, event, &position_map, text_bounds, cx);
-                        }),
-                        _ => {}
-                    };
-                }
-            }
-        });
+        //     move |event: &MouseDownEvent, phase, cx| {
+        //         if phase == DispatchPhase::Bubble
+        //             && interactive_bounds.visibly_contains(&event.position, cx)
+        //         {
+        //             match event.button {
+        //                 MouseButton::Left => editor.update(cx, |editor, cx| {
+        //                     Self::mouse_left_down(
+        //                         editor,
+        //                         event,
+        //                         &position_map,
+        //                         text_bounds,
+        //                         gutter_bounds,
+        //                         &stacking_order,
+        //                         cx,
+        //                     );
+        //                 }),
+        //                 MouseButton::Right => editor.update(cx, |editor, cx| {
+        //                     Self::mouse_right_down(editor, event, &position_map, text_bounds, cx);
+        //                 }),
+        //                 _ => {}
+        //             };
+        //         }
+        //     }
+        // });
 
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            let editor = self.editor.clone();
-            let stacking_order = cx.stacking_order().clone();
-            let interactive_bounds = interactive_bounds.clone();
+        // cx.on_mouse_event({
+        //     let position_map = layout.position_map.clone();
+        //     let editor = self.editor.clone();
+        //     let stacking_order = cx.stacking_order().clone();
+        //     let interactive_bounds = interactive_bounds.clone();
 
-            move |event: &MouseUpEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    editor.update(cx, |editor, cx| {
-                        Self::mouse_up(
-                            editor,
-                            event,
-                            &position_map,
-                            text_bounds,
-                            &interactive_bounds,
-                            &stacking_order,
-                            cx,
-                        )
-                    });
-                }
-            }
-        });
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            let editor = self.editor.clone();
-            let stacking_order = cx.stacking_order().clone();
+        //     move |event: &MouseUpEvent, phase, cx| {
+        //         if phase == DispatchPhase::Bubble {
+        //             editor.update(cx, |editor, cx| {
+        //                 Self::mouse_up(
+        //                     editor,
+        //                     event,
+        //                     &position_map,
+        //                     text_bounds,
+        //                     &interactive_bounds,
+        //                     &stacking_order,
+        //                     cx,
+        //                 )
+        //             });
+        //         }
+        //     }
+        // });
+        // cx.on_mouse_event({
+        //     let position_map = layout.position_map.clone();
+        //     let editor = self.editor.clone();
+        //     let stacking_order = cx.stacking_order().clone();
 
-            move |event: &MouseMoveEvent, phase, cx| {
-                // if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
+        //     move |event: &MouseMoveEvent, phase, cx| {
+        //         // if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
 
-                if phase == DispatchPhase::Bubble {
-                    editor.update(cx, |editor, cx| {
-                        if event.pressed_button == Some(MouseButton::Left) {
-                            Self::mouse_dragged(
-                                editor,
-                                event,
-                                &position_map,
-                                text_bounds,
-                                gutter_bounds,
-                                &stacking_order,
-                                cx,
-                            )
-                        }
+        //         if phase == DispatchPhase::Bubble {
+        //             editor.update(cx, |editor, cx| {
+        //                 if event.pressed_button == Some(MouseButton::Left) {
+        //                     Self::mouse_dragged(
+        //                         editor,
+        //                         event,
+        //                         &position_map,
+        //                         text_bounds,
+        //                         gutter_bounds,
+        //                         &stacking_order,
+        //                         cx,
+        //                     )
+        //                 }
 
-                        if interactive_bounds.visibly_contains(&event.position, cx) {
-                            Self::mouse_moved(
-                                editor,
-                                event,
-                                &position_map,
-                                text_bounds,
-                                gutter_bounds,
-                                &stacking_order,
-                                cx,
-                            )
-                        }
-                    });
-                }
-            }
-        });
+        //                 if interactive_bounds.visibly_contains(&event.position, cx) {
+        //                     Self::mouse_moved(
+        //                         editor,
+        //                         event,
+        //                         &position_map,
+        //                         text_bounds,
+        //                         gutter_bounds,
+        //                         &stacking_order,
+        //                         cx,
+        //                     )
+        //                 }
+        //             });
+        //         }
+        //     }
+        // });
     }
 }
 

@@ -138,12 +138,14 @@ pub fn popover_menu<M: ManagedView>(id: impl Into<ElementId>) -> PopoverMenu<M> 
 
 pub struct PopoverMenuElementState<M> {
     menu: Rc<RefCell<Option<View<M>>>>,
+    child_bounds: Option<Bounds<Pixels>>,
 }
 
 impl<M> Clone for PopoverMenuElementState<M> {
     fn clone(&self) -> Self {
         Self {
             menu: Rc::clone(&self.menu),
+            child_bounds: self.child_bounds.clone(),
         }
     }
 }
@@ -152,6 +154,7 @@ impl<M> Default for PopoverMenuElementState<M> {
     fn default() -> Self {
         Self {
             menu: Rc::default(),
+            child_bounds: None,
         }
     }
 }
@@ -173,10 +176,9 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
                 let mut overlay = overlay().snap_to_window().anchor(this.anchor);
 
-                if let Some(child_occlusion) = element_state.child_occlusion {
+                if let Some(child_bounds) = element_state.child_bounds {
                     overlay = overlay.position(
-                        this.resolved_attach().corner(child_occlusion.bounds)
-                            + this.resolved_offset(cx),
+                        this.resolved_attach().corner(child_bounds) + this.resolved_offset(cx),
                     );
                 }
 
@@ -224,9 +226,11 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 menu.after_layout(cx);
             }
 
-            before_layout
-                .child_layout_id
-                .map(|layout_id| cx.occlude(cx.layout_bounds(layout_id)).id)
+            before_layout.child_layout_id.map(|layout_id| {
+                let bounds = cx.layout_bounds(layout_id);
+                element_state.child_bounds = Some(bounds);
+                cx.occlude(bounds).id
+            })
         })
     }
 

@@ -853,6 +853,7 @@ impl<'a> WindowContext<'a> {
 
     /// Finds the topmost [Occlusion] containing the given position in the upcoming frame.
     pub fn topmost_occlusion(&self, position: Point<Pixels>) -> Option<Occlusion> {
+        // TODO: consider reversing the occlusions array so that we can iterate it forwards.
         self.window
             .next_frame
             .occlusions
@@ -864,39 +865,12 @@ impl<'a> WindowContext<'a> {
 
     /// Finds the topmost [Occlusion] under the mouse cursor in the upcoming frame.
     pub fn moused_occlusion(&self) -> Option<Occlusion> {
-        let mouse_position = self.mouse_position();
-        self.window
-            .next_frame
-            .occlusions
-            .iter()
-            .rev()
-            .find(|occlusion| occlusion.bounds.contains(&mouse_position))
-            .cloned()
+        self.topmost_occlusion(self.mouse_position())
     }
 
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.window.modifiers
-    }
-
-    /// Returns true if there is no opaque layer containing the given point
-    /// on top of the given level. Layers who are extensions of the queried layer
-    /// are not considered to be on top of queried layer.
-    pub fn was_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
-        todo!()
-    }
-
-    pub(crate) fn was_top_layer_under_active_drag(
-        &self,
-        point: &Point<Pixels>,
-        layer: &StackingOrder,
-    ) -> bool {
-        todo!()
-    }
-
-    /// Called during painting to get the current stacking order.
-    pub fn stacking_order(&self) -> &StackingOrder {
-        todo!()
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -1156,6 +1130,7 @@ impl<'a> WindowContext<'a> {
             // Capture phase, events bubble from back to front. Handlers for this phase are used for
             // special purposes, such as detecting events outside of a given Bounds.
             for listener in &mut mouse_listeners {
+                let listener = listener.as_mut().unwrap();
                 listener(event, moused_occlusion_id, DispatchPhase::Capture, cx);
                 if !cx.app.propagate_event {
                     break;
@@ -1165,6 +1140,7 @@ impl<'a> WindowContext<'a> {
             // Bubble phase, where most normal handlers do their work.
             if cx.app.propagate_event {
                 for listener in mouse_listeners.iter_mut().rev() {
+                    let listener = listener.as_mut().unwrap();
                     listener(event, moused_occlusion_id, DispatchPhase::Bubble, cx);
                     if !cx.app.propagate_event {
                         break;
@@ -1231,17 +1207,17 @@ impl<'a> WindowContext<'a> {
                     currently_pending.bindings.push(binding);
                 }
 
-                // currently_pending.timer = Some(self.spawn(|mut cx| async move {
-                //     cx.background_executor.timer(Duration::from_secs(1)).await;
-                //     cx.update(move |cx| {
-                //         cx.clear_pending_keystrokes();
-                //         let Some(currently_pending) = cx.window.pending_input.take() else {
-                //             return;
-                //         };
-                //         cx.replay_pending_input(currently_pending)
-                //     })
-                //     .log_err();
-                // }));
+                currently_pending.timer = Some(self.spawn(|mut cx| async move {
+                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    cx.update(move |cx| {
+                        cx.clear_pending_keystrokes();
+                        let Some(currently_pending) = cx.window.pending_input.take() else {
+                            return;
+                        };
+                        cx.replay_pending_input(currently_pending)
+                    })
+                    .log_err();
+                }));
 
                 self.window.pending_input = Some(currently_pending);
 

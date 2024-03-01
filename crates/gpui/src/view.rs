@@ -1,8 +1,8 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
     ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
-    LayoutId, Model, PaintIndex, Pixels, Render, Style, TextStyle, ViewContext, VisualContext,
-    WeakModel,
+    LayoutId, LayoutIndex, Model, PaintIndex, Pixels, Render, Style, TextStyle, ViewContext,
+    VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -23,7 +23,7 @@ impl<V> Sealed for View<V> {}
 
 struct AnyViewState {
     root_style: Style,
-    occlusion_range: Range<usize>,
+    layout_range: Range<LayoutIndex>,
     paint_range: Range<PaintIndex>,
     cache_key: ViewCacheKey,
 }
@@ -309,7 +309,7 @@ impl Element for AnyView {
                         let element_state = Some(AnyViewState {
                             root_style: cx.layout_style(layout_id).unwrap().clone(),
                             cache_key: ViewCacheKey::default(),
-                            occlusion_range: 0..0,
+                            layout_range: LayoutIndex::default()..LayoutIndex::default(),
                             paint_range: PaintIndex::default()..PaintIndex::default(),
                         });
                         ((layout_id, Some(element)), element_state)
@@ -329,6 +329,7 @@ impl Element for AnyView {
         element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> Option<AnyElement> {
+        let layout_start = cx.window.next_frame.layout_index();
         cx.with_view_id(self.entity_id(), |cx| {
             if self.cache {
                 cx.with_element_state::<AnyViewState, _>(
@@ -337,19 +338,18 @@ impl Element for AnyView {
                         let mut element_state = element_state.unwrap().unwrap();
 
                         if let Some(mut element) = element.take() {
-                            let occlusion_start = cx.window.next_frame.occlusions.len();
                             element.after_layout(cx);
-                            let occlusion_end = cx.window.next_frame.occlusions.len();
+                            let layout_end = cx.window.next_frame.layout_index();
                             element_state.cache_key.bounds = bounds;
                             element_state.cache_key.content_mask = cx.content_mask();
                             element_state.cache_key.text_style = cx.text_style();
-                            element_state.occlusion_range = occlusion_start..occlusion_end;
+                            element_state.layout_range = layout_start..layout_end;
                             (Some(element), Some(element_state))
                         } else if element_state.cache_key.bounds == bounds
                             && element_state.cache_key.content_mask == cx.content_mask()
                             && element_state.cache_key.text_style == cx.text_style()
                         {
-                            cx.reuse_occlusions(element_state.occlusion_range.clone());
+                            cx.reuse_layout(element_state.layout_range.clone());
                             (None, Some(element_state))
                         } else {
                             element_state.cache_key.bounds = bounds;
@@ -361,10 +361,9 @@ impl Element for AnyView {
                             cx.compute_layout(layout_id, bounds.size.into());
                             element_state.root_style = cx.layout_style(layout_id).unwrap().clone();
 
-                            let occlusion_start = cx.window.next_frame.occlusions.len();
                             element.after_layout(cx);
-                            let occlusion_end = cx.window.next_frame.occlusions.len();
-                            element_state.occlusion_range = occlusion_start..occlusion_end;
+                            let layout_end = cx.window.next_frame.layout_index();
+                            element_state.layout_range = layout_start..layout_end;
 
                             (Some(element), Some(element_state))
                         }
@@ -387,6 +386,7 @@ impl Element for AnyView {
         element: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
+        let paint_start_ix = cx.window.next_frame.paint_index();
         cx.paint_view(self.entity_id(), |cx| {
             if self.cache {
                 cx.with_element_state::<AnyViewState, _>(
@@ -395,7 +395,7 @@ impl Element for AnyView {
                         let mut element_state = element_state.unwrap().unwrap();
 
                         if let Some(element) = element {
-                            element_state.paint_range.start = cx.window.next_frame.paint_index();
+                            element_state.paint_range.start = paint_start_ix;
                             element.paint(cx);
                             element_state.paint_range.end = cx.window.next_frame.paint_index();
                         } else {

@@ -1404,7 +1404,7 @@ impl Interactivity {
         #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
-            && todo!("something with the occlusion")
+            && occlusion.bounds.contains(&cx.mouse_position())
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
             let element_id = format!("{:?}", self.element_id.as_ref().unwrap());

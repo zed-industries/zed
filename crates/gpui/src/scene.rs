@@ -18,7 +18,7 @@ pub(crate) type DrawOrder = u32;
 
 #[derive(Default)]
 pub(crate) struct Scene {
-    primitives: Vec<Primitive>,
+    pub(crate) primitives: Vec<Primitive>,
     primitive_bounds: BoundsTree<ScaledPixels, ()>,
     pub(crate) shadows: Vec<Shadow>,
     pub(crate) quads: Vec<Quad>,
@@ -145,7 +145,7 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
-#[derive(Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) enum Primitive {
     Shadow(Shadow),
     Quad(Quad),

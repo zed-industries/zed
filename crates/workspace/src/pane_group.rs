@@ -752,15 +752,15 @@ mod element {
                 size: pane_bounds.size.apply_along(axis, |_| px(DIVIDER_SIZE)),
             };
 
-            cx.occlude(handle_bounds);
+            let handle_occlusion = cx.occlude(handle_bounds);
             cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border));
 
             cx.on_mouse_event({
                 let dragged_handle = dragged_handle.clone();
                 let flexes = flexes.clone();
                 let workspace = workspace.clone();
-                move |e: &MouseDownEvent, phase, cx| {
-                    if phase.bubble() && handle_bounds.contains(&e.position) {
+                move |e: &MouseDownEvent, moused_occlusion, phase, cx| {
+                    if phase.bubble() && moused_occlusion == Some(handle_occlusion.id) {
                         dragged_handle.replace(Some(ix));
                         if e.click_count >= 2 {
                             let mut borrow = flexes.lock();
@@ -777,10 +777,13 @@ mod element {
             });
             cx.on_mouse_event({
                 let workspace = workspace.clone();
-                move |e: &MouseMoveEvent, phase, cx| {
+                move |e: &MouseMoveEvent, moused_occlusion, phase, cx| {
                     let dragged_handle = dragged_handle.borrow();
 
-                    if phase.bubble() && *dragged_handle == Some(ix) {
+                    if phase.bubble()
+                        && *dragged_handle == Some(ix)
+                        && moused_occlusion == Some(handle_occlusion.id)
+                    {
                         Self::compute_resize(
                             &flexes,
                             e,
@@ -915,7 +918,7 @@ mod element {
 
             cx.on_mouse_event({
                 let state = state.clone();
-                move |_: &MouseUpEvent, phase, _cx| {
+                move |_: &MouseUpEvent, _moused_occlusion, phase, _cx| {
                     if phase.bubble() {
                         state.replace(None);
                     }
