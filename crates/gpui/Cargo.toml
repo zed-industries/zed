@@ -69,7 +69,6 @@ usvg = { version = "0.14", features = [] }
 util.workspace = true
 uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
-wayland-cursor = "0.31.1"
 
 [dev-dependencies]
 backtrace = "0.3"
@@ -99,7 +98,8 @@ open = "5.0.1"
 ashpd = "0.7.0"
 # todo(linux) - Technically do not use `randr`, but it doesn't compile otherwise
 xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr", "xkb"] }
-wayland-client= { version = "0.31.2" }
+wayland-client = { version = "0.31.2" }
+wayland-cursor = "0.31.1"
 wayland-protocols = { version = "0.31.2", features = ["client", "staging", "unstable"] }
 wayland-backend = { version = "0.3.3", features = ["client_system"] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
