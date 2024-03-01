@@ -851,7 +851,7 @@ impl<'a> WindowContext<'a> {
         self.window.mouse_position
     }
 
-    /// Finds the topmost [Occlusion] in the upcoming frame containing the given position.
+    /// Finds the topmost [Occlusion] containing the given position in the upcoming frame.
     pub fn topmost_occlusion(&self, position: Point<Pixels>) -> Option<Occlusion> {
         self.window
             .next_frame
@@ -859,6 +859,18 @@ impl<'a> WindowContext<'a> {
             .iter()
             .rev()
             .find(|occlusion| occlusion.bounds.contains(&position))
+            .cloned()
+    }
+
+    /// Finds the topmost [Occlusion] under the mouse cursor in the upcoming frame.
+    pub fn moused_occlusion(&self) -> Option<Occlusion> {
+        let mouse_position = self.mouse_position();
+        self.window
+            .next_frame
+            .occlusions
+            .iter()
+            .rev()
+            .find(|occlusion| occlusion.bounds.contains(&mouse_position))
             .cloned()
     }
 
@@ -1135,31 +1147,31 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
-        let Some(mouse_occlusion) = self.topmost_occlusion(self.mouse_position()) else {
-            return;
-        };
+        let moused_occlusion_id = self
+            .topmost_occlusion(self.mouse_position())
+            .map(|moused| moused.id);
 
         let mut mouse_listeners = mem::take(&mut self.window.rendered_frame.mouse_listeners);
-
-        // Capture phase, events bubble from back to front. Handlers for this phase are used for
-        // special purposes, such as detecting events outside of a given Bounds.
-        for listener in &mut mouse_listeners {
-            listener.dispatch(event, DispatchPhase::Capture, &mouse_occlusion, self);
-            if !self.app.propagate_event {
-                break;
-            }
-        }
-
-        // Bubble phase, where most normal handlers do their work.
-        if self.app.propagate_event {
-            for listener in mouse_listeners.iter_mut().rev() {
-                listener.dispatch(event, DispatchPhase::Bubble, &mouse_occlusion, self);
-                if !self.app.propagate_event {
+        self.with_element_context(|cx| {
+            // Capture phase, events bubble from back to front. Handlers for this phase are used for
+            // special purposes, such as detecting events outside of a given Bounds.
+            for listener in &mut mouse_listeners {
+                listener(event, moused_occlusion_id, DispatchPhase::Capture, cx);
+                if !cx.app.propagate_event {
                     break;
                 }
             }
-        }
 
+            // Bubble phase, where most normal handlers do their work.
+            if cx.app.propagate_event {
+                for listener in mouse_listeners.iter_mut().rev() {
+                    listener(event, moused_occlusion_id, DispatchPhase::Bubble, cx);
+                    if !cx.app.propagate_event {
+                        break;
+                    }
+                }
+            }
+        });
         self.window.rendered_frame.mouse_listeners = mouse_listeners;
 
         if self.app.propagate_event && self.has_active_drag() {

@@ -38,27 +38,8 @@ use crate::{
     SUBPIXEL_VARIANTS,
 };
 
-pub(crate) struct MouseListener {
-    pub(crate) occlusion_id: OcclusionId,
-    pub(crate) invert_occlusion: bool,
-    pub(crate) callback: Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>,
-}
-
-impl MouseListener {
-    pub(crate) fn dispatch(
-        &mut self,
-        event: &dyn Any,
-        phase: DispatchPhase,
-        mouse_occlusion: &Occlusion,
-        cx: &mut WindowContext,
-    ) {
-        if (self.occlusion_id == mouse_occlusion.id) != self.invert_occlusion {
-            cx.with_element_context(|cx| {
-                (self.callback)(event, phase, cx);
-            });
-        }
-    }
-}
+pub(crate) type AnyMouseListener =
+    Box<dyn FnMut(&dyn Any, Option<OcclusionId>, DispatchPhase, &mut ElementContext) + 'static>;
 
 pub(crate) struct RequestedInputHandler {
     pub(crate) view_id: EntityId,
@@ -75,22 +56,25 @@ pub(crate) struct CursorStyleRequest {
     pub(crate) style: CursorStyle,
 }
 
+/// An identifier for an [Occlusion]
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub(crate) struct OcclusionId(usize);
+pub struct OcclusionId(usize);
 
-/// Identifies an occlusion, see [ElementContext::insert_occlusion] for more details.
-#[derive(Clone, Deref)]
+/// A rectangular region that potentially blocks occlusions inserted prior.
+/// See [ElementContext::insert_occlusion] for more details.
+#[derive(Clone, Eq, PartialEq)]
 pub struct Occlusion {
-    pub(crate) id: OcclusionId,
-    #[deref]
-    pub(crate) bounds: Bounds<Pixels>,
+    /// A unique identifier for the occlusion
+    pub id: OcclusionId,
+    /// The bounds of the occlusion
+    pub bounds: Bounds<Pixels>,
 }
 
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    pub(crate) mouse_listeners: Vec<MouseListener>,
+    pub(crate) mouse_listeners: Vec<AnyMouseListener>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) occlusions: Vec<Occlusion>,
@@ -1161,21 +1145,19 @@ impl<'a> ElementContext<'a> {
     /// the listener will be cleared.
     pub fn on_mouse_event<Event: MouseEvent>(
         &mut self,
-        // occlusion: Occlusion,
-        mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
+        mut handler: impl FnMut(&Event, Option<OcclusionId>, DispatchPhase, &mut ElementContext)
+            + 'static,
     ) {
-        let occlusion: Occlusion = todo!();
-        self.window.next_frame.mouse_listeners.push(MouseListener {
-            occlusion_id: occlusion.id,
-            invert_occlusion: false,
-            callback: Box::new(
-                move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
-                    if let Some(event) = event.downcast_ref() {
-                        handler(event, phase, cx)
-                    }
-                },
-            ),
-        });
+        self.window.next_frame.mouse_listeners.push(Box::new(
+            move |event: &dyn Any,
+                  occlusion_id: Option<OcclusionId>,
+                  phase: DispatchPhase,
+                  cx: &mut ElementContext<'_>| {
+                if let Some(event) = event.downcast_ref() {
+                    handler(event, occlusion_id, phase, cx)
+                }
+            },
+        ));
     }
 
     /// Register a key event listener on the window for the next frame. The type of event

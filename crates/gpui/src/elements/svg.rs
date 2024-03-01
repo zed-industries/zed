@@ -28,7 +28,7 @@ impl Svg {
 
 impl Element for Svg {
     type BeforeLayout = ();
-    type AfterLayout = Option<Occlusion>;
+    type AfterLayout = Occlusion;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self
@@ -42,7 +42,7 @@ impl Element for Svg {
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Option<Occlusion> {
+    ) -> Occlusion {
         self.interactivity
             .after_layout(bounds, bounds.size, cx, |_, _, occlusion, _| occlusion)
     }
@@ -51,17 +51,16 @@ impl Element for Svg {
         &mut self,
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        hover_occlusion: &mut Self::AfterLayout,
+        occlusion: &mut Occlusion,
         cx: &mut ElementContext,
     ) where
         Self: Sized,
     {
-        self.interactivity
-            .paint(bounds, hover_occlusion.as_ref(), cx, |style, cx| {
-                if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
-                    cx.paint_svg(bounds, path.clone(), color).log_err();
-                }
-            })
+        self.interactivity.paint(occlusion, cx, |style, cx| {
+            if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
+                cx.paint_svg(bounds, path.clone(), color).log_err();
+            }
+        })
     }
 }
 

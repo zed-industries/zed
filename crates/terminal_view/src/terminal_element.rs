@@ -1017,9 +1017,8 @@ impl Element for TerminalElement {
 
         self.register_mouse_listeners(origin, after_layout.mode, bounds, cx);
 
-        let occlusion = after_layout.occlusion.clone();
         self.interactivity
-            .paint(bounds, Some(&occlusion), cx, |_, cx| {
+            .paint(&after_layout.occlusion, cx, |_, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
 
                 cx.on_key_event({

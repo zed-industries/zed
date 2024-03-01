@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     overlay, point, prelude::FluentBuilder, px, rems, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, InteractiveBounds,
-    IntoElement, LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View,
+    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, IntoElement, LayoutId,
+    ManagedView, MouseDownEvent, Occlusion, OcclusionId, ParentElement, Pixels, Point, View,
     VisualContext, WindowContext,
 };
 
@@ -138,14 +138,12 @@ pub fn popover_menu<M: ManagedView>(id: impl Into<ElementId>) -> PopoverMenu<M> 
 
 pub struct PopoverMenuElementState<M> {
     menu: Rc<RefCell<Option<View<M>>>>,
-    child_bounds: Option<Bounds<Pixels>>,
 }
 
 impl<M> Clone for PopoverMenuElementState<M> {
     fn clone(&self) -> Self {
         Self {
             menu: Rc::clone(&self.menu),
-            child_bounds: self.child_bounds,
         }
     }
 }
@@ -154,7 +152,6 @@ impl<M> Default for PopoverMenuElementState<M> {
     fn default() -> Self {
         Self {
             menu: Rc::default(),
-            child_bounds: None,
         }
     }
 }
@@ -167,7 +164,7 @@ pub struct PopoverMenuFrameState {
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
     type BeforeLayout = PopoverMenuFrameState;
-    type AfterLayout = ();
+    type AfterLayout = Option<OcclusionId>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::BeforeLayout) {
         self.with_element_state(cx, |this, element_state, cx| {
@@ -176,9 +173,10 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
                 let mut overlay = overlay().snap_to_window().anchor(this.anchor);
 
-                if let Some(child_bounds) = element_state.child_bounds {
+                if let Some(child_occlusion) = element_state.child_occlusion {
                     overlay = overlay.position(
-                        this.resolved_attach().corner(child_bounds) + this.resolved_offset(cx),
+                        this.resolved_attach().corner(child_occlusion.bounds)
+                            + this.resolved_offset(cx),
                     );
                 }
 
@@ -216,19 +214,19 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         _bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) {
+    ) -> Option<OcclusionId> {
         self.with_element_state(cx, |_this, element_state, cx| {
             if let Some(child) = before_layout.child_element.as_mut() {
                 child.after_layout(cx);
             }
 
-            if let Some(child_layout_id) = before_layout.child_layout_id.as_ref() {
-                element_state.child_bounds = Some(cx.layout_bounds(*child_layout_id));
-            }
-
             if let Some(menu) = before_layout.menu_element.as_mut() {
                 menu.after_layout(cx);
             }
+
+            before_layout
+                .child_layout_id
+                .map(|layout_id| cx.occlude(cx.layout_bounds(layout_id)).id)
         })
     }
 
@@ -236,7 +234,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         &mut self,
         _: Bounds<gpui::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        child_occlusion: &mut Option<OcclusionId>,
         cx: &mut ElementContext,
     ) {
         self.with_element_state(cx, |_this, element_state, cx| {
@@ -247,17 +245,12 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             if let Some(mut menu) = before_layout.menu_element.take() {
                 menu.paint(cx);
 
-                if let Some(child_bounds) = element_state.child_bounds {
-                    let interactive_bounds = InteractiveBounds {
-                        bounds: child_bounds,
-                        stacking_order: cx.stacking_order().clone(),
-                    };
-
+                if let Some(child_occlusion) = *child_occlusion {
                     // Mouse-downing outside the menu dismisses it, so we don't
                     // want a click on the toggle to re-open it.
-                    cx.on_mouse_event(move |e: &MouseDownEvent, phase, cx| {
+                    cx.on_mouse_event(move |e: &MouseDownEvent, moused_occlusion, phase, cx| {
                         if phase == DispatchPhase::Bubble
-                            && interactive_bounds.visibly_contains(&e.position, cx)
+                            && moused_occlusion == Some(child_occlusion)
                         {
                             cx.stop_propagation()
                         }

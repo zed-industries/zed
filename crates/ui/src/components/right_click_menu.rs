@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     overlay, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element,
-    ElementContext, ElementId, InteractiveBounds, IntoElement, LayoutId, ManagedView, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    ElementContext, ElementId, IntoElement, LayoutId, ManagedView, MouseButton, MouseDownEvent,
+    OcclusionId, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
@@ -183,14 +183,11 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             let child_layout_id = before_layout.child_layout_id.clone();
             let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
 
-            let interactive_bounds = InteractiveBounds {
-                bounds: bounds.intersect(&cx.content_mask().bounds),
-                stacking_order: cx.stacking_order().clone(),
-            };
-            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+            let occlusion: OcclusionId = todo!();
+            cx.on_mouse_event(move |event: &MouseDownEvent, moused_occlusion, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == MouseButton::Right
-                    && interactive_bounds.visibly_contains(&event.position, cx)
+                    && moused_occlusion == Some(occlusion)
                 {
                     cx.stop_propagation();
                     cx.prevent_default();
