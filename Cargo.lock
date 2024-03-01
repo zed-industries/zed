@@ -93,6 +93,7 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "tiktoken-rs",
