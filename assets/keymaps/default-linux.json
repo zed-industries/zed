@@ -117,7 +117,8 @@
         {
           "stop_at_soft_wraps": true
         }
-      ]
+      ],
+      "ctrl-;": "editor::ToggleLineNumbers"
     }
   },
   {
