@@ -8,7 +8,6 @@ license = "Apache-2.0"
 path = "src/extension_api.rs"
 
 [dependencies]
-anyhow.workspace = true
 wit-bindgen = "0.18"
 
 [package.metadata.component]
