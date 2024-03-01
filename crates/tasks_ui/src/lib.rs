@@ -67,15 +67,19 @@ fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_
                     range: start..end,
                 };
                 let language_context = context_provider.build_context(location, cx).ok()?;
+                let mut env = HashMap::from_iter([
+                    ("ZED_CURRENT_FILE".into(), language_context.file),
+                    (
+                        "ZED_WORKSPACE_ROOT".into(),
+                        workspace_root.to_string_lossy().to_string(),
+                    ),
+                ]);
+                if let Some(symbol) = language_context.symbol {
+                    env.insert("ZED_CURRENT_SYMBOL".into(), symbol);
+                }
                 Some(TaskContext {
                     cwd: cwd.clone(),
-                    env: HashMap::from_iter([
-                        ("ZED_CURRENT_FILE".into(), language_context.file),
-                        (
-                            "ZED_WORKSPACE_ROOT".into(),
-                            workspace_root.to_string_lossy().to_string(),
-                        ),
-                    ]),
+                    env,
                 })
             })
         })()

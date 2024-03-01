@@ -70,9 +70,25 @@ impl LanguageContextProvider for DefaultContextProvider {
         let Some(file) = location.buffer.read(cx).file() else {
             Err(anyhow!("Cannot build a language context for unnamed file"))?
         };
+        let symbols = location
+            .buffer
+            .read(cx)
+            .snapshot()
+            .symbols_containing(location.range.start, None);
+        let symbol = symbols.and_then(|symbols| {
+            symbols.last().map(|symbol| {
+                let range = symbol
+                    .name_ranges
+                    .last()
+                    .cloned()
+                    .unwrap_or(0..symbol.text.len());
+                symbol.text[range].to_string()
+            })
+        });
         Ok(LanguageContext {
             file: file.path().to_string_lossy().to_string(),
             package: None,
+            symbol,
         })
     }
 }
