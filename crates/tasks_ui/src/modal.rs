@@ -284,7 +284,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_name(cx: &mut TestAppContext) {
+    async fn test_spawn_tasks_modal_query_reuse(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
