@@ -41,10 +41,9 @@ impl LspAdapter for ExtensionLspAdapter {
                     |extension, store| {
                         async move {
                             let resource = store.data_mut().table().push(delegate)?;
-                            let result = extension
+                            extension
                                 .call_language_server_command(store, &this.config, resource)
-                                .await;
-                            result
+                                .await
                         }
                         .boxed()
                     }

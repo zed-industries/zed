@@ -616,11 +616,11 @@ impl LanguageServer {
                 uri: root_uri,
                 name: Default::default(),
             }]),
-            client_info: Some(ClientInfo {
-                name: release_channel::ReleaseChannel::global(cx)
-                    .display_name()
-                    .to_string(),
-                version: Some(release_channel::AppVersion::global(cx).to_string()),
+            client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
+                ClientInfo {
+                    name: release_channel.display_name().to_string(),
+                    version: Some(release_channel::AppVersion::global(cx).to_string()),
+                }
             }),
             locale: None,
         };

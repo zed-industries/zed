@@ -7,7 +7,10 @@ use collections::BTreeMap;
 use fs::{FakeFs, Fs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, TestAppContext};
-use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
+use language::{
+    Language, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus,
+    LanguageServerName,
+};
 use node_runtime::FakeNodeRuntime;
 use project::Project;
 use serde_json::json;
@@ -413,10 +416,38 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     init_test(cx);
 
-    let language_registry = Arc::new(LanguageRegistry::test());
+    let gleam_extension_dir = PathBuf::from_iter([
+        env!("CARGO_MANIFEST_DIR"),
+        "..",
+        "..",
+        "extensions",
+        "gleam",
+    ])
+    .canonicalize()
+    .unwrap();
+
+    compile_extension("zed_gleam", &gleam_extension_dir);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/the-extension-dir", json!({ "installed": {} }))
+        .await;
+    fs.insert_tree_from_real_fs("/the-extension-dir/installed/gleam", gleam_extension_dir)
+        .await;
+
+    fs.insert_tree(
+        "/the-project-dir",
+        json!({
+            ".tool-versions": "rust 1.73.0",
+            "test.gleam": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-project-dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let node_runtime = FakeNodeRuntime::new();
-    let fs = FakeFs::new(cx.executor());
 
     let mut status_updates = language_registry.language_server_binary_statuses();
 
@@ -466,23 +497,6 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         }
     });
 
-    let gleam_extension_dir = PathBuf::from_iter([
-        env!("CARGO_MANIFEST_DIR"),
-        "..",
-        "..",
-        "extensions",
-        "gleam",
-    ])
-    .canonicalize()
-    .unwrap();
-
-    compile_extension("zed_gleam", &gleam_extension_dir);
-
-    fs.insert_tree("/the-extension-dir", json!({ "installed": {} }))
-        .await;
-    fs.insert_tree_from_real_fs("/the-extension-dir/installed/gleam", gleam_extension_dir)
-        .await;
-
     let _store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
@@ -497,25 +511,28 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
 
-    fs.insert_tree(
-        "/the-project-dir",
-        json!({
-            ".tool-versions": "rust 1.73.0",
-            "test.gleam": ""
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/the-project-dir".as_ref()], cx).await;
-
     let mut fake_servers = language_registry.fake_language_servers("Gleam");
 
-    let _buffer = project
+    let buffer = project
         .update(cx, |project, cx| {
             project.open_local_buffer("/the-project-dir/test.gleam", cx)
         })
         .await
         .unwrap();
+
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(
+            &buffer,
+            Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Gleam".into(),
+                    ..Default::default()
+                },
+                None,
+            )),
+            cx,
+        )
+    });
 
     let fake_server = fake_servers.next().await.unwrap();
 
@@ -526,7 +543,10 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         "the-gleam-binary-contents"
     );
 
-    assert_eq!(fake_server.binary.path, PathBuf::from("gleam-v1.2.3/gleam"));
+    assert_eq!(
+        fake_server.binary.path,
+        PathBuf::from("/the-extension-dir/work/gleam/gleam-v1.2.3/gleam")
+    );
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
 
     assert_eq!(
@@ -537,15 +557,15 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         ],
         [
             (
-                LanguageServerName("Gleam LSP".into()),
+                LanguageServerName("gleam".into()),
                 LanguageServerBinaryStatus::CheckingForUpdate
             ),
             (
-                LanguageServerName("Gleam LSP".into()),
+                LanguageServerName("gleam".into()),
                 LanguageServerBinaryStatus::Downloading
             ),
             (
-                LanguageServerName("Gleam LSP".into()),
+                LanguageServerName("gleam".into()),
                 LanguageServerBinaryStatus::Downloaded
             )
         ]
@@ -579,5 +599,6 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
+        language::init(cx);
     });
 }

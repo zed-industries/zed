@@ -585,8 +585,6 @@ impl LanguageRegistry {
         let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
         let root_path = root_path.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
-
-        #[cfg(any(test, feature = "test-support"))]
         let this = Arc::downgrade(self);
 
         let task = cx.spawn({
@@ -611,16 +609,23 @@ impl LanguageRegistry {
                 }
 
                 #[cfg(any(test, feature = "test-support"))]
-                if let Some(fake_adapter) = adapter.as_fake() {
+                if true {
+                    let capabilities = adapter
+                        .as_fake()
+                        .map(|fake_adapter| fake_adapter.capabilities.clone())
+                        .unwrap_or_default();
+
                     let (server, mut fake_server) = lsp::FakeLanguageServer::new(
                         binary,
-                        fake_adapter.name.to_string(),
-                        fake_adapter.capabilities.clone(),
+                        adapter.name.0.to_string(),
+                        capabilities,
                         cx.clone(),
                     );
 
-                    if let Some(initializer) = &fake_adapter.initializer {
-                        initializer(&mut fake_server);
+                    if let Some(fake_adapter) = adapter.as_fake() {
+                        if let Some(initializer) = &fake_adapter.initializer {
+                            initializer(&mut fake_server);
+                        }
                     }
 
                     cx.background_executor()
@@ -649,6 +654,7 @@ impl LanguageRegistry {
                     return Ok(server);
                 }
 
+                drop(this);
                 lsp::LanguageServer::new(
                     stderr_capture,
                     server_id,
