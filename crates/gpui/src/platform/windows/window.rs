@@ -51,15 +51,17 @@ use windows::{
             },
             Shell::{DragQueryFileA, DragQueryFileW, HDROP},
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, GetClientRect, GetCursorPos, MessageBoxExW,
-                PostMessageW, PostQuitMessage, RegisterClassExW, SetWindowTextW, ShowWindow,
-                CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_HINSTANCE, HMENU, SIZE_MINIMIZED,
-                SW_SHOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_DESTROY,
-                WM_DROPFILES, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK,
-                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
-                WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
-                WM_RBUTTONUP, WM_SIZE, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW,
-                WS_EX_ACCEPTFILES, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+                CreateWindowExW, DefWindowProcW, GetClientRect, GetCursorPos, KillTimer,
+                MessageBoxExW, PostMessageW, PostQuitMessage, RegisterClassExW, SetTimer,
+                SetWindowTextW, ShowWindow, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_HINSTANCE,
+                HMENU, SIZE_MINIMIZED, SW_SHOW, TIMERPROC, WA_ACTIVE, WA_CLICKACTIVE, WA_INACTIVE,
+                WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CHAR, WM_CLOSE, WM_COMMAND,
+                WM_DESTROY, WM_DROPFILES, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP,
+                WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
+                WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONDBLCLK,
+                WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN,
+                WM_XBUTTONUP, WNDCLASSEXW, WS_EX_ACCEPTFILES, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW,
+                WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -72,7 +74,8 @@ use crate::{
     Action, Bounds, DisplayId, ForegroundExecutor, Modifiers, Pixels, PlatformDisplay,
     PlatformInput, PlatformInputHandler, PlatformWindow, Point, Size, WindowKind, WindowOptions,
     WindowsWindowBase, WindowsWinodwDataWrapper, DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH,
-    MENU_ACTIONS, WINDOW_CLOSE, WINODW_EXTRA_EXSTYLE, WINODW_STYLE,
+    MENU_ACTIONS, WINDOW_CLOSE, WINDOW_REFRESH_TIMER, WINODW_EXTRA_EXSTYLE,
+    WINODW_REFRESH_INTERVAL, WINODW_STYLE,
 };
 
 use super::{display::WindowsDisplay, WINDOW_CLASS};
@@ -170,6 +173,14 @@ impl WindowsWindow {
             bounds,
             renderer,
         );
+        unsafe {
+            SetTimer(
+                raw_window_handle,
+                WINDOW_REFRESH_TIMER,
+                WINODW_REFRESH_INTERVAL,
+                TIMERPROC::None,
+            )
+        };
         let windows_dragdrop = unsafe {
             set_windowdata(raw_window_handle, WindowsWinodwDataWrapper(inner.clone()));
             let drop_target = WindowsDragDropTarget(inner.clone());
@@ -318,11 +329,21 @@ impl WindowsWindowinner {
             }
         }
     }
+
+    fn set_focused(&self, focus: bool) {
+        if let Some(ref mut func) = self.callbacks.borrow_mut().active_status_change {
+            func(focus);
+        }
+    }
 }
 
 impl WindowsWindowBase for WindowsWindowinner {
     unsafe fn handle_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
+            WM_TIMER => {
+                self.update();
+                LRESULT(0)
+            }
             WM_PAINT => {
                 self.request_redraw();
                 ValidateRect(self.window_handle.hwnd(), None);
@@ -336,6 +357,10 @@ impl WindowsWindowBase for WindowsWindowinner {
                     WPARAM::default(),
                     LPARAM::default(),
                 );
+                if let Some(func) = self.callbacks.borrow_mut().close.take() {
+                    func();
+                }
+                KillTimer(self.window_handle.hwnd(), WINDOW_REFRESH_TIMER);
                 PostQuitMessage(0);
                 LRESULT(0)
             }
@@ -349,6 +374,15 @@ impl WindowsWindowBase for WindowsWindowinner {
                         LPARAM::default(),
                     )
                     .inspect_err(log_windows_error);
+                }
+                self.update();
+                LRESULT(0)
+            }
+            WM_ACTIVATE => {
+                if loword!(wparam.0, u16) as u32 & (WA_ACTIVE | WA_CLICKACTIVE) > 0 {
+                    self.set_focused(true);
+                } else if loword!(wparam.0, u16) as u32 & WA_INACTIVE > 0 {
+                    self.set_focused(false);
                 }
                 LRESULT(0)
             }
@@ -376,6 +410,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let (new_pos, input) = parse_mouse_movement(wparam, lparam, modifiers);
                 *self.mouse_position.borrow_mut() = new_pos;
                 self.handle_input(input);
+                self.update();
                 LRESULT(0)
             }
             WM_CHAR => {
@@ -418,6 +453,11 @@ impl WindowsWindowBase for WindowsWindowinner {
                 config.ptCurrentPos.y = cursor.y;
                 ImmSetCompositionWindow(ctx, &config as _);
                 ImmReleaseContext(self.window_handle.hwnd(), ctx);
+                self.update();
+                println!(
+                    "Set composition pos: ({}, {})",
+                    config.ptCurrentPos.x, config.ptCurrentPos.y
+                );
                 LRESULT(0)
             }
             _ => DefWindowProcW(self.window_handle.hwnd(), message, wparam, lparam),

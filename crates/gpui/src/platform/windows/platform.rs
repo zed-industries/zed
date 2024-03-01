@@ -169,7 +169,7 @@ impl WindowsPlatformInner {
                 PostQuitMessage(0);
             }
         }
-        let old_val = self.windows_count.fetch_sub(1, Ordering::SeqCst);
+        self.windows_count.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -197,9 +197,6 @@ impl Platform for WindowsPlatform {
         }
         if let Some(ref mut func) = self.inner.callbacks.borrow_mut().quit {
             func();
-        }
-        unsafe {
-            let _ = DestroyWindow(self.inner.dispatch_window_handle);
         }
     }
 

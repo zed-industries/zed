@@ -21,6 +21,9 @@ pub const WINODW_EXTRA_EXSTYLE: WINDOW_EX_STYLE = WS_EX_ACCEPTFILES;
 // events
 // Values in the range 0x0400 (the value of WM_USER) through 0x7FFF are
 // available for message identifiers for private window classes.
+pub const WINDOW_REFRESH_TIMER: usize = 1;
+// the minimum value is 0xA, which means only max to 100fps
+pub const WINODW_REFRESH_INTERVAL: u32 = 16;
 pub const MAIN_DISPATCH: u32 = WM_USER + 1;
 pub const WINDOW_CLOSE: u32 = WM_USER + 2;
 pub const WINDOW_OPEN: u32 = WM_USER + 3;
