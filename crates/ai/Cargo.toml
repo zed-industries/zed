@@ -20,7 +20,6 @@ futures.workspace = true
 gpui.workspace = true
 isahc.workspace = true
 language.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 matrixmultiply = "0.3.7"
 ordered-float.workspace = true

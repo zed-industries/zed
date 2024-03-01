@@ -84,7 +84,6 @@ dependencies = [
  "gpui",
  "isahc",
  "language",
- "lazy_static",
  "log",
  "matrixmultiply",
  "ordered-float 2.10.0",
