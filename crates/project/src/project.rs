@@ -55,7 +55,6 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_core::project_settings::{LspSettings, ProjectSettings};
 pub use project_core::{DiagnosticSummary, ProjectEntryId};
 use rand::prelude::*;
-use std::{ffi::OsStr, str::FromStr};
 
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
@@ -9365,8 +9364,8 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
 
-    let additional_command = match PathBuf::from_str(shell.as_str()) {
-        Ok(shell) if shell.file_name() == Some(OsStr::new("fish")) => Some("emit fish_prompt"),
+    let additional_command = match PathBuf::from(&shell).file_name().and_then(|f| f.to_str()) {
+        Some("fish") => Some("emit fish_prompt"),
         _ => None,
     };
 
@@ -9380,8 +9379,7 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
 
     let output = smol::process::Command::new(&shell)
         .args([
-            "-i",
-            "-c",
+            "-i", "-c",
             // What we're doing here is to spawn a shell and then `cd` into
             // the project directory to get the env in there as if the user
             // `cd`'d into it. We do that because tools like direnv, asdf, ...
