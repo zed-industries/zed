@@ -199,8 +199,6 @@ async fn stream_completion(
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub enum AzureOpenAiApiVersion {
-    #[serde(rename = "2022-12-01")]
-    V2022_12_01,
     /// Retiring April 2, 2024.
     #[serde(rename = "2023-03-15-preview")]
     V2023_03_15Preview,
@@ -230,7 +228,6 @@ impl fmt::Display for AzureOpenAiApiVersion {
             f,
             "{}",
             match self {
-                Self::V2022_12_01 => "2022-12-01",
                 Self::V2023_03_15Preview => "2023-03-15-preview",
                 Self::V2023_05_15 => "2023-05-15",
                 Self::V2023_06_01Preview => "2023-06-01-preview",
