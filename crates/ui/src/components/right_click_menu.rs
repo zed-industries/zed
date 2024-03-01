@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     overlay, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element,
-    ElementContext, ElementId, Hitbox, HitboxId, IntoElement, LayoutId, ManagedView, MouseButton,
+    ElementContext, ElementId, Hitbox, IntoElement, LayoutId, ManagedView, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
 
@@ -163,7 +163,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
     fn paint(
         &mut self,
-        bounds: Bounds<gpui::Pixels>,
+        _bounds: Bounds<gpui::Pixels>,
         before_layout: &mut Self::BeforeLayout,
         hitbox: &mut Self::AfterLayout,
         cx: &mut ElementContext,
@@ -189,10 +189,10 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
 
             let hitbox_id = hitbox.id;
-            cx.on_mouse_event(move |event: &MouseDownEvent, moused_hitbox, phase, cx| {
+            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == MouseButton::Right
-                    && moused_hitbox == Some(hitbox_id)
+                    && hitbox_id.is_hovered(cx)
                 {
                     cx.stop_propagation();
                     cx.prevent_default();

@@ -252,8 +252,8 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 if let Some(child_hitbox) = *child_hitbox {
                     // Mouse-downing outside the menu dismisses it, so we don't
                     // want a click on the toggle to re-open it.
-                    cx.on_mouse_event(move |e: &MouseDownEvent, moused_hitbox, phase, cx| {
-                        if phase == DispatchPhase::Bubble && moused_hitbox == Some(child_hitbox) {
+                    cx.on_mouse_event(move |_: &MouseDownEvent, phase, cx| {
+                        if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(cx) {
                             cx.stop_propagation()
                         }
                     })

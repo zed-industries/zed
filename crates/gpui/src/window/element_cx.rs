@@ -39,7 +39,7 @@ use crate::{
 };
 
 pub(crate) type AnyMouseListener =
-    Box<dyn FnMut(&dyn Any, Option<HitboxId>, DispatchPhase, &mut ElementContext) + 'static>;
+    Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
 
 pub(crate) struct RequestedInputHandler {
     pub(crate) view_id: EntityId,
@@ -56,6 +56,13 @@ pub(crate) struct CursorStyleRequest {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct HitboxId(usize);
 
+impl HitboxId {
+    /// Checks if the hitbox with this id is currently hovered.
+    pub fn is_hovered(&self, cx: &WindowContext) -> bool {
+        cx.window.mouse_hit_test.0.contains(self)
+    }
+}
+
 /// A rectangular region that potentially blocks hitboxes inserted prior.
 /// See [ElementContext::insert_hitbox] for more details.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,8 +72,18 @@ pub struct Hitbox {
     /// The bounds of the hitbox
     pub bounds: Bounds<Pixels>,
     /// Whether the hitbox occludes other hitboxes inserted prior.
-    pub occluding: bool,
+    pub opaque: bool,
 }
+
+impl Hitbox {
+    /// Checks if the hitbox is currently hovered.
+    pub fn is_hovered(&self, cx: &WindowContext) -> bool {
+        self.id.is_hovered(cx)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
 
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
@@ -75,7 +92,7 @@ pub(crate) struct Frame {
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) hitboxs: Vec<Hitbox>,
+    pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
@@ -89,7 +106,7 @@ pub(crate) struct Frame {
 
 #[derive(Clone, Default)]
 pub(crate) struct AfterLayoutIndex {
-    hitboxs_index: usize,
+    hitboxes_index: usize,
     tooltips_index: usize,
 }
 
@@ -110,7 +127,7 @@ impl Frame {
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
-            hitboxs: Vec::new(),
+            hitboxes: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
@@ -133,13 +150,13 @@ impl Frame {
         self.requested_input_handler.take();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
-        self.hitboxs.clear();
+        self.hitboxes.clear();
         debug_assert_eq!(self.view_stack.len(), 0);
     }
 
     pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
         AfterLayoutIndex {
-            hitboxs_index: self.hitboxs.len(),
+            hitboxes_index: self.hitboxes.len(),
             tooltips_index: self.tooltip_requests.len(),
         }
     }
@@ -151,6 +168,19 @@ impl Frame {
             cursor_styles_index: self.cursor_styles.len(),
             dispatch_tree_index: self.dispatch_tree.len(),
         }
+    }
+
+    pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
+        let mut hit_test = HitTest::default();
+        for hitbox in self.hitboxes.iter().rev() {
+            if hitbox.bounds.contains(&position) {
+                hit_test.0.push(hitbox.id);
+                if hitbox.opaque {
+                    break;
+                }
+            }
+        }
+        hit_test
     }
 
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -344,12 +374,14 @@ impl<'a> ElementContext<'a> {
             tooltip_element = Some(element);
         }
 
+        self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
+
         // let moused_hitbox = self.moused_hitbox();
-        // let hitbox_count = self.window.next_frame.hitboxs.len();
+        // let hitbox_count = self.window.next_frame.hitboxes.len();
         // for (hitbox_ix, hitbox) in self
         //     .window
         //     .next_frame
-        //     .hitboxs
+        //     .hitboxes
         //     .iter()
         //     .cloned()
         //     .enumerate()
@@ -413,8 +445,8 @@ impl<'a> ElementContext<'a> {
 
     pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
         let window = &mut self.window;
-        window.next_frame.hitboxs.extend(
-            window.rendered_frame.hitboxs[range.start.hitboxs_index..range.end.hitboxs_index]
+        window.next_frame.hitboxes.extend(
+            window.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
                 .cloned(),
         );
@@ -1110,7 +1142,7 @@ impl<'a> ElementContext<'a> {
     /// This method should be called during `after_layout`. You can use
     /// the returned [Hitbox] during `paint` or in an event handler
     /// to determine whether the inserted hitbox was the topmost.
-    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, occluding: bool) -> Hitbox {
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
         let content_mask = self.content_mask();
         let window = &mut self.window;
         let id = window.next_hitbox_id;
@@ -1118,9 +1150,9 @@ impl<'a> ElementContext<'a> {
         let hitbox = Hitbox {
             id,
             bounds: bounds.intersect(&content_mask.bounds),
-            occluding: false,
+            opaque,
         };
-        window.next_frame.hitboxs.push(hitbox.clone());
+        window.next_frame.hitboxes.push(hitbox.clone());
         hitbox
     }
 
@@ -1207,15 +1239,12 @@ impl<'a> ElementContext<'a> {
     /// the listener will be cleared.
     pub fn on_mouse_event<Event: MouseEvent>(
         &mut self,
-        mut handler: impl FnMut(&Event, Option<HitboxId>, DispatchPhase, &mut ElementContext) + 'static,
+        mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
         self.window.next_frame.mouse_listeners.push(Some(Box::new(
-            move |event: &dyn Any,
-                  hitbox_id: Option<HitboxId>,
-                  phase: DispatchPhase,
-                  cx: &mut ElementContext<'_>| {
+            move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
                 if let Some(event) = event.downcast_ref() {
-                    handler(event, hitbox_id, phase, cx)
+                    handler(event, phase, cx)
                 }
             },
         )));

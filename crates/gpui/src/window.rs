@@ -262,6 +262,7 @@ pub struct Window {
     focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
+    mouse_hit_test: HitTest,
     modifiers: Modifiers,
     scale_factor: f32,
     bounds: WindowBounds,
@@ -456,6 +457,7 @@ impl Window {
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
+            mouse_hit_test: HitTest::default(),
             modifiers,
             scale_factor,
             bounds,
@@ -851,28 +853,6 @@ impl<'a> WindowContext<'a> {
         self.window.mouse_position
     }
 
-    /// Finds the topmost [Occlusion] containing the given position in the upcoming frame.
-    pub fn hit_test(&self, position: Point<Pixels>) -> Option<Hitbox> {
-        let frame = if self.window.drawing {
-            &self.window.next_frame
-        } else {
-            &self.window.rendered_frame
-        };
-
-        // TODO: consider reversing the hitboxs array so that we can iterate it forwards.
-        frame
-            .hitboxs
-            .iter()
-            .rev()
-            .find(|hitbox| hitbox.bounds.contains(&position))
-            .cloned()
-    }
-
-    /// Finds the topmost [Occlusion] under the mouse cursor in the upcoming frame.
-    pub fn moused_hitbox(&self) -> Option<Hitbox> {
-        self.hit_test(self.mouse_position())
-    }
-
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.window.modifiers
@@ -980,15 +960,14 @@ impl<'a> WindowContext<'a> {
     }
 
     fn compute_cursor_style(&mut self) -> Option<CursorStyle> {
-        let mouse_position = self.mouse_position();
-        let hitbox = self.hit_test(mouse_position)?;
         // TODO: maybe we should have a HashMap keyed by HitboxId.
         let request = self
             .window
             .next_frame
             .cursor_styles
             .iter()
-            .find(|request| request.hitbox_id == hitbox.id)?;
+            .rev()
+            .find(|request| request.hitbox_id.is_hovered(self))?;
         Some(request.style)
     }
 
@@ -1126,7 +1105,7 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
-        let moused_hitbox_id = self.hit_test(self.mouse_position()).map(|moused| moused.id);
+        self.window.mouse_hit_test = self.window.rendered_frame.hit_test(self.mouse_position());
 
         let mut mouse_listeners = mem::take(&mut self.window.rendered_frame.mouse_listeners);
         self.with_element_context(|cx| {
@@ -1134,7 +1113,7 @@ impl<'a> WindowContext<'a> {
             // special purposes, such as detecting events outside of a given Bounds.
             for listener in &mut mouse_listeners {
                 let listener = listener.as_mut().unwrap();
-                listener(event, moused_hitbox_id, DispatchPhase::Capture, cx);
+                listener(event, DispatchPhase::Capture, cx);
                 if !cx.app.propagate_event {
                     break;
                 }
@@ -1144,7 +1123,7 @@ impl<'a> WindowContext<'a> {
             if cx.app.propagate_event {
                 for listener in mouse_listeners.iter_mut().rev() {
                     let listener = listener.as_mut().unwrap();
-                    listener(event, moused_hitbox_id, DispatchPhase::Bubble, cx);
+                    listener(event, DispatchPhase::Bubble, cx);
                     if !cx.app.propagate_event {
                         break;
                     }
