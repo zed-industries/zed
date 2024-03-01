@@ -11,7 +11,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-lazy_static.workspace = true
 sys-locale.workspace = true
 time.workspace = true
 
