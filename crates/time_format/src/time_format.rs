@@ -25,8 +25,8 @@ pub fn format_localized_timestamp(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        //todo!(linux) respect user's date/time preferences
-        //todo!(windows) respect user's date/time preferences
+        // todo(linux) respect user's date/time preferences
+        // todo(windows) respect user's date/time preferences
         format_timestamp_fallback(reference, timestamp, timezone)
     }
 }

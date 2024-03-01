@@ -183,7 +183,7 @@ impl Client for WaylandClient {
             let decoration =
                 decoration_manager.get_toplevel_decoration(&toplevel, &self.qh, xdg_surface.id());
 
-            // todo!(linux) - options.titlebar is lacking information required for wayland.
+            // todo(linux) - options.titlebar is lacking information required for wayland.
             //                Especially, whether a titlebar is wanted in itself.
             //
             // Removing the titlebar also removes the entire window frame (ie. the ability to
@@ -482,7 +482,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                     wl_keyboard::KeyState::Pressed => {
                         let input = PlatformInput::KeyDown(KeyDownEvent {
                             keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
-                            is_held: false, // todo!(linux)
+                            is_held: false, // todo(linux)
                         });
 
                         focused_window.handle_input(input.clone());

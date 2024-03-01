@@ -96,7 +96,7 @@ objc = "0.2"
 flume = "0.11"
 open = "5.0.1"
 ashpd = "0.7.0"
-# todo!(linux) - Technically do not use `randr`, but it doesn't compile otherwise
+# todo(linux) - Technically do not use `randr`, but it doesn't compile otherwise
 xcb = { version = "1.3", features = ["as-raw-xcb-connection", "present", "randr", "xkb"] }
 wayland-client= { version = "0.31.2" }
 wayland-protocols = { version = "0.31.2", features = ["client", "staging", "unstable"] }
