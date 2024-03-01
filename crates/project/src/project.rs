@@ -846,8 +846,9 @@ impl Project {
         let current_lsp_settings = &self.current_lsp_settings;
         for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
             let language = languages.iter().find_map(|l| {
-                let adapter = l
-                    .lsp_adapters()
+                let adapter = self
+                    .languages
+                    .lsp_adapters(l)
                     .iter()
                     .find(|adapter| &adapter.name == started_lsp_name)?;
                 Some((l, adapter))
@@ -888,9 +889,11 @@ impl Project {
 
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language, settings) in language_formatters_to_check {
-            if let Some(plugins) =
-                prettier_support::prettier_plugins_for_language(&language, &settings)
-            {
+            if let Some(plugins) = prettier_support::prettier_plugins_for_language(
+                &self.languages,
+                &language,
+                &settings,
+            ) {
                 prettier_plugins_by_worktree
                     .entry(worktree)
                     .or_insert_with(|| HashSet::default())
@@ -2046,7 +2049,7 @@ impl Project {
             }
 
             if let Some(language) = language {
-                for adapter in language.lsp_adapters() {
+                for adapter in self.languages.lsp_adapters(&language) {
                     let language_id = adapter.language_ids.get(language.name().as_ref()).cloned();
                     let server = self
                         .language_server_ids
@@ -2118,7 +2121,9 @@ impl Project {
             let ids = &self.language_server_ids;
 
             let language = buffer.language().cloned();
-            let adapters = language.iter().flat_map(|language| language.lsp_adapters());
+            let adapters = language
+                .iter()
+                .flat_map(|language| self.languages.lsp_adapters(&language));
             for &server_id in adapters.flat_map(|a| ids.get(&(worktree_id, a.name.clone()))) {
                 buffer.update_diagnostics(server_id, Default::default(), cx);
             }
@@ -2700,9 +2705,11 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) =
-            prettier_support::prettier_plugins_for_language(&new_language, &settings)
-        {
+        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(
+            &self.languages,
+            &new_language,
+            &settings,
+        ) {
             self.install_default_prettier(worktree, prettier_plugins, cx);
         };
         if let Some(file) = buffer_file {
@@ -2725,7 +2732,7 @@ impl Project {
             return;
         }
 
-        for adapter in language.lsp_adapters() {
+        for adapter in self.languages.lsp_adapters(&language) {
             self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
     }
@@ -3239,7 +3246,11 @@ impl Project {
                 };
 
                 if file.worktree.read(cx).id() != key.0
-                    || !language.lsp_adapters().iter().any(|a| a.name == key.1)
+                    || !self
+                        .languages
+                        .lsp_adapters(&language)
+                        .iter()
+                        .any(|a| a.name == key.1)
                 {
                     continue;
                 }
@@ -3432,8 +3443,9 @@ impl Project {
     ) {
         let worktree_id = worktree.read(cx).id();
 
-        let stop_tasks = language
-            .lsp_adapters()
+        let stop_tasks = self
+            .languages
+            .lsp_adapters(&language)
             .iter()
             .map(|adapter| {
                 let stop_task = self.stop_language_server(worktree_id, adapter.name.clone(), cx);
@@ -4778,14 +4790,15 @@ impl Project {
                                     .languages
                                     .language_for_file(&project_path.path, None)
                                     .unwrap_or_else(move |_| adapter_language);
-                                let language_server_name = adapter.name.clone();
+                                let adapter = adapter.clone();
                                 Some(async move {
                                     let language = language.await;
-                                    let label =
-                                        language.label_for_symbol(&symbol_name, symbol_kind).await;
+                                    let label = adapter
+                                        .label_for_symbol(&symbol_name, symbol_kind, &language)
+                                        .await;
 
                                     Symbol {
-                                        language_server_name,
+                                        language_server_name: adapter.name.clone(),
                                         source_worktree_id,
                                         path: project_path,
                                         label: label.unwrap_or_else(|| {
@@ -7929,6 +7942,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
+        let languages = this.update(&mut cx, |this, _| this.languages.clone())?;
         let (buffer, completion) = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this
@@ -7943,6 +7957,7 @@ impl Project {
                     .completion
                     .ok_or_else(|| anyhow!("invalid completion"))?,
                 language.cloned(),
+                &languages,
             );
             Ok::<_, anyhow::Error>((buffer, completion))
         })??;
@@ -8668,6 +8683,9 @@ impl Project {
                 .language_for_file(&path.path, None)
                 .await
                 .log_err();
+            let adapter = language
+                .as_ref()
+                .and_then(|language| languages.lsp_adapters(language).first());
             Ok(Symbol {
                 language_server_name: LanguageServerName(
                     serialized_symbol.language_server_name.into(),
@@ -8675,10 +8693,10 @@ impl Project {
                 source_worktree_id,
                 path,
                 label: {
-                    match language {
-                        Some(language) => {
-                            language
-                                .label_for_symbol(&serialized_symbol.name, kind)
+                    match language.as_ref().zip(adapter.as_ref()) {
+                        Some((language, adapter)) => {
+                            adapter
+                                .label_for_symbol(&serialized_symbol.name, kind, language)
                                 .await
                         }
                         None => None,
@@ -8930,6 +8948,17 @@ impl Project {
         self.supplementary_language_servers.iter()
     }
 
+    pub fn language_server_adapter_for_id(
+        &self,
+        id: LanguageServerId,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        if let Some(LanguageServerState::Running { adapter, .. }) = self.language_servers.get(&id) {
+            Some(adapter.clone())
+        } else {
+            None
+        }
+    }
+
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
         if let Some(LanguageServerState::Running { server, .. }) = self.language_servers.get(&id) {
             Some(server.clone())
@@ -8980,8 +9009,8 @@ impl Project {
     ) -> Vec<LanguageServerId> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
-            language
-                .lsp_adapters()
+            self.languages
+                .lsp_adapters(&language)
                 .iter()
                 .flat_map(|adapter| {
                     let key = (worktree_id, adapter.name.clone());

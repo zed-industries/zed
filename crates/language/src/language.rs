@@ -850,10 +850,6 @@ impl Language {
         }
     }
 
-    pub fn lsp_adapters(&self) -> &[Arc<CachedLspAdapter>] {
-        &self.adapters
-    }
-
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
             self = self
@@ -1166,53 +1162,6 @@ impl Language {
 
     pub fn name(&self) -> Arc<str> {
         self.config.name.clone()
-    }
-
-    pub async fn disk_based_diagnostic_sources(&self) -> &[String] {
-        match self.adapters.first().as_ref() {
-            Some(adapter) => &adapter.disk_based_diagnostic_sources,
-            None => &[],
-        }
-    }
-
-    pub async fn disk_based_diagnostics_progress_token(&self) -> Option<&str> {
-        for adapter in &self.adapters {
-            let token = adapter.disk_based_diagnostics_progress_token.as_deref();
-            if token.is_some() {
-                return token;
-            }
-        }
-
-        None
-    }
-
-    pub async fn process_completion(self: &Arc<Self>, completion: &mut lsp::CompletionItem) {
-        for adapter in &self.adapters {
-            adapter.process_completion(completion).await;
-        }
-    }
-
-    pub async fn label_for_completion(
-        self: &Arc<Self>,
-        completion: &lsp::CompletionItem,
-    ) -> Option<CodeLabel> {
-        self.adapters
-            .first()
-            .as_ref()?
-            .label_for_completion(completion, self)
-            .await
-    }
-
-    pub async fn label_for_symbol(
-        self: &Arc<Self>,
-        name: &str,
-        kind: lsp::SymbolKind,
-    ) -> Option<CodeLabel> {
-        self.adapters
-            .first()
-            .as_ref()?
-            .label_for_symbol(name, kind, self)
-            .await
     }
 
     pub fn highlight_text<'a>(

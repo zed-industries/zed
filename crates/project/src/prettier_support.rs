@@ -14,7 +14,7 @@ use futures::{
 use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
     language_settings::{Formatter, LanguageSettings},
-    Buffer, Language, LanguageServerName, LocalFile,
+    Buffer, Language, LanguageRegistry, LanguageServerName, LocalFile,
 };
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -26,7 +26,8 @@ use crate::{
 };
 
 pub fn prettier_plugins_for_language(
-    language: &Language,
+    language_registry: &Arc<LanguageRegistry>,
+    language: &Arc<Language>,
     language_settings: &LanguageSettings,
 ) -> Option<HashSet<&'static str>> {
     match &language_settings.formatter {
@@ -38,8 +39,8 @@ pub fn prettier_plugins_for_language(
         prettier_plugins
             .get_or_insert_with(|| HashSet::default())
             .extend(
-                language
-                    .lsp_adapters()
+                language_registry
+                    .lsp_adapters(language)
                     .iter()
                     .flat_map(|adapter| adapter.prettier_plugins()),
             )

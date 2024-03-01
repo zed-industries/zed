@@ -423,12 +423,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_go_label_for_completion() {
-        let language = language(
-            "go",
-            tree_sitter_go::language(),
-            Some(Arc::new(GoLspAdapter)),
-        )
-        .await;
+        let adapter = Arc::new(GoLspAdapter);
+        let language = language("go", tree_sitter_go::language(), Some(adapter.clone())).await;
 
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -446,13 +442,16 @@ mod tests {
         let highlight_number = grammar.highlight_id_for_name("number").unwrap();
 
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::FUNCTION),
-                    label: "Hello".to_string(),
-                    detail: Some("func(a B) c.D".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        label: "Hello".to_string(),
+                        detail: Some("func(a B) c.D".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "Hello(a B) c.D".to_string(),
@@ -467,13 +466,16 @@ mod tests {
 
         // Nested methods
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::METHOD),
-                    label: "one.two.Three".to_string(),
-                    detail: Some("func() [3]interface{}".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "one.two.Three".to_string(),
+                        detail: Some("func() [3]interface{}".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "one.two.Three() [3]interface{}".to_string(),
@@ -488,13 +490,16 @@ mod tests {
 
         // Nested fields
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::FIELD),
-                    label: "two.Three".to_string(),
-                    detail: Some("a.Bcd".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FIELD),
+                        label: "two.Three".to_string(),
+                        detail: Some("a.Bcd".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "two.Three a.Bcd".to_string(),

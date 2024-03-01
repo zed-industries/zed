@@ -2,7 +2,7 @@ use anyhow::Context;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncAppContext, Model};
-use language::{language_settings::language_settings, Buffer, Diff};
+use language::{language_settings::language_settings, Buffer, Diff, LanguageRegistry};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,7 @@ pub struct RealPrettier {
     default: bool,
     prettier_dir: PathBuf,
     server: Arc<LanguageServer>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -223,8 +224,9 @@ impl Prettier {
                         let buffer_language = buffer.language();
                         let parser_with_plugins = buffer_language.and_then(|l| {
                             let prettier_parser = l.prettier_parser_name()?;
-                            let mut prettier_plugins = l
-                                .lsp_adapters()
+                            let mut prettier_plugins = local
+                                .language_registry
+                                .lsp_adapters(l)
                                 .iter()
                                 .flat_map(|adapter| adapter.prettier_plugins())
                                 .collect::<Vec<_>>();

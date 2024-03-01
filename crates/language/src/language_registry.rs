@@ -490,6 +490,10 @@ impl LanguageRegistry {
         self.state.read().languages.iter().cloned().collect()
     }
 
+    pub fn lsp_adapters<'a>(&self, language: &'a Arc<Language>) -> &'a [Arc<CachedLspAdapter>] {
+        &language.adapters
+    }
+
     pub fn update_lsp_status(
         &self,
         server_name: LanguageServerName,
