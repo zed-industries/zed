@@ -288,6 +288,13 @@
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w n": ["workspace::NewFileInDirection", "Up"],
       "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"],
+
+      "ctrl-w d": "editor::GoToDefinitionSplit",
+      "ctrl-w g d": "editor::GoToDefinitionSplit",
+      "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
+      "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
+      "ctrl-w space": "editor::OpenExcerptsSplit",
+      "ctrl-w g space": "editor::OpenExcerptsSplit",
       "-": "pane::RevealInProjectPanel"
     }
   },

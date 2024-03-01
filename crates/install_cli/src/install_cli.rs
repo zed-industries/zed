@@ -18,7 +18,7 @@ pub async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
     // If the symlink is not there or is outdated, first try replacing it
     // without escalating.
     smol::fs::remove_file(link_path).await.log_err();
-    // todo!("windows")
+    // todo("windows")
     #[cfg(not(windows))]
     {
         if smol::fs::unix::symlink(&cli_path, link_path)

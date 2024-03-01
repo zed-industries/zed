@@ -72,7 +72,10 @@ impl JsonLspAdapter {
                         "schema": KeymapFile::generate_json_schema(&action_names),
                     },
                     {
-                        "fileMatch": [schema_file_match(&paths::TASKS)],
+                        "fileMatch": [
+                            schema_file_match(&paths::TASKS),
+                            &*paths::LOCAL_TASKS_RELATIVE_PATH,
+                        ],
                         "schema": tasks_schema,
                     }
                 ]

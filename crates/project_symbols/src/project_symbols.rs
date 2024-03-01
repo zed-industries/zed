@@ -127,12 +127,13 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     let position = buffer
                         .read(cx)
                         .clip_point_utf16(symbol.range.start, Bias::Left);
-
-                    let editor = if secondary {
-                        workspace.split_project_item::<Editor>(buffer, cx)
+                    let pane = if secondary {
+                        workspace.adjacent_pane(cx)
                     } else {
-                        workspace.open_project_item::<Editor>(buffer, cx)
+                        workspace.active_pane().clone()
                     };
+
+                    let editor = workspace.open_project_item::<Editor>(pane, buffer, cx);
 
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(Some(Autoscroll::center()), cx, |s| {

@@ -95,14 +95,24 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         "/the-root",
         json!({
             ".zed": {
-                "settings.json": r#"{ "tab_size": 8 }"#
+                "settings.json": r#"{ "tab_size": 8 }"#,
+                "tasks.json": r#"[{
+                    "label": "cargo check",
+                    "command": "cargo",
+                    "args": ["check", "--all"]
+                },]"#,
             },
             "a": {
                 "a.rs": "fn a() {\n    A\n}"
             },
             "b": {
                 ".zed": {
-                    "settings.json": r#"{ "tab_size": 2 }"#
+                    "settings.json": r#"{ "tab_size": 2 }"#,
+                    "tasks.json": r#"[{
+                        "label": "cargo check",
+                        "command": "cargo",
+                        "args": ["check"]
+                    },]"#,
                 },
                 "b.rs": "fn b() {\n  B\n}"
             }
@@ -140,6 +150,38 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
         assert_eq!(settings_a.tab_size.get(), 8);
         assert_eq!(settings_b.tab_size.get(), 2);
+
+        let workree_id = project.update(cx, |project, cx| {
+            project.worktrees().next().unwrap().read(cx).id()
+        });
+        let all_tasks = project
+            .update(cx, |project, cx| {
+                project.task_inventory().update(cx, |inventory, cx| {
+                    inventory.list_tasks(None, None, false, cx)
+                })
+            })
+            .into_iter()
+            .map(|(source_kind, task)| (source_kind, task.name().to_string()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_tasks,
+            vec![
+                (
+                    TaskSourceKind::Worktree {
+                        id: workree_id,
+                        abs_path: PathBuf::from("/the-root/.zed/tasks.json")
+                    },
+                    "cargo check".to_string()
+                ),
+                (
+                    TaskSourceKind::Worktree {
+                        id: workree_id,
+                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json")
+                    },
+                    "cargo check".to_string()
+                ),
+            ]
+        );
     });
 }
 

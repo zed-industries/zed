@@ -310,7 +310,7 @@ async fn test_basic_following(
     let multibuffer_editor_a = workspace_a.update(cx_a, |workspace, cx| {
         let editor =
             cx.new_view(|cx| Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), cx));
-        workspace.add_item(Box::new(editor.clone()), cx);
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
         editor
     });
     executor.run_until_parked();

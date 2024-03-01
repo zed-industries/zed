@@ -99,7 +99,7 @@ jobs:
       - name: Build other binaries and features
         run: cargo build --workspace --bins --all-features; cargo check -p gpui --features "macos-blade"
 
-  # todo!(linux): Actually run the tests
+  # todo(linux): Actually run the tests
   linux_tests:
     name: (Linux) Run Clippy and tests
     runs-on: ubuntu-latest
@@ -126,7 +126,7 @@ jobs:
       - name: Build Zed
         run: cargo build -p zed
 
-  # todo!(windows): Actually run the tests
+  # todo(windows): Actually run the tests
   windows_tests:
     name: (Windows) Run Clippy and tests
     runs-on: windows-latest

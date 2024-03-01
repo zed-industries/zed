@@ -315,10 +315,13 @@ impl Peer {
                             "incoming response: requester resumed"
                         );
                     } else {
+                        let message_type = proto::build_typed_envelope(connection_id, incoming)
+                            .map(|p| p.payload_type_name());
                         tracing::warn!(
                             %connection_id,
                             message_id,
                             responding_to,
+                            message_type,
                             "incoming response: unknown request"
                         );
                     }
