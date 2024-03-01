@@ -121,8 +121,8 @@ impl WindowsWindow {
             // TODO: move window to target monitor
             display.display_id = display_id;
         }
-        let scale_factor = monitor.scale_factor();
-        println!("Scale factor: {}", scale_factor);
+        // let scale_factor = monitor.scale_factor();
+        let scale_factor = 1.0;
 
         let mut lpwindowname = None;
         if let Some(ref titlebar_opt) = options.titlebar {
