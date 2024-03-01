@@ -149,12 +149,12 @@ pub struct AssistantSettingsContent {
     /// The default OpenAI model to use when starting new conversations.
     ///
     /// Default: gpt-4-1106-preview
-    #[deprecated = "Please use `provider.openai.default_model` instead."]
+    #[deprecated = "Please use `provider.default_model` instead."]
     pub default_open_ai_model: Option<OpenAiModel>,
     /// OpenAI API base URL to use when starting new conversations.
     ///
     /// Default: https://api.openai.com/v1
-    #[deprecated = "Please use `provider.openai.api_url` instead."]
+    #[deprecated = "Please use `provider.api_url` instead."]
     pub openai_api_url: Option<String>,
     /// The settings for the AI provider.
     #[serde(default)]
