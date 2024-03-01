@@ -361,7 +361,7 @@ mod tests {
     #[gpui::test]
     async fn test_rust_label_for_completion() {
         let adapter = Arc::new(RustLspAdapter);
-        let language = language("rust", tree_sitter_rust::language(), Some(adapter.clone())).await;
+        let language = language("rust", tree_sitter_rust::language());
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -476,7 +476,7 @@ mod tests {
     #[gpui::test]
     async fn test_rust_label_for_symbol() {
         let adapter = Arc::new(RustLspAdapter);
-        let language = language("rust", tree_sitter_rust::language(), Some(adapter.clone())).await;
+        let language = language("rust", tree_sitter_rust::language());
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -528,7 +528,7 @@ mod tests {
             });
         });
 
-        let language = crate::language("rust", tree_sitter_rust::language(), None).await;
+        let language = crate::language("rust", tree_sitter_rust::language());
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")

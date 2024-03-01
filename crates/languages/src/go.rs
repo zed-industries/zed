@@ -424,7 +424,7 @@ mod tests {
     #[gpui::test]
     async fn test_go_label_for_completion() {
         let adapter = Arc::new(GoLspAdapter);
-        let language = language("go", tree_sitter_go::language(), Some(adapter.clone())).await;
+        let language = language("go", tree_sitter_go::language());
 
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),

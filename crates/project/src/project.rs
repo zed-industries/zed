@@ -850,7 +850,8 @@ impl Project {
                     .languages
                     .lsp_adapters(l)
                     .iter()
-                    .find(|adapter| &adapter.name == started_lsp_name)?;
+                    .find(|adapter| &adapter.name == started_lsp_name)?
+                    .clone();
                 Some((l, adapter))
             });
             if let Some((language, adapter)) = language {
@@ -2049,7 +2050,7 @@ impl Project {
             }
 
             if let Some(language) = language {
-                for adapter in self.languages.lsp_adapters(&language) {
+                for adapter in self.languages.lsp_adapters(&language).into_iter() {
                     let language_id = adapter.language_ids.get(language.name().as_ref()).cloned();
                     let server = self
                         .language_server_ids
@@ -2120,12 +2121,12 @@ impl Project {
             let worktree_id = old_file.worktree_id(cx);
             let ids = &self.language_server_ids;
 
-            let language = buffer.language().cloned();
-            let adapters = language
-                .iter()
-                .flat_map(|language| self.languages.lsp_adapters(&language));
-            for &server_id in adapters.flat_map(|a| ids.get(&(worktree_id, a.name.clone()))) {
-                buffer.update_diagnostics(server_id, Default::default(), cx);
+            if let Some(language) = buffer.language().cloned() {
+                for adapter in self.languages.lsp_adapters(&language).into_iter() {
+                    if let Some(server_id) = ids.get(&(worktree_id, adapter.name.clone())) {
+                        buffer.update_diagnostics(*server_id, Default::default(), cx);
+                    }
+                }
             }
 
             self.buffer_snapshots.remove(&buffer.remote_id());
@@ -2732,7 +2733,7 @@ impl Project {
             return;
         }
 
-        for adapter in self.languages.lsp_adapters(&language) {
+        for adapter in self.languages.clone().lsp_adapters(&language).into_iter() {
             self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
     }
@@ -3445,6 +3446,7 @@ impl Project {
 
         let stop_tasks = self
             .languages
+            .clone()
             .lsp_adapters(&language)
             .iter()
             .map(|adapter| {
@@ -8685,7 +8687,7 @@ impl Project {
                 .log_err();
             let adapter = language
                 .as_ref()
-                .and_then(|language| languages.lsp_adapters(language).first());
+                .and_then(|language| languages.lsp_adapters(language).first().cloned());
             Ok(Symbol {
                 language_server_name: LanguageServerName(
                     serialized_symbol.language_server_name.into(),

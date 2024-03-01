@@ -229,6 +229,7 @@ impl Prettier {
                                 .lsp_adapters(l)
                                 .iter()
                                 .flat_map(|adapter| adapter.prettier_plugins())
+                                .copied()
                                 .collect::<Vec<_>>();
                             prettier_plugins.dedup();
                             Some((prettier_parser, prettier_plugins))
@@ -266,7 +267,7 @@ impl Prettier {
 
                                 let mut plugins = plugins
                                     .into_iter()
-                                    .filter(|&&plugin_name| {
+                                    .filter(|&plugin_name| {
                                         if plugin_name == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
                                             add_tailwind_back = true;
                                             false

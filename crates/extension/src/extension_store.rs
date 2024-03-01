@@ -520,7 +520,6 @@ impl ExtensionStore {
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
-                vec![],
                 move || {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;

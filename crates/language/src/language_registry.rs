@@ -11,12 +11,12 @@ use futures::{
 };
 use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::{LanguageServerBinary, LanguageServerId};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use postage::watch;
 use std::{
     borrow::Cow,
     ffi::OsStr,
-    ops::Not,
+    ops::{Deref, Not},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -43,6 +43,7 @@ struct LanguageRegistryState {
     languages: Vec<Arc<Language>>,
     available_languages: Vec<AvailableLanguage>,
     grammars: HashMap<Arc<str>, AvailableGrammar>,
+    lsp_adapters: HashMap<Arc<str>, Vec<Arc<CachedLspAdapter>>>,
     loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
     theme: Option<Arc<Theme>>,
@@ -72,7 +73,6 @@ struct AvailableLanguage {
     grammar: Option<Arc<str>>,
     matcher: LanguageMatcher,
     load: Arc<dyn Fn() -> Result<(LanguageConfig, LanguageQueries)> + 'static + Send + Sync>,
-    lsp_adapters: Vec<Arc<dyn LspAdapter>>,
     loaded: bool,
 }
 
@@ -124,6 +124,7 @@ impl LanguageRegistry {
                 available_languages: Default::default(),
                 grammars: Default::default(),
                 loading_languages: Default::default(),
+                lsp_adapters: Default::default(),
                 subscription: watch::channel(),
                 theme: Default::default(),
                 version: 0,
@@ -168,9 +169,36 @@ impl LanguageRegistry {
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
-            vec![],
             move || Ok((config.clone(), Default::default())),
         )
+    }
+
+    pub fn register_lsp_adapter(&self, language_name: Arc<str>, adapter: Arc<dyn LspAdapter>) {
+        self.state
+            .write()
+            .lsp_adapters
+            .entry(language_name)
+            .or_default()
+            .push(CachedLspAdapter::new(adapter));
+    }
+
+    #[cfg(any(feature = "test-support", test))]
+    pub fn register_fake_lsp_adapter(
+        &self,
+        language_name: &str,
+        adapter: crate::FakeLspAdapter,
+    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
+        let (servers_tx, servers_rx) = futures::channel::mpsc::unbounded();
+        self.state
+            .write()
+            .lsp_adapters
+            .entry(language_name.into())
+            .or_default()
+            .push(CachedLspAdapter::new(Arc::new((
+                Arc::new(adapter),
+                servers_tx,
+            ))));
+        servers_rx
     }
 
     /// Adds a language to the registry, which can be loaded if needed.
@@ -179,7 +207,6 @@ impl LanguageRegistry {
         name: Arc<str>,
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
-        lsp_adapters: Vec<Arc<dyn LspAdapter>>,
         load: impl Fn() -> Result<(LanguageConfig, LanguageQueries)> + 'static + Send + Sync,
     ) {
         let load = Arc::new(load);
@@ -189,7 +216,6 @@ impl LanguageRegistry {
             if existing_language.name == name {
                 existing_language.grammar = grammar_name;
                 existing_language.matcher = matcher;
-                existing_language.lsp_adapters = lsp_adapters;
                 existing_language.load = load;
                 return;
             }
@@ -201,7 +227,6 @@ impl LanguageRegistry {
             grammar: grammar_name,
             matcher,
             load,
-            lsp_adapters,
             loaded: false,
         });
         state.version += 1;
@@ -374,10 +399,7 @@ impl LanguageRegistry {
                                         None
                                     };
 
-                                    Language::new_with_id(id, config, grammar)
-                                        .with_lsp_adapters(language.lsp_adapters)
-                                        .await
-                                        .with_queries(queries)
+                                    Language::new_with_id(id, config, grammar).with_queries(queries)
                                 }
                                 .await;
 
@@ -490,8 +512,18 @@ impl LanguageRegistry {
         self.state.read().languages.iter().cloned().collect()
     }
 
-    pub fn lsp_adapters<'a>(&self, language: &'a Arc<Language>) -> &'a [Arc<CachedLspAdapter>] {
-        &language.adapters
+    pub fn lsp_adapters<'a>(
+        &'a self,
+        language: &'a Arc<Language>,
+    ) -> impl 'a + Deref<Target = [Arc<CachedLspAdapter>]> {
+        static EMPTY: &[Arc<CachedLspAdapter>] = &[];
+
+        RwLockReadGuard::map(self.state.read(), |state| {
+            state
+                .lsp_adapters
+                .get(&language.config.name)
+                .map_or(EMPTY, |vec| vec.as_slice())
+        })
     }
 
     pub fn update_lsp_status(
@@ -518,9 +550,8 @@ impl LanguageRegistry {
         );
 
         #[cfg(any(test, feature = "test-support"))]
-        if language.fake_adapter.is_some() {
+        if let Some((fake_adapter, fake_servers_tx)) = adapter.as_fake() {
             let task = cx.spawn(|cx| async move {
-                let (servers_tx, fake_adapter) = language.fake_adapter.as_ref().unwrap();
                 let (server, mut fake_server) = lsp::FakeLanguageServer::new(
                     fake_adapter.name.to_string(),
                     fake_adapter.capabilities.clone(),
@@ -531,7 +562,6 @@ impl LanguageRegistry {
                     initializer(&mut fake_server);
                 }
 
-                let servers_tx = servers_tx.clone();
                 cx.background_executor()
                     .spawn(async move {
                         if fake_server
@@ -539,7 +569,7 @@ impl LanguageRegistry {
                             .await
                             .is_some()
                         {
-                            servers_tx.unbounded_send(fake_server).ok();
+                            fake_servers_tx.unbounded_send(fake_server).ok();
                         }
                     })
                     .detach();
@@ -562,7 +592,6 @@ impl LanguageRegistry {
         let language = language.clone();
         let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
         let root_path = root_path.clone();
-        let adapter = adapter.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
 
         let task = {

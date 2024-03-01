@@ -132,7 +132,7 @@ pub struct CachedLspAdapter {
 }
 
 impl CachedLspAdapter {
-    pub async fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
+    pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name();
         let short_name = adapter.short_name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
@@ -221,6 +221,16 @@ impl CachedLspAdapter {
 
     pub fn prettier_plugins(&self) -> &[&'static str] {
         self.adapter.prettier_plugins()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(
+        &self,
+    ) -> Option<(
+        Arc<FakeLspAdapter>,
+        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+    )> {
+        self.adapter.as_fake()
     }
 }
 
@@ -451,6 +461,16 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn prettier_plugins(&self) -> &[&'static str] {
         &[]
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(
+        &self,
+    ) -> Option<(
+        Arc<FakeLspAdapter>,
+        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+    )> {
+        None
     }
 }
 
@@ -722,13 +742,6 @@ pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) adapters: Vec<Arc<CachedLspAdapter>>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    fake_adapter: Option<(
-        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-        Arc<FakeLspAdapter>,
-    )>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -843,10 +856,6 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            adapters: Vec::new(),
-
-            #[cfg(any(test, feature = "test-support"))]
-            fake_adapter: None,
         }
     }
 
@@ -1141,25 +1150,6 @@ impl Language {
         Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
 
-    pub async fn with_lsp_adapters(mut self, lsp_adapters: Vec<Arc<dyn LspAdapter>>) -> Self {
-        for adapter in lsp_adapters {
-            self.adapters.push(CachedLspAdapter::new(adapter).await);
-        }
-        self
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn set_fake_lsp_adapter(
-        &mut self,
-        fake_lsp_adapter: Arc<FakeLspAdapter>,
-    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
-        let (servers_tx, servers_rx) = futures::channel::mpsc::unbounded();
-        self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
-        let adapter = CachedLspAdapter::new(Arc::new(fake_lsp_adapter)).await;
-        self.adapters = vec![adapter];
-        servers_rx
-    }
-
     pub fn name(&self) -> Arc<str> {
         self.config.name.clone()
     }
@@ -1427,9 +1417,14 @@ impl Default for FakeLspAdapter {
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
-impl LspAdapter for Arc<FakeLspAdapter> {
+impl LspAdapter
+    for (
+        Arc<FakeLspAdapter>,
+        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+    )
+{
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(self.name.into())
+        LanguageServerName(self.0.name.into())
     }
 
     fn short_name(&self) -> &'static str {
@@ -1467,19 +1462,28 @@ impl LspAdapter for Arc<FakeLspAdapter> {
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
-        self.disk_based_diagnostics_sources.clone()
+        self.0.disk_based_diagnostics_sources.clone()
     }
 
     fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
-        self.disk_based_diagnostics_progress_token.clone()
+        self.0.disk_based_diagnostics_progress_token.clone()
     }
 
     fn initialization_options(&self) -> Option<Value> {
-        self.initialization_options.clone()
+        self.0.initialization_options.clone()
     }
 
     fn prettier_plugins(&self) -> &[&'static str] {
-        &self.prettier_plugins
+        &self.0.prettier_plugins
+    }
+
+    fn as_fake(
+        &self,
+    ) -> Option<(
+        Arc<FakeLspAdapter>,
+        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+    )> {
+        Some((self.0.clone(), self.1.clone()))
     }
 }
 
