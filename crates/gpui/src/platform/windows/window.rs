@@ -662,52 +662,58 @@ impl PlatformWindow for WindowsWindow {
         answers: &[&str],
     ) -> futures::channel::oneshot::Receiver<usize> {
         let (done_tx, done_rx) = oneshot::channel();
-        let mut config;
-        unsafe {
-            config = std::mem::zeroed::<TASKDIALOGCONFIG>();
-            config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
-            config.hwndParent = self.inner.window_handle.hwnd();
-            let title;
-            let main_icon;
-            match level {
-                crate::PromptLevel::Info => {
-                    title = windows::core::w!("Info");
-                    main_icon = TD_INFORMATION_ICON;
-                }
-                crate::PromptLevel::Warning => {
-                    title = windows::core::w!("Warning");
-                    main_icon = TD_WARNING_ICON;
-                }
-                crate::PromptLevel::Critical => {
-                    title = windows::core::w!("Critical");
-                    main_icon = TD_ERROR_ICON;
-                }
-            };
-            config.pszWindowTitle = title;
-            config.Anonymous1.pszMainIcon = main_icon;
-            let instruction = encode_wide(msg);
-            config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
-            let hints_encoded;
-            if let Some(hints) = detail {
-                hints_encoded = encode_wide(hints);
-                config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
-            };
-            let mut buttons = Vec::new();
-            let mut btn_encoded = Vec::new();
-            for (index, btn_string) in answers.iter().enumerate() {
-                let encoded = encode_wide(btn_string);
-                buttons.push(TASKDIALOG_BUTTON {
-                    nButtonID: index as _,
-                    pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
-                });
-                btn_encoded.push(encoded);
-            }
-            config.cButtons = buttons.len() as _;
-            config.pButtons = buttons.as_ptr();
-        }
+        let msg = msg.to_string();
+        let detail = match detail {
+            Some(info) => Some(info.to_string()),
+            None => None,
+        };
+        let answers = answers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let handle = self.inner.window_handle.hwnd();
         self.foreground_executor
             .spawn(async move {
                 unsafe {
+                    let mut config;
+                    config = std::mem::zeroed::<TASKDIALOGCONFIG>();
+                    config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
+                    config.hwndParent = handle;
+                    let title;
+                    let main_icon;
+                    match level {
+                        crate::PromptLevel::Info => {
+                            title = windows::core::w!("Info");
+                            main_icon = TD_INFORMATION_ICON;
+                        }
+                        crate::PromptLevel::Warning => {
+                            title = windows::core::w!("Warning");
+                            main_icon = TD_WARNING_ICON;
+                        }
+                        crate::PromptLevel::Critical => {
+                            title = windows::core::w!("Critical");
+                            main_icon = TD_ERROR_ICON;
+                        }
+                    };
+                    config.pszWindowTitle = title;
+                    config.Anonymous1.pszMainIcon = main_icon;
+                    let instruction = encode_wide(&msg);
+                    config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
+                    let hints_encoded;
+                    if let Some(ref hints) = detail {
+                        hints_encoded = encode_wide(hints);
+                        config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
+                    };
+                    let mut buttons = Vec::new();
+                    let mut btn_encoded = Vec::new();
+                    for (index, btn_string) in answers.iter().enumerate() {
+                        let encoded = encode_wide(btn_string);
+                        buttons.push(TASKDIALOG_BUTTON {
+                            nButtonID: index as _,
+                            pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
+                        });
+                        btn_encoded.push(encoded);
+                    }
+                    config.cButtons = buttons.len() as _;
+                    config.pButtons = buttons.as_ptr();
+
                     config.pfCallback = None;
                     let mut res = std::mem::zeroed();
                     let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)

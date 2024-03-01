@@ -189,6 +189,7 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
+        println!("{:?}", self.read_from_clipboard());
         unsafe {
             let mut msg = std::mem::zeroed();
             while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
@@ -557,7 +558,7 @@ impl Platform for WindowsPlatform {
             {
                 return;
             }
-            let _ = CloseClipboard();
+            let _ = CloseClipboard().inspect_err(log_windows_error);
         }
     }
 
@@ -580,8 +581,8 @@ impl Platform for WindowsPlatform {
             else {
                 return None;
             };
-            let string_raw = GlobalLock(data.u.hGlobal) as *mut Vec<u16>;
-            let string = String::from_utf16_lossy(&*string_raw);
+            let wstring = PCWSTR(GlobalLock(data.u.hGlobal) as *mut u16);
+            let string = String::from_utf16_lossy(wstring.as_wide());
             let _ = GlobalUnlock(data.u.hGlobal);
             ReleaseStgMedium(&mut data);
 
@@ -590,6 +591,25 @@ impl Platform for WindowsPlatform {
                 metadata: None,
             })
         }
+        // unsafe {
+        //     if OpenClipboard(self.inner.dispatch_window_handle)
+        //         .inspect_err(log_windows_error)
+        //         .is_err()
+        //     {
+        //         return None;
+        //     }
+        //     let Ok(handle) = GetClipboardData(CF_UNICODETEXT).inspect_err(log_windows_error) else {
+        //         return None;
+        //     };
+        //     let wstring = PCWSTR(handle.0 as _);
+        //     let string = String::from_utf16_lossy(wstring.as_wide());
+        //     let _ = CloseClipboard().inspect_err(log_windows_error);
+
+        //     Some(ClipboardItem {
+        //         text: string,
+        //         metadata: None,
+        //     })
+        // }
     }
 
     // todo!(windows)
@@ -860,4 +880,28 @@ fn keycode_to_vkey(keycode: &str) -> Option<VIRTUAL_KEY> {
     }
 
     key
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ClipboardItem;
+
+    use super::*;
+
+    #[test]
+    fn test_clipboard() {
+        let platform = WindowsPlatform::new();
+        println!("{:?}", platform.read_from_clipboard());
+        // assert_eq!(platform.read_from_clipboard(), None);
+
+        let item = ClipboardItem::new("123".to_string());
+        platform.write_to_clipboard(item.clone());
+        println!("{:?}", platform.read_from_clipboard());
+        // assert_eq!(platform.read_from_clipboard(), Some(item));
+
+        let item = ClipboardItem::new("456".to_string()).with_metadata(vec![3, 4]);
+        platform.write_to_clipboard(item.clone());
+        println!("{:?}", platform.read_from_clipboard());
+        // assert_eq!(platform.read_from_clipboard(), Some(item));
+    }
 }

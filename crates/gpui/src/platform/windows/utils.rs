@@ -81,7 +81,7 @@ pub unsafe fn set_windowdata<T>(handle: HWND, data: T) {
     let raw = Box::into_raw(Box::new(data));
     let ret = SetWindowLongPtrW(handle, GWL_USERDATA, raw as _);
     if ret == 0 {
-        log::error!("Windows error: {}", std::io::Error::last_os_error());
+        log_windows_error_with_message!(None);
         let _ = SetWindowLongPtrW(handle, GWL_USERDATA, raw as _);
     }
 }
