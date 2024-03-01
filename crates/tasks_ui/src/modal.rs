@@ -24,7 +24,7 @@ pub(crate) struct TasksModalDelegate {
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
-    last_prompt: String,
+    prompt: String,
 }
 
 impl TasksModalDelegate {
@@ -35,20 +35,21 @@ impl TasksModalDelegate {
             candidates: Vec::new(),
             matches: Vec::new(),
             selected_index: 0,
-            last_prompt: String::default(),
+            prompt: String::default(),
         }
     }
 
     fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
-        let oneshot_source = self
-            .inventory
-            .update(cx, |this, _| this.source::<OneshotSource>())?;
-        oneshot_source.update(cx, |this, _| {
-            let Some(this) = this.as_any().downcast_mut::<OneshotSource>() else {
-                return None;
-            };
-            Some(this.spawn(self.last_prompt.clone()))
-        })
+        self.inventory
+            .update(cx, |inventory, _| inventory.source::<OneshotSource>())?
+            .update(cx, |oneshot_source, _| {
+                Some(
+                    oneshot_source
+                        .as_any()
+                        .downcast_mut::<OneshotSource>()?
+                        .spawn(self.prompt.clone()),
+                )
+            })
     }
 }
 
@@ -132,12 +133,7 @@ impl PickerDelegate for TasksModalDelegate {
                     picker.delegate.candidates = picker
                         .delegate
                         .inventory
-                        .update(cx, |inventory, cx| inventory.list_tasks(None, cx));
-                    picker
-                        .delegate
-                        .candidates
-                        .sort_by(|a, b| a.name().cmp(&b.name()));
-
+                        .update(cx, |inventory, cx| inventory.list_tasks(None, true, cx));
                     picker
                         .delegate
                         .candidates
@@ -167,7 +163,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
-                    delegate.last_prompt = query;
+                    delegate.prompt = query;
 
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
@@ -184,7 +180,7 @@ impl PickerDelegate for TasksModalDelegate {
         let current_match_index = self.selected_index();
 
         let task = if secondary {
-            if !self.last_prompt.trim().is_empty() {
+            if !self.prompt.trim().is_empty() {
                 self.spawn_oneshot(cx)
             } else {
                 None

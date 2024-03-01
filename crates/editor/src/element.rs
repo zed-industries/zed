@@ -716,6 +716,11 @@ impl EditorElement {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
 
+        if bounds.contains(&cx.mouse_position()) {
+            let stacking_order = cx.stacking_order().clone();
+            cx.set_cursor_style(CursorStyle::Arrow, stacking_order);
+        }
+
         let show_git_gutter = matches!(
             ProjectSettings::get_global(cx).git.git_gutter,
             Some(GitGutterSetting::TrackedFiles)
@@ -915,7 +920,7 @@ impl EditorElement {
                     bounds: text_bounds,
                     stacking_order: cx.stacking_order().clone(),
                 };
-                if interactive_text_bounds.visibly_contains(&cx.mouse_position(), cx) {
+                if text_bounds.contains(&cx.mouse_position()) {
                     if self
                         .editor
                         .read(cx)
@@ -923,9 +928,15 @@ impl EditorElement {
                         .as_ref()
                         .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
                     {
-                        cx.set_cursor_style(CursorStyle::PointingHand);
+                        cx.set_cursor_style(
+                            CursorStyle::PointingHand,
+                            interactive_text_bounds.stacking_order.clone(),
+                        );
                     } else {
-                        cx.set_cursor_style(CursorStyle::IBeam);
+                        cx.set_cursor_style(
+                            CursorStyle::IBeam,
+                            interactive_text_bounds.stacking_order.clone(),
+                        );
                     }
                 }
 
@@ -1551,8 +1562,11 @@ impl EditorElement {
             stacking_order: cx.stacking_order().clone(),
         };
         let mut mouse_position = cx.mouse_position();
-        if interactive_track_bounds.visibly_contains(&mouse_position, cx) {
-            cx.set_cursor_style(CursorStyle::Arrow);
+        if track_bounds.contains(&mouse_position) {
+            cx.set_cursor_style(
+                CursorStyle::Arrow,
+                interactive_track_bounds.stacking_order.clone(),
+            );
         }
 
         cx.on_mouse_event({

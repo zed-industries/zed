@@ -142,8 +142,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
         auto_update::notify_of_any_new_update(cx);
 
-        vim::observe_keystrokes(cx);
-
         let handle = cx.view().downgrade();
         cx.on_window_should_close(move |cx| {
             handle
