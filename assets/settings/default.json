@@ -472,6 +472,10 @@
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
+    },
+    "toolbar": {
+      // Whether to display the terminal title in its toolbar.
+      "title": true
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
