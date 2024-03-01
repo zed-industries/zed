@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::{Source, SpawnInTerminal, Task, TaskId};
+use crate::{SpawnInTerminal, Task, TaskId, TaskSource};
 use gpui::{AppContext, Context, Model};
 
 /// A storage and source of tasks generated out of user command prompt inputs.
@@ -54,8 +54,8 @@ impl Task for OneshotTask {
 
 impl OneshotSource {
     /// Initializes the oneshot source, preparing to store user prompts.
-    pub fn new(cx: &mut AppContext) -> Model<Box<dyn Source>> {
-        cx.new_model(|_| Box::new(Self { tasks: Vec::new() }) as Box<dyn Source>)
+    pub fn new(cx: &mut AppContext) -> Model<Box<dyn TaskSource>> {
+        cx.new_model(|_| Box::new(Self { tasks: Vec::new() }) as Box<dyn TaskSource>)
     }
 
     /// Spawns a certain task based on the user prompt.
@@ -66,7 +66,7 @@ impl OneshotSource {
     }
 }
 
-impl Source for OneshotSource {
+impl TaskSource for OneshotSource {
     fn as_any(&mut self) -> &mut dyn std::any::Any {
         self
     }
@@ -74,7 +74,7 @@ impl Source for OneshotSource {
     fn tasks_for_path(
         &mut self,
         _path: Option<&std::path::Path>,
-        _cx: &mut gpui::ModelContext<Box<dyn Source>>,
+        _cx: &mut gpui::ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks.clone()
     }

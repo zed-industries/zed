@@ -1426,6 +1426,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: true,
                     show_parameter_hints: false,
                     show_other_hints: true,
@@ -1438,6 +1440,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: true,
                     show_parameter_hints: false,
                     show_other_hints: true,
@@ -1695,6 +1699,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: false,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: false,
                     show_parameter_hints: false,
                     show_other_hints: false,
@@ -1707,6 +1713,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: true,
                     show_parameter_hints: true,
                     show_other_hints: true,

@@ -22,7 +22,7 @@ pub mod markdown;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
-use gpui::{AppContext, AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
@@ -108,6 +108,12 @@ pub trait ToLspPosition {
 /// A name of a language server.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+
+pub struct Location {
+    pub buffer: Model<Buffer>,
+    pub range: Range<Anchor>,
+}
 
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
@@ -1516,16 +1522,16 @@ mod tests {
         });
 
         languages
-            .language_for_file("the/script", None)
+            .language_for_file("the/script".as_ref(), None)
             .await
             .unwrap_err();
         languages
-            .language_for_file("the/script", Some(&"nothing".into()))
+            .language_for_file("the/script".as_ref(), Some(&"nothing".into()))
             .await
             .unwrap_err();
         assert_eq!(
             languages
-                .language_for_file("the/script", Some(&"#!/bin/env node".into()))
+                .language_for_file("the/script".as_ref(), Some(&"#!/bin/env node".into()))
                 .await
                 .unwrap()
                 .name()

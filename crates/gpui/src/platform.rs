@@ -1,6 +1,6 @@
-// todo!(linux): remove
+// todo(linux): remove
 #![cfg_attr(target_os = "linux", allow(dead_code))]
-// todo!("windows"): remove
+// todo("windows"): remove
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
@@ -63,7 +63,7 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(LinuxPlatform::new())
 }
-// todo!("windows")
+// todo("windows")
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     unimplemented!()
@@ -195,8 +195,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
+
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
-    fn set_graphics_profiler_enabled(&self, enabled: bool);
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

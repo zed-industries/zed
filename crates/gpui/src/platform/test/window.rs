@@ -251,8 +251,6 @@ impl PlatformWindow for TestWindow {
         self.0.lock().sprite_atlas.clone()
     }
 
-    fn set_graphics_profiler_enabled(&self, _enabled: bool) {}
-
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         Some(self)
     }

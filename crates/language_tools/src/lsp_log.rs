@@ -93,7 +93,7 @@ pub fn init(cx: &mut AppContext) {
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() {
-                workspace.add_item(
+                workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),

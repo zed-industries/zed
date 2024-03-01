@@ -11,10 +11,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-lazy_static.workspace = true
 sys-locale.workspace = true
 time.workspace = true
-util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

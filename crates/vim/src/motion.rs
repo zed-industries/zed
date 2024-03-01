@@ -22,27 +22,57 @@ use crate::{
 pub enum Motion {
     Left,
     Backspace,
-    Down { display_lines: bool },
-    Up { display_lines: bool },
+    Down {
+        display_lines: bool,
+    },
+    Up {
+        display_lines: bool,
+    },
     Right,
     Space,
-    NextWordStart { ignore_punctuation: bool },
-    NextWordEnd { ignore_punctuation: bool },
-    PreviousWordStart { ignore_punctuation: bool },
-    PreviousWordEnd { ignore_punctuation: bool },
-    FirstNonWhitespace { display_lines: bool },
+    NextWordStart {
+        ignore_punctuation: bool,
+    },
+    NextWordEnd {
+        ignore_punctuation: bool,
+    },
+    PreviousWordStart {
+        ignore_punctuation: bool,
+    },
+    PreviousWordEnd {
+        ignore_punctuation: bool,
+    },
+    FirstNonWhitespace {
+        display_lines: bool,
+    },
     CurrentLine,
-    StartOfLine { display_lines: bool },
-    EndOfLine { display_lines: bool },
+    StartOfLine {
+        display_lines: bool,
+    },
+    EndOfLine {
+        display_lines: bool,
+    },
     StartOfParagraph,
     EndOfParagraph,
     StartOfDocument,
     EndOfDocument,
     Matching,
-    FindForward { before: bool, char: char },
-    FindBackward { after: bool, char: char },
-    RepeatFind { last_find: Box<Motion> },
-    RepeatFindReversed { last_find: Box<Motion> },
+    FindForward {
+        before: bool,
+        char: char,
+        mode: FindRange,
+    },
+    FindBackward {
+        after: bool,
+        char: char,
+        mode: FindRange,
+    },
+    RepeatFind {
+        last_find: Box<Motion>,
+    },
+    RepeatFindReversed {
+        last_find: Box<Motion>,
+    },
     NextLineStart,
     StartOfLineDownward,
     EndOfLineDownward,
@@ -481,30 +511,30 @@ impl Motion {
             ),
             Matching => (matching(map, point), SelectionGoal::None),
             // t f
-            FindForward { before, char } => {
-                return find_forward(map, point, *before, *char, times)
+            FindForward { before, char, mode } => {
+                return find_forward(map, point, *before, *char, times, *mode)
                     .map(|new_point| (new_point, SelectionGoal::None))
             }
             // T F
-            FindBackward { after, char } => (
-                find_backward(map, point, *after, *char, times),
+            FindBackward { after, char, mode } => (
+                find_backward(map, point, *after, *char, times, *mode),
                 SelectionGoal::None,
             ),
             // ; -- repeat the last find done with t, f, T, F
             RepeatFind { last_find } => match **last_find {
-                Motion::FindForward { before, char } => {
-                    let mut new_point = find_forward(map, point, before, char, times);
+                Motion::FindForward { before, char, mode } => {
+                    let mut new_point = find_forward(map, point, before, char, times, mode);
                     if new_point == Some(point) {
-                        new_point = find_forward(map, point, before, char, times + 1);
+                        new_point = find_forward(map, point, before, char, times + 1, mode);
                     }
 
                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
                 }
 
-                Motion::FindBackward { after, char } => {
-                    let mut new_point = find_backward(map, point, after, char, times);
+                Motion::FindBackward { after, char, mode } => {
+                    let mut new_point = find_backward(map, point, after, char, times, mode);
                     if new_point == point {
-                        new_point = find_backward(map, point, after, char, times + 1);
+                        new_point = find_backward(map, point, after, char, times + 1, mode);
                     }
 
                     (new_point, SelectionGoal::None)
@@ -513,19 +543,19 @@ impl Motion {
             },
             // , -- repeat the last find done with t, f, T, F, in opposite direction
             RepeatFindReversed { last_find } => match **last_find {
-                Motion::FindForward { before, char } => {
-                    let mut new_point = find_backward(map, point, before, char, times);
+                Motion::FindForward { before, char, mode } => {
+                    let mut new_point = find_backward(map, point, before, char, times, mode);
                     if new_point == point {
-                        new_point = find_backward(map, point, before, char, times + 1);
+                        new_point = find_backward(map, point, before, char, times + 1, mode);
                     }
 
                     (new_point, SelectionGoal::None)
                 }
 
-                Motion::FindBackward { after, char } => {
-                    let mut new_point = find_forward(map, point, after, char, times);
+                Motion::FindBackward { after, char, mode } => {
+                    let mut new_point = find_forward(map, point, after, char, times, mode);
                     if new_point == Some(point) {
-                        new_point = find_forward(map, point, after, char, times + 1);
+                        new_point = find_forward(map, point, after, char, times + 1, mode);
                     }
 
                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
@@ -1011,13 +1041,14 @@ fn find_forward(
     before: bool,
     target: char,
     times: usize,
+    mode: FindRange,
 ) -> Option<DisplayPoint> {
     let mut to = from;
     let mut found = false;
 
     for _ in 0..times {
         found = false;
-        let new_to = find_boundary(map, to, FindRange::SingleLine, |_, right| {
+        let new_to = find_boundary(map, to, mode, |_, right| {
             found = right == target;
             found
         });
@@ -1045,14 +1076,13 @@ fn find_backward(
     after: bool,
     target: char,
     times: usize,
+    mode: FindRange,
 ) -> DisplayPoint {
     let mut to = from;
 
     for _ in 0..times {
         let new_to =
-            find_preceding_boundary_display_point(map, to, FindRange::SingleLine, |_, right| {
-                right == target
-            });
+            find_preceding_boundary_display_point(map, to, mode, |_, right| right == target);
         if to == new_to {
             break;
         }

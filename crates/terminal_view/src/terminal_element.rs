@@ -489,15 +489,12 @@ impl TerminalElement {
             }
         });
 
-        let interactive_text_bounds = InteractiveBounds {
-            bounds,
-            stacking_order: cx.stacking_order().clone(),
-        };
-        if interactive_text_bounds.visibly_contains(&cx.mouse_position(), cx) {
+        if bounds.contains(&cx.mouse_position()) {
+            let stacking_order = cx.stacking_order().clone();
             if self.can_navigate_to_selected_word && last_hovered_word.is_some() {
-                cx.set_cursor_style(gpui::CursorStyle::PointingHand)
+                cx.set_cursor_style(gpui::CursorStyle::PointingHand, stacking_order);
             } else {
-                cx.set_cursor_style(gpui::CursorStyle::IBeam)
+                cx.set_cursor_style(gpui::CursorStyle::IBeam, stacking_order);
             }
         }
 
