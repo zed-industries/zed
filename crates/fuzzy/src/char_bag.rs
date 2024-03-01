@@ -8,6 +8,7 @@ impl CharBag {
         self.0 & other.0 == other.0
     }
 
+    #[allow(clippy::manual_is_ascii_check)]
     fn insert(&mut self, c: char) {
         let c = c.to_ascii_lowercase();
         if ('a'..='z').contains(&c) {

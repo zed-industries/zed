@@ -31,7 +31,7 @@ use std::{
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
 
-const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
+const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
@@ -201,7 +201,7 @@ impl LanguageServer {
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
         let mut server = Self::new_internal(
-            server_id.clone(),
+            server_id,
             stdin,
             stdout,
             Some(stderr),
@@ -233,6 +233,7 @@ impl LanguageServer {
         Ok(server)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_internal<Stdin, Stdout, Stderr, F>(
         server_id: LanguageServerId,
         stdin: Stdin,
@@ -312,7 +313,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            server: Arc::new(Mutex::new(server.map(|server| server))),
+            server: Arc::new(Mutex::new(server)),
         }
     }
 
@@ -349,7 +350,7 @@ impl LanguageServer {
             let headers = std::str::from_utf8(&buffer)?;
 
             let message_len = headers
-                .split("\n")
+                .split('\n')
                 .find(|line| line.starts_with(CONTENT_LEN_HEADER))
                 .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
                 .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
@@ -949,7 +950,7 @@ impl LanguageServer {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
                         CancelParams {
-                            id: NumberOrString::Number(id as i32),
+                            id: NumberOrString::Number(id),
                         },
                     )
                     .log_err();
@@ -1265,7 +1266,7 @@ impl FakeLanguageServer {
     }
 }
 
-pub(self) async fn read_headers<Stdout>(
+async fn read_headers<Stdout>(
     reader: &mut BufReader<Stdout>,
     buffer: &mut Vec<u8>,
 ) -> Result<()>

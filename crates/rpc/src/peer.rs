@@ -31,11 +31,11 @@ pub struct ConnectionId {
     pub id: u32,
 }
 
-impl Into<PeerId> for ConnectionId {
-    fn into(self) -> PeerId {
-        PeerId {
-            owner_id: self.owner_id,
-            id: self.id,
+impl From<ConnectionId> for PeerId {
+    fn from(connection_id: ConnectionId) -> Self {
+        Self {
+            owner_id: connection_id.owner_id,
+            id: connection_id.id,
         }
     }
 }
@@ -55,23 +55,12 @@ impl fmt::Display for ConnectionId {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Receipt<T> {
     pub sender_id: ConnectionId,
     pub message_id: u32,
     payload_type: PhantomData<T>,
 }
-
-impl<T> Clone for Receipt<T> {
-    fn clone(&self) -> Self {
-        Self {
-            sender_id: self.sender_id,
-            message_id: self.message_id,
-            payload_type: PhantomData,
-        }
-    }
-}
-
-impl<T> Copy for Receipt<T> {}
 
 #[derive(Clone, Debug)]
 pub struct TypedEnvelope<T> {
@@ -428,7 +417,7 @@ impl Peer {
             let (response, _barrier) = rx.await.map_err(|_| anyhow!("connection was closed"))?;
 
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                Err(RpcError::from_proto(&error, T::NAME))
+                Err(RpcError::from_proto(error, T::NAME))
             } else {
                 Ok(TypedEnvelope {
                     message_id: response.id,

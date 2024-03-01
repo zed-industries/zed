@@ -56,6 +56,12 @@ impl LabelLike {
     }
 }
 
+impl Default for LabelLike {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LabelCommon for LabelLike {
     fn size(mut self, size: LabelSize) -> Self {
         self.size = size;

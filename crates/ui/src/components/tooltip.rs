@@ -110,6 +110,7 @@ pub struct LinkPreview {
 }
 
 impl LinkPreview {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(url: &str, cx: &mut WindowContext) -> AnyView {
         let mut wrapped_url = String::new();
         for (i, ch) in url.chars().enumerate() {

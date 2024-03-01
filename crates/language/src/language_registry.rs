@@ -83,6 +83,7 @@ enum AvailableGrammar {
     Unloaded(PathBuf),
 }
 
+#[allow(clippy::type_complexity)]
 pub const QUERY_FILENAME_PREFIXES: &[(
     &str,
     fn(&mut LanguageQueries) -> &mut Option<Cow<'static, str>>,
@@ -111,6 +112,7 @@ pub struct LanguageQueries {
 }
 
 #[derive(Clone, Default)]
+#[allow(clippy::type_complexity)]
 struct LspBinaryStatusSender {
     txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(Arc<Language>, LanguageServerBinaryStatus)>>>>,
 }
@@ -457,7 +459,7 @@ impl LanguageRegistry {
                                         let mut parser = parser.borrow_mut();
                                         let mut store = parser.take_wasm_store().unwrap();
                                         let grammar =
-                                            store.load_language(&grammar_name, &wasm_bytes);
+                                            store.load_language(grammar_name, &wasm_bytes);
                                         parser.set_wasm_store(store).unwrap();
                                         grammar
                                     })?;
@@ -489,7 +491,7 @@ impl LanguageRegistry {
     }
 
     pub fn to_vec(&self) -> Vec<Arc<Language>> {
-        self.state.read().languages.iter().cloned().collect()
+        self.state.read().languages.to_vec()
     }
 
     pub fn create_pending_language_server(
@@ -699,7 +701,7 @@ impl LanguageRegistryState {
         self.available_languages
             .retain(|language| !languages_to_remove.contains(&language.name));
         self.grammars
-            .retain(|name, _| !grammars_to_remove.contains(&name));
+            .retain(|name, _| !grammars_to_remove.contains(name));
         self.version += 1;
         self.reload_count += 1;
         *self.subscription.0.borrow_mut() = ();
@@ -743,14 +745,14 @@ async fn check_user_installed_binary(
         return None;
     };
 
-    task.await.and_then(|binary| {
+    task.await.map(|binary| {
         log::info!(
             "found user-installed language server for {}. path: {:?}, arguments: {:?}",
             language.name(),
             binary.path,
             binary.arguments
         );
-        Some(binary)
+        binary
     })
 }
 

@@ -57,7 +57,7 @@ impl sum_tree::Summary for DiffHunkSummary {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct BufferDiff {
     last_buffer_version: Option<clock::Global>,
     tree: SumTree<DiffHunk<Anchor>>,
@@ -208,8 +208,8 @@ impl BufferDiff {
         }
     }
 
-    fn process_patch_hunk<'a>(
-        patch: &GitPatch<'a>,
+    fn process_patch_hunk(
+        patch: &GitPatch<'_>,
         hunk_index: usize,
         buffer: &text::BufferSnapshot,
         buffer_row_divergence: &mut i64,

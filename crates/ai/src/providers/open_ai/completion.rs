@@ -309,10 +309,7 @@ impl OpenAiCompletionProvider {
 
 impl CredentialProvider for OpenAiCompletionProvider {
     fn has_credentials(&self) -> bool {
-        match *self.credential.read() {
-            ProviderCredential::Credentials { .. } => true,
-            _ => false,
-        }
+        matches!(*self.credential.read(), ProviderCredential::Credentials { .. })
     }
 
     fn retrieve_credentials(&self, cx: &mut AppContext) -> BoxFuture<ProviderCredential> {

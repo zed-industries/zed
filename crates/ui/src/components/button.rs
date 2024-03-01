@@ -1,4 +1,7 @@
+#[allow(clippy::module_inception)]
 mod button;
+
+#[allow(clippy::needless_pub_self)]
 pub(self) mod button_icon;
 mod button_like;
 mod icon_button;

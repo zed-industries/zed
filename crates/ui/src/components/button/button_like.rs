@@ -276,6 +276,7 @@ pub enum ButtonSize {
 }
 
 impl ButtonSize {
+    #[allow(clippy::eq_op)]
     fn height(self) -> Rems {
         match self {
             ButtonSize::Large => rems(32. / 16.),
@@ -292,6 +293,7 @@ impl ButtonSize {
 ///
 /// This is also used to build the prebuilt buttons.
 #[derive(IntoElement)]
+#[allow(clippy::type_complexity)]
 pub struct ButtonLike {
     pub base: Div,
     id: ElementId,

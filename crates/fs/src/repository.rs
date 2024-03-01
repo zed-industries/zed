@@ -362,7 +362,7 @@ impl GitFileStatus {
         prefer_other: bool,
     ) -> Option<GitFileStatus> {
         if prefer_other {
-            return other;
+            other
         } else {
             match (this, other) {
                 (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
@@ -428,7 +428,7 @@ pub struct RepoPathDescendants<'a>(pub &'a Path);
 
 impl<'a> MapSeekTarget<RepoPath> for RepoPathDescendants<'a> {
     fn cmp_cursor(&self, key: &RepoPath) -> Ordering {
-        if key.starts_with(&self.0) {
+        if key.starts_with(self.0) {
             Ordering::Greater
         } else {
             self.0.cmp(key)

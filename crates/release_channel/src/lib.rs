@@ -48,7 +48,7 @@ pub struct AppVersion;
 
 impl AppVersion {
     pub fn init(pkg_version: &str, cx: &mut AppContext) {
-        let version = if let Some(from_env) = env::var("ZED_APP_VERSION").ok() {
+        let version = if let Ok(from_env) = env::var("ZED_APP_VERSION") {
             from_env.parse().expect("invalid ZED_APP_VERSION")
         } else {
             cx.app_metadata()

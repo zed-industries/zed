@@ -4,6 +4,7 @@ use crate::{prelude::*, Checkbox};
 
 /// A [`Checkbox`] that has a [`Label`].
 #[derive(IntoElement)]
+#[allow(clippy::type_complexity)]
 pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,

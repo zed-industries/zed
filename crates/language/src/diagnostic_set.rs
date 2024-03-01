@@ -105,6 +105,11 @@ impl DiagnosticSet {
         self.diagnostics.summary().count
     }
 
+    /// Returns if the set is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() > 0
+    }
+
     /// Returns an iterator over the diagnostic entries in the set.
     pub fn iter(&self) -> impl Iterator<Item = &DiagnosticEntry<Anchor>> {
         self.diagnostics.iter()

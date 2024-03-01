@@ -9,6 +9,7 @@ pub enum AudioStatus {
 }
 
 #[derive(IntoElement)]
+#[allow(clippy::type_complexity)]
 pub struct AvatarAudioStatusIndicator {
     audio_status: AudioStatus,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,

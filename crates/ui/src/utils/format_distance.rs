@@ -42,6 +42,7 @@ impl FormatDistance {
         Self::new(date, DateTimeType::Local(Local::now()))
     }
 
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(self) -> String {
         format_distance(
             self.date,
@@ -118,6 +119,7 @@ fn distance_string(
         }
         .to_string()
     } else if distance < 40 && include_seconds {
+        #[allow(clippy::if_same_then_else)]
         if hide_prefix {
             "half a minute"
         } else {

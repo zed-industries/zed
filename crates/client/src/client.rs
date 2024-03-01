@@ -27,7 +27,6 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use settings::{Settings, SettingsStore};
 use std::{
     any::TypeId,
@@ -61,7 +60,7 @@ lazy_static! {
     pub static ref ZED_APP_PATH: Option<PathBuf> =
         std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
     pub static ref ZED_ALWAYS_ACTIVE: bool =
-        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| e.len() > 0);
+        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty());
 }
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
@@ -427,7 +426,7 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut AppContext,
     ) -> Arc<Self> {
-        let client = Arc::new(Self {
+        Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(clock, http.clone(), cx),
@@ -438,9 +437,7 @@ impl Client {
             authenticate: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             establish_connection: Default::default(),
-        });
-
-        client
+        })
     }
 
     pub fn id(&self) -> u64 {
@@ -571,18 +568,16 @@ impl Client {
         let id = (TypeId::of::<T>(), remote_id);
 
         let mut state = self.state.write();
-        if state.entities_by_type_and_remote_id.contains_key(&id) {
-            return Err(anyhow!("already subscribed to entity"));
-        } else {
-            state
-                .entities_by_type_and_remote_id
-                .insert(id, WeakSubscriber::Pending(Default::default()));
+        if let std::collections::hash_map::Entry::Vacant(e) = state.entities_by_type_and_remote_id.entry(id) {
+            e.insert(WeakSubscriber::Pending(Default::default()));
             Ok(PendingEntitySubscription {
                 client: self.clone(),
                 remote_id,
                 consumed: false,
                 _entity_type: PhantomData,
             })
+        } else {
+            Err(anyhow!("already subscribed to entity"))
         }
     }
 
@@ -926,7 +921,7 @@ impl Client {
             move |cx| async move {
                 match handle_io.await {
                     Ok(()) => {
-                        if this.status().borrow().clone()
+                        if *this.status().borrow()
                             == (Status::Connected {
                                 connection_id,
                                 peer_id,
@@ -1335,7 +1330,7 @@ impl Client {
                     pending.push(message);
                     return;
                 }
-                Some(weak_subscriber @ _) => match weak_subscriber {
+                Some(weak_subscriber) => match weak_subscriber {
                     WeakSubscriber::Entity { handle } => {
                         subscriber = handle.upgrade();
                     }

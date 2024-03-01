@@ -76,6 +76,7 @@ impl PromptTemplate for GenerateInlineContent {
         )
         .unwrap();
 
+        #[allow(clippy::single_match)]
         match file_type {
             PromptFileType::Code => {
                 // writeln!(prompt, "Always wrap your code in a Markdown block.").unwrap();

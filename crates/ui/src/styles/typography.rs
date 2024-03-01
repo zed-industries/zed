@@ -36,6 +36,7 @@ pub enum UiTextSize {
 }
 
 impl UiTextSize {
+    #[allow(clippy::eq_op)]
     pub fn rems(self) -> Rems {
         match self {
             Self::Large => rems(16. / 16.),

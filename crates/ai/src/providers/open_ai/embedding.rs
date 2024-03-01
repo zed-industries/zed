@@ -161,10 +161,7 @@ impl OpenAiEmbeddingProvider {
 
 impl CredentialProvider for OpenAiEmbeddingProvider {
     fn has_credentials(&self) -> bool {
-        match *self.credential.read() {
-            ProviderCredential::Credentials { .. } => true,
-            _ => false,
-        }
+        matches!(*self.credential.read(), ProviderCredential::Credentials { .. })
     }
 
     fn retrieve_credentials(&self, cx: &mut AppContext) -> BoxFuture<ProviderCredential> {
@@ -263,7 +260,7 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
         while request_number < MAX_RETRIES {
             response = self
                 .send_request(
-                    &api_url,
+                    api_url,
                     &api_key,
                     spans.iter().map(|x| &**x).collect(),
                     request_timeout,

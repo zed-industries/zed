@@ -31,7 +31,14 @@ pub struct StoryColor {
     pub link: Hsla,
 }
 
+impl Default for StoryColor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StoryColor {
+    #[allow(clippy::eq_op)]
     pub fn new() -> Self {
         Self {
             primary: hsla(216. / 360., 11. / 100., 0. / 100., 1.),
@@ -332,7 +339,7 @@ impl RenderOnce for StoryItem {
     }
 }
 
-#[derive(IntoElement)]
+#[derive(IntoElement, Default)]
 pub struct StorySection {
     description: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,

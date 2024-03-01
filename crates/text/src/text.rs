@@ -79,6 +79,7 @@ impl BufferId {
     }
     /// Increments this buffer id, returning the old value.
     /// So that's a post-increment operator in disguise.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Self {
         let old = *self;
         self.0 = self.0.saturating_add(1);
@@ -1566,6 +1567,7 @@ impl Buffer {
         edits
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn randomly_edit<T>(
         &mut self,
         rng: &mut T,

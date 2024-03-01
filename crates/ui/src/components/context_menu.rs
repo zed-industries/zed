@@ -133,12 +133,11 @@ impl ContextMenu {
     }
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        match self.selected_index.and_then(|ix| self.items.get(ix)) {
-            Some(
-                ContextMenuItem::Entry { handler, .. }
-                | ContextMenuItem::CustomEntry { handler, .. },
-            ) => (handler)(cx),
-            _ => {}
+        if let Some(
+            ContextMenuItem::Entry { handler, .. } | ContextMenuItem::CustomEntry { handler, .. },
+        ) = self.selected_index.and_then(|ix| self.items.get(ix))
+        {
+            (handler)(cx)
         }
 
         cx.emit(DismissEvent);
@@ -198,6 +197,7 @@ impl ContextMenu {
         }
     }
 
+    #[allow(clippy::borrowed_box)]
     pub fn on_action_dispatch(&mut self, dispatched: &Box<dyn Action>, cx: &mut ViewContext<Self>) {
         if self.clicked {
             cx.propagate();

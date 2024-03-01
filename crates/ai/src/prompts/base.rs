@@ -29,8 +29,7 @@ impl PromptArguments {
     pub(crate) fn get_file_type(&self) -> PromptFileType {
         if self
             .language_name
-            .as_ref()
-            .and_then(|name| Some(!["Markdown", "Plain Text"].contains(&name.as_str())))
+            .as_ref().map(|name| !["Markdown", "Plain Text"].contains(&name.as_str()))
             .unwrap_or(true)
         {
             PromptFileType::Code
@@ -49,12 +48,13 @@ pub trait PromptTemplate {
 }
 
 #[repr(i8)]
-#[derive(PartialEq, Eq, Ord)]
+#[derive(PartialEq, Eq)]
 pub enum PromptPriority {
     Mandatory,                // Ignores truncation
     Ordered { order: usize }, // Truncates based on priority
 }
 
+#[allow(clippy::non_canonical_partial_ord_impl)]
 impl PartialOrd for PromptPriority {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (self, other) {
@@ -63,6 +63,12 @@ impl PartialOrd for PromptPriority {
             (Self::Ordered { .. }, Self::Mandatory) => Some(std::cmp::Ordering::Less),
             (Self::Ordered { order: a }, Self::Ordered { order: b }) => b.partial_cmp(a),
         }
+    }
+}
+
+impl Ord for PromptPriority {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
     }
 }
 
@@ -100,7 +106,7 @@ impl PromptChain {
             if let Some((template_prompt, prompt_token_count)) =
                 template.generate(&self.args, tokens_outstanding).log_err()
             {
-                if template_prompt != "" {
+                if !template_prompt.is_empty() {
                     prompts[idx] = template_prompt;
 
                     if let Some(remaining_tokens) = tokens_outstanding {
@@ -115,7 +121,7 @@ impl PromptChain {
             }
         }
 
-        prompts.retain(|x| x != "");
+        prompts.retain(|x| !x.is_empty());
 
         let full_prompt = prompts.join(separator);
         let total_token_count = self.args.model.count_tokens(&full_prompt)?;

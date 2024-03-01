@@ -4,6 +4,7 @@ use crate::{h_flex, prelude::*, Disclosure, Label};
 use gpui::{AnyElement, ClickEvent};
 
 #[derive(IntoElement)]
+#[allow(clippy::type_complexity)]
 pub struct ListHeader {
     /// The label of the header.
     label: SharedString,

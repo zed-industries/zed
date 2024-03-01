@@ -1,3 +1,5 @@
+#![allow(clippy::bad_bit_mask)]
+
 #[cfg(target_os = "macos")]
 pub use mac_impl::*;
 

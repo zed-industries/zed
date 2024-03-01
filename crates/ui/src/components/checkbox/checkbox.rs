@@ -9,6 +9,7 @@ use crate::{Color, Icon, IconName, Selection};
 /// Each checkbox works independently from other checkboxes in the list,
 /// therefore checking an additional box does not affect any other selections.
 #[derive(IntoElement)]
+#[allow(clippy::type_complexity)]
 pub struct Checkbox {
     id: ElementId,
     checked: Selection,

@@ -122,15 +122,15 @@ impl ThemeRegistry {
                     let cursor = player
                         .cursor
                         .as_ref()
-                        .and_then(|color| try_parse_color(&color).ok());
+                        .and_then(|color| try_parse_color(color).ok());
                     let background = player
                         .background
                         .as_ref()
-                        .and_then(|color| try_parse_color(&color).ok());
+                        .and_then(|color| try_parse_color(color).ok());
                     let selection = player
                         .selection
                         .as_ref()
-                        .and_then(|color| try_parse_color(&color).ok());
+                        .and_then(|color| try_parse_color(color).ok());
 
                     if let Some(player_color) = player_colors.0.get_mut(idx) {
                         *player_color = PlayerColor {
@@ -164,7 +164,7 @@ impl ThemeRegistry {
                                 color: highlight
                                     .color
                                     .as_ref()
-                                    .and_then(|color| try_parse_color(&color).ok()),
+                                    .and_then(|color| try_parse_color(color).ok()),
                                 font_style: highlight.font_style.map(Into::into),
                                 font_weight: highlight.font_weight.map(Into::into),
                                 ..Default::default()
@@ -278,7 +278,7 @@ impl ThemeRegistry {
     }
 
     pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
-        let reader = fs.open_sync(&theme_path).await?;
+        let reader = fs.open_sync(theme_path).await?;
         let theme = serde_json_lenient::from_reader(reader)?;
 
         Ok(theme)

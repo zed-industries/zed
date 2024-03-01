@@ -33,6 +33,7 @@ impl Sound {
     }
 }
 
+#[derive(Default)]
 pub struct Audio {
     _output_stream: Option<OutputStream>,
     output_handle: Option<OutputStreamHandle>,

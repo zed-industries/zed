@@ -41,6 +41,7 @@ struct PendingWork<'a> {
 }
 
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct Content {
     icon: Option<&'static str>,
     message: String,

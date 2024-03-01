@@ -81,6 +81,7 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
+#[allow(clippy::type_complexity)]
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
@@ -220,7 +221,7 @@ impl Deref for WorkDirectoryEntry {
     }
 }
 
-impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
+impl From<ProjectEntryId> for WorkDirectoryEntry {
     fn from(value: ProjectEntryId) -> Self {
         WorkDirectoryEntry(value)
     }
@@ -991,7 +992,7 @@ impl LocalWorktree {
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
         let mut is_scanning_rx = self.is_scanning.1.clone();
         async move {
-            let mut is_scanning = is_scanning_rx.borrow().clone();
+            let mut is_scanning = *is_scanning_rx.borrow();
             while is_scanning {
                 if let Some(value) = is_scanning_rx.recv().await {
                     is_scanning = value;
@@ -1800,14 +1801,10 @@ impl Snapshot {
 
         update.removed_repositories.sort_unstable();
         self.repository_entries.retain(|_, entry| {
-            if let Ok(_) = update
+            update
                 .removed_repositories
                 .binary_search(&entry.work_directory.to_proto())
-            {
-                false
-            } else {
-                true
-            }
+                .is_err()
         });
 
         for repository in update.updated_repositories {
@@ -2271,7 +2268,7 @@ impl LocalSnapshot {
                     new_ignores.push((ancestor, None));
                 }
             }
-            if ancestor.join(&*DOT_GIT).is_dir() {
+            if ancestor.join(*DOT_GIT).is_dir() {
                 break;
             }
         }
@@ -2281,7 +2278,8 @@ impl LocalSnapshot {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
-            } else if let Some(ignore) = ignore {
+            }
+            if let Some(ignore) = ignore {
                 ignore_stack = ignore_stack.append(parent_abs_path.into(), ignore);
             }
         }
@@ -2387,7 +2385,7 @@ impl LocalSnapshot {
         path.ancestors().any(|ancestor| {
             self.private_files
                 .iter()
-                .any(|exclude_matcher| exclude_matcher.is_match(&ancestor))
+                .any(|exclude_matcher| exclude_matcher.is_match(ancestor))
         })
     }
 
@@ -2502,7 +2500,7 @@ impl BackgroundScannerState {
         }
 
         if let Some(ignore) = ignore {
-            let abs_parent_path = self.snapshot.abs_path.join(&parent_path).into();
+            let abs_parent_path = self.snapshot.abs_path.join(parent_path).into();
             self.snapshot
                 .ignores_by_parent_abs_path
                 .insert(abs_parent_path, (ignore, false));
@@ -2649,6 +2647,7 @@ impl BackgroundScannerState {
             .retain(|_, entry| ids_to_preserve.contains(&entry.work_directory.0));
     }
 
+    #[allow(clippy::type_complexity)]
     fn build_git_repository(
         &mut self,
         dot_git_path: Arc<Path>,
@@ -3157,13 +3156,12 @@ impl sum_tree::Item for Entry {
         }
 
         let mut statuses = GitStatuses::default();
-        match self.git_status {
-            Some(status) => match status {
+        if let Some(status) = self.git_status {
+            match status {
                 GitFileStatus::Added => statuses.added = 1,
                 GitFileStatus::Modified => statuses.modified = 1,
                 GitFileStatus::Conflict => statuses.conflict = 1,
-            },
-            None => {}
+            }
         }
 
         EntrySummary {
@@ -3299,6 +3297,7 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         snapshot: LocalSnapshot,
         next_entry_id: Arc<AtomicUsize>,
@@ -3338,7 +3337,7 @@ impl BackgroundScanner {
         for (index, ancestor) in root_abs_path.ancestors().enumerate() {
             if index != 0 {
                 if let Ok(ignore) =
-                    build_gitignore(&ancestor.join(&*GITIGNORE), self.fs.as_ref()).await
+                    build_gitignore(&ancestor.join(*GITIGNORE), self.fs.as_ref()).await
                 {
                     self.state
                         .lock()
@@ -3347,7 +3346,7 @@ impl BackgroundScanner {
                         .insert(ancestor.into(), (ignore.into(), false));
                 }
             }
-            if ancestor.join(&*DOT_GIT).is_dir() {
+            if ancestor.join(*DOT_GIT).is_dir() {
                 // Reached root of git repository.
                 break;
             }
@@ -3487,7 +3486,7 @@ impl BackgroundScanner {
         let mut relative_paths = Vec::with_capacity(abs_paths.len());
         let mut dot_git_paths_to_reload = HashSet::default();
         abs_paths.sort_unstable();
-        abs_paths.dedup_by(|a, b| a.starts_with(&b));
+        abs_paths.dedup_by(|a, b| a.starts_with(b));
         abs_paths.retain(|abs_path| {
             let snapshot = &self.state.lock().snapshot;
             {
@@ -3602,7 +3601,7 @@ impl BackgroundScanner {
             self.scan_dir(&job).await.log_err();
         }
 
-        mem::take(&mut self.state.lock().paths_to_scan).len() > 0
+        !mem::take(&mut self.state.lock().paths_to_scan).is_empty()
     }
 
     async fn scan_dirs(
@@ -3917,16 +3916,14 @@ impl BackgroundScanner {
         let repository =
             dotgit_path.and_then(|path| state.build_git_repository(path, self.fs.as_ref()));
 
-        for new_job in new_jobs {
-            if let Some(mut new_job) = new_job {
-                if let Some(containing_repository) = &repository {
-                    new_job.containing_repository = Some(containing_repository.clone());
-                }
-
-                job.scan_queue
-                    .try_send(new_job)
-                    .expect("channel is unbounded");
+        for mut new_job in new_jobs.into_iter().flatten() {
+            if let Some(containing_repository) = &repository {
+                new_job.containing_repository = Some(containing_repository.clone());
             }
+
+            job.scan_queue
+                .try_send(new_job)
+                .expect("channel is unbounded");
         }
 
         Ok(())
@@ -3991,7 +3988,7 @@ impl BackgroundScanner {
         }
 
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
-            let abs_path: Arc<Path> = root_abs_path.join(&path).into();
+            let abs_path: Arc<Path> = root_abs_path.join(path).into();
             match metadata {
                 Ok(Some((metadata, canonical_path))) => {
                     let ignore_stack = state
@@ -4085,7 +4082,7 @@ impl BackgroundScanner {
                     }
                 }
 
-                let ignore_path = parent_path.join(&*GITIGNORE);
+                let ignore_path = parent_path.join(*GITIGNORE);
                 if snapshot.snapshot.entry_for_path(ignore_path).is_none() {
                     ignores_to_delete.push(parent_abs_path.clone());
                 }
@@ -4301,7 +4298,7 @@ impl BackgroundScanner {
                                 let is_newly_loaded = self.phase == InitialScan
                                     || last_newly_loaded_dir_path
                                         .as_ref()
-                                        .map_or(false, |dir| new_entry.path.starts_with(&dir));
+                                        .map_or(false, |dir| new_entry.path.starts_with(dir));
                                 changes.push((
                                     new_entry.path.clone(),
                                     new_entry.id,
@@ -4319,7 +4316,7 @@ impl BackgroundScanner {
                         let is_newly_loaded = self.phase == InitialScan
                             || last_newly_loaded_dir_path
                                 .as_ref()
-                                .map_or(false, |dir| new_entry.path.starts_with(&dir));
+                                .map_or(false, |dir| new_entry.path.starts_with(dir));
                         changes.push((
                             new_entry.path.clone(),
                             new_entry.id,
@@ -4359,6 +4356,7 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
     result
 }
 
+#[allow(clippy::type_complexity)]
 struct ScanJob {
     abs_path: Arc<Path>,
     path: Arc<Path>,
@@ -4623,7 +4621,7 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.traversal.entry() {
-            if item.path.starts_with(&self.parent_path) {
+            if item.path.starts_with(self.parent_path) {
                 self.traversal.advance_to_sibling();
                 return Some(item);
             }
@@ -4642,7 +4640,7 @@ impl<'a> Iterator for DescendentEntriesIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.traversal.entry() {
-            if item.path.starts_with(&self.parent_path) {
+            if item.path.starts_with(self.parent_path) {
                 self.traversal.advance();
                 return Some(item);
             }

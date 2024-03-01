@@ -13,6 +13,7 @@ pub enum ListItemSpacing {
 }
 
 #[derive(IntoElement)]
+#[allow(clippy::type_complexity)]
 pub struct ListItem {
     id: ElementId,
     disabled: bool,

@@ -6,6 +6,7 @@ use gpui::{
     MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
 
+#[allow(clippy::type_complexity)]
 pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,
     child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
@@ -132,8 +133,8 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         };
         let menu = element_state.menu.clone();
         let position = element_state.position.clone();
-        let attach = self.attach.clone();
-        let child_layout_id = element_state.child_layout_id.clone();
+        let attach = self.attach;
+        let child_layout_id = element_state.child_layout_id;
         let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
 
         let interactive_bounds = InteractiveBounds {
@@ -154,8 +155,8 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
                 cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
                     if modal.focus_handle(cx).contains_focused(cx) {
-                        if previous_focus_handle.is_some() {
-                            cx.focus(previous_focus_handle.as_ref().unwrap())
+                        if let Some(ref previous_focus_handle) = previous_focus_handle {
+                            cx.focus(previous_focus_handle)
                         }
                     }
                     *menu2.borrow_mut() = None;
@@ -165,8 +166,8 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 cx.focus_view(&new_menu);
                 *menu.borrow_mut() = Some(new_menu);
 
-                *position.borrow_mut() = if attach.is_some() && child_layout_id.is_some() {
-                    attach.unwrap().corner(child_bounds)
+                *position.borrow_mut() = if let (Some(ref attach), Some(_)) = (attach, child_layout_id) {
+                    attach.corner(child_bounds)
                 } else {
                     cx.mouse_position()
                 };

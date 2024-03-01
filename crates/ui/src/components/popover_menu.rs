@@ -13,6 +13,7 @@ pub trait PopoverTrigger: IntoElement + Clickable + Selectable + 'static {}
 
 impl<T: IntoElement + Clickable + Selectable + 'static> PopoverTrigger for T {}
 
+#[allow(clippy::type_complexity)]
 pub struct PopoverMenu<M: ManagedView> {
     id: ElementId,
     child_builder: Option<
@@ -51,8 +52,8 @@ impl<M: ManagedView> PopoverMenu<M> {
 
                             cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
                                 if modal.focus_handle(cx).contains_focused(cx) {
-                                    if previous_focus_handle.is_some() {
-                                        cx.focus(previous_focus_handle.as_ref().unwrap())
+                                    if let Some(ref previous_focus_handle) = previous_focus_handle {
+                                        cx.focus(previous_focus_handle)
                                     }
                                 }
                                 *menu2.borrow_mut() = None;
@@ -89,6 +90,7 @@ impl<M: ManagedView> PopoverMenu<M> {
     }
 
     fn resolved_attach(&self) -> AnchorCorner {
+        #[allow(clippy::unnecessary_lazy_evaluations)]
         self.attach.unwrap_or_else(|| match self.anchor {
             AnchorCorner::TopLeft => AnchorCorner::BottomLeft,
             AnchorCorner::TopRight => AnchorCorner::BottomRight,

@@ -24,6 +24,7 @@ impl Snippet {
         if let Some(final_tabstop) = final_tabstop {
             tabstops.push(final_tabstop);
         } else {
+            #[allow(clippy::single_range_in_vec_init)]
             let end_tabstop = [len..len].into_iter().collect();
             if !tabstops.last().map_or(false, |t| *t == end_tabstop) {
                 tabstops.push(end_tabstop);
@@ -118,6 +119,7 @@ fn parse_int(source: &str) -> Result<(usize, &str)> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::single_range_in_vec_init)]
     use super::*;
 
     #[test]

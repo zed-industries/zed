@@ -5,6 +5,7 @@ use gpui::ClickEvent;
 use crate::{prelude::*, Color, IconButton, IconName, IconSize};
 
 #[derive(IntoElement)]
+#[allow(clippy::type_complexity)]
 pub struct Disclosure {
     id: ElementId,
     is_open: bool,

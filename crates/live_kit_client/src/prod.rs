@@ -1,3 +1,5 @@
+#![allow(clippy::arc_with_non_send_sync)]
+
 use crate::{ConnectionState, RoomUpdate, Sid};
 use anyhow::{anyhow, Context, Result};
 use core_foundation::{
@@ -681,6 +683,7 @@ impl RoomDelegate {
 }
 
 impl Drop for RoomDelegate {
+    #[allow(clippy::from_raw_with_void_ptr)]
     fn drop(&mut self) {
         unsafe {
             CFRelease(self.native_delegate.0);

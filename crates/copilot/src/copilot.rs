@@ -403,85 +403,81 @@ impl Copilot {
         (this, fake_server)
     }
 
-    fn start_language_server(
+    async fn start_language_server(
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
         this: WeakModel<Self>,
         mut cx: AsyncAppContext,
-    ) -> impl Future<Output = ()> {
-        async move {
-            let start_language_server = async {
-                let server_path = get_copilot_lsp(http).await?;
-                let node_path = node_runtime.binary_path().await?;
-                let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
-                let binary = LanguageServerBinary {
-                    path: node_path,
-                    arguments,
-                    // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
-                    env: None,
-                };
-
-                let server = LanguageServer::new(
-                    Arc::new(Mutex::new(None)),
-                    new_server_id,
-                    binary,
-                    Path::new("/"),
-                    None,
-                    cx.clone(),
-                )?;
-
-                server
-                    .on_notification::<StatusNotification, _>(
-                        |_, _| { /* Silence the notification */ },
-                    )
-                    .detach();
-                let server = cx.update(|cx| server.initialize(None, cx))?.await?;
-
-                let status = server
-                    .request::<request::CheckStatus>(request::CheckStatusParams {
-                        local_checks_only: false,
-                    })
-                    .await?;
-
-                server
-                    .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
-                        editor_info: request::EditorInfo {
-                            name: "zed".into(),
-                            version: env!("CARGO_PKG_VERSION").into(),
-                        },
-                        editor_plugin_info: request::EditorPluginInfo {
-                            name: "zed-copilot".into(),
-                            version: "0.0.1".into(),
-                        },
-                    })
-                    .await?;
-
-                anyhow::Ok((server, status))
+    ) {
+        let start_language_server = async {
+            let server_path = get_copilot_lsp(http).await?;
+            let node_path = node_runtime.binary_path().await?;
+            let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
+            let binary = LanguageServerBinary {
+                path: node_path,
+                arguments,
+                // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
+                env: None,
             };
 
-            let server = start_language_server.await;
-            this.update(&mut cx, |this, cx| {
-                cx.notify();
-                match server {
-                    Ok((server, status)) => {
-                        this.server = CopilotServer::Running(RunningCopilotServer {
-                            name: LanguageServerName(Arc::from("copilot")),
-                            lsp: server,
-                            sign_in_status: SignInStatus::SignedOut,
-                            registered_buffers: Default::default(),
-                        });
-                        cx.emit(Event::CopilotLanguageServerStarted);
-                        this.update_sign_in_status(status, cx);
-                    }
-                    Err(error) => {
-                        this.server = CopilotServer::Error(error.to_string().into());
-                        cx.notify()
-                    }
+            let server = LanguageServer::new(
+                Arc::new(Mutex::new(None)),
+                new_server_id,
+                binary,
+                Path::new("/"),
+                None,
+                cx.clone(),
+            )?;
+
+            server
+                .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
+                .detach();
+            let server = cx.update(|cx| server.initialize(None, cx))?.await?;
+
+            let status = server
+                .request::<request::CheckStatus>(request::CheckStatusParams {
+                    local_checks_only: false,
+                })
+                .await?;
+
+            server
+                .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
+                    editor_info: request::EditorInfo {
+                        name: "zed".into(),
+                        version: env!("CARGO_PKG_VERSION").into(),
+                    },
+                    editor_plugin_info: request::EditorPluginInfo {
+                        name: "zed-copilot".into(),
+                        version: "0.0.1".into(),
+                    },
+                })
+                .await?;
+
+            anyhow::Ok((server, status))
+        };
+
+        let server = start_language_server.await;
+        this.update(&mut cx, |this, cx| {
+            cx.notify();
+            match server {
+                Ok((server, status)) => {
+                    this.server = CopilotServer::Running(RunningCopilotServer {
+                        name: LanguageServerName(Arc::from("copilot")),
+                        lsp: server,
+                        sign_in_status: SignInStatus::SignedOut,
+                        registered_buffers: Default::default(),
+                    });
+                    cx.emit(Event::CopilotLanguageServerStarted);
+                    this.update_sign_in_status(status, cx);
                 }
-            })
-            .ok();
-        }
+                Err(error) => {
+                    this.server = CopilotServer::Error(error.to_string().into());
+                    cx.notify()
+                }
+            }
+        })
+        .ok();
     }
 
     pub fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -509,18 +505,16 @@ impl Copilot {
                                     request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
                                         this.update(&mut cx, |this, cx| {
                                             if let CopilotServer::Running(RunningCopilotServer {
-                                                sign_in_status: status,
+                                                sign_in_status:
+                                                    SignInStatus::SigningIn {
+                                                        prompt: prompt_flow,
+                                                        ..
+                                                    },
                                                 ..
                                             }) = &mut this.server
                                             {
-                                                if let SignInStatus::SigningIn {
-                                                    prompt: prompt_flow,
-                                                    ..
-                                                } = status
-                                                {
-                                                    *prompt_flow = Some(flow.clone());
-                                                    cx.notify();
-                                                }
+                                                *prompt_flow = Some(flow.clone());
+                                                cx.notify();
                                             }
                                         })?;
                                         let response = lsp
@@ -679,7 +673,7 @@ impl Copilot {
             {
                 match event {
                     language::Event::Edited => {
-                        let _ = registered_buffer.report_changes(&buffer, cx);
+                        std::mem::drop(registered_buffer.report_changes(&buffer, cx));
                     }
                     language::Event::Saved => {
                         server
@@ -963,7 +957,7 @@ async fn clear_copilot_dir() {
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-    const SERVER_PATH: &'static str = "dist/agent.js";
+    const SERVER_PATH: &str = "dist/agent.js";
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
@@ -982,7 +976,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 
             let url = &release
                 .assets
-                .get(0)
+                .first()
                 .context("Github release for copilot contained no assets")?
                 .browser_download_url;
 

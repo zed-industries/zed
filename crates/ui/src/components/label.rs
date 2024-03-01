@@ -1,4 +1,5 @@
 mod highlighted_label;
+#[allow(clippy::module_inception)]
 mod label;
 mod label_like;
 

@@ -54,6 +54,7 @@ impl Task for OneshotTask {
 
 impl OneshotSource {
     /// Initializes the oneshot source, preparing to store user prompts.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(cx: &mut AppContext) -> Model<Box<dyn TaskSource>> {
         cx.new_model(|_| Box::new(Self { tasks: Vec::new() }) as Box<dyn TaskSource>)
     }

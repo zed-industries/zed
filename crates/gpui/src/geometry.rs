@@ -2781,12 +2781,12 @@ mod tests {
         };
 
         // Test Case 1: Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds2), true);
+        assert!(bounds1.intersects(&bounds2));
 
         // Test Case 2: Non-Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds3), false);
+        assert!(!bounds1.intersects(&bounds3));
 
         // Test Case 3: Bounds intersecting with themselves
-        assert_eq!(bounds1.intersects(&bounds1), true);
+        assert!(bounds1.intersects(&bounds1));
     }
 }

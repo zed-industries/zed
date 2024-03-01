@@ -1058,7 +1058,6 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
-                return;
             }
             Err(parse_task) => {
                 self.parsing_in_background = true;
@@ -1956,7 +1955,7 @@ impl Buffer {
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
             let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
-            if diagnostics.len() == 0 {
+            if diagnostics.is_empty() {
                 if let Ok(ix) = ix {
                     self.diagnostics.remove(ix);
                 }
@@ -2441,7 +2440,7 @@ impl BufferSnapshot {
             });
             let highlight_maps = captures
                 .grammars()
-                .into_iter()
+                .iter()
                 .map(|grammar| grammar.highlight_map())
                 .collect();
             syntax = Some((captures, highlight_maps));
@@ -2839,10 +2838,10 @@ impl BufferSnapshot {
     }
 
     /// Returns bracket range pairs overlapping or adjacent to `range`
-    pub fn bracket_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn bracket_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a {
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self).saturating_sub(1)
             ..self.len().min(range.end.to_offset(self) + 1);
@@ -2935,10 +2934,10 @@ impl BufferSnapshot {
     /// Returns anchor ranges for any matches of the redaction query.
     /// The buffer can be associated with multiple languages, and the redaction query associated with each
     /// will be run on the relevant section of the buffer.
-    pub fn redacted_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn redacted_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = Range<usize>> + 'a {
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
         let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
             grammar
@@ -3015,28 +3014,28 @@ impl BufferSnapshot {
 
     /// Returns all the Git diff hunks intersecting the given
     /// row range.
-    pub fn git_diff_hunks_in_row_range<'a>(
-        &'a self,
+    pub fn git_diff_hunks_in_row_range(
+        &self,
         range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_in_row_range(range, self)
     }
 
     /// Returns all the Git diff hunks intersecting the given
     /// range.
-    pub fn git_diff_hunks_intersecting_range<'a>(
-        &'a self,
+    pub fn git_diff_hunks_intersecting_range(
+        &self,
         range: Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_intersecting_range(range, self)
     }
 
     /// Returns all the Git diff hunks intersecting the given
     /// range, in reverse order.
-    pub fn git_diff_hunks_intersecting_range_rev<'a>(
-        &'a self,
+    pub fn git_diff_hunks_intersecting_range_rev(
+        &self,
         range: Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_intersecting_range_rev(range, self)
     }
 
@@ -3109,12 +3108,12 @@ impl BufferSnapshot {
     }
 
     /// Returns an iterator over the diagnostics for the given group.
-    pub fn diagnostic_group<'a, O>(
-        &'a self,
+    pub fn diagnostic_group<O>(
+        &self,
         group_id: usize,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl '_ + Iterator<Item = DiagnosticEntry<O>>
     where
-        O: 'a + FromAnchor,
+        O: FromAnchor,
     {
         self.diagnostics
             .iter()

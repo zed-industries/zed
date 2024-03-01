@@ -11,6 +11,7 @@ pub struct CommandPaletteFilter {
 
 impl Global for CommandPaletteFilter {}
 
+#[allow(clippy::type_complexity)]
 pub struct CommandPaletteInterceptor(
     pub Box<dyn Fn(&str, &AppContext) -> Option<CommandInterceptResult>>,
 );

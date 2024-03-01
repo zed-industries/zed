@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 mod avatar;
 mod avatar_audio_status_indicator;
 mod avatar_availability_indicator;

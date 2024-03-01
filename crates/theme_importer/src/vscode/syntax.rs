@@ -190,6 +190,7 @@ impl ZedSyntaxToken {
         }
     }
 
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_vscode(&self) -> Vec<&'static str> {
         match self {
             ZedSyntaxToken::Attribute => vec!["entity.other.attribute-name"],

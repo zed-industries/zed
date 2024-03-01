@@ -158,11 +158,11 @@ impl TerminalSize {
     }
 
     pub fn num_lines(&self) -> usize {
-        f32::from((self.size.height / self.line_height).floor()) as usize
+        (self.size.height / self.line_height).floor() as usize
     }
 
     pub fn num_columns(&self) -> usize {
-        f32::from((self.size.width / self.cell_width).floor()) as usize
+        (self.size.width / self.cell_width).floor() as usize
     }
 
     pub fn height(&self) -> Pixels {
@@ -303,6 +303,7 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
@@ -486,7 +487,7 @@ impl TerminalBuilder {
                         }
                     }
 
-                    if events.is_empty() && wakeup == false {
+                    if events.is_empty() && !wakeup {
                         smol::future::yield_now().await;
                         break 'outer;
                     } else {
@@ -623,7 +624,7 @@ impl Terminal {
             AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(format(
                 &cx.read_from_clipboard()
                     .map(|ci| ci.text().to_string())
-                    .unwrap_or_else(|| "".to_string()),
+                    .unwrap_or_default(),
             )),
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
@@ -715,7 +716,7 @@ impl Terminal {
                 new_size.size.height = cmp::max(new_size.line_height, new_size.height());
                 new_size.size.width = cmp::max(new_size.cell_width, new_size.width());
 
-                self.last_content.size = new_size.clone();
+                self.last_content.size = new_size;
 
                 self.pty_tx.0.send(Msg::Resize(new_size.into())).ok();
 
@@ -807,11 +808,11 @@ impl Terminal {
                         let new_min_index = min_index.sub(term, Boundary::Cursor, 1);
                         if new_min_index == min_index {
                             break;
-                        } else if term.grid().index(new_min_index).hyperlink() != link {
-                            break;
-                        } else {
-                            min_index = new_min_index
                         }
+                        if term.grid().index(new_min_index).hyperlink() != link {
+                            break;
+                        }
+                        min_index = new_min_index
                     }
 
                     let mut max_index = point;
@@ -819,11 +820,11 @@ impl Terminal {
                         let new_max_index = max_index.add(term, Boundary::Cursor, 1);
                         if new_max_index == max_index {
                             break;
-                        } else if term.grid().index(new_max_index).hyperlink() != link {
-                            break;
-                        } else {
-                            max_index = new_max_index
                         }
+                        if term.grid().index(new_max_index).hyperlink() != link {
+                            break;
+                        }
+                        max_index = new_max_index
                     }
 
                     let url = link.unwrap().uri().to_owned();
@@ -1295,7 +1296,7 @@ impl Terminal {
                 );
 
                 if let Some(scrolls) =
-                    scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+                    scroll_report(point, scroll_lines, e, self.last_content.mode)
                 {
                     for scroll in scrolls {
                         self.pty_tx.notify(scroll);
@@ -1308,12 +1309,10 @@ impl Terminal {
                 && !e.shift
             {
                 self.pty_tx.notify(alt_scroll(scroll_lines))
-            } else {
-                if scroll_lines != 0 {
-                    let scroll = AlacScroll::Delta(scroll_lines);
+            } else if scroll_lines != 0 {
+                let scroll = AlacScroll::Delta(scroll_lines);
 
-                    self.events.push_back(InternalEvent::Scroll(scroll));
-                }
+                self.events.push_back(InternalEvent::Scroll(scroll));
             }
         }
     }
@@ -1378,7 +1377,7 @@ impl Terminal {
                     let process_name = format!(
                         "{}{}",
                         fpi.name,
-                        if fpi.argv.len() >= 1 {
+                        if !fpi.argv.is_empty() {
                             format!(" {}", (fpi.argv[1..]).join(" "))
                         } else {
                             "".to_string()
@@ -1554,9 +1553,9 @@ fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
 
 pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
     Rgba {
-        r: (r as f32 / 255.) as f32,
-        g: (g as f32 / 255.) as f32,
-        b: (b as f32 / 255.) as f32,
+        r: (r as f32 / 255.),
+        g: (g as f32 / 255.),
+        b: (b as f32 / 255.),
         a: 1.,
     }
     .into()
@@ -1579,7 +1578,7 @@ mod tests {
     fn test_rgb_for_index() {
         //Test every possible value in the color cube
         for i in 16..=231 {
-            let (r, g, b) = rgb_for_index(&(i as u8));
+            let (r, g, b) = rgb_for_index(&i);
             assert_eq!(i, 16 + 36 * r + 6 * g + b);
         }
     }
@@ -1663,9 +1662,9 @@ mod tests {
     fn get_cells(size: TerminalSize, rng: &mut ThreadRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..(f32::from(size.height() / size.line_height()) as usize) {
+        for _ in 0..((size.height() / size.line_height()) as usize) {
             let mut row_vec = Vec::new();
-            for _ in 0..(f32::from(size.width() / size.cell_width()) as usize) {
+            for _ in 0..((size.width() / size.cell_width()) as usize) {
                 let cell_char = rng.sample(Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
@@ -1675,14 +1674,13 @@ mod tests {
         cells
     }
 
-    fn convert_cells_to_content(size: TerminalSize, cells: &Vec<Vec<char>>) -> TerminalContent {
+    fn convert_cells_to_content(size: TerminalSize, cells: &[Vec<char>]) -> TerminalContent {
         let mut ic = Vec::new();
 
-        for row in 0..cells.len() {
-            for col in 0..cells[row].len() {
-                let cell_char = cells[row][col];
+        for (row_idx, row) in cells.iter().enumerate() {
+            for (col_idx, &cell_char) in row.iter().enumerate() {
                 ic.push(IndexedCell {
-                    point: AlacPoint::new(Line(row as i32), Column(col)),
+                    point: AlacPoint::new(Line(row_idx as i32), Column(col_idx)),
                     cell: Cell {
                         c: cell_char,
                         ..Default::default()

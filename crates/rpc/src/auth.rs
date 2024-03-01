@@ -36,7 +36,7 @@ impl PublicKey {
             .0
             .encrypt(&mut rng, PADDING_SCHEME, bytes)
             .context("failed to encrypt string with public key")?;
-        let encrypted_string = base64::encode_config(&encrypted_bytes, base64::URL_SAFE);
+        let encrypted_string = base64::encode_config(encrypted_bytes, base64::URL_SAFE);
         Ok(encrypted_string)
     }
 }
@@ -59,7 +59,7 @@ impl TryFrom<PublicKey> for String {
     type Error = anyhow::Error;
     fn try_from(key: PublicKey) -> Result<Self> {
         let bytes = key.0.to_pkcs1().context("failed to serialize public key")?;
-        let string = base64::encode_config(&bytes, base64::URL_SAFE);
+        let string = base64::encode_config(bytes, base64::URL_SAFE);
         Ok(string)
     }
 }
@@ -67,7 +67,7 @@ impl TryFrom<PublicKey> for String {
 impl TryFrom<String> for PublicKey {
     type Error = anyhow::Error;
     fn try_from(value: String) -> Result<Self> {
-        let bytes = base64::decode_config(&value, base64::URL_SAFE)
+        let bytes = base64::decode_config(value, base64::URL_SAFE)
             .context("failed to base64-decode public key string")?;
         let key = Self(RSAPublicKey::from_pkcs1(&bytes).context("failed to parse public key")?);
         Ok(key)

@@ -13,6 +13,7 @@ pub enum IconSize {
 }
 
 impl IconSize {
+    #[allow(clippy::eq_op)]
     pub fn rems(self) -> Rems {
         match self {
             IconSize::Indicator => rems(10. / 16.),

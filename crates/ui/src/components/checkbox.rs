@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 mod checkbox;
 mod checkbox_with_label;
 

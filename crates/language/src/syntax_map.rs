@@ -422,6 +422,7 @@ impl SyntaxSnapshot {
         }
     }
 
+    #[allow(clippy::single_range_in_vec_init)]
     fn reparse_with_ranges(
         &mut self,
         text: &BufferSnapshot,
@@ -614,9 +615,9 @@ impl SyntaxSnapshot {
                             Some(old_tree.clone()),
                         );
                         changed_ranges = join_ranges(
-                            invalidated_ranges.iter().cloned().filter(|range| {
+                            invalidated_ranges.iter().filter(|&range| {
                                 range.start <= step_end_byte && range.end >= step_start_byte
-                            }),
+                            }).cloned(),
                             old_tree.changed_ranges(&tree).map(|r| {
                                 step_start_byte + r.start_byte..step_start_byte + r.end_byte
                             }),
@@ -714,6 +715,7 @@ impl SyntaxSnapshot {
     }
 
     #[cfg(debug_assertions)]
+    #[allow(clippy::comparison_chain)]
     fn check_invariants(&self, text: &BufferSnapshot) {
         let mut max_depth = 0;
         let mut prev_range: Option<Range<Anchor>> = None;
@@ -766,7 +768,7 @@ impl SyntaxSnapshot {
         SyntaxMapCaptures::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer).into_iter(),
+            self.layers_for_range(range, buffer),
             query,
         )
     }
@@ -780,7 +782,7 @@ impl SyntaxSnapshot {
         SyntaxMapMatches::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer).into_iter(),
+            self.layers_for_range(range, buffer),
             query,
         )
     }
@@ -1180,6 +1182,7 @@ fn parse_text(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,
@@ -1312,8 +1315,10 @@ pub(crate) fn splice_included_ranges(
     new_ranges: &[tree_sitter::Range],
 ) -> (Vec<tree_sitter::Range>, Range<usize>) {
     let mut removed_ranges = removed_ranges.iter().cloned().peekable();
-    let mut new_ranges = new_ranges.into_iter().cloned().peekable();
+    let mut new_ranges = new_ranges.iter().cloned().peekable();
     let mut ranges_ix = 0;
+
+    #[allow(clippy::reversed_empty_ranges)]
     let mut changed_portion = usize::MAX..0;
     loop {
         let next_new_range = new_ranges.peek();
@@ -1412,7 +1417,7 @@ fn insert_newlines_between_ranges(
             continue;
         }
 
-        let range_b = ranges[ix].clone();
+        let range_b = ranges[ix];
         let range_a = &mut ranges[ix - 1];
         if range_a.end_point.column == 0 {
             continue;
@@ -1421,7 +1426,7 @@ fn insert_newlines_between_ranges(
         if range_a.end_point.row < range_b.start_point.row {
             let end_point = start_point + Point::from_ts_point(range_a.end_point);
             let line_end = Point::new(end_point.row, text.line_len(end_point.row));
-            if end_point.column as u32 >= line_end.column {
+            if end_point.column >= line_end.column {
                 range_a.end_byte += 1;
                 range_a.end_point.row += 1;
                 range_a.end_point.column = 0;
@@ -1675,7 +1680,7 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
 {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
         if self.change.cmp(cursor_location, buffer).is_le() {
-            return Ordering::Less;
+            Ordering::Less
         } else {
             self.position.cmp(cursor_location, buffer)
         }
@@ -1725,7 +1730,7 @@ impl<'a> Iterator for ByteChunks<'a> {
 
 impl QueryCursorHandle {
     pub(crate) fn new() -> Self {
-        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
+        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_default();
         cursor.set_match_limit(64);
         QueryCursorHandle(Some(cursor))
     }

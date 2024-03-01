@@ -140,6 +140,7 @@ impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
 }
 
 impl StaticSource {
+    #[allow(clippy::new_ret_no_self)]
     /// Initializes the static source, reacting on tasks config changes.
     pub fn new(
         id_base: impl Into<Cow<'static, str>>,

@@ -47,6 +47,7 @@ impl HasDisplayHandle for TestWindow {
 }
 
 impl TestWindow {
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new(
         options: WindowOptions,
         handle: AnyWindowHandle,

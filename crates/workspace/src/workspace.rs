@@ -2647,6 +2647,7 @@ impl Workspace {
             .map(|task| task.detach_and_log_err(cx));
     }
 
+    #[allow(clippy::eq_op)]
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
         let state = self.follower_states.remove(pane)?;
         let leader_id = state.leader_id;
