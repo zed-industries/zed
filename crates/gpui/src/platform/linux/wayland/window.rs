@@ -14,7 +14,7 @@ use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
-use crate::platform::blade::BladeRenderer;
+use crate::platform::cross_platform::BladeRenderer;
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;

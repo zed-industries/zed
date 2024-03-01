@@ -2,9 +2,9 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBounds, WindowOptions,
+    platform::cross_platform::BladeRenderer, size, Bounds, GlobalPixels, Modifiers, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptLevel, Scene, Size, WindowAppearance, WindowBounds, WindowOptions,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
