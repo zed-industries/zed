@@ -6,6 +6,7 @@ use windows::{
         Foundation::{HWND, LPARAM, LRESULT, WPARAM},
         Globalization::{WideCharToMultiByte, CP_UTF8},
         Graphics::Gdi::HBRUSH,
+        System::SystemServices::{MK_CONTROL, MK_SHIFT},
         UI::{
             Input::KeyboardAndMouse::{
                 VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
@@ -393,18 +394,34 @@ pub fn parse_mouse_movement(
     (new_pos, input)
 }
 
-pub fn parse_mouse_wheel(wparam: WPARAM, lparam: LPARAM, modifiers: Modifiers) -> PlatformInput {
+pub fn parse_mouse_vwheel(wparam: WPARAM, lparam: LPARAM, modifiers: Modifiers) -> PlatformInput {
     let position = Point {
         x: Pixels(loword!(lparam.0, i16) as _),
         y: Pixels(hiword!(lparam.0, i16) as _),
     };
     let lines = hiword!(wparam.0, i16);
-    println!("Lines: {}", lines);
     PlatformInput::ScrollWheel(ScrollWheelEvent {
         position,
         delta: ScrollDelta::Lines(Point {
             x: 0.0,
             y: lines as f32 / 120.0,
+        }),
+        modifiers,
+        touch_phase: TouchPhase::default(),
+    })
+}
+
+pub fn parse_mouse_hwheel(wparam: WPARAM, lparam: LPARAM, modifiers: Modifiers) -> PlatformInput {
+    let position = Point {
+        x: Pixels(loword!(lparam.0, i16) as _),
+        y: Pixels(hiword!(lparam.0, i16) as _),
+    };
+    let lines = hiword!(wparam.0, i16);
+    PlatformInput::ScrollWheel(ScrollWheelEvent {
+        position,
+        delta: ScrollDelta::Lines(Point {
+            x: lines as f32 / 120.0,
+            y: 0.0,
         }),
         modifiers,
         touch_phase: TouchPhase::default(),

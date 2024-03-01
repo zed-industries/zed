@@ -58,10 +58,10 @@ use windows::{
                 WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CHAR, WM_CLOSE, WM_COMMAND,
                 WM_DESTROY, WM_DROPFILES, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP,
                 WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
-                WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONDBLCLK,
-                WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN,
-                WM_XBUTTONUP, WNDCLASSEXW, WS_EX_ACCEPTFILES, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW,
-                WS_POPUP, WS_VISIBLE,
+                WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
+                WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
+                WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW, WS_EX_ACCEPTFILES,
+                WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -70,12 +70,13 @@ use windows::{
 use crate::{
     available_monitors, encode_wide, get_module_handle, hiword, log_windows_error,
     log_windows_error_with_message, loword, parse_dropfiles, parse_keyboard_input,
-    parse_mouse_button, parse_mouse_movement, parse_mouse_wheel, parse_system_key,
-    platform::cross_platform::BladeRenderer, set_windowdata, Action, Bounds, DisplayId,
-    ForegroundExecutor, Modifiers, Pixels, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, Size, WindowKind, WindowOptions, WindowsWindowBase,
-    WindowsWinodwDataWrapper, DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH, MENU_ACTIONS, WINDOW_CLOSE,
-    WINDOW_REFRESH_TIMER, WINODW_EXTRA_EXSTYLE, WINODW_REFRESH_INTERVAL, WINODW_STYLE,
+    parse_mouse_button, parse_mouse_hwheel, parse_mouse_movement, parse_mouse_vwheel,
+    parse_system_key, platform::cross_platform::BladeRenderer, set_windowdata, Action, Bounds,
+    DisplayId, ForegroundExecutor, Modifiers, Pixels, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, Size, WindowKind, WindowOptions,
+    WindowsWindowBase, WindowsWinodwDataWrapper, DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH,
+    MENU_ACTIONS, WINDOW_CLOSE, WINDOW_REFRESH_TIMER, WINODW_EXTRA_EXSTYLE,
+    WINODW_REFRESH_INTERVAL, WINODW_STYLE,
 };
 
 use super::{display::WindowsDisplay, WINDOW_CLASS};
@@ -410,6 +411,7 @@ impl WindowsWindowBase for WindowsWindowinner {
             | WM_RBUTTONDBLCLK | WM_MBUTTONDBLCLK | WM_XBUTTONDBLCLK => {
                 let modifiers = self.modifiers.borrow();
                 let key = parse_mouse_button(message, wparam, lparam, &modifiers);
+                println!("Mouse button down: {:#?}", key);
                 self.handle_input(key);
                 self.update_now();
                 LRESULT(0)
@@ -432,7 +434,14 @@ impl WindowsWindowBase for WindowsWindowinner {
             }
             WM_MOUSEWHEEL => {
                 let modifiers = self.modifiers.borrow().clone();
-                let input = parse_mouse_wheel(wparam, lparam, modifiers);
+                let input = parse_mouse_vwheel(wparam, lparam, modifiers);
+                self.handle_input(input);
+                self.update_now();
+                LRESULT(0)
+            }
+            WM_MOUSEHWHEEL => {
+                let modifiers = self.modifiers.borrow().clone();
+                let input = parse_mouse_hwheel(wparam, lparam, modifiers);
                 self.handle_input(input);
                 self.update_now();
                 LRESULT(0)

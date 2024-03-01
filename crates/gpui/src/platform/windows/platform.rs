@@ -765,15 +765,13 @@ unsafe fn generate_menu(
                         let accel_table = keystroke_to_accel_table(keystroke, action_index as _);
                         accelerator_vec.push(accel_table);
                     } else {
-                        item_name.push('\t');
-                        for (keyindex, keystroke) in keystrokes.iter().enumerate() {
+                        // windows cant show multiple chortcuts on menu item
+                        for keystroke in keystrokes.iter() {
                             keystroke_to_menu_string(keystroke, &mut item_name);
-                            item_name.push('\t');
                             let accel_table =
                                 keystroke_to_accel_table(keystroke, action_index as _);
                             accelerator_vec.push(accel_table);
                         }
-                        item_name.pop();
                     }
                 }
                 let name_vec = encode_wide(&item_name);
@@ -784,7 +782,7 @@ unsafe fn generate_menu(
                     PCWSTR::from_raw(name_vec.as_ptr()),
                 )
                 .inspect_err(log_windows_error)?;
-                println!("action [{}]: {:#?}", action_index, action);
+                // println!("action [{}]: {:#?}", action_index, action);
                 actions_vec.push(action);
             }
         }
